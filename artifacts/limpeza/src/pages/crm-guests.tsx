@@ -206,7 +206,13 @@ export default function CrmGuests() {
   const [compFinancialEmail, setCompFinancialEmail] = useState("")
   const [compPhone, setCompPhone] = useState("")
   const [compContactPerson, setCompContactPerson] = useState("")
-  const [compBillingTerms, setCompBillingTerms] = useState("30 dias")
+  const [compBillingTerms, setCompBillingTerms] = useState("")
+  const [compAllowsDirectReservations, setCompAllowsDirectReservations] = useState(true)
+  const [compBillingEnabled, setCompBillingEnabled] = useState(false)
+  const [compConsumptionSamePayer, setCompConsumptionSamePayer] = useState(true)
+  const [compConsumptionPayerType, setCompConsumptionPayerType] = useState<"company" | "guest">("guest")
+  const [compConsumptionTermDays, setCompConsumptionTermDays] = useState("15")
+  const [formPreferredInvoiceRecipient, setFormPreferredInvoiceRecipient] = useState<"guest" | "company">("guest")
   const [compNotes, setCompNotes] = useState("")
   const [loadingCnpj, setLoadingCnpj] = useState(false)
   const [loadingCompanyCep, setLoadingCompanyCep] = useState(false)
@@ -614,6 +620,17 @@ export default function CrmGuests() {
     }
   }
 
+  const isCrmCompanyBillingActive = (c: any): boolean => {
+    if (!c) return false
+    if (c.billingEnabled !== undefined) return Boolean(c.billingEnabled)
+    if (c.isInvoiceOnly === true || c.companyRole === "invoice_only") return false
+    const terms = String(c.billingTerms || "").trim().toLowerCase()
+    if (!terms || terms === "b2b" || terms === "sem faturamento" || terms === "à vista" || terms === "a vista" || terms === "faturamento check-out") {
+      return Boolean(c.defaultBoletoTermDays)
+    }
+    return true
+  }
+
   const handleLookupCnpj = async (val: string) => {
     const clean = val.replace(/\D/g, "")
     if (clean.length === 14) {
@@ -624,8 +641,10 @@ export default function CrmGuests() {
           const data = await res.json()
           if (data.razaoSocial) setCompCorporateName(data.razaoSocial)
           if (data.nomeFantasia) setCompTradeName(data.nomeFantasia)
-          if (data.email) setCompFinancialEmail(data.email)
-          if (data.telefone) setCompPhone(data.telefone)
+          if (data.fromCrmOrDirectory) {
+            if (data.email) setCompFinancialEmail(data.email)
+            if (data.telefone) setCompPhone(data.telefone)
+          }
           if (data.cep) setCompCep(data.cep)
           if (data.logradouro) setCompAddress(data.logradouro)
           if (data.numero) setCompNumber(data.numero)
@@ -657,6 +676,7 @@ export default function CrmGuests() {
     setFormNeighborhood("")
     setFormIbgeCode("")
     setFormCompanyId("")
+    setFormPreferredInvoiceRecipient("guest")
     setFormDocPhotoUrl("")
     setFormDocFileName("")
     setFormIsMonthlyGuest(false)
@@ -711,6 +731,7 @@ export default function CrmGuests() {
     setFormNeighborhood(isFakePelinca ? "" : (g.neighborhood || g.bairro || ""))
     setFormIbgeCode(isFakePelinca ? "" : (g.ibgeCode || g.codigoMunicipio || ""))
     setFormCompanyId(g.companyId ? String(g.companyId) : "")
+    setFormPreferredInvoiceRecipient(g.preferredInvoiceRecipient === "company" ? "company" : "guest")
     setFormDocPhotoUrl(g.docPhotoUrl || "")
     setFormDocFileName(g.docPhotoUrl ? "documento_anexado" : "")
     setFormIsMonthlyGuest(Boolean(g.isMonthlyGuest || g.clientType === "mensalista"))
@@ -753,6 +774,7 @@ export default function CrmGuests() {
         city: formCity.trim(),
         cidade: formCity.trim(),
         companyId: formCompanyId ? Number(formCompanyId) : null,
+        preferredInvoiceRecipient: formCompanyId ? formPreferredInvoiceRecipient : "guest",
         isMonthlyGuest: Boolean(formIsMonthlyGuest),
         clientType: formIsMonthlyGuest ? "mensalista" : "avulso",
         autoEmitInvoice: Boolean(formAutoInvoice),
@@ -828,7 +850,9 @@ export default function CrmGuests() {
     setCompFinancialEmail("")
     setCompPhone("")
     setCompContactPerson("")
-    setCompBillingTerms("30 dias")
+    setCompAllowsDirectReservations(true)
+    setCompBillingEnabled(false)
+    setCompBillingTerms("")
     setCompNotes("")
     setCompCep("")
     setCompAddress("")
@@ -840,6 +864,9 @@ export default function CrmGuests() {
     setCompIbgeCode("3301009")
     setCompBoletoTermDays("28")
     setCompBoletoConsumptionMode("single")
+    setCompConsumptionSamePayer(true)
+    setCompConsumptionPayerType("guest")
+    setCompConsumptionTermDays("15")
     setCompFinRespName("")
     setCompFinRespEmail("")
     setCompFinRespPhone("")
@@ -851,6 +878,8 @@ export default function CrmGuests() {
   }
 
   const handleEditCompany = (c: any) => {
+    const isInvOnly = c.allowsDirectReservations === false || c.isInvoiceOnly === true || c.companyRole === "invoice_only"
+    const hasBill = isCrmCompanyBillingActive(c)
     setEditingCompany(c)
     setCompCorporateName(c.corporateName || c.razaoSocial || "")
     setCompTradeName(c.tradeName || c.nomeFantasia || "")
@@ -860,7 +889,9 @@ export default function CrmGuests() {
     setCompFinancialEmail(c.financialEmail || c.emailFinanceiro || "")
     setCompPhone(c.phone || c.telefone || "")
     setCompContactPerson(c.contactPerson || c.contato || "")
-    setCompBillingTerms(c.billingTerms || c.condicaoFaturamento || "30 dias")
+    setCompAllowsDirectReservations(!isInvOnly)
+    setCompBillingEnabled(hasBill)
+    setCompBillingTerms(hasBill ? (c.billingTerms || c.condicaoFaturamento || `${c.defaultBoletoTermDays ?? 28} dias`) : "")
     setCompNotes(c.notes || c.observacoes || "")
     setCompCep(c.cep || "")
     setCompAddress(c.address || c.logradouro || c.endereco || "")
@@ -872,6 +903,9 @@ export default function CrmGuests() {
     setCompIbgeCode(c.ibgeCode || c.codigoMunicipio || c.codigoIbge || "3301009")
     setCompBoletoTermDays(String(c.defaultBoletoTermDays ?? 28))
     setCompBoletoConsumptionMode(c.defaultBoletoConsumptionMode === "separate" ? "separate" : "single")
+    setCompConsumptionSamePayer(c.defaultConsumptionSamePayerAndDue !== false)
+    setCompConsumptionPayerType(c.defaultConsumptionPayerType === "company" ? "company" : "guest")
+    setCompConsumptionTermDays(String(c.defaultConsumptionTermDays ?? 15))
     const fr = c.financialResponsible || {}
     setCompFinRespName(fr.name || "")
     setCompFinRespEmail(fr.email || "")
@@ -890,6 +924,7 @@ export default function CrmGuests() {
 
     setSavingCompany(true)
     try {
+      const termDaysNum = Number(compBoletoTermDays) || 28
       const payload = {
         corporateName: compCorporateName.trim(),
         razaoSocial: compCorporateName.trim(),
@@ -901,7 +936,11 @@ export default function CrmGuests() {
         financialEmail: compFinancialEmail.trim(),
         phone: compPhone.trim(),
         contactPerson: compContactPerson.trim(),
-        billingTerms: compBillingTerms.trim(),
+        companyRole: compAllowsDirectReservations ? "booking_partner" : "invoice_only",
+        allowsDirectReservations: compAllowsDirectReservations,
+        isInvoiceOnly: !compAllowsDirectReservations,
+        billingEnabled: compBillingEnabled,
+        billingTerms: compBillingEnabled ? (compBillingTerms.trim() || `${termDaysNum} dias`) : "",
         notes: compNotes.trim(),
         cep: compCep.trim().replace(/\D/g, ""),
         address: compAddress.trim(),
@@ -918,8 +957,11 @@ export default function CrmGuests() {
         uf: compState.trim().toUpperCase(),
         ibgeCode: compIbgeCode.trim() || "3301009",
         codigoMunicipio: compIbgeCode.trim() || "3301009",
-        defaultBoletoTermDays: Number(compBoletoTermDays) || 28,
+        defaultBoletoTermDays: termDaysNum,
         defaultBoletoConsumptionMode: compBoletoConsumptionMode,
+        defaultConsumptionSamePayerAndDue: compBoletoConsumptionMode === "separate" ? compConsumptionSamePayer : true,
+        defaultConsumptionPayerType: compBoletoConsumptionMode === "separate" && !compConsumptionSamePayer ? compConsumptionPayerType : "company",
+        defaultConsumptionTermDays: Number(compConsumptionTermDays) || termDaysNum,
         financialResponsible: {
           name: compFinRespName.trim(),
           email: compFinRespEmail.trim(),
@@ -1846,13 +1888,16 @@ export default function CrmGuests() {
                       <tr>
                         <th className="p-3.5">Empresa / Razão Social</th>
                         <th className="p-3.5">CNPJ / Inscrições</th>
-                        <th className="p-3.5">Contato / E-mail Financeiro</th>
-                        <th className="p-3.5">Condição de Faturamento</th>
+                        <th className="p-3.5">Contato / E-mail</th>
+                        <th className="p-3.5">Papel & Faturamento</th>
                         <th className="p-3.5 text-right">Ações</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
-                      {filteredCompanies.map(c => (
+                      {filteredCompanies.map(c => {
+                        const hasBill = isCrmCompanyBillingActive(c)
+                        const isInvOnly = c.allowsDirectReservations === false || c.isInvoiceOnly === true || c.companyRole === "invoice_only"
+                        return (
                         <tr key={c.id} className="hover:bg-muted/20 transition-colors">
                           <td className="p-3.5">
                             <div className="font-bold text-foreground">{c.tradeName || c.corporateName}</div>
@@ -1865,15 +1910,37 @@ export default function CrmGuests() {
                           </td>
 
                           <td className="p-3.5">
-                            <div className="font-semibold text-foreground">{c.contactPerson || "Gestor de Viagens"}</div>
-                            {c.financialEmail && <div className="text-[10px] text-muted-foreground">{c.financialEmail}</div>}
+                            <div className="font-semibold text-foreground">{c.contactPerson || "—"}</div>
+                            {c.financialEmail ? (
+                              <div className="text-[10px] text-muted-foreground">{c.financialEmail}</div>
+                            ) : (
+                              <div className="text-[10px] text-muted-foreground/70 italic">NFS-e enviada ao hóspede</div>
+                            )}
                             {c.phone && <div className="text-[10px] text-muted-foreground">{c.phone}</div>}
                           </td>
 
                           <td className="p-3.5">
-                            <Badge variant="outline" className="text-[10px] font-bold text-indigo-600 border-indigo-200">
-                              {c.billingTerms || "30 dias"}
-                            </Badge>
+                            <div className="flex flex-wrap items-center gap-1">
+                              {isInvOnly ? (
+                                <Badge variant="outline" className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/30">
+                                  🧾 Só Tomadora NFS-e
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 border-indigo-200 dark:border-indigo-800">
+                                  🏢 Faz Reservas
+                                </Badge>
+                              )}
+                              {hasBill ? (
+                                <Badge className="text-[10px] font-bold bg-indigo-600 text-white">
+                                  🏦 Faturado • {c.defaultBoletoTermDays ? `${c.defaultBoletoTermDays} dias` : (c.billingTerms || "28 dias")}
+                                  {c.defaultBoletoConsumptionMode === "separate" ? " (2 Boletos)" : ""}
+                                </Badge>
+                              ) : (
+                                <Badge variant="secondary" className="text-[10px] font-semibold text-muted-foreground">
+                                  Sem Faturamento
+                                </Badge>
+                              )}
+                            </div>
                           </td>
 
                           <td className="p-3.5 text-right">
@@ -1909,7 +1976,8 @@ export default function CrmGuests() {
                             </div>
                           </td>
                         </tr>
-                      ))}
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -3107,10 +3175,18 @@ export default function CrmGuests() {
                   <Input type="email" value={formEmail} onChange={e => setFormEmail(e.target.value)} className="h-9 text-xs rounded-xl" />
                 </div>
                 <div className="space-y-1">
-                  <Label className="font-bold">Empresa Parceira (Opcional)</Label>
+                  <Label className="font-bold">Empresa Vinculada (Opcional)</Label>
                   <select 
                     value={formCompanyId} 
-                    onChange={e => setFormCompanyId(e.target.value)}
+                    onChange={e => {
+                      const val = e.target.value
+                      setFormCompanyId(val)
+                      if (val) {
+                        setFormPreferredInvoiceRecipient("company")
+                      } else {
+                        setFormPreferredInvoiceRecipient("guest")
+                      }
+                    }}
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs"
                   >
                     <option value="">Nenhuma (Pessoa Física Avulsa)</option>
@@ -3120,6 +3196,41 @@ export default function CrmGuests() {
                   </select>
                 </div>
               </div>
+
+              {formCompanyId && (
+                <div className="p-3 bg-indigo-50/60 dark:bg-indigo-950/25 border border-indigo-200 dark:border-indigo-800/60 rounded-2xl space-y-1.5">
+                  <Label className="text-[11px] font-bold text-indigo-800 dark:text-indigo-300 block">
+                    Padrão de Emissão da Nota Fiscal (NFS-e) nas Próximas Reservas
+                  </Label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setFormPreferredInvoiceRecipient("company")}
+                      className={`py-1.5 px-2.5 rounded-xl border text-[11px] font-bold text-left transition-all cursor-pointer ${
+                        formPreferredInvoiceRecipient === "company"
+                          ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                          : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-indigo-500/60"
+                      }`}
+                    >
+                      🏢 Sempre p/ Empresa (CNPJ)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormPreferredInvoiceRecipient("guest")}
+                      className={`py-1.5 px-2.5 rounded-xl border text-[11px] font-bold text-left transition-all cursor-pointer ${
+                        formPreferredInvoiceRecipient === "guest"
+                          ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                          : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-emerald-500/60"
+                      }`}
+                    >
+                      👤 Hóspede Titular (CPF)
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground leading-snug">
+                    Pré-selecionado automaticamente em novas reservas manuais, Site, WhatsApp e OTAs (Booking/Airbnb), podendo ser trocado pontualmente na reserva.
+                  </p>
+                </div>
+              )}
 
               {/* Endereço Residencial / Fiscal */}
               <div className="p-3 bg-muted/20 border border-border rounded-2xl space-y-2">
@@ -3352,12 +3463,52 @@ export default function CrmGuests() {
             <DialogHeader>
               <DialogTitle className="text-base font-black flex items-center gap-2">
                 <Building2 className="w-5 h-5 text-indigo-600" />
-                <span>{editingCompany ? "Editar Empresa" : "Nova Empresa Parceira (PJ)"}</span>
+                <span>{editingCompany ? "Editar Empresa (PJ)" : "Nova Empresa (PJ)"}</span>
               </DialogTitle>
-              <DialogDescription className="text-xs">Faturamento corporativo, dados cadastrais e endereço fiscal B2B</DialogDescription>
+              <DialogDescription className="text-xs">
+                Cadastro único corporativo: defina se a empresa apenas recebe NFS-e ou também faz reservas e faturamento a prazo.
+              </DialogDescription>
             </DialogHeader>
 
             <form onSubmit={handleSaveCompany} className="space-y-3 pt-2 text-xs">
+              {/* Papel da Empresa */}
+              <div className="p-2.5 bg-muted/30 border border-border rounded-2xl space-y-1.5">
+                <Label className="font-bold text-[11px] block">Como esta empresa atua no hotel?</Label>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCompAllowsDirectReservations(false)
+                      setCompBillingEnabled(false)
+                    }}
+                    className={`p-2 rounded-xl border text-[11px] font-bold text-left transition-all cursor-pointer ${
+                      !compAllowsDirectReservations
+                        ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                        : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-emerald-500/60"
+                    }`}
+                  >
+                    <span className="block">🧾 Só Tomadora de Nota (NFS-e)</span>
+                    <span className={`text-[9.5px] font-normal block ${!compAllowsDirectReservations ? "text-emerald-50" : "text-muted-foreground"}`}>
+                      Hóspede reserva/paga, CNPJ sai na nota
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCompAllowsDirectReservations(true)}
+                    className={`p-2 rounded-xl border text-[11px] font-bold text-left transition-all cursor-pointer ${
+                      compAllowsDirectReservations
+                        ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                        : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-indigo-500/60"
+                    }`}
+                  >
+                    <span className="block">🏢 Também Solicita Reservas</span>
+                    <span className={`text-[9.5px] font-normal block ${compAllowsDirectReservations ? "text-indigo-100" : "text-muted-foreground"}`}>
+                      Parceira corporativa / reservas diretas
+                    </span>
+                  </button>
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <Label className="font-bold">CNPJ *</Label>
@@ -3376,7 +3527,7 @@ export default function CrmGuests() {
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <Label className="font-bold">Telefone / WhatsApp</Label>
+                  <Label className="font-bold">Telefone / WhatsApp (Opcional)</Label>
                   <Input type="tel" inputMode="tel" value={compPhone} onChange={e => setCompPhone(formatSmartPhone(e.target.value))} placeholder="(00) 0000-0000" className="h-9 text-xs rounded-xl" />
                 </div>
               </div>
@@ -3392,7 +3543,7 @@ export default function CrmGuests() {
                   <Input value={compTradeName} onChange={e => setCompTradeName(e.target.value)} className="h-9 text-xs rounded-xl" />
                 </div>
                 <div className="space-y-1">
-                  <Label className="font-bold">Contato / Responsável</Label>
+                  <Label className="font-bold">Contato / Responsável (Opcional)</Label>
                   <Input value={compContactPerson} onChange={e => setCompContactPerson(e.target.value)} placeholder="Ex: Gestor de RH" className="h-9 text-xs rounded-xl" />
                 </div>
               </div>
@@ -3408,15 +3559,11 @@ export default function CrmGuests() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label className="font-bold">E-mail Financeiro</Label>
-                  <Input value={compFinancialEmail} onChange={e => setCompFinancialEmail(e.target.value)} placeholder="financeiro@empresa.com" className="h-9 text-xs rounded-xl" />
-                </div>
-                <div className="space-y-1">
-                  <Label className="font-bold">Condição de Faturamento</Label>
-                  <Input value={compBillingTerms} onChange={e => setCompBillingTerms(e.target.value)} placeholder="Ex: 30 dias" className="h-9 text-xs rounded-xl" />
-                </div>
+              <div className="space-y-1">
+                <Label className="font-bold">
+                  {compBillingEnabled ? "E-mail Financeiro" : "E-mail da Empresa (Opcional — deixe vazio p/ enviar NFS-e só ao hóspede)"}
+                </Label>
+                <Input value={compFinancialEmail} onChange={e => setCompFinancialEmail(e.target.value)} placeholder={compBillingEnabled ? "financeiro@empresa.com" : "Opcional"} className="h-9 text-xs rounded-xl" />
               </div>
 
               {/* Endereço Fiscal da Empresa */}
@@ -3479,45 +3626,140 @@ export default function CrmGuests() {
                 </div>
               </div>
 
-              {/* Faturamento a Prazo (Boleto Inter), Responsável Financeiro & Destinatários Padrão (Empresa PJ) */}
-              <div className="p-3 bg-indigo-500/5 border border-indigo-500/20 rounded-2xl space-y-2">
-                <div className="font-bold text-indigo-700 dark:text-indigo-300 text-xs">
-                  🏦 Boleto Faturado a Prazo, Responsável Financeiro & Destinatários Padrão
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <Label className="text-[11px] font-semibold">Prazo Padrão (Dias após Check-out)</Label>
-                    <Input
-                      type="number"
-                      value={compBoletoTermDays}
-                      onChange={e => setCompBoletoTermDays(e.target.value)}
-                      placeholder="Ex: 28"
-                      className="h-8 text-xs rounded-xl font-mono"
-                    />
+              {/* Switch Explícito + Regras de Faturamento a Prazo (Boleto Inter) */}
+              <div className="p-3 bg-indigo-500/5 border border-indigo-500/20 rounded-2xl space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="font-bold text-indigo-700 dark:text-indigo-300 text-xs">
+                      🏦 Pagamento Faturado a Prazo (Boleto Banco Inter)
+                    </div>
+                    <span className="text-[10px] text-muted-foreground block">
+                      {compBillingEnabled
+                        ? "Habilitado: pré-configura boletos, prazos e divisão de consumo quando esta empresa solicita reservas"
+                        : "Desativado: empresa sem faturamento a prazo (não gera boleto faturado)"}
+                    </span>
                   </div>
-                  <div className="space-y-1">
-                    <Label className="text-[11px] font-semibold">Padrão de Boletos no Check-out</Label>
-                    <select
-                      value={compBoletoConsumptionMode}
-                      onChange={e => setCompBoletoConsumptionMode(e.target.value === "separate" ? "separate" : "single")}
-                      className="w-full h-8 px-2 text-xs rounded-xl border border-border bg-background font-semibold"
-                    >
-                      <option value="single">1 Boleto Unificado (Hosp + Consumo)</option>
-                      <option value="separate">2 Boletos Separados (1 Hosp + 1 Consumo)</option>
-                    </select>
+                  <Switch
+                    checked={compBillingEnabled}
+                    onCheckedChange={checked => {
+                      setCompBillingEnabled(checked)
+                      if (checked) {
+                        setCompAllowsDirectReservations(true)
+                        if (!compBillingTerms) setCompBillingTerms(`${Number(compBoletoTermDays) || 28} dias`)
+                      }
+                    }}
+                  />
+                </div>
+
+                {compBillingEnabled && (
+                  <div className="pt-2 border-t border-indigo-500/20 space-y-2.5">
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-[11px] font-semibold">Prazo Padrão (Dias após Check-out)</Label>
+                        <div className="flex items-center gap-1">
+                          {["7", "15", "28", "30"].map(d => (
+                            <button
+                              key={d}
+                              type="button"
+                              onClick={() => {
+                                setCompBoletoTermDays(d)
+                                setCompBillingTerms(`${d} dias`)
+                              }}
+                              className={`px-2 py-0.5 rounded-md text-[10px] font-bold border cursor-pointer transition-colors ${
+                                compBoletoTermDays === d
+                                  ? "bg-indigo-600 text-white border-indigo-600"
+                                  : "bg-background border-border text-muted-foreground hover:border-indigo-400"
+                              }`}
+                            >
+                              {d}d
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Input
+                          type="number"
+                          min={1}
+                          value={compBoletoTermDays}
+                          onChange={e => {
+                            setCompBoletoTermDays(e.target.value)
+                            if (e.target.value) setCompBillingTerms(`${e.target.value} dias`)
+                          }}
+                          placeholder="Ex: 28"
+                          className="h-8 text-xs rounded-xl font-mono"
+                        />
+                        <Input
+                          value={compBillingTerms}
+                          onChange={e => setCompBillingTerms(e.target.value)}
+                          placeholder="Condição (Ex: 28 dias)"
+                          className="h-8 text-xs rounded-xl"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-semibold">Padrão de Boletos no Check-out (Hospedagem vs Consumo)</Label>
+                      <select
+                        value={compBoletoConsumptionMode}
+                        onChange={e => setCompBoletoConsumptionMode(e.target.value === "separate" ? "separate" : "single")}
+                        className="w-full h-8 px-2 text-xs rounded-xl border border-border bg-background font-semibold"
+                      >
+                        <option value="single">1 Boleto Unificado (Hospedagem + Consumo juntos)</option>
+                        <option value="separate">2 Boletos Separados (1 Hospedagem + 1 Consumo)</option>
+                      </select>
+                    </div>
+
+                    {compBoletoConsumptionMode === "separate" && (
+                      <div className="p-2 rounded-xl bg-background border border-border space-y-1.5">
+                        <label className="flex items-center gap-1.5 text-[11px] font-semibold cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={compConsumptionSamePayer}
+                            onChange={e => setCompConsumptionSamePayer(e.target.checked)}
+                          />
+                          <span>Mesma empresa e mesmo vencimento nos 2 boletos</span>
+                        </label>
+                        {!compConsumptionSamePayer && (
+                          <div className="grid grid-cols-2 gap-2 pt-1">
+                            <div className="space-y-0.5">
+                              <Label className="text-[10px] text-muted-foreground">Quem paga o Consumo?</Label>
+                              <select
+                                value={compConsumptionPayerType}
+                                onChange={e => setCompConsumptionPayerType(e.target.value === "company" ? "company" : "guest")}
+                                className="w-full h-8 px-2 text-[11px] rounded-lg border border-border bg-background font-semibold"
+                              >
+                                <option value="guest">👤 Hóspede (PF)</option>
+                                <option value="company">🏢 Empresa (PJ)</option>
+                              </select>
+                            </div>
+                            <div className="space-y-0.5">
+                              <Label className="text-[10px] text-muted-foreground">Prazo 2º Boleto (dias)</Label>
+                              <Input
+                                type="number"
+                                min={1}
+                                value={compConsumptionTermDays}
+                                onChange={e => setCompConsumptionTermDays(e.target.value)}
+                                className="h-8 text-[11px] rounded-lg font-mono"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <Input value={compFinRespName} onChange={e => setCompFinRespName(e.target.value)} placeholder="Nome Resp. Financeiro" className="h-8 text-xs rounded-xl" />
+                      <Input value={compFinRespEmail} onChange={e => setCompFinRespEmail(e.target.value)} placeholder="E-mail Notas/Boletos" className="h-8 text-xs rounded-xl" />
+                      <Input type="tel" inputMode="tel" value={compFinRespPhone} onChange={e => setCompFinRespPhone(formatSmartPhone(e.target.value))} placeholder="WhatsApp Resp. Fin." className="h-8 text-xs rounded-xl font-mono" />
+                    </div>
+                    <div className="flex flex-wrap gap-3 text-[11px] font-semibold pt-0.5">
+                      <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={compRecGuest} onChange={e => setCompRecGuest(e.target.checked)} /> 👤 Hóspede</label>
+                      <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={compRecRequester} onChange={e => setCompRecRequester(e.target.checked)} /> 📋 Solicitante</label>
+                      <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={compRecCompany} onChange={e => setCompRecCompany(e.target.checked)} /> 🏢 Empresa</label>
+                      <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={compRecFinResp} onChange={e => setCompRecFinResp(e.target.checked)} /> 💼 Resp. Financeiro</label>
+                    </div>
                   </div>
-                </div>
-                <div className="grid grid-cols-3 gap-1.5">
-                  <Input value={compFinRespName} onChange={e => setCompFinRespName(e.target.value)} placeholder="Nome Resp. Financeiro" className="h-8 text-xs rounded-xl" />
-                  <Input value={compFinRespEmail} onChange={e => setCompFinRespEmail(e.target.value)} placeholder="E-mail Notas/Boletos" className="h-8 text-xs rounded-xl" />
-                  <Input type="tel" inputMode="tel" value={compFinRespPhone} onChange={e => setCompFinRespPhone(formatSmartPhone(e.target.value))} placeholder="WhatsApp Resp. Fin." className="h-8 text-xs rounded-xl font-mono" />
-                </div>
-                <div className="flex flex-wrap gap-3 text-[11px] font-semibold pt-0.5">
-                  <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={compRecGuest} onChange={e => setCompRecGuest(e.target.checked)} /> 👤 Hóspede</label>
-                  <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={compRecRequester} onChange={e => setCompRecRequester(e.target.checked)} /> 📋 Solicitante</label>
-                  <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={compRecCompany} onChange={e => setCompRecCompany(e.target.checked)} /> 🏢 Empresa</label>
-                  <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={compRecFinResp} onChange={e => setCompRecFinResp(e.target.checked)} /> 💼 Resp. Financeiro</label>
-                </div>
+                )}
               </div>
 
               <div className="space-y-1">

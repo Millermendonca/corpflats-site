@@ -139,6 +139,17 @@ const MemoCrmGuestSelect = memo(function MemoCrmGuestSelect({
   )
 })
 
+function isCompanyBillingActive(c: any): boolean {
+  if (!c) return false
+  if (c.billingEnabled !== undefined) return Boolean(c.billingEnabled)
+  if (c.isInvoiceOnly === true || c.companyRole === "invoice_only") return false
+  const terms = String(c.billingTerms || "").trim().toLowerCase()
+  if (!terms || terms === "b2b" || terms === "sem faturamento" || terms === "à vista" || terms === "a vista" || terms === "faturamento check-out") {
+    return Boolean(c.defaultBoletoTermDays)
+  }
+  return true
+}
+
 const MemoCompanySelect = memo(function MemoCompanySelect({
   value,
   onValueChange,
@@ -147,6 +158,7 @@ const MemoCompanySelect = memo(function MemoCompanySelect({
   newLabel,
   newItemClassName = "text-indigo-600 dark:text-indigo-400 font-bold cursor-pointer bg-indigo-50/60 dark:bg-indigo-950/40",
   skipInformadoCnpj = false,
+  prioritizeBookingPartners = false,
 }: {
   value: string
   onValueChange: (val: string) => void
@@ -155,17 +167,33 @@ const MemoCompanySelect = memo(function MemoCompanySelect({
   newLabel: string
   newItemClassName?: string
   skipInformadoCnpj?: boolean
+  prioritizeBookingPartners?: boolean
 }) {
-  const items = useMemo(
-    () =>
-      companies.map((c: any) => (
+  const items = useMemo(() => {
+    const list = prioritizeBookingPartners
+      ? [...companies].sort((a, b) => {
+          const aDirect = a?.allowsDirectReservations !== false && !a?.isInvoiceOnly ? 1 : 0
+          const bDirect = b?.allowsDirectReservations !== false && !b?.isInvoiceOnly ? 1 : 0
+          if (aDirect !== bDirect) return bDirect - aDirect
+          return String(a?.tradeName || a?.corporateName || "").localeCompare(String(b?.tradeName || b?.corporateName || ""))
+        })
+      : companies
+    return list.map((c: any) => {
+      const hasBilling = isCompanyBillingActive(c)
+      const isInvOnly = c.allowsDirectReservations === false || c.isInvoiceOnly === true || c.companyRole === "invoice_only"
+      const cnpjLabel = c.cnpj && (!skipInformadoCnpj || !String(c.cnpj).includes("Informado")) ? ` • CNPJ: ${c.cnpj}` : ""
+      const tagLabel = hasBilling
+        ? ` • Faturado (${c.defaultBoletoTermDays ? `${c.defaultBoletoTermDays}d` : (c.billingTerms || "28d")})`
+        : (isInvOnly ? " • Só NFS-e" : " • Sem Faturamento")
+      return (
         <SelectItem key={c.id} value={String(c.id)}>
           <span className="font-semibold">{c.tradeName || c.corporateName}</span>
-          {c.cnpj && (!skipInformadoCnpj || !String(c.cnpj).includes("Informado")) ? ` • CNPJ: ${c.cnpj}` : ""}
+          {cnpjLabel}
+          <span className="text-[10px] opacity-75">{tagLabel}</span>
         </SelectItem>
-      )),
-    [companies, skipInformadoCnpj]
-  )
+      )
+    })
+  }, [companies, skipInformadoCnpj, prioritizeBookingPartners])
   return (
     <Select value={value} onValueChange={onValueChange}>
       <SelectTrigger className="text-xs h-8">
@@ -1518,13 +1546,21 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
 
   // Quick Company Creation Modal States
   const [newCompanyModalOpen, setNewCompanyModalOpen] = useState(false)
+  const [newCompanyModalContext, setNewCompanyModalContext] = useState<"invoice_only" | "requester_corporate" | "b2b_client">("requester_corporate")
+  const [newCompAllowsDirectReservations, setNewCompAllowsDirectReservations] = useState(true)
+  const [newCompBillingEnabled, setNewCompBillingEnabled] = useState(false)
+  const [newCompBoletoTermDays, setNewCompBoletoTermDays] = useState("28")
+  const [newCompBoletoConsumptionMode, setNewCompBoletoConsumptionMode] = useState<"single" | "separate">("single")
+  const [newCompConsumptionSamePayer, setNewCompConsumptionSamePayer] = useState(true)
+  const [newCompConsumptionPayerType, setNewCompConsumptionPayerType] = useState<"company" | "guest">("guest")
+  const [newCompConsumptionTermDays, setNewCompConsumptionTermDays] = useState("15")
   const [newCompCorporateName, setNewCompCorporateName] = useState("")
   const [newCompTradeName, setNewCompTradeName] = useState("")
   const [newCompCnpj, setNewCompCnpj] = useState("")
   const [newCompFinancialEmail, setNewCompFinancialEmail] = useState("")
   const [newCompPhone, setNewCompPhone] = useState("")
   const [newCompContactPerson, setNewCompContactPerson] = useState("")
-  const [newCompBillingTerms, setNewCompBillingTerms] = useState("30 dias")
+  const [newCompBillingTerms, setNewCompBillingTerms] = useState("")
   const [newCompNotes, setNewCompNotes] = useState("")
   const [savingNewCompany, setSavingNewCompany] = useState(false)
   const [loadingNewCompanyCnpj, setLoadingNewCompanyCnpj] = useState(false)
@@ -4791,10 +4827,13 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
       } else if (!isSameGuest) {
         setFormAutoInvoice(false)
       }
-      if (g.companyId && !formCompanyId) {
+      if (g.companyId && (!formCompanyId || !isSameGuest)) {
         setFormCompanyId(String(g.companyId))
         const comp = companies.find(c => c.id === Number(g.companyId))
         if (comp) setFormCompanyName(comp.tradeName || comp.corporateName)
+      } else if (!g.companyId && !isSameGuest && formRequesterType !== "company") {
+        setFormCompanyId("")
+        setFormCompanyName("")
       }
       if (formChannel !== "b2b" && formRequesterType !== "agency_b2b") {
         if (g.preferredInvoiceRecipient === "company" && (g.companyId || formCompanyId)) {
@@ -5107,14 +5146,84 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   // Handlers para Cadastro Rápido de Empresa Parceira
   const [newCompAddressData, setNewCompAddressData] = useState<Record<string, string>>({})
 
-  const handleOpenNewCompanyModal = () => {
+  const applyCompanyBillingDefaultsToForm = (c: any) => {
+    if (!c) return
+    const hasBilling = isCompanyBillingActive(c)
+    if (hasBilling) {
+      setFormIsFaturadoBoleto(true)
+      setFormPaymentMethod("boleto_faturado")
+      setFormAutoInvoice(true)
+      const nonAutoCompanyPays = formPayments.filter(p =>
+        p && (String(p.id || "").startsWith("pay_bol_") || !/^(pagamento integral|pagamento inicial)$/i.test(String(p.notes || "").trim()))
+      )
+      if (nonAutoCompanyPays.length === 0) {
+        setFormPayments([])
+        setFormPaidAmount("0")
+        setFormPaymentStatus("pendente")
+      }
+      setFormBoletoPayerType("company")
+      if (c.defaultBoletoTermDays || c.billingTerms) {
+        const parsedDays = Number(c.defaultBoletoTermDays) || parseInt(String(c.billingTerms || "").replace(/\D/g, ""), 10) || 28
+        setFormBoletoTermDays(parsedDays)
+      }
+      if (c.defaultBoletoConsumptionMode) {
+        const isSep = c.defaultBoletoConsumptionMode === "separate_boletos" || c.defaultBoletoConsumptionMode === "separate"
+        setFormBoletoConsumptionMode(isSep ? "separate_boletos" : "single_boleto")
+        if (isSep) {
+          const samePayer = c.defaultConsumptionSamePayerAndDue !== undefined ? Boolean(c.defaultConsumptionSamePayerAndDue) : true
+          setFormConsumptionSamePayerAndDue(samePayer)
+          if (!samePayer && c.defaultConsumptionPayerType) {
+            setFormConsumptionPayerType(c.defaultConsumptionPayerType)
+          }
+          if (c.defaultConsumptionTermDays) {
+            setFormConsumptionTermDays(Number(c.defaultConsumptionTermDays) || 15)
+          }
+        }
+      }
+      if (c.financialResponsible?.name) {
+        setFormFinRespName(c.financialResponsible.name || "")
+        setFormFinRespEmail(c.financialResponsible.email || "")
+        setFormFinRespPhone(c.financialResponsible.phone || c.financialResponsible.whatsapp || "")
+        setFormFinRespDoc(c.financialResponsible.document || "")
+      }
+      if (c.defaultBillingRecipients) {
+        setFormRecGuest(Boolean(c.defaultBillingRecipients.guest ?? false))
+        setFormRecRequester(Boolean(c.defaultBillingRecipients.requester ?? true))
+        setFormRecCompany(Boolean(c.defaultBillingRecipients.company ?? true))
+        setFormRecFinResp(Boolean(c.defaultBillingRecipients.financialResponsible ?? true))
+        setFormRecSendEmail(c.defaultBillingRecipients.sendEmail !== false)
+        setFormRecSendWhatsapp(c.defaultBillingRecipients.sendWhatsapp !== false)
+      } else {
+        setFormRecCompany(true)
+        setFormRecRequester(true)
+        setFormRecFinResp(true)
+      }
+    } else {
+      setFormIsFaturadoBoleto(false)
+      if (formPaymentMethod === "boleto_faturado" || formPaymentMethod === "faturado_boleto") {
+        setFormPaymentMethod("pix")
+      }
+    }
+  }
+
+  const handleOpenNewCompanyModal = (context: "invoice_only" | "requester_corporate" | "b2b_client" = "requester_corporate") => {
+    const isInvoiceOnlyCtx = context === "invoice_only"
+    const isRequesterCtx = context === "requester_corporate"
+    setNewCompanyModalContext(context)
+    setNewCompAllowsDirectReservations(!isInvoiceOnlyCtx)
+    setNewCompBillingEnabled(isRequesterCtx)
+    setNewCompBoletoTermDays("28")
+    setNewCompBoletoConsumptionMode("single")
+    setNewCompConsumptionSamePayer(true)
+    setNewCompConsumptionPayerType("guest")
+    setNewCompConsumptionTermDays("15")
     setNewCompCorporateName("")
     setNewCompTradeName("")
     setNewCompCnpj("")
     setNewCompFinancialEmail("")
     setNewCompPhone("")
     setNewCompContactPerson("")
-    setNewCompBillingTerms("30 dias")
+    setNewCompBillingTerms(isRequesterCtx ? "28 dias" : "")
     setNewCompNotes("")
     setNewCompAddressData({})
     setNewCompanyModalOpen(true)
@@ -5130,8 +5239,10 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
           const resData = await res.json()
           if (resData.razaoSocial || resData.razao_social) setNewCompCorporateName(resData.razaoSocial || resData.razao_social)
           if (resData.nomeFantasia || resData.nome_fantasia) setNewCompTradeName(resData.nomeFantasia || resData.nome_fantasia)
-          if (resData.email) setNewCompFinancialEmail(resData.email)
-          if (resData.telefone || resData.ddd_telefone_1) setNewCompPhone(resData.telefone || resData.ddd_telefone_1)
+          if (resData.fromCrmOrDirectory) {
+            if (resData.email) setNewCompFinancialEmail(resData.email)
+            if (resData.telefone || resData.ddd_telefone_1) setNewCompPhone(resData.telefone || resData.ddd_telefone_1)
+          }
           setNewCompAddressData({
             address: resData.logradouro || resData.endereco || "",
             number: resData.numero || "S/N",
@@ -5143,8 +5254,10 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
             ibgeCode: resData.codigoMunicipio || resData.ibge || resData.ibgeCode || ""
           })
           toast({
-            title: "Dados da Empresa Localizados!",
-            description: `${resData.razaoSocial || resData.razao_social || resData.nomeFantasia} carregada da Receita Federal.`
+            title: resData.companyId ? "Empresa Já Existente no CRM!" : "Dados Fiscais Localizados!",
+            description: resData.companyId
+              ? `${resData.razaoSocial || resData.nomeFantasia} já está cadastrada. Ao confirmar, ela será vinculada sem duplicar.`
+              : `${resData.razaoSocial || resData.razao_social || resData.nomeFantasia} carregada (Razão Social e Endereço Fiscal).`
           })
         }
       } catch {}
@@ -5161,6 +5274,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
 
     setSavingNewCompany(true)
     try {
+      const termDaysNum = Number(newCompBoletoTermDays) || 28
       const payload = {
         corporateName: newCompCorporateName.trim(),
         tradeName: (newCompTradeName || newCompCorporateName).trim(),
@@ -5168,7 +5282,16 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         financialEmail: newCompFinancialEmail.trim(),
         phone: newCompPhone.trim(),
         contactPerson: newCompContactPerson.trim(),
-        billingTerms: newCompBillingTerms.trim(),
+        companyRole: newCompAllowsDirectReservations ? "booking_partner" : "invoice_only",
+        allowsDirectReservations: newCompAllowsDirectReservations,
+        isInvoiceOnly: !newCompAllowsDirectReservations,
+        billingEnabled: newCompBillingEnabled,
+        billingTerms: newCompBillingEnabled ? (newCompBillingTerms.trim() || `${termDaysNum} dias`) : "",
+        defaultBoletoTermDays: termDaysNum,
+        defaultBoletoConsumptionMode: newCompBoletoConsumptionMode,
+        defaultConsumptionSamePayerAndDue: newCompBoletoConsumptionMode === "separate" ? newCompConsumptionSamePayer : true,
+        defaultConsumptionPayerType: newCompBoletoConsumptionMode === "separate" && !newCompConsumptionSamePayer ? newCompConsumptionPayerType : "company",
+        defaultConsumptionTermDays: Number(newCompConsumptionTermDays) || termDaysNum,
         notes: newCompNotes.trim(),
         ...newCompAddressData
       }
@@ -5186,13 +5309,23 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         fetchCompanies()
         setFormCompanyId(String(createdComp.id))
         setFormCompanyName(createdComp.tradeName || createdComp.corporateName)
-        if (formRequesterType !== "agency_b2b" && formChannel !== "b2b") {
-          setFormRequesterType("company")
+
+        if (newCompanyModalContext === "invoice_only") {
+          setFormInvoiceRecipientType("company")
+        } else if (newCompanyModalContext === "requester_corporate") {
+          if (formRequesterType !== "agency_b2b" && formChannel !== "b2b") {
+            setFormRequesterType("company")
+          }
+          setFormInvoiceRecipientType("company")
+          applyCompanyBillingDefaultsToForm(createdComp)
         }
+
         setNewCompanyModalOpen(false)
         toast({
-          title: "Empresa Cadastrada com Sucesso!",
-          description: `${createdComp.tradeName || createdComp.corporateName} foi cadastrada e vinculada a esta reserva.`
+          title: "Empresa Vinculada com Sucesso!",
+          description: newCompanyModalContext === "invoice_only"
+            ? `${createdComp.tradeName || createdComp.corporateName} vinculada como Tomadora da NFS-e (sem ativar faturamento a prazo).`
+            : `${createdComp.tradeName || createdComp.corporateName} foi cadastrada e vinculada a esta reserva.`
         })
       } else {
         const errJson = await res.json()
@@ -6422,6 +6555,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
       })
       setResModalOpen(false)
       fetchData()
+      fetchCrmGuests()
       notifyCalendarUpdated()
     } catch (err: any) {
       console.error("[PMS Calendar] Erro ao salvar reserva:", err)
@@ -6447,6 +6581,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
       })
       setResModalOpen(false)
       fetchData()
+      fetchCrmGuests()
       notifyCalendarUpdated()
     } catch {}
   }
@@ -6833,7 +6968,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
 
   const stableSelectCompanySimple = useStableCallback((val: string) => {
     if (val === "__NEW_COMPANY__") {
-      handleOpenNewCompanyModal()
+      handleOpenNewCompanyModal("b2b_client")
       return
     }
     setFormCompanyId(val)
@@ -6843,9 +6978,22 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     }
   })
 
+  const stableSelectCompanyInvoice = useStableCallback((val: string) => {
+    if (val === "__NEW_COMPANY__") {
+      handleOpenNewCompanyModal("invoice_only")
+      return
+    }
+    setFormCompanyId(val)
+    setFormInvoiceRecipientType("company")
+    const c = companies.find(comp => String(comp.id) === val) as any
+    if (c) {
+      setFormCompanyName(c.tradeName || c.corporateName)
+    }
+  })
+
   const stableSelectCompanyCorporate = useStableCallback((val: string) => {
     if (val === "__NEW_COMPANY__") {
-      handleOpenNewCompanyModal()
+      handleOpenNewCompanyModal("requester_corporate")
       return
     }
     setFormCompanyId(val)
@@ -6861,47 +7009,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
       if (!formRequesterEmail.trim() && (c.email || c.financialEmail || c.emailFinanceiro)) {
         setFormRequesterEmail(c.email || c.financialEmail || c.emailFinanceiro)
       }
-      setFormIsFaturadoBoleto(true)
-      setFormPaymentMethod("boleto_faturado")
-      setFormAutoInvoice(true)
-      const nonAutoCompanyPays = formPayments.filter(p =>
-        p && (String(p.id || "").startsWith("pay_bol_") || !/^(pagamento integral|pagamento inicial)$/i.test(String(p.notes || "").trim()))
-      )
-      if (nonAutoCompanyPays.length === 0) {
-        setFormPayments([])
-        setFormPaidAmount("0")
-        setFormPaymentStatus("pendente")
-      }
-      setFormBoletoPayerType("company")
-      if (c.defaultBoletoTermDays || c.billingTerms) {
-        const parsedDays = Number(c.defaultBoletoTermDays) || parseInt(String(c.billingTerms || "").replace(/\D/g, ""), 10) || 15
-        setFormBoletoTermDays(parsedDays)
-      }
-      if (c.defaultBoletoConsumptionMode) {
-        setFormBoletoConsumptionMode(
-          c.defaultBoletoConsumptionMode === "separate_boletos" || c.defaultBoletoConsumptionMode === "separate"
-            ? "separate_boletos"
-            : "single_boleto"
-        )
-      }
-      if (c.financialResponsible?.name) {
-        setFormFinRespName(c.financialResponsible.name || "")
-        setFormFinRespEmail(c.financialResponsible.email || "")
-        setFormFinRespPhone(c.financialResponsible.phone || c.financialResponsible.whatsapp || "")
-        setFormFinRespDoc(c.financialResponsible.document || "")
-      }
-      if (c.defaultBillingRecipients) {
-        setFormRecGuest(Boolean(c.defaultBillingRecipients.guest ?? false))
-        setFormRecRequester(Boolean(c.defaultBillingRecipients.requester ?? true))
-        setFormRecCompany(Boolean(c.defaultBillingRecipients.company ?? true))
-        setFormRecFinResp(Boolean(c.defaultBillingRecipients.financialResponsible ?? true))
-        setFormRecSendEmail(c.defaultBillingRecipients.sendEmail !== false)
-        setFormRecSendWhatsapp(c.defaultBillingRecipients.sendWhatsapp !== false)
-      } else {
-        setFormRecCompany(true)
-        setFormRecRequester(true)
-        setFormRecFinResp(true)
-      }
+      applyCompanyBillingDefaultsToForm(c)
     }
   })
 
@@ -10565,7 +10673,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                         <span className="text-[10px] uppercase font-black text-primary block">Selecione a Empresa Cadastrada</span>
                         <button
                           type="button"
-                          onClick={handleOpenNewCompanyModal}
+                          onClick={() => handleOpenNewCompanyModal("requester_corporate")}
                           className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold flex items-center gap-1 cursor-pointer"
                         >
                           <Plus className="w-3.5 h-3.5" /> Cadastrar Empresa
@@ -10578,13 +10686,22 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                         companies={companies}
                         placeholder="Selecione a Empresa Parceira..."
                         newLabel="➕ Cadastrar Nova Empresa Parceira..."
+                        prioritizeBookingPartners
                       />
 
-                      {formCompanyId && (
-                        <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1 mt-0.5">
-                          <CheckCircle2 className="w-3 h-3" /> Empresa vinculada para faturamento corporativo ({formCompanyName}).
-                        </div>
-                      )}
+                      {formCompanyId && (() => {
+                        const selCompObj = companies.find(comp => String(comp.id) === String(formCompanyId))
+                        const compHasBilling = isCompanyBillingActive(selCompObj)
+                        return compHasBilling ? (
+                          <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1 mt-0.5">
+                            <CheckCircle2 className="w-3 h-3" /> Empresa com faturamento a prazo habilitado ({formCompanyName} • {selCompObj?.defaultBoletoTermDays ? `${selCompObj.defaultBoletoTermDays} dias` : (selCompObj?.billingTerms || "28 dias")}).
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-slate-600 dark:text-slate-400 font-medium flex items-center gap-1 mt-0.5">
+                            <CheckCircle2 className="w-3 h-3 text-indigo-500" /> Empresa vinculada sem faturamento a prazo ({formCompanyName} • Pagamento normal/à vista).
+                          </div>
+                        )
+                      })()}
 
                       <div className="pt-2 border-t border-border/40 space-y-1.5">
                         <span className="text-[10px] uppercase font-black text-slate-700 dark:text-slate-300 block">
@@ -12391,19 +12508,22 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                             </span>
                             <button
                               type="button"
-                              onClick={handleOpenNewCompanyModal}
+                              onClick={() => handleOpenNewCompanyModal("invoice_only")}
                               className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold flex items-center gap-1 cursor-pointer"
                             >
-                              <Plus className="w-3.5 h-3.5" /> Cadastrar Empresa
+                              <Plus className="w-3.5 h-3.5" /> Cadastrar Empresa (Só NFS-e)
                             </button>
                           </div>
                           <MemoCompanySelect
                             value={formCompanyId}
-                            onValueChange={stableSelectCompanySimple}
+                            onValueChange={stableSelectCompanyInvoice}
                             companies={companies}
                             placeholder="Selecione a Empresa para emissão da NFS-e..."
-                            newLabel="➕ Cadastrar Nova Empresa..."
+                            newLabel="➕ Cadastrar Nova Empresa (Só NFS-e)..."
                           />
+                          <p className="text-[10px] text-muted-foreground leading-snug">
+                            ✓ Emite a NFS-e no CNPJ sem ativar boleto faturado e já salva essa preferência como padrão no CRM do hóspede para as próximas reservas.
+                          </p>
                         </div>
                       )}
 
@@ -15944,26 +16064,74 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
           </DialogContent>
         </Dialog>
 
-        {/* Modal: Cadastro Rápido de Nova Empresa Parceira */}
+        {/* Modal: Cadastro Rápido de Empresa (Tomadora NFS-e ou Parceira Faturada) */}
         <Dialog open={newCompanyModalOpen} onOpenChange={setNewCompanyModalOpen}>
-          <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl shadow-2xl">
+          <DialogContent className="sm:max-w-lg bg-card border border-border rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="text-base font-black flex items-center gap-2">
                 <Building2 className="w-5 h-5 text-indigo-600" />
-                <span>Nova Empresa Parceira (PJ / Faturamento)</span>
+                <span>
+                  {!newCompAllowsDirectReservations && !newCompBillingEnabled
+                    ? "Nova Empresa (Tomadora de NFS-e)"
+                    : "Nova Empresa Corporativa (PJ)"}
+                </span>
               </DialogTitle>
               <DialogDescription className="text-xs">
-                Cadastre a empresa corporativa e vincule diretamente a esta reserva.
+                {!newCompAllowsDirectReservations && !newCompBillingEnabled
+                  ? "Cadastro do CNPJ para emissão da Nota Fiscal — não ativa pagamento faturado nem altera quem solicitou a reserva."
+                  : "Cadastre a empresa no CRM unificado e configure se ela possui faturamento a prazo."}
               </DialogDescription>
             </DialogHeader>
 
-            <form onSubmit={handleSaveNewCompany} className="space-y-3 pt-2 text-xs">
+            <form onSubmit={handleSaveNewCompany} className="space-y-3 pt-1 text-xs">
+              {/* Papel da Empresa no CRM */}
+              <div className="space-y-1.5 p-2.5 bg-muted/30 border border-border rounded-2xl">
+                <Label className="font-bold text-[11px] text-slate-700 dark:text-slate-300 block">
+                  Como esta empresa atua no hotel?
+                </Label>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewCompAllowsDirectReservations(false)
+                      setNewCompBillingEnabled(false)
+                    }}
+                    className={`p-2 rounded-xl border text-[11px] font-bold text-left transition-all cursor-pointer ${
+                      !newCompAllowsDirectReservations
+                        ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                        : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-emerald-500/60"
+                    }`}
+                  >
+                    <span className="block">🧾 Só Tomadora de Nota</span>
+                    <span className={`text-[9.5px] font-normal block ${!newCompAllowsDirectReservations ? "text-emerald-50" : "text-muted-foreground"}`}>
+                      Hóspede reserva/paga, CNPJ na NFS-e
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewCompAllowsDirectReservations(true)
+                    }}
+                    className={`p-2 rounded-xl border text-[11px] font-bold text-left transition-all cursor-pointer ${
+                      newCompAllowsDirectReservations
+                        ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                        : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-indigo-500/60"
+                    }`}
+                  >
+                    <span className="block">🏢 Também Faz Reservas</span>
+                    <span className={`text-[9.5px] font-normal block ${newCompAllowsDirectReservations ? "text-indigo-100" : "text-muted-foreground"}`}>
+                      Empresa solicita reservas diretas
+                    </span>
+                  </button>
+                </div>
+              </div>
+
               <div className="space-y-1">
                 <Label className="font-bold flex items-center justify-between">
-                  <span>CNPJ (Opcional)</span>
+                  <span>CNPJ (Busca Automática na Receita Federal)</span>
                   {loadingNewCompanyCnpj && (
                     <span className="text-[10px] text-indigo-600 flex items-center gap-1 font-normal">
-                      <RefreshCw className="w-3 h-3 animate-spin" /> Buscando na Receita Federal...
+                      <RefreshCw className="w-3 h-3 animate-spin" /> Buscando Razão Social e Endereço...
                     </span>
                   )}
                 </Label>
@@ -15973,7 +16141,7 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                     setNewCompCnpj(e.target.value)
                     handleLookupNewCompanyCnpj(e.target.value)
                   }} 
-                  placeholder="00.000.000/0000-00 (Opcional)"
+                  placeholder="00.000.000/0000-00"
                   className="h-8 text-xs rounded-xl font-mono" 
                 />
               </div>
@@ -15989,29 +16157,42 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                 />
               </div>
 
-              <div className="space-y-1">
-                <Label className="font-bold">Nome Fantasia (Opcional)</Label>
-                <Input 
-                  value={newCompTradeName} 
-                  onChange={e => setNewCompTradeName(e.target.value)} 
-                  placeholder="Ex: Transpetro"
-                  className="h-8 text-xs rounded-xl" 
-                />
-              </div>
-
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <Label className="font-bold">E-mail Financeiro</Label>
+                  <Label className="font-bold">Nome Fantasia (Opcional)</Label>
                   <Input 
-                    type="email"
-                    value={newCompFinancialEmail} 
-                    onChange={e => setNewCompFinancialEmail(e.target.value)} 
-                    placeholder="financeiro@empresa.com"
+                    value={newCompTradeName} 
+                    onChange={e => setNewCompTradeName(e.target.value)} 
+                    placeholder="Ex: Transpetro"
                     className="h-8 text-xs rounded-xl" 
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="font-bold">Telefone / WhatsApp</Label>
+                  <Label className="font-bold">Responsável / Contato (Opcional)</Label>
+                  <Input 
+                    value={newCompContactPerson} 
+                    onChange={e => setNewCompContactPerson(e.target.value)} 
+                    placeholder="Ex: Roberto Silva"
+                    className="h-8 text-xs rounded-xl" 
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="font-bold">
+                    {newCompBillingEnabled ? "E-mail Financeiro" : "E-mail da Empresa (Opcional)"}
+                  </Label>
+                  <Input 
+                    type="email"
+                    value={newCompFinancialEmail} 
+                    onChange={e => setNewCompFinancialEmail(e.target.value)} 
+                    placeholder={newCompBillingEnabled ? "financeiro@empresa.com" : "Deixe vazio p/ enviar só ao hóspede"}
+                    className="h-8 text-xs rounded-xl" 
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="font-bold">Telefone / WhatsApp (Opcional)</Label>
                   <Input 
                     type="tel"
                     inputMode="tel"
@@ -16023,25 +16204,128 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label className="font-bold">Responsável / Contato</Label>
-                  <Input 
-                    value={newCompContactPerson} 
-                    onChange={e => setNewCompContactPerson(e.target.value)} 
-                    placeholder="Ex: Roberto Silva"
-                    className="h-8 text-xs rounded-xl" 
+              {/* Switch Explícito: Pagamento Faturado (Boleto a Prazo) */}
+              <div className="p-2.5 rounded-2xl border border-indigo-200 dark:border-indigo-800/60 bg-indigo-50/50 dark:bg-indigo-950/20 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                      🏦 Habilitar Pagamento Faturado (Boleto a Prazo)
+                    </span>
+                    <span className="text-[10px] text-muted-foreground block">
+                      {newCompBillingEnabled
+                        ? "Ativo: reservas solicitadas por esta empresa poderão gerar boleto após o check-out"
+                        : "Desativado: empresa sem crédito faturado (pagamento normal pelo hóspede, OTA ou PIX/Cartão)"}
+                    </span>
+                  </div>
+                  <Switch
+                    checked={newCompBillingEnabled}
+                    onCheckedChange={checked => {
+                      setNewCompBillingEnabled(checked)
+                      if (checked) {
+                        setNewCompAllowsDirectReservations(true)
+                        if (!newCompBillingTerms) setNewCompBillingTerms(`${Number(newCompBoletoTermDays) || 28} dias`)
+                      }
+                    }}
                   />
                 </div>
-                <div className="space-y-1">
-                  <Label className="font-bold">Condição de Faturamento</Label>
-                  <Input 
-                    value={newCompBillingTerms} 
-                    onChange={e => setNewCompBillingTerms(e.target.value)} 
-                    placeholder="Ex: 30 dias"
-                    className="h-8 text-xs rounded-xl" 
-                  />
-                </div>
+
+                {newCompBillingEnabled && (
+                  <div className="pt-2 border-t border-indigo-200/70 dark:border-indigo-800/50 space-y-2">
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-[11px] font-bold">Prazo Padrão do Boleto (dias após Check-out)</Label>
+                        <div className="flex items-center gap-1">
+                          {["7", "15", "28", "30"].map(d => (
+                            <button
+                              key={d}
+                              type="button"
+                              onClick={() => {
+                                setNewCompBoletoTermDays(d)
+                                setNewCompBillingTerms(`${d} dias`)
+                              }}
+                              className={`px-2 py-0.5 rounded-md text-[10px] font-bold border cursor-pointer transition-colors ${
+                                newCompBoletoTermDays === d
+                                  ? "bg-indigo-600 text-white border-indigo-600"
+                                  : "bg-background border-border text-muted-foreground hover:border-indigo-400"
+                              }`}
+                            >
+                              {d}d
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Input
+                          type="number"
+                          min={1}
+                          value={newCompBoletoTermDays}
+                          onChange={e => {
+                            setNewCompBoletoTermDays(e.target.value)
+                            if (e.target.value) setNewCompBillingTerms(`${e.target.value} dias`)
+                          }}
+                          placeholder="Ex: 28"
+                          className="h-8 text-xs rounded-xl font-mono bg-background"
+                        />
+                        <Input
+                          value={newCompBillingTerms}
+                          onChange={e => setNewCompBillingTerms(e.target.value)}
+                          placeholder="Rótulo (Ex: 28 dias)"
+                          className="h-8 text-xs rounded-xl bg-background"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-bold">Regra de Boletos (Hospedagem vs Consumo/Frigobar)</Label>
+                      <select
+                        value={newCompBoletoConsumptionMode}
+                        onChange={e => setNewCompBoletoConsumptionMode(e.target.value === "separate" ? "separate" : "single")}
+                        className="w-full h-8 px-2.5 text-xs rounded-xl border border-border bg-background font-semibold"
+                      >
+                        <option value="single">1 Boleto Unificado (Hospedagem + Consumo juntos)</option>
+                        <option value="separate">2 Boletos Separados (1 Hospedagem + 1 Consumo)</option>
+                      </select>
+                    </div>
+
+                    {newCompBoletoConsumptionMode === "separate" && (
+                      <div className="p-2 rounded-xl bg-background border border-border space-y-1.5">
+                        <label className="flex items-center gap-1.5 text-[11px] font-semibold cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={newCompConsumptionSamePayer}
+                            onChange={e => setNewCompConsumptionSamePayer(e.target.checked)}
+                          />
+                          <span>Mesma empresa e mesmo vencimento nos 2 boletos</span>
+                        </label>
+                        {!newCompConsumptionSamePayer && (
+                          <div className="grid grid-cols-2 gap-2 pt-1">
+                            <div className="space-y-0.5">
+                              <Label className="text-[10px] text-muted-foreground">Quem paga o Consumo?</Label>
+                              <select
+                                value={newCompConsumptionPayerType}
+                                onChange={e => setNewCompConsumptionPayerType(e.target.value === "company" ? "company" : "guest")}
+                                className="w-full h-7.5 px-2 text-[11px] rounded-lg border border-border bg-background font-semibold"
+                              >
+                                <option value="guest">👤 Hóspede (PF)</option>
+                                <option value="company">🏢 Empresa (PJ)</option>
+                              </select>
+                            </div>
+                            <div className="space-y-0.5">
+                              <Label className="text-[10px] text-muted-foreground">Prazo 2º Boleto (dias)</Label>
+                              <Input
+                                type="number"
+                                min={1}
+                                value={newCompConsumptionTermDays}
+                                onChange={e => setNewCompConsumptionTermDays(e.target.value)}
+                                className="h-7.5 text-[11px] rounded-lg font-mono"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="space-y-1">
@@ -16049,7 +16333,7 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                 <Input 
                   value={newCompNotes} 
                   onChange={e => setNewCompNotes(e.target.value)} 
-                  placeholder="Ex: Centro de Custo, regras de faturamento..."
+                  placeholder="Ex: Centro de Custo, instruções de emissão de NFS-e..."
                   className="h-8 text-xs rounded-xl" 
                 />
               </div>

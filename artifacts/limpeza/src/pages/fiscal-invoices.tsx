@@ -2393,14 +2393,17 @@ export default function FiscalInvoicesPage() {
       if (data.uf) { setFormTomadorUf(data.uf); nextOverrides.tomadorUf = data.uf }
       const resolvedIbge = data.codigoMunicipio || data.ibge || data.ibgeCode
       if (resolvedIbge) { setFormTomadorIbge(String(resolvedIbge)); nextOverrides.tomadorCodigoMunicipio = String(resolvedIbge) }
-      if (data.email && !formTomadorEmail) { setFormTomadorEmail(data.email); nextOverrides.tomadorEmail = data.email }
+      if (data.fromCrmOrDirectory && data.email && !formTomadorEmail) {
+        setFormTomadorEmail(data.email)
+        nextOverrides.tomadorEmail = data.email
+      }
       const guestMobileFallback = !formNfHideFromGuest
         ? formatSmartPhone(linkedGuest?.phone || selectedGuest?.phone || linkedReservation?.guestPhone || "")
         : ""
       if (guestMobileFallback && !formTomadorTelefone) {
         setFormTomadorTelefone(guestMobileFallback)
         nextOverrides.tomadorTelefone = guestMobileFallback
-      } else if (data.telefone && !formTomadorTelefone) {
+      } else if (data.fromCrmOrDirectory && data.telefone && !formTomadorTelefone) {
         const maskedTel = formatSmartPhone(data.telefone)
         setFormTomadorTelefone(maskedTel)
         nextOverrides.tomadorTelefone = maskedTel

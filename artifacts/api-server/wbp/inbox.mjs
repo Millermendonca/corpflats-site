@@ -1683,6 +1683,64 @@ export async function processIncomingOTA(rawPayload, options = {}) {
   const isPropertyCollect = normalized.paymentCollect === "Property";
   const paymentStatus = isPropertyCollect ? "pendente" : "pago_total";
 
+  // Herda vínculo cadastral e preferência fiscal (PF vs Empresa PJ) do CRM caso o hóspede já seja recorrente
+  const normGuestPhoneDigits = String(normalized.guestPhone || "").replace(/\D/g, "");
+  const normGuestPhoneTail = normGuestPhoneDigits.length >= 8 ? normGuestPhoneDigits.slice(-8) : "";
+  const normGuestEmailClean = String(normalized.guestEmail || "").trim().toLowerCase();
+  const isOtaRelayEmail = /@(guest\.booking\.com|airbnb\.com)$/i.test(normGuestEmailClean);
+  const normGuestNameClean = String(normalized.guestName || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
+  let matchedCrmGuest = null;
+  if (Array.isArray(db.guests) && db.guests.length > 0 && normGuestNameClean.length >= 3) {
+    matchedCrmGuest = db.guests.find(g => {
+      if (!g) return false;
+      const gName = String(g.fullName || g.name || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim();
+      const firstTokenMatch = Boolean(gName && normGuestNameClean && gName.split(" ")[0] === normGuestNameClean.split(" ")[0]);
+      const gPhoneDigits = String(g.phone || "").replace(/\D/g, "");
+      const gPhoneTail = gPhoneDigits.length >= 8 ? gPhoneDigits.slice(-8) : "";
+      if (normGuestPhoneTail && gPhoneTail && normGuestPhoneTail === gPhoneTail && firstTokenMatch) {
+        return true;
+      }
+      const gEmail = String(g.email || "").trim().toLowerCase();
+      if (!isOtaRelayEmail && normGuestEmailClean && normGuestEmailClean.includes("@") && gEmail === normGuestEmailClean && firstTokenMatch) {
+        return true;
+      }
+      return false;
+    }) || null;
+
+    if (!matchedCrmGuest && normGuestNameClean.split(" ").length >= 2) {
+      const exactNameMatches = db.guests.filter(g => {
+        const gName = String(g?.fullName || g?.name || "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+          .replace(/\s+/g, " ")
+          .trim();
+        return gName === normGuestNameClean;
+      });
+      if (exactNameMatches.length === 1) {
+        matchedCrmGuest = exactNameMatches[0];
+      }
+    }
+  }
+
+  const matchedCrmCompany = (matchedCrmGuest?.companyId && Array.isArray(db.companies))
+    ? db.companies.find(c => Number(c?.id) === Number(matchedCrmGuest.companyId)) || null
+    : null;
+  const otaPreferredInvRecipient = (matchedCrmGuest?.preferredInvoiceRecipient === "company" && (matchedCrmCompany || matchedCrmGuest?.companyId))
+    ? "company"
+    : (matchedCrmGuest?.preferredInvoiceRecipient === "guest" ? "guest" : undefined);
+
   const createdReservations = [];
 
   for (let i = 0; i < allocatedFlats.length; i++) {
@@ -1708,9 +1766,18 @@ export async function processIncomingOTA(rawPayload, options = {}) {
       code,
       flatId: flat.id,
       flatNumber: rFlatNumber,
+      guestId: matchedCrmGuest?.id || undefined,
+      guestCode: matchedCrmGuest?.guestCode || undefined,
       guestName: normalized.guestName,
-      guestEmail: normalized.guestEmail,
-      guestPhone: normalized.guestPhone,
+      guestEmail: normalized.guestEmail || matchedCrmGuest?.email || "",
+      guestPhone: normalized.guestPhone || matchedCrmGuest?.phone || "",
+      guestDocument: matchedCrmGuest?.documentNumber || matchedCrmGuest?.document || undefined,
+      companyId: otaPreferredInvRecipient === "company" ? Number(matchedCrmCompany?.id || matchedCrmGuest.companyId) : undefined,
+      companyName: otaPreferredInvRecipient === "company" ? (matchedCrmCompany?.corporateName || matchedCrmCompany?.tradeName || matchedCrmGuest?.companyName || "") : undefined,
+      companyCnpj: otaPreferredInvRecipient === "company" ? (matchedCrmCompany?.cnpj || matchedCrmGuest?.companyCnpj || "") : undefined,
+      invoiceRecipientType: otaPreferredInvRecipient,
+      nfRecipientType: otaPreferredInvRecipient,
+      autoEmitInvoice: matchedCrmGuest?.autoEmitInvoice ? true : undefined,
       checkinDate: roomSpec.checkinDate,
       checkoutDate: roomSpec.checkoutDate,
       guestCount: Number(roomSpec.adults || 1) + Number(roomSpec.children || 0),

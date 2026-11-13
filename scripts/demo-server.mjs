@@ -35791,18 +35791,27 @@ app.post("/api/pms/reservations", async (req, res) => {
         existingComp = {
           id: db.companies.length > 0 ? Math.max(...db.companies.map(c => c.id)) + 1 : 1,
           corporateName: (invoiceDetails.companyName || invoiceDetails.razaoSocial || "Empresa PJ").trim(),
+          razaoSocial: (invoiceDetails.companyName || invoiceDetails.razaoSocial || "Empresa PJ").trim(),
           tradeName: (invoiceDetails.tradeName || invoiceDetails.nomeFantasia || invoiceDetails.companyName || "").trim(),
+          nomeFantasia: (invoiceDetails.tradeName || invoiceDetails.nomeFantasia || invoiceDetails.companyName || "").trim(),
           cnpj: invoiceDetails.cnpj.trim(),
           stateRegistration: "",
           municipalRegistration: "",
-          financialEmail: (invoiceDetails.companyEmail || primaryEmail || "").trim(),
-          phone: (invoiceDetails.companyPhone || primaryPhone || "").trim(),
+          financialEmail: (invoiceDetails.companyEmail || "").trim(),
+          phone: (invoiceDetails.companyPhone || "").trim(),
           contactPerson: primaryName,
-          billingTerms: "Faturamento Check-out",
-          notes: `Cadastrada automaticamente pelo motor de reservas no nome do hóspede ${primaryName}.`,
+          companyRole: "invoice_only",
+          allowsDirectReservations: false,
+          isInvoiceOnly: true,
+          billingEnabled: false,
+          billingTerms: "",
+          notes: `Cadastrada automaticamente para emissão de NFS-e no nome do hóspede ${primaryName}.`,
           createdAt: new Date().toISOString()
         };
         db.companies.push(existingComp);
+      }
+      if (!resolvedCompany) {
+        resolvedCompany = existingComp;
       }
 
       if (guest) {
@@ -35912,7 +35921,26 @@ app.post("/api/pms/reservations", async (req, res) => {
         : Number((finalTotalAmount - (resolvedCommAmt || 0)).toFixed(2)))
     : undefined;
 
+  if (!resolvedCompany && !isB2b && guest?.companyId && invoiceRecipientType !== "guest") {
+    resolvedCompany = (db.companies || []).find(c => Number(c.id) === Number(guest.companyId)) || null;
+  }
+
   const resolvedInvRecipient = invoiceRecipientType || resolvedAgency?.defaultInvoiceRecipient || guest?.preferredInvoiceRecipient || (resolvedCompany ? "company" : "guest");
+  if (guest && !isB2b) {
+    if (resolvedInvRecipient === "company" && (resolvedCompany?.id || companyId || guest.companyId)) {
+      const targetCompId = Number(resolvedCompany?.id || companyId || guest.companyId);
+      guest.companyId = targetCompId;
+      if (resolvedCompany?.corporateName || companyName) {
+        guest.companyName = resolvedCompany?.corporateName || companyName;
+      }
+      if (resolvedCompany?.cnpj) {
+        guest.companyCnpj = String(resolvedCompany.cnpj).replace(/\D/g, "") || resolvedCompany.cnpj;
+      }
+      guest.preferredInvoiceRecipient = "company";
+    } else if (invoiceRecipientType === "guest") {
+      guest.preferredInvoiceRecipient = "guest";
+    }
+  }
   const resolvedNfEmails = Array.isArray(nfDeliveryEmails)
     ? nfDeliveryEmails.map(e => String(e).trim()).filter(Boolean)
     : (typeof nfDeliveryEmails === "string" && nfDeliveryEmails.trim()
@@ -36042,10 +36070,19 @@ app.post("/api/pms/reservations", async (req, res) => {
       resolvedInvRecipient ||
       (resolvedCompany ? "company" : (resolvedAgency ? "agency" : "guest"))
     ),
-    consumptionSamePayerAndDue: req.body.consumptionSamePayerAndDue !== undefined ? Boolean(req.body.consumptionSamePayerAndDue) : true,
-    consumptionPayerType: String(req.body.consumptionPayerType || req.body.boletoPayerType || resolvedInvRecipient || "guest"),
+    consumptionSamePayerAndDue: req.body.consumptionSamePayerAndDue !== undefined
+      ? Boolean(req.body.consumptionSamePayerAndDue)
+      : (resolvedCompany?.defaultConsumptionSamePayerAndDue !== undefined ? Boolean(resolvedCompany.defaultConsumptionSamePayerAndDue) : true),
+    consumptionPayerType: String(
+      req.body.consumptionPayerType ||
+      resolvedCompany?.defaultConsumptionPayerType ||
+      req.body.boletoPayerType ||
+      resolvedInvRecipient ||
+      "guest"
+    ),
     consumptionTermDays: Number(
       req.body.consumptionTermDays ??
+      resolvedCompany?.defaultConsumptionTermDays ??
       req.body.boletoTermDays ??
       resolvedCompany?.defaultBoletoTermDays ??
       resolvedAgency?.defaultBoletoTermDays ??
@@ -38831,6 +38868,19 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     r.guests[0].email = r.guestEmail || "";
   }
 
+  if (req.body.invoiceRecipientType !== undefined && req.body.nfRecipientType === undefined) {
+    r.nfRecipientType = r.invoiceRecipientType;
+  }
+  if (r.companyId && db.companies) {
+    const linkedCompPut = db.companies.find(c => Number(c.id) === Number(r.companyId));
+    if (linkedCompPut) {
+      if (!r.companyName) r.companyName = linkedCompPut.corporateName || linkedCompPut.tradeName || "";
+      if (!r.companyCnpj && linkedCompPut.cnpj) r.companyCnpj = linkedCompPut.cnpj;
+    }
+  }
+
+  const isB2bGuestSync = String(r.channel || "").toLowerCase().includes("b2b") || r.requesterType === "agency_b2b";
+
   if (matchedGuest && !isPendingGuestName(r.guestName)) {
     matchedGuest.name = r.guestName;
     matchedGuest.fullName = r.guestName;
@@ -38838,7 +38888,17 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     if (r.guestEmail) matchedGuest.email = r.guestEmail;
     if (r.guestDocument) matchedGuest.document = r.guestDocument;
     if (r.companyName) matchedGuest.companyName = r.companyName;
-    if (r.companyId) matchedGuest.companyId = r.companyId;
+    if (r.companyId) matchedGuest.companyId = Number(r.companyId);
+    if (!isB2bGuestSync) {
+      if (r.invoiceRecipientType === "company" && r.companyId) {
+        matchedGuest.companyId = Number(r.companyId);
+        if (r.companyName) matchedGuest.companyName = r.companyName;
+        if (r.companyCnpj) matchedGuest.companyCnpj = String(r.companyCnpj).replace(/\D/g, "") || r.companyCnpj;
+        matchedGuest.preferredInvoiceRecipient = "company";
+      } else if (req.body.invoiceRecipientType === "guest") {
+        matchedGuest.preferredInvoiceRecipient = "guest";
+      }
+    }
     r.guestId = matchedGuest.id;
     r.guestCode = matchedGuest.guestCode || `HOSP-${String(matchedGuest.id).padStart(5, "0")}`;
     if (Array.isArray(r.guests) && r.guests[0]) {
@@ -38857,7 +38917,8 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       email: r.guestEmail || "",
       document: r.guestDocument || "",
       companyName: r.companyName || "",
-      companyId: r.companyId || null,
+      companyId: r.companyId ? Number(r.companyId) : null,
+      preferredInvoiceRecipient: (!isB2bGuestSync && r.invoiceRecipientType === "company" && r.companyId) ? "company" : "guest",
       city: "",
       notes: "",
       tags: [],
@@ -48083,7 +48144,7 @@ const handleUpdateGuest = async (req, res) => {
   const fields = [
     "name", "fullName", "phone", "email", "docType", "document", "documentNumber", "birthDate", "gender",
     "nationality", "profession", "city", "notes", "tags",
-    "isMonthlyGuest", "clientType", "companyId", "companyName", "companyData", "preferences", "autoEmitInvoice",
+    "isMonthlyGuest", "clientType", "companyId", "companyName", "companyData", "preferredInvoiceRecipient", "preferences", "autoEmitInvoice",
     "docPhotoUrl", "hasMinor", "minorAge", "isCamposResident", "riskAttentionAlert", "riskAttentionReason",
     "address", "street", "logradouro", "number", "streetNumber", "numero", "complement", "complemento",
     "neighborhood", "bairro", "cep", "state", "uf", "ibgeCode", "codigoMunicipio",
@@ -48196,8 +48257,16 @@ const handleUpdateGuest = async (req, res) => {
           companyPhone: comp.phone || guest.companyData?.companyPhone || ""
         };
       }
-    } else if (!guest.companyId && req.body.companyData === undefined && req.body.companyName === undefined) {
-      guest.companyName = null;
+      if (req.body.preferredInvoiceRecipient === undefined && !guest.preferredInvoiceRecipient) {
+        guest.preferredInvoiceRecipient = "company";
+      }
+    } else if (!guest.companyId) {
+      if (req.body.companyData === undefined && req.body.companyName === undefined) {
+        guest.companyName = null;
+      }
+      if (req.body.preferredInvoiceRecipient === undefined) {
+        guest.preferredInvoiceRecipient = "guest";
+      }
     }
   }
   if (req.body.companyData !== undefined || req.body.companyCnpj !== undefined || req.body.companyEmail !== undefined || req.body.companyPhone !== undefined) {
@@ -48339,7 +48408,7 @@ app.post("/api/pms/guests", async (req, res) => {
     name, fullName, phone, email, docType, document, documentNumber,
     birthDate, gender, nationality, profession,
     city, cidade, municipio, notes, tags, isMonthlyGuest, clientType, autoEmitInvoice,
-    companyId, companyName, companyData, preferences, docPhotoUrl, docPhotoBase64, hasMinor, minorAge, isCamposResident,
+    companyId, companyName, companyData, preferredInvoiceRecipient, preferences, docPhotoUrl, docPhotoBase64, hasMinor, minorAge, isCamposResident,
     address, street, logradouro, endereco, number, streetNumber, numero, complement, complemento,
     neighborhood, bairro, cep, state, uf, estado, ibgeCode, codigoMunicipio, codigoIbge,
     vehiclePlate, vehicleBrand, vehicleModel, vehicleColor, vehicle
@@ -48418,6 +48487,7 @@ app.post("/api/pms/guests", async (req, res) => {
     companyId: resolvedCompId,
     companyName: resolvedCompName,
     companyData: companyData || (resolvedCompName ? { cnpj: "", companyName: resolvedCompName, companyEmail: "", companyPhone: "" } : null),
+    preferredInvoiceRecipient: preferredInvoiceRecipient === "company" || (preferredInvoiceRecipient === undefined && Boolean(resolvedCompId)) ? "company" : "guest",
     isMonthlyGuest: isMonthly,
     clientType: isMonthly ? "mensalista" : "avulso",
     autoEmitInvoice: Boolean(autoEmitInvoice),
@@ -58686,6 +58756,7 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       }
     }
 
+    const isCompNoBilling = Boolean(company && (company.billingEnabled === false || company.isInvoiceOnly === true));
     const companyOption = company ? {
       type: "company",
       tomadorType: "pj",
@@ -58695,8 +58766,16 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       doc: onlyDigits(company.cnpj || r.companyCnpj || ""),
       tomadorNome: toTitleCase(company.corporateName || company.tradeName || r.companyName || ""),
       tomadorCpfCnpj: onlyDigits(company.cnpj || r.companyCnpj || ""),
-      tomadorEmail: (company.financialEmail || r.agencyAgentEmail || guest?.email || "").trim().toLowerCase(),
-      tomadorTelefone: cleanPhone(company.phone || r.guestPhone || ""),
+      tomadorEmail: (
+        company.financialEmail ||
+        (!isCompNoBilling ? r.agencyAgentEmail : "") ||
+        (!r.nfHideFromGuest ? (r.guestEmail || guest?.email || "") : "")
+      ).trim().toLowerCase(),
+      tomadorTelefone: cleanPhone(
+        (!r.nfHideFromGuest && isCompNoBilling)
+          ? (r.guestPhone || guest?.phone || company.phone || "")
+          : (company.phone || r.guestPhone || guest?.phone || "")
+      ),
       tomadorEndereco: (company.address || company.logradouro || r.companyAddress || "").trim(),
       tomadorNumero: (company.number || r.companyNumber || "S/N").trim(),
       tomadorComplemento: (company.complement || r.companyComplement || "").trim(),
@@ -59263,13 +59342,21 @@ export async function executeNfseEmissionInternal(payload) {
       let comp = db.companies.find(c => onlyDigits(c.cnpj) === cleanDoc || (resolvedCompanyId && Number(c.id) === Number(resolvedCompanyId)));
       if (!comp) {
         const nextCompId = db.companies.length > 0 ? Math.max(...db.companies.map(c => Number(c.id) || 0)) + 1 : 1;
+        const guestMailLower = String(matchedRes?.guestEmail || matchedGuest?.email || "").trim().toLowerCase();
         comp = {
           id: nextCompId,
           corporateName: toTitleCase(tomadorNome),
+          razaoSocial: toTitleCase(tomadorNome),
           tradeName: payload.tomadorNomeFantasia || toTitleCase(tomadorNome),
+          nomeFantasia: payload.tomadorNomeFantasia || toTitleCase(tomadorNome),
           cnpj: cleanDoc,
-          financialEmail: cleanEmail,
-          phone: cleanTel,
+          financialEmail: (cleanEmail && cleanEmail !== guestMailLower) ? cleanEmail : "",
+          phone: (cleanTel && cleanTel !== guestWhatsappPhone) ? cleanTel : "",
+          companyRole: "invoice_only",
+          allowsDirectReservations: false,
+          isInvoiceOnly: true,
+          billingEnabled: false,
+          billingTerms: "",
           address: endLogradouro,
           logradouro: endLogradouro,
           number: endNumero,
@@ -59607,14 +59694,19 @@ export async function executeNfseEmissionInternal(payload) {
   const resolvedCheckoutDate = payload.checkoutDate || payload.checkOut || matchedRes?.checkoutDate || null;
   const resolvedAliquota = Number(payload.aliquota || payload.aliquotaIss || 2.0);
   const resolvedNfHideFromGuest = payload.nfHideFromGuest !== undefined ? Boolean(payload.nfHideFromGuest) : Boolean(matchedRes?.nfHideFromGuest);
+  const targetCompForDelivery = resolvedCompanyId ? (db.companies || []).find(c => Number(c.id) === Number(resolvedCompanyId)) : null;
+  const isTargetCompNoBilling = Boolean(targetCompForDelivery && (targetCompForDelivery.billingEnabled === false || targetCompForDelivery.isInvoiceOnly === true));
+  const guestPersonalEmail = String(matchedRes?.guestEmail || matchedGuest?.email || "").trim().toLowerCase();
+  const explicitCompanyEmail = String(targetCompForDelivery?.financialEmail || "").trim().toLowerCase();
   const rawDeliveryEmails = Array.isArray(payload.nfDeliveryEmails)
     ? payload.nfDeliveryEmails
     : (typeof payload.nfDeliveryEmails === "string" && payload.nfDeliveryEmails.trim()
         ? payload.nfDeliveryEmails.split(/[;,]+/).map(s => s.trim()).filter(Boolean)
         : (Array.isArray(matchedRes?.nfDeliveryEmails) && matchedRes.nfDeliveryEmails.length > 0
             ? matchedRes.nfDeliveryEmails
-            : (cleanEmail ? [cleanEmail] : [])));
-  const guestPersonalEmail = String(matchedRes?.guestEmail || "").trim().toLowerCase();
+            : (isTargetCompNoBilling && !resolvedNfHideFromGuest
+                ? Array.from(new Set([guestPersonalEmail, explicitCompanyEmail].filter(Boolean)))
+                : (cleanEmail ? [cleanEmail] : []))));
   const resolvedNfDeliveryEmails = resolvedNfHideFromGuest && guestPersonalEmail
     ? rawDeliveryEmails.filter(e => String(e).trim().toLowerCase() !== guestPersonalEmail)
     : rawDeliveryEmails;
@@ -63107,7 +63199,11 @@ app.post("/api/companies", (req, res) => {
     financialEmail = "", emailFinanceiro = "", email = "",
     phone = "", telefone = "",
     contactPerson = "", contato = "",
-    billingTerms = "30 dias", condicaoFaturamento = "",
+    billingTerms = "", condicaoFaturamento = "",
+    companyRole,
+    allowsDirectReservations,
+    isInvoiceOnly,
+    billingEnabled,
     notes = "", observacoes = "",
     address = "", logradouro = "", endereco = "",
     number = "", numero = "",
@@ -63131,7 +63227,17 @@ app.post("/api/companies", (req, res) => {
   const resolvedEmail = (financialEmail || emailFinanceiro || email || "").trim();
   const resolvedPhone = (phone || telefone || "").trim();
   const resolvedContact = (contactPerson || contato || "").trim();
-  const resolvedBilling = (billingTerms || condicaoFaturamento || "30 dias").trim();
+  const resolvedAllowsDirect = allowsDirectReservations !== undefined
+    ? Boolean(allowsDirectReservations)
+    : (companyRole === "invoice_only" || isInvoiceOnly === true ? false : true);
+  const resolvedRole = resolvedAllowsDirect ? "booking_partner" : "invoice_only";
+  const resolvedBillingEnabled = billingEnabled !== undefined
+    ? Boolean(billingEnabled)
+    : (resolvedRole === "invoice_only" ? false : true);
+  const rawBillingTerms = (billingTerms || condicaoFaturamento || "").trim();
+  const resolvedBilling = resolvedBillingEnabled
+    ? (rawBillingTerms || `${Number(req.body.defaultBoletoTermDays ?? 28) || 28} dias`)
+    : "";
   const resolvedNotes = (notes || observacoes || "").trim();
   const resolvedAddress = (address || logradouro || endereco || "").trim();
   const resolvedNumber = (number || numero || "").trim();
@@ -63152,8 +63258,82 @@ app.post("/api/companies", (req, res) => {
   const resolvedState = inferredCompGeo.uf || rawState;
   const resolvedIbge = inferredCompGeo.codigoMunicipio || rawIbge || "3301009";
 
+  // Evita duplicidade se o mesmo CNPJ (14 dígitos) já existir no CRM de Empresas
+  const cleanInCnpj = resolvedCnpj.replace(/\D/g, "");
+  const existingCompByCnpj = cleanInCnpj.length === 14
+    ? db.companies.find(c => String(c?.cnpj || "").replace(/\D/g, "") === cleanInCnpj)
+    : null;
+  if (existingCompByCnpj) {
+    if (resolvedCorporateName) {
+      existingCompByCnpj.corporateName = resolvedCorporateName;
+      existingCompByCnpj.razaoSocial = resolvedCorporateName;
+    }
+    if (resolvedTradeName) {
+      existingCompByCnpj.tradeName = resolvedTradeName;
+      existingCompByCnpj.nomeFantasia = resolvedTradeName;
+    }
+    if (resolvedEmail) {
+      existingCompByCnpj.financialEmail = resolvedEmail;
+      existingCompByCnpj.emailFinanceiro = resolvedEmail;
+    }
+    if (resolvedPhone) {
+      existingCompByCnpj.phone = resolvedPhone;
+      existingCompByCnpj.telefone = resolvedPhone;
+    }
+    if (resolvedContact) {
+      existingCompByCnpj.contactPerson = resolvedContact;
+      existingCompByCnpj.contato = resolvedContact;
+    }
+    if (resolvedAddress) {
+      existingCompByCnpj.address = resolvedAddress;
+      existingCompByCnpj.logradouro = resolvedAddress;
+      existingCompByCnpj.endereco = resolvedAddress;
+    }
+    if (resolvedNumber) {
+      existingCompByCnpj.number = resolvedNumber;
+      existingCompByCnpj.numero = resolvedNumber;
+    }
+    if (resolvedComplement) {
+      existingCompByCnpj.complement = resolvedComplement;
+      existingCompByCnpj.complemento = resolvedComplement;
+    }
+    if (resolvedNeighborhood) {
+      existingCompByCnpj.neighborhood = resolvedNeighborhood;
+      existingCompByCnpj.bairro = resolvedNeighborhood;
+    }
+    if (resolvedCep) existingCompByCnpj.cep = resolvedCep;
+    if (resolvedCity) {
+      existingCompByCnpj.city = resolvedCity;
+      existingCompByCnpj.cidade = resolvedCity;
+    }
+    if (resolvedState) {
+      existingCompByCnpj.state = resolvedState;
+      existingCompByCnpj.uf = resolvedState;
+    }
+    if (resolvedIbge) {
+      existingCompByCnpj.ibgeCode = resolvedIbge;
+      existingCompByCnpj.codigoMunicipio = resolvedIbge;
+    }
+    if (resolvedNotes && !existingCompByCnpj.notes) existingCompByCnpj.notes = resolvedNotes;
+    if (resolvedAllowsDirect && existingCompByCnpj.allowsDirectReservations === false) {
+      existingCompByCnpj.allowsDirectReservations = true;
+      existingCompByCnpj.companyRole = "booking_partner";
+      existingCompByCnpj.isInvoiceOnly = false;
+    }
+    if (resolvedBillingEnabled && existingCompByCnpj.billingEnabled === false) {
+      existingCompByCnpj.billingEnabled = true;
+      if (!existingCompByCnpj.billingTerms) existingCompByCnpj.billingTerms = resolvedBilling;
+    }
+    if (resolvedBillingEnabled) {
+      applyCrmBillingConfigFields(existingCompByCnpj, req.body);
+    }
+    existingCompByCnpj.updatedAt = new Date().toISOString();
+    saveDatabase("company_reused_" + existingCompByCnpj.id);
+    return res.status(200).json(existingCompByCnpj);
+  }
+
   const newCompany = {
-    id: db.companies.length > 0 ? Math.max(...db.companies.map(c => c.id)) + 1 : 1,
+    id: db.companies.length > 0 ? Math.max(...db.companies.map(c => Number(c.id) || 0)) + 1 : 1,
     corporateName: resolvedCorporateName,
     razaoSocial: resolvedCorporateName,
     tradeName: resolvedTradeName,
@@ -63169,6 +63349,10 @@ app.post("/api/companies", (req, res) => {
     telefone: resolvedPhone,
     contactPerson: resolvedContact,
     contato: resolvedContact,
+    companyRole: resolvedRole,
+    allowsDirectReservations: resolvedAllowsDirect,
+    isInvoiceOnly: !resolvedAllowsDirect,
+    billingEnabled: resolvedBillingEnabled,
     billingTerms: resolvedBilling,
     notes: resolvedNotes,
     address: resolvedAddress,
@@ -63248,9 +63432,24 @@ const handleUpdateCompany = (req, res) => {
     company.contactPerson = val;
     company.contato = val;
   }
+  if (b.allowsDirectReservations !== undefined || b.companyRole !== undefined || b.isInvoiceOnly !== undefined) {
+    const allowsDirect = b.allowsDirectReservations !== undefined
+      ? Boolean(b.allowsDirectReservations)
+      : (b.companyRole === "invoice_only" || b.isInvoiceOnly === true ? false : true);
+    company.allowsDirectReservations = allowsDirect;
+    company.companyRole = allowsDirect ? "booking_partner" : "invoice_only";
+    company.isInvoiceOnly = !allowsDirect;
+  }
+  if (b.billingEnabled !== undefined) {
+    company.billingEnabled = Boolean(b.billingEnabled);
+  }
   if (b.billingTerms !== undefined || b.condicaoFaturamento !== undefined) {
     const val = (b.billingTerms ?? b.condicaoFaturamento ?? "").trim();
-    company.billingTerms = val;
+    company.billingTerms = company.billingEnabled === false ? "" : val;
+  } else if (b.billingEnabled === false) {
+    company.billingTerms = "";
+  } else if (b.billingEnabled === true && !company.billingTerms) {
+    company.billingTerms = `${Number(b.defaultBoletoTermDays ?? company.defaultBoletoTermDays ?? 28) || 28} dias`;
   }
   if (b.notes !== undefined || b.observacoes !== undefined) {
     const val = (b.notes ?? b.observacoes ?? "").trim();
@@ -73688,6 +73887,20 @@ function applyCrmBillingConfigFields(entity, body = {}) {
     entity.defaultBoletoConsumptionMode = normalizeBoletoConsumptionMode(
       body.defaultBoletoConsumptionMode ?? body.boletoConsumptionMode
     );
+  }
+  if (body.defaultConsumptionSamePayerAndDue !== undefined || body.consumptionSamePayerAndDue !== undefined) {
+    entity.defaultConsumptionSamePayerAndDue = Boolean(
+      body.defaultConsumptionSamePayerAndDue ?? body.consumptionSamePayerAndDue
+    );
+  }
+  if (body.defaultConsumptionPayerType !== undefined || body.consumptionPayerType !== undefined) {
+    entity.defaultConsumptionPayerType = String(
+      body.defaultConsumptionPayerType ?? body.consumptionPayerType
+    ).toLowerCase();
+  }
+  if (body.defaultConsumptionTermDays !== undefined || body.consumptionTermDays !== undefined) {
+    const ctd = Number(body.defaultConsumptionTermDays ?? body.consumptionTermDays);
+    if (!Number.isNaN(ctd) && ctd >= 0) entity.defaultConsumptionTermDays = ctd;
   }
   if (body.defaultBoletoPayerType !== undefined || body.boletoPayerType !== undefined) {
     entity.defaultBoletoPayerType = String(body.defaultBoletoPayerType ?? body.boletoPayerType).toLowerCase();

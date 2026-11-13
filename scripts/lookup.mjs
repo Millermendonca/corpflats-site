@@ -926,7 +926,7 @@ export function isGenericPelincaCompanyAddress(entity = {}) {
   return true;
 }
 
-export function enrichCrmEntityWithCnpjData(entity, cnpjData) {
+export function enrichCrmEntityWithCnpjData(entity, cnpjData, opts = {}) {
   if (!entity || typeof entity !== "object" || !cnpjData || typeof cnpjData !== "object") return false;
   const logradouro = String(cnpjData.logradouro || cnpjData.address || cnpjData.endereco || "").trim();
   const numero = String(cnpjData.numero || cnpjData.number || "S/N").trim();
@@ -968,20 +968,24 @@ export function enrichCrmEntityWithCnpjData(entity, cnpjData) {
     entity.ibgeCode = ibge;
     entity.codigoMunicipio = ibge;
   }
-  if (cnpjData.email) {
-    const cleanEm = String(cnpjData.email).trim().toLowerCase();
-    const localPart = cleanEm.split("@")[0] || "";
-    const isBillingMailbox = /^(?:conciliacao|faturamento|nf|nfe|nfse|notafiscal|notas?fiscais|nfebimbo|fiscal|financeiro|contasapagar)\b/i.test(localPart);
-    if (!entity.financialEmail) {
-      entity.financialEmail = cleanEm;
+  // NUNCA copia e-mail ou telefone de APIs externas da Receita Federal (geralmente pertencem ao contador).
+  // Só enriquece contato se vier explicitamente de fonte interna/homologada (allowContactFields === true).
+  if (opts?.allowContactFields === true) {
+    if (cnpjData.email) {
+      const cleanEm = String(cnpjData.email).trim().toLowerCase();
+      const localPart = cleanEm.split("@")[0] || "";
+      const isBillingMailbox = /^(?:conciliacao|faturamento|nf|nfe|nfse|notafiscal|notas?fiscais|nfebimbo|fiscal|financeiro|contasapagar)\b/i.test(localPart);
+      if (!entity.financialEmail) {
+        entity.financialEmail = cleanEm;
+      }
+      if (!entity.email && !isBillingMailbox) {
+        entity.email = cleanEm;
+      }
     }
-    if (!entity.email && !isBillingMailbox) {
-      entity.email = cleanEm;
+    if (cnpjData.telefone && !entity.phone && !entity.telefone) {
+      entity.phone = cnpjData.telefone;
+      entity.telefone = cnpjData.telefone;
     }
-  }
-  if (cnpjData.telefone && !entity.phone && !entity.telefone) {
-    entity.phone = cnpjData.telefone;
-    entity.telefone = cnpjData.telefone;
   }
   return true;
 }
@@ -1006,6 +1010,14 @@ export async function lookupCnpj(cnpj, db = null) {
   }
 
   const finalizeCnpjResult = async (rawResult, localEntity = local) => {
+    const fromCrmOrDirectory = rawResult.source === "crm_local" || rawResult.source === "crm_known_directory";
+    const safeEmail = fromCrmOrDirectory
+      ? (rawResult.email || localEntity?.financialEmail || localEntity?.email || "")
+      : (localEntity?.financialEmail || localEntity?.email || "");
+    const safeTelefone = fromCrmOrDirectory
+      ? (rawResult.telefone || localEntity?.phone || localEntity?.telefone || "")
+      : (localEntity?.phone || localEntity?.telefone || "");
+
     const healed = await resolveValidCepAndIbge({
       cep: rawResult.cep,
       logradouro: rawResult.logradouro,
@@ -1032,14 +1044,18 @@ export async function lookupCnpj(cnpj, db = null) {
         cidade: finalCidade,
         uf: finalUf,
         codigoMunicipio: finalIbge,
-        email: rawResult.email || "",
-        telefone: rawResult.telefone || ""
-      });
+        email: safeEmail,
+        telefone: safeTelefone
+      }, { allowContactFields: fromCrmOrDirectory });
     }
 
     return {
       ok: true,
       ...rawResult,
+      email: safeEmail,
+      telefone: safeTelefone,
+      ddd_telefone_1: safeTelefone,
+      fromCrmOrDirectory: Boolean(fromCrmOrDirectory || localEntity),
       address: finalLogradouro,
       logradouro: finalLogradouro,
       endereco: finalLogradouro,
@@ -1058,6 +1074,9 @@ export async function lookupCnpj(cnpj, db = null) {
       entityType: rawResult.entityType || (localAgency && !localComp ? "agency" : "company"),
       agencyId: rawResult.agencyId ?? localAgency?.id ?? null,
       companyId: rawResult.companyId ?? localComp?.id ?? null,
+      companyRole: localComp?.companyRole || (localComp?.isInvoiceOnly ? "invoice_only" : undefined),
+      allowsDirectReservations: localComp?.allowsDirectReservations !== undefined ? Boolean(localComp.allowsDirectReservations) : undefined,
+      billingEnabled: localComp?.billingEnabled !== undefined ? Boolean(localComp.billingEnabled) : undefined,
       cepHealed: Boolean(healed.healed)
     };
   };
