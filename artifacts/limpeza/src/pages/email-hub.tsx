@@ -263,7 +263,363 @@ function formatEmailHtmlForViewer(rawHtml?: string, fallbackText?: string): stri
   return `<div class="cf-email-viewer-scope">${responsiveReset}${html}</div>`
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// MOTOR DE CACHE PERSISTENTE + MEMÓRIA & DELTA INCREMENTAL (STALE-WHILE-REVALIDATE)
+// Mantém e-mails, pastas, contadores e detalhes salvos em RAM + Web Storage,
+// evitando que a lista suma ao trocar de tela/pasta e aplicando apenas adições/remoções.
+// ══════════════════════════════════════════════════════════════════════════════
+const WEBMAIL_CACHE_STORAGE_KEY = "cf_webmail_cache_v2"
+const WEBMAIL_DETAILS_STORAGE_KEY = "cf_webmail_details_v2"
+
+const DEFAULT_WEBMAIL_STATUS = {
+  oauthConfigured: false,
+  oauthConnected: false,
+  primaryEmailAddress: "reservas@corpflats.com.br",
+  dc: "com",
+  smtpConfigured: false,
+  smtpHost: "smtp.zoho.com",
+  smtpPort: 465,
+  smtpUser: "",
+  fromName: "CorpFlats",
+  fromEmail: "reservas@corpflats.com.br",
+  engineEnabled: true,
+  receptionEmail: "soho@promenade.com.br",
+  garageEmail: "promenadesoho@pfbestacionamentos.com.br"
+}
+
+interface CachedViewEntry {
+  ids: string[]
+  updatedAt: number
+  remoteSyncedAt: number
+}
+
+interface CachedDetailEntry {
+  message: any
+  threadMessages: any[]
+  updatedAt: number
+}
+
+const webmailClientStore = {
+  hydrated: false,
+  hasAnyCachedData: false,
+  webmailStatus: { ...DEFAULT_WEBMAIL_STATUS } as any,
+  systemFolders: [] as any[],
+  customFolders: [] as any[],
+  labels: [] as any[],
+  activeReservations: [] as any[],
+  selectedFolder: "inbox",
+  selectedLabelId: "",
+  quickFilter: "all",
+  activeMessageId: null as string | null,
+  messagesById: new Map<string, any>(),
+  views: new Map<string, CachedViewEntry>(),
+  detailsById: new Map<string, CachedDetailEntry>(),
+  prefetchedIds: new Set<string>()
+}
+
+function buildWebmailViewKey(folder: string, labelId: string, quickFilter: string, search: string): string {
+  return `${folder || "inbox"}::${labelId || ""}::${quickFilter || "all"}::${String(search || "").trim().toLowerCase()}`
+}
+
+function stripHeavyFieldsForClientStorage(m: any) {
+  if (!m || typeof m !== "object") return m
+  const isDraft = m.folder === "drafts" || m.status === "draft"
+  if (isDraft) return m
+  const { bodyHtml, bodyText, ...rest } = m
+  return rest
+}
+
+function hydrateWebmailClientStoreOnce() {
+  if (webmailClientStore.hydrated) return
+  webmailClientStore.hydrated = true
+
+  try {
+    const raw = localStorage.getItem(WEBMAIL_CACHE_STORAGE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === "object") {
+        if (parsed.webmailStatus) {
+          webmailClientStore.webmailStatus = { ...DEFAULT_WEBMAIL_STATUS, ...parsed.webmailStatus }
+        }
+        if (Array.isArray(parsed.systemFolders)) webmailClientStore.systemFolders = parsed.systemFolders
+        if (Array.isArray(parsed.customFolders)) webmailClientStore.customFolders = parsed.customFolders
+        if (Array.isArray(parsed.labels)) webmailClientStore.labels = parsed.labels
+        if (Array.isArray(parsed.activeReservations)) webmailClientStore.activeReservations = parsed.activeReservations
+        if (typeof parsed.selectedFolder === "string" && parsed.selectedFolder) {
+          webmailClientStore.selectedFolder = parsed.selectedFolder
+        }
+        if (typeof parsed.selectedLabelId === "string") {
+          webmailClientStore.selectedLabelId = parsed.selectedLabelId
+        }
+        if (typeof parsed.quickFilter === "string" && parsed.quickFilter) {
+          webmailClientStore.quickFilter = parsed.quickFilter
+        }
+        if (typeof parsed.activeMessageId === "string") {
+          webmailClientStore.activeMessageId = parsed.activeMessageId
+        }
+        if (Array.isArray(parsed.messages)) {
+          for (const m of parsed.messages) {
+            if (m && m.id) webmailClientStore.messagesById.set(m.id, m)
+          }
+        }
+        if (parsed.views && typeof parsed.views === "object") {
+          for (const [k, v] of Object.entries(parsed.views)) {
+            const entry = v as any
+            if (entry && Array.isArray(entry.ids)) {
+              webmailClientStore.views.set(k, {
+                ids: entry.ids,
+                updatedAt: Number(entry.updatedAt) || 0,
+                remoteSyncedAt: 0 // Ao recarregar a página, permite sync incremental em background
+              })
+            }
+          }
+        }
+        if (webmailClientStore.messagesById.size > 0 || webmailClientStore.systemFolders.length > 0) {
+          webmailClientStore.hasAnyCachedData = true
+        }
+      }
+    }
+  } catch {
+    // Ignora falha de leitura de storage privado/corrompido
+  }
+
+  try {
+    const rawDetails = sessionStorage.getItem(WEBMAIL_DETAILS_STORAGE_KEY)
+    if (rawDetails) {
+      const parsedDetails = JSON.parse(rawDetails)
+      if (Array.isArray(parsedDetails)) {
+        for (const [id, entry] of parsedDetails) {
+          if (id && entry?.message) {
+            webmailClientStore.detailsById.set(id, entry)
+            webmailClientStore.prefetchedIds.add(id)
+          }
+        }
+      }
+    }
+  } catch {}
+}
+
+let persistCacheTimer: ReturnType<typeof setTimeout> | null = null
+
+function schedulePersistWebmailClientStore() {
+  if (persistCacheTimer) clearTimeout(persistCacheTimer)
+  persistCacheTimer = setTimeout(() => {
+    persistCacheTimer = null
+    try {
+      const allMsgs = Array.from(webmailClientStore.messagesById.values())
+        .sort((a, b) => new Date(b?.created_at || 0).getTime() - new Date(a?.created_at || 0).getTime())
+        .slice(0, 400)
+        .map(stripHeavyFieldsForClientStorage)
+
+      const allowedIds = new Set(allMsgs.map(m => m.id))
+      const serializedViews: Record<string, CachedViewEntry> = {}
+      const viewEntries = Array.from(webmailClientStore.views.entries())
+        .sort((a, b) => b[1].updatedAt - a[1].updatedAt)
+        .slice(0, 25)
+
+      for (const [k, v] of viewEntries) {
+        serializedViews[k] = {
+          ids: v.ids.filter(id => allowedIds.has(id)),
+          updatedAt: v.updatedAt,
+          remoteSyncedAt: v.remoteSyncedAt
+        }
+      }
+
+      const payload = {
+        webmailStatus: webmailClientStore.webmailStatus,
+        systemFolders: webmailClientStore.systemFolders,
+        customFolders: webmailClientStore.customFolders,
+        labels: webmailClientStore.labels,
+        activeReservations: webmailClientStore.activeReservations,
+        selectedFolder: webmailClientStore.selectedFolder,
+        selectedLabelId: webmailClientStore.selectedLabelId,
+        quickFilter: webmailClientStore.quickFilter,
+        activeMessageId: webmailClientStore.activeMessageId,
+        messages: allMsgs,
+        views: serializedViews
+      }
+      localStorage.setItem(WEBMAIL_CACHE_STORAGE_KEY, JSON.stringify(payload))
+    } catch {}
+
+    try {
+      const detailEntries = Array.from(webmailClientStore.detailsById.entries())
+        .sort((a, b) => (b[1].updatedAt || 0) - (a[1].updatedAt || 0))
+        .slice(0, 18)
+        .filter(([, entry]) => {
+          const htmlLen = String(entry?.message?.bodyHtml || "").length
+          return htmlLen < 160000
+        })
+      sessionStorage.setItem(WEBMAIL_DETAILS_STORAGE_KEY, JSON.stringify(detailEntries))
+    } catch {}
+  }, 450)
+}
+
+function filterCachedMessagesLocally(
+  all: any[],
+  folder: string,
+  labelId: string,
+  quickFilter: string,
+  search: string
+): any[] {
+  const cleanSearch = String(search || "").trim().toLowerCase()
+  const todayBrStr = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })
+
+  const filtered = all.filter(m => {
+    if (!m) return false
+    if (labelId) {
+      if (m.direction !== "inbound" || m.folder === "trash" || m.folder === "spam") return false
+      if (!Array.isArray(m.labels) || !m.labels.includes(labelId)) return false
+    } else {
+      if (folder === "starred") {
+        if (!m.isStarred || m.folder === "trash") return false
+      } else if (folder === "archive") {
+        if (m.folder === "trash" || m.folder === "spam" || m.folder === "drafts") return false
+      } else {
+        if (m.folder !== folder) return false
+      }
+    }
+
+    if (quickFilter === "unread" && m.isRead) return false
+    if (quickFilter === "starred" && !m.isStarred) return false
+    if (quickFilter === "hasAttachment" && !m.hasAttachments && !(m.matchedReservation?.attachmentsAvailableCount > 0)) {
+      return false
+    }
+    if (quickFilter === "hasReservation" && !m.matchedReservation) return false
+    if (quickFilter === "failed" && m.status !== "failed") return false
+
+    if (quickFilter === "today") {
+      const refIso = folder === "queue" && !labelId ? m.scheduledFor || m.created_at : m.created_at
+      const msgBrStr = new Date(refIso || 0).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })
+      if (msgBrStr !== todayBrStr) return false
+    }
+
+    const toStr = Array.isArray(m.to) ? m.to.join(" ") : String(m.to || "")
+    const ccStr = Array.isArray(m.cc) ? m.cc.join(" ") : String(m.cc || "")
+    const recLow = `${m.recipient || ""} ${toStr} ${ccStr}`.toLowerCase()
+    const subjLow = String(m.subject || "").toLowerCase()
+    const tplLow = String(m.templateKey || "").toLowerCase()
+
+    if (quickFilter === "sent_guests") {
+      if (recLow.includes("promenade.com.br") || recLow.includes("pfbestacionamentos")) return false
+      if (!m.matchedReservation && (subjLow.includes("portaria") || subjLow.includes("garagem"))) return false
+    }
+    if (quickFilter === "sent_portaria") {
+      if (!recLow.includes("promenade.com.br") && !subjLow.includes("portaria") && !subjLow.includes("liberação de acesso")) {
+        return false
+      }
+    }
+    if (quickFilter === "sent_garage") {
+      if (!recLow.includes("pfbestacionamentos") && !subjLow.includes("garagem") && !subjLow.includes("vaga de estacionamento")) {
+        return false
+      }
+    }
+    if (quickFilter === "queue_24h") {
+      const schedMs = new Date(m.scheduledFor || m.created_at || 0).getTime()
+      if (schedMs > Date.now() + 24 * 3600 * 1000) return false
+    }
+    if (quickFilter === "queue_checkin") {
+      const isCheckin =
+        tplLow.includes("checkin") ||
+        tplLow.includes("arrival") ||
+        subjLow.includes("check-in") ||
+        subjLow.includes("instruções de chegada") ||
+        subjLow.includes("liberação") ||
+        subjLow.includes("garagem")
+      if (!isCheckin) return false
+    }
+    if (quickFilter === "queue_welcome") {
+      const isWelcome =
+        tplLow.includes("welcome") ||
+        subjLow.includes("bem-vindo") ||
+        subjLow.includes("boas-vindas") ||
+        subjLow.includes("confirmação")
+      if (!isWelcome) return false
+    }
+    if (quickFilter === "queue_checkout") {
+      const isCheckout =
+        tplLow.includes("checkout") || subjLow.includes("check-out") || subjLow.includes("agradecimento")
+      if (!isCheckout) return false
+    }
+
+    if (cleanSearch) {
+      const haystack = [
+        m.subject,
+        m.fromName,
+        m.fromEmail,
+        m.recipient,
+        m.cc,
+        m.snippet,
+        m.reservation_id,
+        m.reservationCode,
+        m.matchedReservation?.code,
+        m.matchedReservation?.guestName,
+        m.matchedReservation?.flatNumber ? `flat ${m.matchedReservation.flatNumber}` : ""
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+      if (!haystack.includes(cleanSearch)) return false
+    }
+
+    return true
+  })
+
+  if (folder === "queue" && !labelId) {
+    filtered.sort(
+      (a, b) => new Date(a.scheduledFor || a.created_at || 0).getTime() - new Date(b.scheduledFor || b.created_at || 0).getTime()
+    )
+  } else {
+    filtered.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+  }
+
+  return filtered
+}
+
+function getInstantMessagesForView(
+  folder: string,
+  labelId: string,
+  quickFilter: string,
+  search: string
+): any[] {
+  hydrateWebmailClientStoreOnce()
+  const vKey = buildWebmailViewKey(folder, labelId, quickFilter, search)
+  const cachedView = webmailClientStore.views.get(vKey)
+  if (cachedView) {
+    return cachedView.ids.map(id => webmailClientStore.messagesById.get(id)).filter(Boolean)
+  }
+  if (webmailClientStore.messagesById.size > 0) {
+    return filterCachedMessagesLocally(
+      Array.from(webmailClientStore.messagesById.values()),
+      folder,
+      labelId,
+      quickFilter,
+      search
+    )
+  }
+  return []
+}
+
+function buildOptimisticDetailFromSummary(summary: any) {
+  if (!summary) return null
+  const fallbackSafe = String(summary.bodyText || summary.snippet || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\n/g, "<br/>")
+  const optimisticMsg = {
+    ...summary,
+    bodyHtml: summary.bodyHtml || (fallbackSafe ? `<p>${fallbackSafe}</p>` : ""),
+    attachments: Array.isArray(summary.attachments) ? summary.attachments : [],
+    _optimisticPreview: !summary.bodyHtml
+  }
+  return {
+    message: optimisticMsg,
+    threadMessages: [optimisticMsg]
+  }
+}
+
 export default function EmailHub() {
+  hydrateWebmailClientStoreOnce()
   const [, setLocation] = useLocation()
   const { toast } = useToast()
 
@@ -303,46 +659,63 @@ export default function EmailHub() {
     }
   }, [])
 
-  // ── Estado Global do Motor & Status Zoho ──────────────────────────────────
-  const [webmailStatus, setWebmailStatus] = useState<any>({
-    oauthConfigured: false,
-    oauthConnected: false,
-    primaryEmailAddress: "reservas@corpflats.com.br",
-    dc: "com",
-    smtpConfigured: false,
-    smtpHost: "smtp.zoho.com",
-    smtpPort: 465,
-    smtpUser: "",
-    fromName: "CorpFlats",
-    fromEmail: "reservas@corpflats.com.br",
-    engineEnabled: true,
-    receptionEmail: "soho@promenade.com.br",
-    garageEmail: "promenadesoho@pfbestacionamentos.com.br"
-  })
+  // ── Estado Global do Motor & Status Zoho (Hidratado Instantaneamente do Cache) ──
+  const [webmailStatus, setWebmailStatus] = useState<any>(() => webmailClientStore.webmailStatus)
   const [togglingEngine, setTogglingEngine] = useState(false)
 
   // ── Navegação 3-Pane (Pastas, Etiquetas, Filtros e Busca) ────────────────
-  const [systemFolders, setSystemFolders] = useState<any[]>([])
-  const [customFolders, setCustomFolders] = useState<any[]>([])
-  const [labels, setLabels] = useState<any[]>([])
-  const [activeReservations, setActiveReservations] = useState<any[]>([])
+  const [systemFolders, setSystemFolders] = useState<any[]>(() => webmailClientStore.systemFolders)
+  const [customFolders, setCustomFolders] = useState<any[]>(() => webmailClientStore.customFolders)
+  const [labels, setLabels] = useState<any[]>(() => webmailClientStore.labels)
+  const [activeReservations, setActiveReservations] = useState<any[]>(() => webmailClientStore.activeReservations)
 
-  const [selectedFolder, setSelectedFolder] = useState<string>("inbox")
-  const [selectedLabelId, setSelectedLabelId] = useState<string>("")
-  const [quickFilter, setQuickFilter] = useState<string>("all")
+  const [selectedFolder, setSelectedFolder] = useState<string>(() => webmailClientStore.selectedFolder || "inbox")
+  const [selectedLabelId, setSelectedLabelId] = useState<string>(() => webmailClientStore.selectedLabelId || "")
+  const [quickFilter, setQuickFilter] = useState<string>(() => webmailClientStore.quickFilter || "all")
   const [searchQuery, setSearchQuery] = useState<string>("")
 
-  // ── Lista de Mensagens (Coluna 2) & Seleção em Lote ──────────────────────
-  const [messages, setMessages] = useState<any[]>([])
+  // ── Lista de Mensagens (Coluna 2) & Seleção em Lote (0ms a partir do Cache) ──
+  const [messages, setMessages] = useState<any[]>(() =>
+    getInstantMessagesForView(
+      webmailClientStore.selectedFolder || "inbox",
+      webmailClientStore.selectedLabelId || "",
+      webmailClientStore.quickFilter || "all",
+      ""
+    )
+  )
   const [loadingMessages, setLoadingMessages] = useState<boolean>(false)
   const [syncingRemote, setSyncingRemote] = useState<boolean>(false)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
 
-  // ── Mensagem Aberta & Thread (Coluna 3) ──────────────────────────────────
-  const [activeMessageId, setActiveMessageId] = useState<string | null>(null)
-  const [messageDetail, setMessageDetail] = useState<any | null>(null)
-  const [threadMessages, setThreadMessages] = useState<any[]>([])
-  const [expandedThreadIds, setExpandedThreadIds] = useState<string[]>([])
+  // ── Mensagem Aberta & Thread (Coluna 3 - Restaurada Instantaneamente) ────
+  const initialActiveId = useMemo(() => {
+    const initMsgs = getInstantMessagesForView(
+      webmailClientStore.selectedFolder || "inbox",
+      webmailClientStore.selectedLabelId || "",
+      webmailClientStore.quickFilter || "all",
+      ""
+    )
+    const savedId = webmailClientStore.activeMessageId
+    if (savedId && initMsgs.some(m => m.id === savedId)) return savedId
+    return initMsgs[0]?.id || null
+  }, [])
+
+  const initialDetailBundle = useMemo(() => {
+    if (!initialActiveId) return null
+    const cached = webmailClientStore.detailsById.get(initialActiveId)
+    if (cached) return cached
+    const summary = webmailClientStore.messagesById.get(initialActiveId)
+    return buildOptimisticDetailFromSummary(summary)
+  }, [initialActiveId])
+
+  const [activeMessageId, setActiveMessageId] = useState<string | null>(initialActiveId)
+  const [messageDetail, setMessageDetail] = useState<any | null>(() => initialDetailBundle?.message || null)
+  const [threadMessages, setThreadMessages] = useState<any[]>(() => initialDetailBundle?.threadMessages || [])
+  const [expandedThreadIds, setExpandedThreadIds] = useState<string[]>(() => {
+    if (!initialDetailBundle?.threadMessages?.length) return []
+    const newestId = initialDetailBundle.threadMessages[0]?.id
+    return Array.from(new Set([newestId, initialActiveId].filter(Boolean))) as string[]
+  })
   const [loadingDetail, setLoadingDetail] = useState<boolean>(false)
 
   // Quick Reply no rodapé do painel de leitura
@@ -403,8 +776,7 @@ export default function EmailHub() {
   const [smtpHost, setSmtpHost] = useState("smtp.zoho.com")
   const [smtpPort, setSmtpPort] = useState(465)
   const [smtpUser, setSmtpUser] = useState("")
-  const [smtpPass, setSmtpPass]
-    = useState("")
+  const [smtpPass, setSmtpPass] = useState("")
   const [smtpFromName, setSmtpFromName] = useState("CorpFlats")
   const [smtpFromEmail, setSmtpFromEmail] = useState("")
   const [savingSmtp, setSavingSmtp] = useState(false)
@@ -413,27 +785,120 @@ export default function EmailHub() {
   const [testTargetEmail, setTestTargetEmail] = useState("")
   const [testingSmtp, setTestingSmtp] = useState(false)
 
-  // ── Carregamento Inicial e Reativo ────────────────────────────────────────
-  const initialSyncRef = useRef<boolean>(false)
+  // ── Carregamento Cache-First + Sincronização Incremental (Delta) ──────────
+  const fetchSeqRef = useRef<number>(0)
+  const detailSeqRef = useRef<number>(0)
 
   useEffect(() => {
     fetchWebmailStatus()
   }, [])
 
+  // Se o detalhe inicial veio apenas como prévia otimista (sem HTML completo em cache), hidrata silenciosamente
   useEffect(() => {
-    const shouldForceSync = !initialSyncRef.current
-    initialSyncRef.current = true
-    fetchMessages(shouldForceSync)
+    if (initialActiveId && !webmailClientStore.detailsById.has(initialActiveId)) {
+      openMessageDetail(initialActiveId, false, false)
+    }
+  }, [])
+
+  useEffect(() => {
+    webmailClientStore.selectedFolder = selectedFolder
+    webmailClientStore.selectedLabelId = selectedLabelId
+    webmailClientStore.quickFilter = quickFilter
+
+    // 1. Renderização Instantânea (0ms) a partir do Cache Local sem apagar a tela!
+    const instantList = getInstantMessagesForView(selectedFolder, selectedLabelId, quickFilter, searchQuery)
+    setMessages(prev => {
+      if (
+        prev.length === instantList.length &&
+        prev.every((item, idx) => item === instantList[idx] || (item.id === instantList[idx]?.id && item._digest && item._digest === instantList[idx]?._digest))
+      ) {
+        return prev
+      }
+      return instantList
+    })
+
+    if (instantList.length > 0 && (!activeMessageId || !instantList.some(m => m.id === activeMessageId))) {
+      openMessageDetail(instantList[0].id, false, false)
+    }
+
+    // 2. Estágio Rápido (< 20ms): busca delta na memória do servidor + Estágio 2 em background no Zoho se necessário
+    let cancelled = false
+    const vKey = buildWebmailViewKey(selectedFolder, selectedLabelId, quickFilter, searchQuery)
+    const lastRemoteSync = webmailClientStore.views.get(vKey)?.remoteSyncedAt || 0
+    const needsBackgroundZohoSync =
+      selectedFolder !== "queue" &&
+      selectedFolder !== "outbox" &&
+      selectedFolder !== "drafts" &&
+      !searchQuery.trim() &&
+      Date.now() - lastRemoteSync > 25000
+
+    ;(async () => {
+      await fetchMessages(false, true)
+      if (!cancelled && needsBackgroundZohoSync) {
+        await fetchMessages(true, true)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
   }, [selectedFolder, selectedLabelId, quickFilter, searchQuery])
 
+  // Atualização periódica incremental em background (apenas acrescenta/remove novidades sem recarregar tudo)
   useEffect(() => {
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") {
         fetchMessages(true, true)
       }
-    }, 60000)
+    }, 45000)
     return () => clearInterval(interval)
   }, [selectedFolder, selectedLabelId, quickFilter, searchQuery])
+
+  // Pré-carregamento inteligente (Prefetch) em background dos primeiros 6 e-mails visíveis para leitura em 0ms
+  useEffect(() => {
+    if (!messages.length) return
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      const candidates = messages
+        .slice(0, 6)
+        .filter(
+          m =>
+            m &&
+            m.id &&
+            m.folder !== "drafts" &&
+            m.status !== "draft" &&
+            !webmailClientStore.detailsById.has(m.id) &&
+            !webmailClientStore.prefetchedIds.has(m.id)
+        )
+
+      for (const item of candidates) {
+        if (cancelled) break
+        webmailClientStore.prefetchedIds.add(item.id)
+        try {
+          const res = await fetch(`/api/webmail/messages/${encodeURIComponent(item.id)}?prefetch=1`)
+          if (res.ok && !cancelled) {
+            const d = await res.json()
+            if (d?.message) {
+              const tList = Array.isArray(d.threadMessages) ? d.threadMessages : [d.message]
+              webmailClientStore.detailsById.set(item.id, {
+                message: d.message,
+                threadMessages: tList,
+                updatedAt: Date.now()
+              })
+              schedulePersistWebmailClientStore()
+            }
+          }
+        } catch {
+          webmailClientStore.prefetchedIds.delete(item.id)
+        }
+      }
+    }, 650)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [messages])
 
   const fetchWebmailStatus = async () => {
     try {
@@ -441,10 +906,25 @@ export default function EmailHub() {
       if (res.ok) {
         const d = await res.json()
         setWebmailStatus(d)
-        if (Array.isArray(d.systemFolders)) setSystemFolders(d.systemFolders)
-        if (Array.isArray(d.customFolders)) setCustomFolders(d.customFolders)
-        if (Array.isArray(d.labels)) setLabels(d.labels)
-        if (Array.isArray(d.activeReservations)) setActiveReservations(d.activeReservations)
+        webmailClientStore.webmailStatus = d
+        if (Array.isArray(d.systemFolders)) {
+          setSystemFolders(d.systemFolders)
+          webmailClientStore.systemFolders = d.systemFolders
+        }
+        if (Array.isArray(d.customFolders)) {
+          setCustomFolders(d.customFolders)
+          webmailClientStore.customFolders = d.customFolders
+        }
+        if (Array.isArray(d.labels)) {
+          setLabels(d.labels)
+          webmailClientStore.labels = d.labels
+        }
+        if (Array.isArray(d.activeReservations)) {
+          setActiveReservations(d.activeReservations)
+          webmailClientStore.activeReservations = d.activeReservations
+        }
+        webmailClientStore.hasAnyCachedData = true
+        schedulePersistWebmailClientStore()
 
         if (d.oauthConfigMasked) {
           setOauthClientId(d.oauthConfigMasked.clientId || "")
@@ -466,73 +946,281 @@ export default function EmailHub() {
   }
 
   const fetchMessages = useStableCallback(async (syncRemote = false, silentBackground = false) => {
-    if (syncRemote) setSyncingRemote(true)
-    else if (!silentBackground) setLoadingMessages(true)
+    const reqFolder = selectedFolder
+    const reqLabel = selectedLabelId
+    const reqFilter = quickFilter
+    const reqSearch = searchQuery
+    const vKey = buildWebmailViewKey(reqFolder, reqLabel, reqFilter, reqSearch)
+    const seq = ++fetchSeqRef.current
+
+    const hasCachedForView =
+      webmailClientStore.views.has(vKey) ||
+      webmailClientStore.hasAnyCachedData ||
+      messages.length > 0
+
+    // NUNCA apaga os e-mails da tela! Só mostra skeleton se for a primeiríssima abertura sem nenhum dado em cache.
+    if (syncRemote) {
+      setSyncingRemote(true)
+    } else if (!silentBackground && !hasCachedForView) {
+      setLoadingMessages(true)
+    } else if (!silentBackground) {
+      setSyncingRemote(true)
+    }
 
     try {
-      const params = new URLSearchParams({
-        folder: selectedFolder,
-        labelId: selectedLabelId,
-        quickFilter,
-        search: searchQuery,
-        sync: syncRemote ? "true" : "false"
-      })
-      const res = await fetch(`/api/webmail/messages?${params.toString()}`)
-      if (res.ok) {
-        const d = await res.json()
-        const list = Array.isArray(d.messages) ? d.messages : []
-        setMessages(list)
-        if (Array.isArray(d.systemFolders)) setSystemFolders(d.systemFolders)
-        if (Array.isArray(d.customFolders)) setCustomFolders(d.customFolders)
-        if (Array.isArray(d.labels)) setLabels(d.labels)
-        if (d.zohoStatus) setWebmailStatus((prev: any) => ({ ...prev, ...d.zohoStatus }))
-
-        // Se nenhuma mensagem estiver aberta ou a aberta não estiver na lista, abre a primeira automaticamente em desktop (sem forçar detail no mobile)
-        if (list.length > 0 && (!activeMessageId || !list.some((m: any) => m.id === activeMessageId))) {
-          openMessageDetail(list[0].id, false, false)
-        } else if (list.length === 0) {
-          setActiveMessageId(null)
-          setMessageDetail(null)
-          setThreadMessages([])
-          setMobileView("list")
+      const existingView = webmailClientStore.views.get(vKey)
+      let knownDigests: Record<string, string> | null = null
+      if (existingView && existingView.ids.length > 0) {
+        const digestMap: Record<string, string> = {}
+        let allHaveDigests = true
+        for (const id of existingView.ids) {
+          const item = webmailClientStore.messagesById.get(id)
+          if (!item || !item._digest) {
+            allHaveDigests = false
+            break
+          }
+          digestMap[id] = item._digest
+        }
+        if (allHaveDigests) {
+          knownDigests = digestMap
         }
       }
+
+      const res = await fetch("/api/webmail/messages/delta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          folder: reqFolder,
+          labelId: reqLabel,
+          quickFilter: reqFilter,
+          search: reqSearch,
+          sync: syncRemote,
+          knownDigests
+        })
+      })
+
+      if (!res.ok) return
+      const d = await res.json()
+
+      // Atualiza metadados globais de contadores e pastas
+      if (Array.isArray(d.systemFolders)) {
+        webmailClientStore.systemFolders = d.systemFolders
+        setSystemFolders(d.systemFolders)
+      }
+      if (Array.isArray(d.customFolders)) {
+        webmailClientStore.customFolders = d.customFolders
+        setCustomFolders(d.customFolders)
+      }
+      if (Array.isArray(d.labels)) {
+        webmailClientStore.labels = d.labels
+        setLabels(d.labels)
+      }
+      if (d.zohoStatus) {
+        webmailClientStore.webmailStatus = { ...webmailClientStore.webmailStatus, ...d.zohoStatus }
+        setWebmailStatus((prev: any) => ({ ...prev, ...d.zohoStatus }))
+      }
+      webmailClientStore.hasAnyCachedData = true
+
+      const nowMs = Date.now()
+      let resolvedList: any[] = []
+
+      if (d.deltaMode) {
+        if (d.unchanged && existingView) {
+          webmailClientStore.views.set(vKey, {
+            ...existingView,
+            updatedAt: nowMs,
+            remoteSyncedAt: syncRemote ? nowMs : existingView.remoteSyncedAt
+          })
+          schedulePersistWebmailClientStore()
+          return
+        }
+
+        const upsertedArr = Array.isArray(d.upserted) ? d.upserted : []
+        const upsertedIdSet = new Set<string>()
+        for (const u of upsertedArr) {
+          if (u && u.id) {
+            upsertedIdSet.add(u.id)
+            webmailClientStore.messagesById.set(u.id, u)
+          }
+        }
+
+        const orderedIds: string[] = Array.isArray(d.orderedIds) ? d.orderedIds : []
+        webmailClientStore.views.set(vKey, {
+          ids: orderedIds,
+          updatedAt: nowMs,
+          remoteSyncedAt: syncRemote ? nowMs : (existingView?.remoteSyncedAt || 0)
+        })
+
+        // Ignora se o usuário já trocou de pasta/filtro enquanto essa requisição estava em trânsito
+        if (seq !== fetchSeqRef.current) {
+          schedulePersistWebmailClientStore()
+          return
+        }
+
+        // Reconciliação incremental cirúrgica: preserva 100% das referências de e-mails que não mudaram!
+        setMessages(prev => {
+          const prevById = new Map(prev.map(m => [m.id, m]))
+          const next = orderedIds
+            .map(id => {
+              if (!upsertedIdSet.has(id) && prevById.has(id)) {
+                return prevById.get(id)!
+              }
+              return webmailClientStore.messagesById.get(id)
+            })
+            .filter(Boolean)
+          resolvedList = next
+          return next
+        })
+
+        // Se a mensagem aberta recebeu nova resposta na conversa, atualiza a thread aberta sem piscar
+        if (activeMessageId && upsertedIdSet.has(activeMessageId)) {
+          const updatedSummary = webmailClientStore.messagesById.get(activeMessageId)
+          const cachedDet = webmailClientStore.detailsById.get(activeMessageId)
+          if (
+            updatedSummary &&
+            cachedDet &&
+            Number(updatedSummary.threadCount || 1) !== Number(cachedDet.threadMessages?.length || 1)
+          ) {
+            openMessageDetail(activeMessageId, false, false)
+          }
+        }
+      } else {
+        // Carga inicial completa da visão (quando ainda não havia knownDigests)
+        const incoming = Array.isArray(d.messages) ? d.messages : []
+        for (const item of incoming) {
+          if (item && item.id) {
+            webmailClientStore.messagesById.set(item.id, item)
+          }
+        }
+        const orderedIds = incoming.map((m: any) => m.id)
+        webmailClientStore.views.set(vKey, {
+          ids: orderedIds,
+          updatedAt: nowMs,
+          remoteSyncedAt: syncRemote ? nowMs : (existingView?.remoteSyncedAt || 0)
+        })
+
+        if (seq !== fetchSeqRef.current) {
+          schedulePersistWebmailClientStore()
+          return
+        }
+
+        setMessages(prev => {
+          const prevById = new Map(prev.map(m => [m.id, m]))
+          const next = incoming.map((item: any) => {
+            const old = prevById.get(item.id)
+            if (old && old._digest && item._digest && old._digest === item._digest) {
+              return old
+            }
+            return item
+          })
+          resolvedList = next
+          return next
+        })
+      }
+
+      schedulePersistWebmailClientStore()
+
+      const checkList =
+        resolvedList.length > 0
+          ? resolvedList
+          : (webmailClientStore.views.get(vKey)?.ids || [])
+              .map(id => webmailClientStore.messagesById.get(id))
+              .filter(Boolean)
+
+      if (checkList.length > 0 && (!activeMessageId || !checkList.some((m: any) => m.id === activeMessageId))) {
+        openMessageDetail(checkList[0].id, false, false)
+      } else if (checkList.length === 0) {
+        setActiveMessageId(null)
+        setMessageDetail(null)
+        setThreadMessages([])
+        setMobileView("list")
+      }
     } catch (err) {
-      console.error("Erro ao listar mensagens:", err)
+      console.error("Erro ao sincronizar mensagens incrementalmente:", err)
     } finally {
-      setLoadingMessages(false)
-      setSyncingRemote(false)
+      if (seq === fetchSeqRef.current) {
+        setLoadingMessages(false)
+        setSyncingRemote(false)
+      }
     }
   })
 
   const openMessageDetail = useStableCallback(async (id: string, markReadOptimistic = true, switchToMobileDetail = false) => {
+    const detSeq = ++detailSeqRef.current
     setActiveMessageId(id)
+    webmailClientStore.activeMessageId = id
     setQuickReplyOpen(false)
     setQuickReplyText("")
     if (switchToMobileDetail) {
       setMobileView("detail")
     }
 
+    const summaryInStore = webmailClientStore.messagesById.get(id)
+    const wasUnread = summaryInStore ? !summaryInStore.isRead : false
+
     if (markReadOptimistic) {
-      setMessages(prev => prev.map(m => (m.id === id ? { ...m, isRead: true } : m)))
+      if (summaryInStore && !summaryInStore.isRead) {
+        const updatedSummary = { ...summaryInStore, isRead: true, _digest: undefined }
+        webmailClientStore.messagesById.set(id, updatedSummary)
+      }
+      setMessages(prev => prev.map(m => (m.id === id && !m.isRead ? { ...m, isRead: true, _digest: undefined } : m)))
     }
 
-    setLoadingDetail(true)
+    // 1. Verifica se o HTML e a thread já estão no Cache de Detalhes -> abertura instantânea em 0ms!
+    const cachedDetail = webmailClientStore.detailsById.get(id)
+    if (cachedDetail) {
+      const msgView = markReadOptimistic ? { ...cachedDetail.message, isRead: true } : cachedDetail.message
+      setMessageDetail(msgView)
+      setThreadMessages(cachedDetail.threadMessages)
+      const newestId = cachedDetail.threadMessages[0]?.id
+      setExpandedThreadIds(Array.from(new Set([newestId, id].filter(Boolean))))
+      setLoadingDetail(false)
+      schedulePersistWebmailClientStore()
+
+      // Se o e-mail já está cacheado e já estava lido (e threadCount bate), nem precisa esperar rede!
+      // Caso estivesse não lido ou threadCount mudou, sincroniza silenciosamente em background sem loadingDetail
+      const expectedThreadLen = Number(summaryInStore?.threadCount || 1)
+      const cachedThreadLen = Number(cachedDetail.threadMessages?.length || 1)
+      if (!wasUnread && expectedThreadLen === cachedThreadLen) {
+        return
+      }
+    } else {
+      // 2. Se ainda não tem detalhe completo, exibe imediatamente o cabeçalho + prévia otimista sem tela branca!
+      const optimistic = buildOptimisticDetailFromSummary(webmailClientStore.messagesById.get(id))
+      if (optimistic) {
+        setMessageDetail(optimistic.message)
+        setThreadMessages(optimistic.threadMessages)
+        setExpandedThreadIds([id])
+      }
+      setLoadingDetail(true)
+    }
+
     try {
       const res = await fetch(`/api/webmail/messages/${encodeURIComponent(id)}`)
       if (res.ok) {
         const d = await res.json()
-        setMessageDetail(d.message)
         const tList = Array.isArray(d.threadMessages) ? d.threadMessages : [d.message]
-        setThreadMessages(tList)
-        // Expande por padrão a mensagem MAIS RECENTE (topo da thread, tList[0]) e a mensagem clicada
-        const newestId = tList[0]?.id
-        setExpandedThreadIds(Array.from(new Set([newestId, id].filter(Boolean))))
+        webmailClientStore.detailsById.set(id, {
+          message: d.message,
+          threadMessages: tList,
+          updatedAt: Date.now()
+        })
+        webmailClientStore.prefetchedIds.add(id)
+        schedulePersistWebmailClientStore()
+
+        if (detSeq === detailSeqRef.current) {
+          setMessageDetail(d.message)
+          setThreadMessages(tList)
+          const newestId = tList[0]?.id
+          setExpandedThreadIds(Array.from(new Set([newestId, id].filter(Boolean))))
+        }
       }
     } catch (err) {
       console.error("Erro ao abrir mensagem:", err)
     } finally {
-      setLoadingDetail(false)
+      if (detSeq === detailSeqRef.current) {
+        setLoadingDetail(false)
+      }
     }
   })
 
@@ -588,7 +1276,10 @@ export default function EmailHub() {
         if (res.ok) {
           const d = await res.json()
           if (d.draft?.id && !draftId) setDraftId(d.draft.id)
-          if (Array.isArray(d.systemFolders)) setSystemFolders(d.systemFolders)
+          if (Array.isArray(d.systemFolders)) {
+            webmailClientStore.systemFolders = d.systemFolders
+            setSystemFolders(d.systemFolders)
+          }
           const timeStr = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
           setDraftSaveStatus(`Salvo nos rascunhos às ${timeStr}`)
         }
@@ -625,7 +1316,9 @@ export default function EmailHub() {
       })
       const d = await res.json()
       if (res.ok && d.success) {
+        webmailClientStore.webmailStatus = { ...webmailClientStore.webmailStatus, engineEnabled: newState }
         setWebmailStatus((prev: any) => ({ ...prev, engineEnabled: newState }))
+        schedulePersistWebmailClientStore()
         toast({
           title: newState ? "🟢 Motor de E-mails Ativado" : "⏸️ Motor de E-mails Pausado",
           description: newState
@@ -640,77 +1333,104 @@ export default function EmailHub() {
     }
   })
 
-  // ── Ações Otimistas em Massa e Individuais ────────────────────────────────
+  // ── Ações Otimistas em Massa e Individuais (Sincronizadas com o Cache) ────
   const executeBulkAction = useStableCallback(async (
     ids: string[],
     action: string,
     extra: { targetFolderId?: string; labelId?: string; toastMsg?: string } = {}
   ) => {
     if (!ids.length) return
+    const idSet = new Set(ids)
 
-    // Atualização otimista imediata na UI
+    const mutateItem = (m: any) => {
+      let next = { ...m, _digest: undefined }
+      if (action === "markAsRead") next.isRead = true
+      if (action === "markAsUnread") next.isRead = false
+      if (action === "star") next.isStarred = true
+      if (action === "unstar") next.isStarred = false
+      if (action === "archive") next.folder = "archive"
+      if (action === "trash") next.folder = "trash"
+      if (action === "moveToInbox") next.folder = "inbox"
+      if (action === "moveToFolder" && extra.targetFolderId) next.folder = extra.targetFolderId
+      if (action === "applyLabel" && extra.labelId) {
+        next.labels = Array.from(new Set([...(m.labels || []), extra.labelId]))
+      }
+      if (action === "removeLabel" && extra.labelId) {
+        next.labels = (m.labels || []).filter((l: string) => l !== extra.labelId)
+      }
+      return next
+    }
+
+    const shouldRemoveFromCurrentView =
+      (action === "archive" && selectedFolder !== "archive") ||
+      (action === "trash" && selectedFolder !== "trash") ||
+      (action === "moveToInbox" && selectedFolder !== "inbox") ||
+      action === "deleteForever" ||
+      Boolean(action === "moveToFolder" && extra.targetFolderId && extra.targetFolderId !== selectedFolder) ||
+      Boolean(action === "removeLabel" && extra.labelId && selectedLabelId === extra.labelId) ||
+      Boolean(action === "markAsRead" && quickFilter === "unread") ||
+      Boolean(action === "unstar" && (selectedFolder === "starred" || quickFilter === "starred"))
+
+    // Sincroniza imediatamente com o Cache em Memória + Storage para nunca "voltar fantasma"
+    for (const targetId of ids) {
+      if (action === "deleteForever") {
+        webmailClientStore.messagesById.delete(targetId)
+        webmailClientStore.detailsById.delete(targetId)
+      } else {
+        const existing = webmailClientStore.messagesById.get(targetId)
+        if (existing) {
+          webmailClientStore.messagesById.set(targetId, mutateItem(existing))
+        }
+        const det = webmailClientStore.detailsById.get(targetId)
+        if (det?.message) {
+          webmailClientStore.detailsById.set(targetId, {
+            ...det,
+            message: mutateItem(det.message)
+          })
+        }
+      }
+    }
+
+    if (shouldRemoveFromCurrentView) {
+      const curKey = buildWebmailViewKey(selectedFolder, selectedLabelId, quickFilter, searchQuery)
+      const curView = webmailClientStore.views.get(curKey)
+      if (curView) {
+        webmailClientStore.views.set(curKey, {
+          ...curView,
+          ids: curView.ids.filter(x => !idSet.has(x))
+        })
+      }
+      // Invalida outras views afetadas pela mudança de pasta para recalcularem limpas
+      if (action === "archive" || action === "trash" || action === "moveToInbox" || action === "moveToFolder" || action === "deleteForever") {
+        for (const [vk] of webmailClientStore.views.entries()) {
+          if (vk !== curKey) webmailClientStore.views.delete(vk)
+        }
+      }
+    }
+    schedulePersistWebmailClientStore()
+
+    // Atualização otimista imediata na UI (acrescentando/removendo sem recarregar tudo)
     setMessages(prev => {
       return prev
-        .map(m => {
-          if (!ids.includes(m.id)) return m
-          if (action === "markAsRead") return { ...m, isRead: true }
-          if (action === "markAsUnread") return { ...m, isRead: false }
-          if (action === "star") return { ...m, isStarred: true }
-          if (action === "unstar") return { ...m, isStarred: false }
-          if (action === "applyLabel" && extra.labelId) {
-            const set = new Set([...(m.labels || []), extra.labelId])
-            return { ...m, labels: Array.from(set) }
-          }
-          if (action === "removeLabel" && extra.labelId) {
-            return { ...m, labels: (m.labels || []).filter((l: string) => l !== extra.labelId) }
-          }
-          return m
-        })
-        .filter(m => {
-          if (!ids.includes(m.id)) return true
-          if (action === "archive" && selectedFolder !== "archive") return false
-          if (action === "trash" && selectedFolder !== "trash") return false
-          if (action === "moveToInbox" && selectedFolder !== "inbox") return false
-          if (action === "deleteForever") return false
-          if (action === "moveToFolder" && extra.targetFolderId && extra.targetFolderId !== selectedFolder) return false
-          return true
-        })
+        .map(m => (idSet.has(m.id) ? mutateItem(m) : m))
+        .filter(m => !(idSet.has(m.id) && shouldRemoveFromCurrentView))
     })
 
-    const removesCurrent =
-      activeMessageId &&
-      ids.includes(activeMessageId) &&
-      ((action === "archive" && selectedFolder !== "archive") ||
-        (action === "trash" && selectedFolder !== "trash") ||
-        (action === "moveToInbox" && selectedFolder !== "inbox") ||
-        action === "deleteForever" ||
-        Boolean(action === "moveToFolder" && extra.targetFolderId && extra.targetFolderId !== selectedFolder))
+    const removesCurrent = Boolean(activeMessageId && idSet.has(activeMessageId) && shouldRemoveFromCurrentView)
 
     if (removesCurrent) {
       setMobileView("list")
-      const remaining = messages.filter(m => !ids.includes(m.id))
+      const remaining = messages.filter(m => !idSet.has(m.id))
       if (remaining.length > 0) {
         openMessageDetail(remaining[0].id, false, false)
       } else {
         setActiveMessageId(null)
+        webmailClientStore.activeMessageId = null
         setMessageDetail(null)
         setThreadMessages([])
       }
-    } else if (messageDetail && ids.includes(messageDetail.id)) {
-      if (action === "star") setMessageDetail((p: any) => ({ ...p, isStarred: true }))
-      if (action === "unstar") setMessageDetail((p: any) => ({ ...p, isStarred: false }))
-      if (action === "applyLabel" && extra.labelId) {
-        setMessageDetail((p: any) => ({
-          ...p,
-          labels: Array.from(new Set([...(p?.labels || []), extra.labelId]))
-        }))
-      }
-      if (action === "removeLabel" && extra.labelId) {
-        setMessageDetail((p: any) => ({
-          ...p,
-          labels: (p?.labels || []).filter((l: string) => l !== extra.labelId)
-        }))
-      }
+    } else if (messageDetail && idSet.has(messageDetail.id)) {
+      setMessageDetail((p: any) => (p ? mutateItem(p) : p))
     }
 
     try {
@@ -726,9 +1446,19 @@ export default function EmailHub() {
       })
       if (res.ok) {
         const d = await res.json()
-        if (Array.isArray(d.systemFolders)) setSystemFolders(d.systemFolders)
-        if (Array.isArray(d.customFolders)) setCustomFolders(d.customFolders)
-        if (Array.isArray(d.labels)) setLabels(d.labels)
+        if (Array.isArray(d.systemFolders)) {
+          webmailClientStore.systemFolders = d.systemFolders
+          setSystemFolders(d.systemFolders)
+        }
+        if (Array.isArray(d.customFolders)) {
+          webmailClientStore.customFolders = d.customFolders
+          setCustomFolders(d.customFolders)
+        }
+        if (Array.isArray(d.labels)) {
+          webmailClientStore.labels = d.labels
+          setLabels(d.labels)
+        }
+        schedulePersistWebmailClientStore()
         setSelectedIds([])
         if (extra.toastMsg) {
           toast({ title: extra.toastMsg })
@@ -736,7 +1466,7 @@ export default function EmailHub() {
       }
     } catch (err: any) {
       toast({ title: "Erro ao sincronizar ação", description: err.message, variant: "destructive" })
-      fetchMessages(false)
+      fetchMessages(false, true)
     }
   })
 
@@ -748,11 +1478,13 @@ export default function EmailHub() {
       const res = await fetch(`/api/emails/queue/${queueId}/send-now`, { method: "POST" })
       const d = await res.json()
       if (res.ok && d.success) {
+        webmailClientStore.messagesById.delete(queueId)
+        setMessages(prev => prev.filter(m => m.id !== queueId && m.queueId !== queueId))
         toast({
           title: "⚡ E-mail Agendado Enviado Agora!",
           description: "O disparo foi antecipado com sucesso e movido para Enviados."
         })
-        fetchMessages(false)
+        fetchMessages(false, true)
       } else {
         toast({
           title: "Falha ao antecipar envio",
@@ -772,8 +1504,10 @@ export default function EmailHub() {
     try {
       const res = await fetch(`/api/emails/queue/${queueId}`, { method: "DELETE" })
       if (res.ok) {
+        webmailClientStore.messagesById.delete(queueId)
+        setMessages(prev => prev.filter(m => m.id !== queueId && m.queueId !== queueId))
         toast({ title: "Agendamento Cancelado", description: "O e-mail foi removido da fila programada." })
-        fetchMessages(false)
+        fetchMessages(false, true)
       }
     } catch (err: any) {
       toast({ title: "Erro ao cancelar", description: err.message, variant: "destructive" })
@@ -787,8 +1521,9 @@ export default function EmailHub() {
       const res = await fetch(`/api/pms/reservations/communications/${commId}/resend`, { method: "POST" })
       const d = await res.json()
       if (res.ok && d.success) {
+        webmailClientStore.detailsById.delete(commId)
         toast({ title: "✓ E-mail Reenviado com Sucesso!", description: "O disparo foi processado pelo servidor SMTP." })
-        fetchMessages(false)
+        fetchMessages(false, true)
         if (activeMessageId === commId) openMessageDetail(commId, false)
       } else {
         toast({ title: "Falha no Reenvio", description: d.error || "Erro ao reenviar", variant: "destructive" })
@@ -1034,8 +1769,16 @@ export default function EmailHub() {
           description: `Disparado para ${finalTo.join(", ")}${composeAttachResDocs ? " com documentação da reserva anexada" : ""}.`
         })
         setComposeOpen(false)
+        if (draftId) {
+          webmailClientStore.messagesById.delete(draftId)
+          webmailClientStore.detailsById.delete(draftId)
+        }
+        if (composeInReplyTo) {
+          webmailClientStore.detailsById.delete(composeInReplyTo)
+        }
+        webmailClientStore.views.delete(buildWebmailViewKey("sent", "", "all", ""))
         setDraftId(null)
-        fetchMessages(false)
+        fetchMessages(false, true)
       } else {
         toast({
           title: "Falha no Envio",
@@ -1078,7 +1821,10 @@ export default function EmailHub() {
         })
         setQuickReplyText("")
         setQuickReplyOpen(false)
-        fetchMessages(false)
+        // Invalida o detalhe cacheado para carregar a nova resposta no topo do acordeão
+        webmailClientStore.detailsById.delete(messageDetail.id)
+        webmailClientStore.views.delete(buildWebmailViewKey("sent", "", "all", ""))
+        fetchMessages(false, true)
         openMessageDetail(messageDetail.id, false)
       } else {
         toast({ title: "Erro ao responder", description: d.error, variant: "destructive" })
@@ -2242,9 +2988,16 @@ export default function EmailHub() {
                     )}
                   </div>
                 ) : (
-                  <span className="text-[11px] font-semibold text-muted-foreground truncate">
-                    {activeFolderLabel} ({messages.length})
-                  </span>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="text-[11px] font-semibold text-muted-foreground truncate">
+                      {activeFolderLabel} ({messages.length})
+                    </span>
+                    {syncingRemote && (
+                      <span className="text-[10px] font-medium text-primary/80 animate-pulse shrink-0">
+                        • Atualizando
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -2277,7 +3030,7 @@ export default function EmailHub() {
 
             {/* Lista de Cards de Linha do E-mail */}
             <div className="flex-1 overflow-y-auto divide-y divide-border/70 pb-16 md:pb-0">
-              {loadingMessages ? (
+              {loadingMessages || (messages.length === 0 && syncingRemote) ? (
                 <div className="p-6 space-y-3">
                   {[1, 2, 3, 4, 5].map(n => (
                     <div key={n} className="animate-pulse flex items-start gap-3">
@@ -3284,6 +4037,12 @@ export default function EmailHub() {
                           {/* Corpo Renderizado e Anexos (Quando Expandido) */}
                           {isExpanded && (
                             <div className="px-2.5 sm:px-4 pb-3.5 sm:pb-4 pt-1.5 border-t border-border/60 space-y-3.5">
+                              {tm._optimisticPreview && loadingDetail && (
+                                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                                  <RefreshCw className="w-3 h-3 animate-spin text-primary" />
+                                  <span>Carregando formatação completa do e-mail...</span>
+                                </div>
+                              )}
                               <div
                                 className="cf-email-html-viewer rounded-xl overflow-x-auto p-2.5 sm:p-3.5 bg-[#F8FAFC] text-[#1F2937] border border-[#E5E7EB] text-xs sm:text-sm leading-relaxed break-words"
                                 dangerouslySetInnerHTML={{

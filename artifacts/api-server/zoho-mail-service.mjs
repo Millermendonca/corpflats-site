@@ -56,8 +56,36 @@ const zohoTokenCache = {
   lastError: null,
   lastFolderSyncAt: {},
   folderMapCache: null,
-  folderMapExpiresAt: 0
+  folderMapExpiresAt: 0,
+  syncInFlightByKey: {},
+  lastB2bDispatchCheckAt: 0
 };
+
+// Cache curto em RAM (TTL 20s) para resumos de anexos de reservas, evitando milhares de fs.existsSync repetidos por listagem
+const reservationAttSummaryCache = new Map();
+
+function getCachedReservationAttSummary(reservation, db) {
+  if (!reservation) return { count: 0, filenames: [] };
+  const guestCountSig = Array.isArray(reservation.guests)
+    ? reservation.guests.map(g => `${g?.index || ""}:${g?.hasCompletedCheckin ? 1 : 0}:${g?.fnrhDocumentUuid || ""}`).join(",")
+    : "";
+  const cacheKey = `${reservation.id}|${reservation.updatedAt || ""}|${reservation.fnrhSignedAt || ""}|${reservation.fnhrCompleted ? 1 : 0}|${reservation.fnrhDocumentUuid || ""}|${guestCountSig}`;
+  const now = Date.now();
+  const hit = reservationAttSummaryCache.get(reservation.id);
+  if (hit && hit.sig === cacheKey && now - hit.ts < 20000) {
+    return hit.val;
+  }
+  const atts = resolveReservationAttachments({ reservation, db });
+  const val = {
+    count: atts.length,
+    filenames: atts.map(a => a.filename)
+  };
+  if (reservationAttSummaryCache.size > 500) {
+    reservationAttSummaryCache.clear();
+  }
+  reservationAttSummaryCache.set(reservation.id, { sig: cacheKey, ts: now, val });
+  return val;
+}
 
 const DEMO_SEED_IDS = new Set([
   "inb_welcome_portaria_1",
@@ -710,7 +738,7 @@ export function matchEmailWithReservation(db, item) {
   if (!matched) return null;
 
   const flat = (db.flats || []).find(f => f.id === matched.flatId || String(f.number) === String(matched.flatNumber));
-  const atts = resolveReservationAttachments({ reservation: matched, db });
+  const attSummary = getCachedReservationAttSummary(matched, db);
 
   return {
     id: matched.id,
@@ -726,8 +754,8 @@ export function matchEmailWithReservation(db, item) {
     status: matched.status || "confirmada",
     fnhrCompleted: Boolean(matched.fnhrCompleted || matched.fnrhDocumentUuid || matched.guests?.[0]?.hasCompletedCheckin),
     vehiclePlate: matched.vehicle?.plate || "",
-    attachmentsAvailableCount: atts.length,
-    attachmentsSummary: atts.map(a => a.filename),
+    attachmentsAvailableCount: attSummary.count,
+    attachmentsSummary: attSummary.filenames,
     receptionNotified: Boolean(matched.morningEmailSentDate || matched.receptionNotifiedAt)
   };
 }
@@ -1064,7 +1092,7 @@ export function resolveZohoTrueIsoDate(zm = {}) {
 /**
  * Sincroniza mensagens da Zoho Mail API para o cache local quando OAuth2 está ativo
  */
-export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "", limit = 50, saveDatabase = null } = {}) {
+export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "", limit = 50, incremental = false, saveDatabase = null } = {}) {
   ensureWebmailCollections(db);
   const oauthCfg = getZohoOAuthConfig(db);
   if (!oauthCfg.isConfigured) {
@@ -1074,6 +1102,11 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
   try {
     const zohoFolderMap = await resolveZohoFolders(db);
     let rawZohoMessages = [];
+    const lastFolderSyncMs = zohoTokenCache.lastFolderSyncAt?.[folder] || 0;
+    const canUseIncrementalWindow =
+      !search &&
+      (incremental || (db.zohoMessagesCache.length > 0 && Date.now() - lastFolderSyncMs < 15 * 60 * 1000));
+    const effectiveLimit = canUseIncrementalWindow ? Math.min(Number(limit) || 50, 25) : (Number(limit) || 50);
 
     if (search) {
       const endpoint = `/accounts/{accountId}/messages/search?searchKey=entire:${encodeURIComponent(search)}&limit=${limit}`;
@@ -1088,7 +1121,7 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
         : (zohoFolderMap.inbox ? [zohoFolderMap.inbox] : [null]);
 
       const requests = targetFolders.map(fId => {
-        const qp = new URLSearchParams({ limit: String(limit), includeto: "true" });
+        const qp = new URLSearchParams({ limit: String(effectiveLimit), includeto: "true" });
         if (fId) qp.set("folderId", String(fId));
         return callZohoMailApi(db, `/accounts/{accountId}/messages/view?${qp.toString()}`);
       });
@@ -1100,7 +1133,7 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
         }
       }
     } else {
-      const qp = new URLSearchParams({ limit: String(limit), includeto: "true" });
+      const qp = new URLSearchParams({ limit: String(effectiveLimit), includeto: "true" });
       if (zohoFolderMap[folder]) {
         qp.set("folderId", String(zohoFolderMap[folder]));
       }
@@ -1932,9 +1965,9 @@ export function buildUnifiedMessagesList(db) {
 /**
  * Calcula contadores dinâmicos de pastas e etiquetas
  */
-export function getWebmailFoldersAndCounts(db) {
+export function getWebmailFoldersAndCounts(db, prebuiltAll = null) {
   ensureWebmailCollections(db);
-  const all = buildUnifiedMessagesList(db);
+  const all = Array.isArray(prebuiltAll) ? prebuiltAll : buildUnifiedMessagesList(db);
 
   const counts = {
     inbox: { total: 0, unread: 0 },
@@ -2030,7 +2063,78 @@ function isNonThreadableGenericSubject(normSubj) {
 }
 
 /**
+ * Executa sincronização Zoho deduplicada em voo por pasta/busca (evita chamadas concorrentes repetidas)
+ */
+async function runZohoSyncDeduped(db, { folder = "inbox", search = "", incremental = false, saveDatabase = null } = {}) {
+  const syncKey = `${folder}|${String(search || "").trim().toLowerCase()}`;
+  if (zohoTokenCache.syncInFlightByKey[syncKey]) {
+    return zohoTokenCache.syncInFlightByKey[syncKey];
+  }
+
+  const promise = (async () => {
+    try {
+      const syncRes = await syncZohoMessagesToCache(db, {
+        folder,
+        search,
+        incremental,
+        saveDatabase
+      });
+      if (syncRes.ok && syncRes.synced > 0 && typeof saveDatabase === "function") {
+        saveDatabase("zoho_sync_incremental");
+      }
+      return syncRes;
+    } finally {
+      delete zohoTokenCache.syncInFlightByKey[syncKey];
+    }
+  })();
+
+  zohoTokenCache.syncInFlightByKey[syncKey] = promise;
+  return promise;
+}
+
+function triggerThrottledB2bCredentialCheck(db, saveDatabase) {
+  const now = Date.now();
+  if (now - (zohoTokenCache.lastB2bDispatchCheckAt || 0) < 30000) return;
+  zohoTokenCache.lastB2bDispatchCheckAt = now;
+  Promise.resolve()
+    .then(() => ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase))
+    .catch(err => console.warn("[Webmail B2B Credential Background] Aviso:", err?.message || err));
+}
+
+function computeWebmailItemDigest(m) {
+  const labelsSig = Array.isArray(m.labels) ? m.labels.join(",") : "";
+  const resSig = m.matchedReservation
+    ? `${m.matchedReservation.id}:${m.matchedReservation.fnhrCompleted ? 1 : 0}:${m.matchedReservation.attachmentsAvailableCount || 0}:${m.matchedReservation.vehiclePlate || ""}`
+    : "";
+  return [
+    m.isRead ? "1" : "0",
+    m.isStarred ? "1" : "0",
+    m.folder || "",
+    m.status || "",
+    m.threadCount || 1,
+    labelsSig,
+    resSig,
+    m.hasAttachments ? "1" : "0",
+    m.scheduledFor || "",
+    m.updatedAt || "",
+    (m.subject || "").length,
+    (m.snippet || "").slice(0, 32)
+  ].join("|");
+}
+
+function stripHeavyWebmailFields(m) {
+  const isDraft = m.folder === "drafts" || m.status === "draft";
+  if (isDraft) return m;
+  const { bodyHtml, bodyText, ...lightItem } = m;
+  return {
+    ...lightItem,
+    hasCachedBody: Boolean(bodyHtml)
+  };
+}
+
+/**
  * Filtra e pagina mensagens para a Coluna 2 (Lista de E-mails / Threads)
+ * Suporta leitura em memória ultra-rápida (syncRemote=false), compactação de payload e Delta Incremental (knownDigests)
  */
 export async function listWebmailMessages(db, {
   folder = "inbox",
@@ -2038,32 +2142,47 @@ export async function listWebmailMessages(db, {
   quickFilter = "all",
   search = "",
   syncRemote = false,
+  compact = false,
+  knownDigests = null,
   saveDatabase = null
 } = {}) {
   ensureWebmailCollections(db);
 
   const oauthCfg = getZohoOAuthConfig(db);
   const syncTargetFolder = labelId ? "inbox" : folder;
-  const lastFolderSync = zohoTokenCache.lastFolderSyncAt?.[syncTargetFolder] || 0;
-  const shouldAutoSync =
+  const effectiveZohoFolder = syncTargetFolder === "newsletters" ? "inbox" : syncTargetFolder;
+  const lastFolderSync = zohoTokenCache.lastFolderSyncAt?.[effectiveZohoFolder] || 0;
+  const canSyncFolder =
     oauthCfg.isConfigured &&
     syncTargetFolder !== "queue" &&
-    syncTargetFolder !== "outbox" &&
-    (syncRemote || Date.now() - lastFolderSync > 30000);
+    syncTargetFolder !== "outbox";
 
-  if (shouldAutoSync) {
-    const syncRes = await syncZohoMessagesToCache(db, {
-      folder: syncTargetFolder === "newsletters" ? "inbox" : syncTargetFolder,
-      search,
-      saveDatabase
-    });
-    if (syncRes.ok && syncRes.synced > 0 && typeof saveDatabase === "function") {
-      saveDatabase();
+  let syncMeta = { synced: 0, backgroundTriggered: false };
+
+  if (canSyncFolder) {
+    if (syncRemote) {
+      // Quando o cliente pediu sync explícito (ex: botão Atualizar ou estágio 2 em background), aguarda o sync incremental deduplicado
+      const syncRes = await runZohoSyncDeduped(db, {
+        folder: effectiveZohoFolder,
+        search,
+        incremental: !search,
+        saveDatabase
+      });
+      syncMeta.synced = Number(syncRes?.synced || 0);
+    } else if (Date.now() - lastFolderSync > 30000) {
+      // Leitura instantânea (syncRemote=false): NUNCA bloqueia a resposta HTTP! Dispara atualização Zoho em background
+      syncMeta.backgroundTriggered = true;
+      void runZohoSyncDeduped(db, {
+        folder: effectiveZohoFolder,
+        search: "",
+        incremental: true,
+        saveDatabase
+      });
     }
   }
 
-  // Garante que reservas B2B sem WhatsApp/CPF do hóspede tenham o e-mail cordial de credenciamento disparado à agência
-  await ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase);
+  // Dispara verificação B2B em background com throttle de 30s sem travar a listagem da UI
+  triggerThrottledB2bCredentialCheck(db, saveDatabase);
 
   const all = buildUnifiedMessagesList(db);
   const cleanSearch = String(search || "").trim().toLowerCase();
@@ -2189,27 +2308,76 @@ export async function listWebmailMessages(db, {
   const itemsWithThreadCount = filtered.map(m => {
     const normSubj = normalizeThreadSubject(m.subject);
     const key = m.threadId || (!isNonThreadableGenericSubject(normSubj) ? `subj_${normSubj}` : m.id);
-    return {
+    const enriched = {
       ...m,
       threadCount: subjectMap.get(key) || 1
     };
+    enriched._digest = computeWebmailItemDigest(enriched);
+    return enriched;
   });
 
-  const { systemFolders, customFolders, labels } = getWebmailFoldersAndCounts(db);
+  const { systemFolders, customFolders, labels } = getWebmailFoldersAndCounts(db, all);
+  const zohoStatus = getZohoStatusSummary(db);
+
+  // Modo Delta Incremental: retorna APENAS mensagens novas/alteradas e IDs removidos!
+  if (knownDigests && typeof knownDigests === "object" && !Array.isArray(knownDigests)) {
+    const orderedIds = itemsWithThreadCount.map(m => m.id);
+    const currentIdSet = new Set(orderedIds);
+    const prevIds = Object.keys(knownDigests);
+
+    const upserted = [];
+    for (const item of itemsWithThreadCount) {
+      if (knownDigests[item.id] !== item._digest) {
+        upserted.push(compact ? stripHeavyWebmailFields(item) : item);
+      }
+    }
+
+    const removedIds = [];
+    for (const oldId of prevIds) {
+      if (!currentIdSet.has(oldId)) {
+        removedIds.push(oldId);
+      }
+    }
+
+    const sameOrder =
+      prevIds.length === orderedIds.length &&
+      prevIds.every((id, idx) => id === orderedIds[idx]);
+    const unchanged = upserted.length === 0 && removedIds.length === 0 && sameOrder;
+
+    return {
+      deltaMode: true,
+      unchanged,
+      upserted,
+      removedIds,
+      orderedIds,
+      totalCount: orderedIds.length,
+      syncMeta,
+      systemFolders,
+      customFolders,
+      labels,
+      zohoStatus
+    };
+  }
+
+  const outputMessages = compact
+    ? itemsWithThreadCount.map(stripHeavyWebmailFields)
+    : itemsWithThreadCount;
 
   return {
-    messages: itemsWithThreadCount,
+    messages: outputMessages,
+    syncMeta,
     systemFolders,
     customFolders,
     labels,
-    zohoStatus: getZohoStatusSummary(db)
+    zohoStatus
   };
 }
 
 /**
  * Obtém detalhes completos de uma mensagem + histórico da Thread em Acordeão + Anexos
  */
-export async function getWebmailMessageDetail(db, saveDatabase, messageId) {
+export async function getWebmailMessageDetail(db, saveDatabase, messageId, options = {}) {
+  const markRead = options?.markRead !== false;
   ensureWebmailCollections(db);
   const all = buildUnifiedMessagesList(db);
   const target = all.find(m => m.id === messageId);
@@ -2218,6 +2386,7 @@ export async function getWebmailMessageDetail(db, saveDatabase, messageId) {
   }
 
   // Se for mensagem vinda da Zoho REST API e ainda não tiver o HTML ou lista de anexos carregados, busca na Zoho API
+  let cacheMutated = false;
   if (target.source === "zoho_api" && target.zohoMessageId && target.zohoFolderId) {
     if (!target.bodyHtml) {
       const contentRes = await callZohoMailApi(
@@ -2227,7 +2396,10 @@ export async function getWebmailMessageDetail(db, saveDatabase, messageId) {
       if (contentRes.ok && contentRes.data?.content) {
         target.bodyHtml = contentRes.data.content;
         const cached = (db.zohoMessagesCache || []).find(c => c.id === target.id);
-        if (cached) cached.bodyHtml = target.bodyHtml;
+        if (cached) {
+          cached.bodyHtml = target.bodyHtml;
+          cacheMutated = true;
+        }
       }
     }
 
@@ -2254,13 +2426,17 @@ export async function getWebmailMessageDetail(db, saveDatabase, messageId) {
           downloadUrl: `/api/webmail/attachments/${target.zohoFolderId}/${target.zohoMessageId}/${a.attachmentId || a.id}?name=${encodeURIComponent(a.attachmentName || a.filename || "anexo")}`
         }));
         const cached = (db.zohoMessagesCache || []).find(c => c.id === target.id);
-        if (cached) cached.attachments = target.attachments;
+        if (cached) {
+          cached.attachments = target.attachments;
+          cacheMutated = true;
+        }
       }
     }
   }
 
-  // Se for confirmação de reserva B2B, extrai dados do voucher e garante vínculo das 4 pontas no banco
+  // Se for confirmação de reserva B2B AINDA NÃO PROCESSADA, extrai dados do voucher e garante vínculo das 4 pontas no banco
   if (
+    !target.b2bParsed &&
     target.direction === "inbound" &&
     (String(target.fromEmail || "").toLowerCase().includes("b2breservas") ||
       /Confirma[cç][aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*\d{7,10}/i.test(target.subject || "") ||
@@ -2302,6 +2478,16 @@ export async function getWebmailMessageDetail(db, saveDatabase, messageId) {
         target.matchedReservation = matchEmailWithReservation(db, target);
       }
     }
+    target.b2bParsed = true;
+    const cached = (db.zohoMessagesCache || []).find(c => c.id === target.id);
+    if (cached) {
+      cached.b2bParsed = true;
+      cacheMutated = true;
+    }
+  }
+
+  if (cacheMutated && typeof saveDatabase === "function") {
+    saveDatabase("webmail_detail_cache");
   }
 
   // Resolve anexos da reserva se aplicável
@@ -2322,12 +2508,12 @@ export async function getWebmailMessageDetail(db, saveDatabase, messageId) {
     }
   }
 
-  // Marca automaticamente como lido ao abrir
-  if (!target.isRead) {
+  // Marca automaticamente como lido ao abrir (exceto em prefetch de segundo plano)
+  if (markRead && !target.isRead) {
     if (!db.emailStateMeta[target.id]) db.emailStateMeta[target.id] = {};
     db.emailStateMeta[target.id].isRead = true;
     target.isRead = true;
-    if (typeof saveDatabase === "function") saveDatabase();
+    if (typeof saveDatabase === "function") saveDatabase("webmail_mark_read");
   }
 
   // Agrupa todas as mensagens da mesma conversa (Thread) e ordena da MAIS RECENTE (topo) para a mais antiga

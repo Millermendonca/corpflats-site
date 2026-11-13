@@ -51370,7 +51370,7 @@ app.post("/api/webmail/oauth-config", async (req, res) => {
   });
 });
 
-// W3. Listagem, Busca Instantânea e Filtros Rápidos de Mensagens (Coluna 2)
+// W3. Listagem, Busca Instantânea, Filtros Rápidos e Sincronização Incremental (Delta) de Mensagens (Coluna 2)
 app.get("/api/webmail/messages", async (req, res) => {
   if (pgPool && !pgHydratedSuccessfully) {
     try {
@@ -51385,7 +51385,8 @@ app.get("/api/webmail/messages", async (req, res) => {
     labelId = "",
     quickFilter = "all",
     search = "",
-    sync = "false"
+    sync = "false",
+    compact = "false"
   } = req.query;
 
   const result = await listWebmailMessages(db, {
@@ -51394,6 +51395,40 @@ app.get("/api/webmail/messages", async (req, res) => {
     quickFilter: String(quickFilter),
     search: String(search),
     syncRemote: sync === "true" || sync === "1",
+    compact: compact === "true" || compact === "1",
+    saveDatabase
+  });
+
+  res.json(result);
+});
+
+// W3b. Sincronização Incremental (Delta) — retorna apenas e-mails acrescentados, atualizados ou removidos
+app.post("/api/webmail/messages/delta", async (req, res) => {
+  if (pgPool && !pgHydratedSuccessfully) {
+    try {
+      await Promise.race([
+        loadDatabase(),
+        new Promise(r => setTimeout(r, 2500))
+      ]);
+    } catch (_) {}
+  }
+  const {
+    folder = "inbox",
+    labelId = "",
+    quickFilter = "all",
+    search = "",
+    sync = false,
+    knownDigests = null
+  } = req.body || {};
+
+  const result = await listWebmailMessages(db, {
+    folder: String(folder),
+    labelId: String(labelId),
+    quickFilter: String(quickFilter),
+    search: String(search),
+    syncRemote: sync === true || sync === "true" || sync === "1",
+    compact: true,
+    knownDigests: knownDigests && typeof knownDigests === "object" ? knownDigests : null,
     saveDatabase
   });
 
@@ -51402,7 +51437,10 @@ app.get("/api/webmail/messages", async (req, res) => {
 
 // W4. Detalhe da Mensagem + Thread em Acordeão + Anexos + Reserva Vinculada (Coluna 3)
 app.get("/api/webmail/messages/:id", async (req, res) => {
-  const result = await getWebmailMessageDetail(db, saveDatabase, req.params.id);
+  const isPrefetch = req.query.prefetch === "1" || req.query.prefetch === "true";
+  const result = await getWebmailMessageDetail(db, saveDatabase, req.params.id, {
+    markRead: !isPrefetch
+  });
   if (!result.ok) {
     return res.status(404).json({ error: result.error });
   }
