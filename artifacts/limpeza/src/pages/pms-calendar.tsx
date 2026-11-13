@@ -6185,7 +6185,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         statusToSave !== "pre_reserva" &&
         !formIsFaturadoBoleto &&
         !isB2b &&
-        paidAmount < totalAmount - 0.01 &&
+        resolvedPaidAmount < totalAmount - 0.01 &&
         formDailyRates.some(d => {
           const ch = String(d.channel || "").toLowerCase()
           const isPaidOtaOrB2bChan = ch.includes("booking") || ch.includes("airbnb") || ch.includes("b2b")
