@@ -84,7 +84,7 @@ export const calcularOrcamentoTool: AgentToolDefinition<CalcularOrcamentoArgs> =
       const diariaBase = 216.49;
       const adicionalTerceiroHospede = hospedes === 3 ? 60.0 : 0.0;
       const valorCafeInternoPorPessoaDia = 20.0;
-      const taxaLimpezaSemCafe = 70.0;
+      const taxaLimpezaSemCafe = 50.0;
       const percentualComissaoPlataformas = 15.0;
 
       const diariaAcomodacao = Number((diariaBase + adicionalTerceiroHospede).toFixed(2));

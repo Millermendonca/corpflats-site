@@ -1077,7 +1077,7 @@ export default function SiteEditor() {
                         size="sm"
                         variant={config?.petPolicy?.enabled ? "default" : "outline"}
                         onClick={() => {
-                          const current = config.petPolicy || { enabled: true, feeAmount: 80, feeType: "per_stay" }
+                          const current = config.petPolicy || { enabled: true, feeAmount: 40, feeType: "per_stay" }
                           setConfig({ ...config, petPolicy: { ...current, enabled: true } })
                         }}
                         className="flex-1 text-xs font-bold rounded-xl h-8"
@@ -1089,7 +1089,7 @@ export default function SiteEditor() {
                         size="sm"
                         variant={!config?.petPolicy?.enabled ? "default" : "outline"}
                         onClick={() => {
-                          const current = config.petPolicy || { enabled: false, feeAmount: 80, feeType: "per_stay" }
+                          const current = config.petPolicy || { enabled: false, feeAmount: 40, feeType: "per_stay" }
                           setConfig({ ...config, petPolicy: { ...current, enabled: false } })
                         }}
                         className="flex-1 text-xs font-bold rounded-xl h-8"
@@ -1103,12 +1103,12 @@ export default function SiteEditor() {
                     <Label className="text-xs font-bold">Valor da Taxa Pet (R$)</Label>
                     <Input
                       type="number"
-                      value={config?.petPolicy?.feeAmount ?? 80}
+                      value={config?.petPolicy?.feeAmount ?? 40}
                       onChange={e => {
                         const current = config.petPolicy || { enabled: true, feeType: "per_stay" }
                         setConfig({ ...config, petPolicy: { ...current, feeAmount: Number(e.target.value) } })
                       }}
-                      placeholder="80"
+                      placeholder="40"
                       className="text-xs h-8 rounded-xl"
                     />
                   </div>
@@ -1118,7 +1118,7 @@ export default function SiteEditor() {
                     <select
                       value={config?.petPolicy?.feeType || "per_stay"}
                       onChange={e => {
-                        const current = config.petPolicy || { enabled: true, feeAmount: 80 }
+                        const current = config.petPolicy || { enabled: true, feeAmount: 40 }
                         setConfig({ ...config, petPolicy: { ...current, feeType: e.target.value } })
                       }}
                       className="w-full h-8 px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs font-medium"
@@ -1146,7 +1146,7 @@ export default function SiteEditor() {
                       onClick={() => {
                         const species = config?.petPolicy?.allowedSpecies || "Cachorros (Cães) de pequeno porte (até 10kg)"
                         const defaultRule = `• Permissão: Permitida a hospedagem exclusivamente de cães de pequeno porte (até 10 kg e altura de cernelha de até 35–40 cm). Outros animais não são autorizados.\n• Circulação no Prédio: Nas áreas comuns do condomínio, o pet deve ser transportado obrigatoriamente no colo ou dentro de caixa/bolsa de transporte (ou com guia curta).\n• Uso de Elevadores: É obrigatório utilizar exclusivamente o elevador de serviço ao transitar com animais.\n• Convivência e Sossego: É proibido deixar o animal desacompanhado/sozinho no flat por longos períodos. O tutor deve zelar para evitar latidos ou ruídos excessivos.\n• Higiene e Cuidados: Proibido dar banho no animal utilizando toalhas ou enxoval do flat, bem como permitir que o pet suba em camas e sofás sem proteção própria.\n• Responsabilidade e Avarias: O titular da reserva responde integralmente por quaisquer danos a móveis, colchões, enxoval de cama/banho, odores ou sujeiras causadas pelo pet, arcando com os custos de reposição ou higienização extraordinária.`
-                        const current = config.petPolicy || { enabled: true, feeAmount: 80, feeType: "per_stay" }
+                        const current = config.petPolicy || { enabled: true, feeAmount: 40, feeType: "per_stay" }
                         setConfig({ ...config, petPolicy: { ...current, rules: defaultRule } })
                       }}
                       className="text-[11px] h-7 px-2.5 rounded-lg border-amber-300 bg-white dark:bg-slate-900 text-amber-900 dark:text-amber-200 font-bold hover:bg-amber-100"
@@ -1158,7 +1158,7 @@ export default function SiteEditor() {
                   <Input
                     value={config?.petPolicy?.allowedSpecies || "Cachorros (Cães)"}
                     onChange={e => {
-                      const current = config.petPolicy || { enabled: true, feeAmount: 80, feeType: "per_stay" }
+                      const current = config.petPolicy || { enabled: true, feeAmount: 40, feeType: "per_stay" }
                       setConfig({ ...config, petPolicy: { ...current, allowedSpecies: e.target.value } })
                     }}
                     placeholder="Ex: Cachorros (Cães), Gatos"
@@ -1172,7 +1172,7 @@ export default function SiteEditor() {
                     rows={4}
                     value={config?.petPolicy?.rules || ""}
                     onChange={e => {
-                      const current = config.petPolicy || { enabled: true, feeAmount: 80, feeType: "per_stay" }
+                      const current = config.petPolicy || { enabled: true, feeAmount: 40, feeType: "per_stay" }
                       setConfig({ ...config, petPolicy: { ...current, rules: e.target.value } })
                     }}
                     placeholder="Descreva o regulamento: proibição expressa de animais não autorizados, porte permitido, uso obrigatório de coleira..."

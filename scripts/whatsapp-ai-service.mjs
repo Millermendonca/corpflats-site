@@ -1492,7 +1492,7 @@ export async function querySystemData(db, {
 
       const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
       const activeRes = reservations.filter(r => r.status !== "cancelada");
-      const tariffSettings = db?.tariffSettings || { baseDailyRate: 237, weekendMarkupPct: 0.15, cleaningFee: 70, breakfastFeePerson: 35 };
+      const tariffSettings = db?.tariffSettings || { baseDailyRate: 216.49, weekendMarkupPct: 0.15, cleaningFee: 50, breakfastFeePerson: 20 };
 
       let totalRevenue = 0;
       let totalNights = 0;
@@ -2830,11 +2830,11 @@ function handleCalculateQuote(db, args = {}) {
 
   const siteCfg = db?.siteConfig || {};
   const plans = siteCfg.ratePlans || {};
-  const selectedPlan = plans[ratePlan] || plans["room_only"] || { cleaningFeeAmount: 70 };
+  const selectedPlan = plans[ratePlan] || plans["room_only"] || { cleaningFeeAmount: 50 };
 
   let cleaningFee = 0;
   if (ratePlan !== "with_breakfast" && selectedPlan.cleaningFeeEnabled !== false) {
-    cleaningFee = Number(selectedPlan.cleaningFeeAmount != null ? selectedPlan.cleaningFeeAmount : 70);
+    cleaningFee = Number(selectedPlan.cleaningFeeAmount != null ? selectedPlan.cleaningFeeAmount : 50);
   }
 
   let extraBedFee = 0;
@@ -3674,18 +3674,19 @@ export function handleGetPricingInfo(db, args = {}) {
   const breakfastTotal = withBreakfast ? (breakfastFeePerPerson * guests) : 0;
   const dailyRate = baseDailyRate + breakfastTotal;
 
+  const stdCleanFee = Number(db?.siteConfig?.ratePlans?.room_only?.cleaningFeeAmount ?? 50);
   return {
     success: true,
     hasPeriod: false,
     baseRateWithoutBreakfast: baseDailyRate,
     rateWithBreakfastFor1: baseDailyRate + breakfastFeePerPerson,
     rateWithBreakfastFor2: baseDailyRate + (breakfastFeePerPerson * 2),
-    cleaningFeeStandard: 70,
+    cleaningFeeStandard: stdCleanFee,
     cleaningFeeWithBreakfast: 0,
     breakfastPerPerson: breakfastFeePerPerson,
     isCleaningFeeExemptOnBreakfast: true,
     calculatedDailyRate: dailyRate,
-    summary: `Diária a partir de R$ ${baseDailyRate},00 sem café (+ taxa única de limpeza R$ 70,00); ou a partir de R$ ${baseDailyRate + breakfastFeePerPerson},00 com café no quarto (1 pessoa) com ISENÇÃO TOTAL da taxa de limpeza!`
+    summary: `Diária a partir de R$ ${baseDailyRate},00 sem café (+ taxa única de limpeza R$ ${stdCleanFee},00); ou a partir de R$ ${baseDailyRate + breakfastFeePerPerson},00 com café no quarto (1 pessoa)!`
   };
 }
 
@@ -6513,9 +6514,9 @@ export function executeConversationalBookingStep({
         .sort((a, b) => (Number(a.number) || 0) - (Number(b.number) || 0))
         .map(f => f.number)
         .join(", ");
-      const totalRoomOnlyStr = Number(quoteRoomOnly?.total || (237 * convState.nights + 70)).toFixed(2).replace(".", ",");
-      const totalWithBfStr = Number(quoteWithBf?.total || ((237 + 35) * convState.nights)).toFixed(2).replace(".", ",");
-      const cleaningStr = Number(quoteRoomOnly?.cleaningFee ?? 70).toFixed(2).replace(".", ",");
+      const totalRoomOnlyStr = Number(quoteRoomOnly?.total || (216.49 * convState.nights + 50)).toFixed(2).replace(".", ",");
+      const totalWithBfStr = Number(quoteWithBf?.total || ((216.49 + 20) * convState.nights)).toFixed(2).replace(".", ",");
+      const cleaningStr = Number(quoteRoomOnly?.cleaningFee ?? 50).toFixed(2).replace(".", ",");
 
       return {
         handled: true,
@@ -8243,9 +8244,9 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
 
     // 3. Consulta valores base no banco dinâmico
     const tSettings = activeDb?.tariffSettings || {};
-    const baseDailyRate = Number(tSettings.baseDailyRate != null ? tSettings.baseDailyRate : 237);
-    const breakfastFeePerson = 35;
-    const cleaningFee = 70;
+    const baseDailyRate = Number(tSettings.baseDailyRate != null ? tSettings.baseDailyRate : 216.49);
+    const breakfastFeePerson = Number(tSettings.breakfastSurchargePerGuest ?? 20);
+    const cleaningFee = Number(activeDb?.siteConfig?.ratePlans?.room_only?.cleaningFeeAmount ?? 50);
 
     // 4. Se especificou "1 pessoa com café" (pergunta exata do usuário!)
     if (isExplicit1 && mentionsWithBreakfast) {
@@ -17892,7 +17893,7 @@ export function parseManagerPreReservationCommand(text, proposal, db = null) {
     updates.includeBreakfast = false;
     updates.ratePlan = "room_only";
     if (effectiveProposalCleaningFee <= 0 && db?.siteConfig?.ratePlans?.room_only?.cleaningFeeEnabled !== false) {
-      effectiveProposalCleaningFee = Number(db?.siteConfig?.ratePlans?.room_only?.cleaningFeeAmount ?? 70) || 70;
+      effectiveProposalCleaningFee = Number(db?.siteConfig?.ratePlans?.room_only?.cleaningFeeAmount ?? 50) || 50;
     }
     updates.cleaningFee = effectiveProposalCleaningFee;
     hasFieldUpdates = true;

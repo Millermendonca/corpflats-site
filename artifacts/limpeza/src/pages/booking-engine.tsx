@@ -690,7 +690,7 @@ export default function BookingEngine() {
     ...rawRoomOnly,
     dailyRateComputed: roomOnlyAvgRate,
     cleaningFeeEnabled: rawRoomOnly.cleaningFeeEnabled !== false,
-    cleaningFeeAmount: Number(rawRoomOnly.cleaningFeeAmount ?? 70)
+    cleaningFeeAmount: Number(rawRoomOnly.cleaningFeeAmount ?? 50)
   }
   roomOnlyConfig.dailyRate = roomOnlyAvgRate
 
@@ -708,7 +708,7 @@ export default function BookingEngine() {
   const cleaningFee = Math.round(cleaningFeePerFlat * flatsCount * 100) / 100
 
   // Cálculo dinâmico da Taxa Pet
-  const petFeePerUnit = siteConfig?.petPolicy?.feeAmount ?? 80
+  const petFeePerUnit = siteConfig?.petPolicy?.feeAmount ?? 40
   const petFee = bringingPet
     ? (siteConfig?.petPolicy?.feeType === "per_night" ? petFeePerUnit * nights * petCount : petFeePerUnit * petCount)
     : 0

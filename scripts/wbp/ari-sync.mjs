@@ -358,8 +358,8 @@ export function buildOtaFeeSyncSchedule(db) {
       siteCfg.pricing?.breakfastSurchargePerGuest ??
       20
     ),
-    cleaningFee: Number(siteCfg.ratePlans?.room_only?.cleaningFeeAmount ?? 70),
-    petFee: Number(siteCfg.petPolicy?.feeAmount ?? 80),
+    cleaningFee: Number(siteCfg.ratePlans?.room_only?.cleaningFeeAmount ?? 50),
+    petFee: Number(siteCfg.petPolicy?.feeAmount ?? 40),
     extraBedFee: Number(
       settings.extraBedFee ??
       tarSettings.extraBedFee ??

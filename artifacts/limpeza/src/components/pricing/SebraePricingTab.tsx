@@ -26,6 +26,8 @@ interface SebraePricingTabProps {
     booking?: { markupPct?: number };
     airbnb?: { markupPct?: number };
   };
+  cleaningFee?: number;
+  petFee?: number;
   onUpdateSettings: (newSettings: Partial<PricingSettings>) => void;
   onSaveAndStage: () => Promise<void>;
   isSaving: boolean;
@@ -35,6 +37,8 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
   settings,
   calculation,
   channelMarkups,
+  cleaningFee = 50,
+  petFee = 40,
   onUpdateSettings,
   onSaveAndStage,
   isSaving,
@@ -703,6 +707,18 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                   <span className="text-right font-medium text-foreground">R$ {extraBedFee.toFixed(2)}</span>
                   <span className="text-right font-medium text-sky-700 dark:text-sky-400">R$ {(extraBedFee * bookingFactor).toFixed(2)}</span>
                   <span className="text-right font-medium text-rose-700 dark:text-rose-400">R$ {(extraBedFee * airbnbFactor).toFixed(2)}</span>
+                </div>
+                <div className="grid grid-cols-4 gap-1 text-[10.5px] text-muted-foreground">
+                  <span>Taxa Limpeza</span>
+                  <span className="text-right font-medium text-foreground">R$ {cleaningFee.toFixed(2)}</span>
+                  <span className="text-right font-medium text-sky-700 dark:text-sky-400">R$ {(cleaningFee * bookingFactor).toFixed(2)}</span>
+                  <span className="text-right font-medium text-rose-700 dark:text-rose-400">R$ {(cleaningFee * airbnbFactor).toFixed(2)}</span>
+                </div>
+                <div className="grid grid-cols-4 gap-1 text-[10.5px] text-muted-foreground">
+                  <span>Taxa Pet</span>
+                  <span className="text-right font-medium text-foreground">R$ {petFee.toFixed(2)}</span>
+                  <span className="text-right font-medium text-sky-700 dark:text-sky-400">R$ {(petFee * bookingFactor).toFixed(2)}</span>
+                  <span className="text-right font-medium text-rose-700 dark:text-rose-400">R$ {(petFee * airbnbFactor).toFixed(2)}</span>
                 </div>
               </div>
             </div>

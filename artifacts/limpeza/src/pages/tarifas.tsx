@@ -868,7 +868,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
           name: "Sem Café",
           dailyRate: Math.round(baseRef * 100) / 100,
           cleaningFeeEnabled: true,
-          cleaningFeeAmount: 70,
+          cleaningFeeAmount: 50,
           cleaningFeeType: "per_stay",
           description: "Hospedagem em flat completo sem café da manhã"
         }
@@ -888,7 +888,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
       },
       petPolicy: {
         enabled: true,
-        feeAmount: 80,
+        feeAmount: 40,
         feeType: "per_stay",
         allowedSpecies: "Cachorros (Cães) de pequeno e médio porte (até 15kg)",
         rules: "• Uso obrigatório de guia/coleira nas áreas sociais do condomínio.\n• Proibido deixar o animal sozinho no flat por longos períodos.\n• O hóspede tutor é responsável pela conservação e integridade do apartamento."
@@ -915,7 +915,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
     handleUpdateSebraeSettings({ breakfastSurchargePerGuest: 20, extraBedFee: 60 })
     toast({
       title: "Valores Restaurados",
-      description: "Padrões aplicados na tela (Café R$ 20/hóspede, Cartão +5%). Clique em 'Salvar Todos os Parâmetros' para persistir.",
+      description: "Padrões aplicados na tela (Café R$ 20/hóspede, Limpeza R$ 50, Pet R$ 40, Cartão +5%). Clique em 'Salvar Todos os Parâmetros' para persistir.",
     })
   }
 
@@ -933,7 +933,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
   const flats = calendarData?.flats || []
   const withBreakfast = siteConfig?.ratePlans?.with_breakfast || {
     name: "Com Café Incluso",
-    dailyRate: 225,
+    dailyRate: 236.49,
     cleaningFeeEnabled: false,
     cleaningFeeAmount: 0,
     cleaningFeeType: "per_stay",
@@ -941,9 +941,9 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
   }
   const roomOnly = siteConfig?.ratePlans?.room_only || {
     name: "Sem Café",
-    dailyRate: 190,
+    dailyRate: 216.49,
     cleaningFeeEnabled: true,
-    cleaningFeeAmount: 70,
+    cleaningFeeAmount: 50,
     cleaningFeeType: "per_stay",
     description: "Tarifa econômica sem café da manhã"
   }
@@ -960,7 +960,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
   }
   const petPolicy = siteConfig?.petPolicy || {
     enabled: true,
-    feeAmount: 80,
+    feeAmount: 40,
     feeType: "per_stay",
     allowedSpecies: "Cachorros (Cães) de pequeno e médio porte (até 15kg)",
     rules: "• Uso obrigatório de guia/coleira nas áreas sociais do condomínio.\n• Proibido deixar o animal sozinho no flat por longos períodos.\n• O hóspede tutor é responsável pela conservação e integridade do apartamento."
@@ -1021,10 +1021,10 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
     : Number(calculation.tarifaMinima || 216.49)
   const effectiveBreakfastPerGuest = Number(sebraeSettings.breakfastSurchargePerGuest ?? pricing.breakfastSurchargePerGuest ?? 20)
   const effectiveCardMarkupPct = Number(pricing.cardMarkupPercent ?? pricing.pixDiscountPercent ?? 5)
-  const baseCleaningFeeVal = roomOnly.cleaningFeeEnabled !== false ? Number(roomOnly.cleaningFeeAmount ?? 70) : 0
+  const baseCleaningFeeVal = roomOnly.cleaningFeeEnabled !== false ? Number(roomOnly.cleaningFeeAmount ?? 50) : 0
   const baseExtraBedFeeVal = Number(extraBedConfig.feeAmount ?? sebraeSettings.extraBedFee ?? 60)
   const baseTwinFeeVal = Number(bedConfig.twinFeeAmount ?? 30)
-  const basePetFeeVal = Number(petPolicy.feeAmount ?? 80)
+  const basePetFeeVal = Number(petPolicy.feeAmount ?? 40)
 
   // Cálculo do Simulador Multi-Noites & Paridade (inclui diárias, café e todas as taxas com comissão em cada plataforma)
   const simStayDiscountPct = simNights >= 30
@@ -1602,6 +1602,8 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                 settings={sebraeSettings}
                 calculation={calculation}
                 channelMarkups={tariffSettings?.channelMarkups}
+                cleaningFee={baseCleaningFeeVal}
+                petFee={basePetFeeVal}
                 onUpdateSettings={handleUpdateSebraeSettings}
                 onSaveAndStage={handleSaveAndStageSebrae}
                 isSaving={saving}
@@ -2494,7 +2496,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                               ...siteConfig,
                               ratePlans: {
                                 ...current,
-                                room_only: { ...roomOnly, cleaningFeeEnabled: true, cleaningFeeAmount: 70 }
+                                room_only: { ...roomOnly, cleaningFeeEnabled: true, cleaningFeeAmount: 50 }
                               }
                             })
                           }}
@@ -2530,7 +2532,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                             <Label className="text-[11px] font-bold">Valor Base Site (R$)</Label>
                             <Input
                               type="number"
-                              value={roomOnly.cleaningFeeAmount ?? 70}
+                              value={roomOnly.cleaningFeeAmount ?? 50}
                               onChange={e => {
                                 const current = siteConfig.ratePlans || {}
                                 setSiteConfig({
@@ -2671,13 +2673,13 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                   <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2.5">
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-xs flex items-center gap-1.5"><Heart className="w-3.5 h-3.5 text-rose-600" /> Política Pet Friendly</span>
-                      <Badge variant="outline" className="text-[10px]">R$ {petPolicy.feeAmount || 80}</Badge>
+                      <Badge variant="outline" className="text-[10px]">R$ {petPolicy.feeAmount || 40}</Badge>
                     </div>
                     <div className="space-y-1">
                       <Label className="text-[11px] font-bold">Taxa Base por Pet (R$)</Label>
                       <Input
                         type="number"
-                        value={petPolicy.feeAmount ?? 80}
+                        value={petPolicy.feeAmount ?? 40}
                         onChange={e => setSiteConfig({ ...siteConfig, petPolicy: { ...petPolicy, feeAmount: Number(e.target.value) } })}
                         className="h-8 font-black text-xs"
                       />

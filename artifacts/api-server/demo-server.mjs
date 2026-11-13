@@ -3820,7 +3820,7 @@ const DEFAULT_SITE_CONFIG = {
   ratePlans: {
     with_breakfast: {
       name: "Com Café Incluso",
-      dailyRate: 296.63,
+      dailyRate: 236.49,
       cleaningFeeEnabled: false,
       cleaningFeeAmount: 0,
       cleaningFeeType: "per_stay",
@@ -3828,9 +3828,9 @@ const DEFAULT_SITE_CONFIG = {
     },
     room_only: {
       name: "Sem Café",
-      dailyRate: 276.63,
+      dailyRate: 216.49,
       cleaningFeeEnabled: true,
-      cleaningFeeAmount: 70,
+      cleaningFeeAmount: 50,
       cleaningFeeType: "per_stay",
       description: "Hospedagem em flat completo sem café da manhã"
     }
@@ -3850,7 +3850,7 @@ const DEFAULT_SITE_CONFIG = {
   },
   petPolicy: {
     enabled: true,
-    feeAmount: 80,
+    feeAmount: 40,
     feeType: "per_stay",
     allowedSpecies: "Cachorros (Cães) de pequeno e médio porte (até 15kg)",
     rules: "• Uso obrigatório de guia/coleira nas áreas sociais do condomínio.\n• Proibido deixar o animal sozinho no flat por longos períodos.\n• O hóspede tutor é responsável pela conservação e integridade do apartamento."
@@ -4021,7 +4021,7 @@ const DEFAULT_SITE_CONFIG = {
   ],
   petPolicy: {
     enabled: true,
-    feeAmount: 80,
+    feeAmount: 40,
     feeType: "per_stay", // "per_stay" ou "per_night"
     maxPets: 2,
     allowedSpecies: "Cachorros (Cães) de pequeno porte (até 10kg)",
@@ -4051,7 +4051,7 @@ const DEFAULT_SITE_CONFIG = {
   ratePlans: {
     with_breakfast: {
       name: "Com Café da Manhã Incluso",
-      dailyRate: 296.63,
+      dailyRate: 236.49,
       cleaningFeeEnabled: false,
       cleaningFeeAmount: 0,
       cleaningFeeType: "per_stay", // "per_stay" ou "per_night"
@@ -4060,9 +4060,9 @@ const DEFAULT_SITE_CONFIG = {
     },
     room_only: {
       name: "Apenas Hospedagem (Sem Café)",
-      dailyRate: 276.63,
+      dailyRate: 216.49,
       cleaningFeeEnabled: true,
-      cleaningFeeAmount: 70,
+      cleaningFeeAmount: 50,
       cleaningFeeType: "per_stay", // "per_stay" ou "per_night"
       description: "Hospedagem em flat completo sem café da manhã",
       badge: "Apenas Hospedagem"
@@ -11840,7 +11840,7 @@ async function _loadDatabaseImpl() {
             ...DEFAULT_SITE_CONFIG.ratePlans.room_only,
             ...(db.siteConfig?.ratePlans?.room_only || {}),
             cleaningFeeEnabled: db.siteConfig?.ratePlans?.room_only?.cleaningFeeEnabled !== false,
-            cleaningFeeAmount: Number(db.siteConfig?.ratePlans?.room_only?.cleaningFeeAmount ?? 70)
+            cleaningFeeAmount: Number(db.siteConfig?.ratePlans?.room_only?.cleaningFeeAmount ?? 50)
           }
         },
         bedConfig: db.siteConfig?.bedConfig || DEFAULT_SITE_CONFIG.bedConfig,
@@ -30819,12 +30819,12 @@ export function calculateCanonicalDirectStayQuote({
 
   const avgDailyRatePerFlat = Math.round((pixAccommodationSubtotal / (nights * flatsCount)) * 100) / 100;
 
-  // Taxa de limpeza (0 no plano com café por padrão hoteleiro; R$ 70/flat no plano sem café)
+  // Taxa de limpeza (0 no plano com café por padrão hoteleiro; R$ 50/flat no plano sem café)
   const rawWbCfg = siteCfg.ratePlans?.with_breakfast || {};
   const rawRoCfg = siteCfg.ratePlans?.room_only || {};
   const activePlanCfg = isWithBf
     ? { cleaningFeeEnabled: Boolean(rawWbCfg.cleaningFeeEnabled), cleaningFeeAmount: Number(rawWbCfg.cleaningFeeAmount ?? 0), cleaningFeeType: rawWbCfg.cleaningFeeType || "per_stay" }
-    : { cleaningFeeEnabled: rawRoCfg.cleaningFeeEnabled !== false, cleaningFeeAmount: Number(rawRoCfg.cleaningFeeAmount ?? 70), cleaningFeeType: rawRoCfg.cleaningFeeType || "per_stay" };
+    : { cleaningFeeEnabled: rawRoCfg.cleaningFeeEnabled !== false, cleaningFeeAmount: Number(rawRoCfg.cleaningFeeAmount ?? 50), cleaningFeeType: rawRoCfg.cleaningFeeType || "per_stay" };
 
   const cleaningFeePerFlat = activePlanCfg.cleaningFeeEnabled
     ? (activePlanCfg.cleaningFeeType === "per_night" ? activePlanCfg.cleaningFeeAmount * nights : activePlanCfg.cleaningFeeAmount)
@@ -30847,7 +30847,7 @@ export function calculateCanonicalDirectStayQuote({
     : 0;
 
   // Taxa Pet
-  const petFeeUnit = Number(siteCfg.petPolicy?.feeAmount ?? 80);
+  const petFeeUnit = Number(siteCfg.petPolicy?.feeAmount ?? 40);
   const cleanPetCount = hasPet ? Math.max(1, Number(petCount) || 1) : 0;
   const petFee = hasPet
     ? Math.round((siteCfg.petPolicy?.feeType === "per_night" ? petFeeUnit * nights * cleanPetCount : petFeeUnit * cleanPetCount) * 100) / 100
@@ -30891,7 +30891,7 @@ export function calculateCanonicalDirectStayQuote({
   const otaChannelFees = calculateChannelAdjustedFees(
     {
       breakfastSurchargePerGuest,
-      cleaningFee: Number(rawRoCfg.cleaningFeeAmount ?? 70),
+      cleaningFee: Number(rawRoCfg.cleaningFeeAmount ?? 50),
       petFee: petFeeUnit,
       extraBedFee: extraBedFeeUnit,
       twinFee: twinFeeUnit,
@@ -31033,7 +31033,7 @@ app.get("/api/site-content", (req, res) => {
         ...(current.ratePlans?.room_only || {}),
         dailyRate: Math.round(todayBaseRate * 100) / 100,
         cleaningFeeEnabled: current.ratePlans?.room_only?.cleaningFeeEnabled !== false,
-        cleaningFeeAmount: Number(current.ratePlans?.room_only?.cleaningFeeAmount ?? 70)
+        cleaningFeeAmount: Number(current.ratePlans?.room_only?.cleaningFeeAmount ?? 50)
       }
     },
     bedConfig: current.bedConfig || DEFAULT_SITE_CONFIG.bedConfig,
@@ -31085,6 +31085,16 @@ function syncSiteConfigToSettings(update) {
   if (update.petPolicy) db.settings.petPolicy = db.siteConfig.petPolicy;
   if (update.childPolicy) db.settings.childPolicy = db.siteConfig.childPolicy;
   if (update.cancellationPolicy) db.settings.cancellationPolicy = db.siteConfig.cancellationPolicy;
+  if (db.tariffSettings) {
+    if (update.ratePlans?.room_only?.cleaningFeeAmount !== undefined) {
+      const cf = Number(update.ratePlans.room_only.cleaningFeeAmount) || 0;
+      db.tariffSettings.cleaningFeeSemCafe = cf;
+      db.tariffSettings.cleaningFee = cf;
+    }
+    if (update.petPolicy?.feeAmount !== undefined) {
+      db.tariffSettings.petFee = Number(update.petPolicy.feeAmount) || 0;
+    }
+  }
   const syncPayload = {};
   if (update.pricing) {
     if (update.pricing.directDiscountPercent !== undefined) syncPayload.directDiscountPercent = update.pricing.directDiscountPercent;
@@ -31095,6 +31105,7 @@ function syncSiteConfigToSettings(update) {
   if (update.extraBedConfig?.feeAmount !== undefined) {
     syncPayload.extraBedFee = update.extraBedConfig.feeAmount;
   }
+  const feesUpdated = Boolean(update.ratePlans || update.petPolicy || update.bedConfig);
   if (Object.keys(syncPayload).length > 0) {
     syncFinancialAndTariffSettings(db, syncPayload);
     WbpPricingManager.updateSettings({
@@ -31103,6 +31114,8 @@ function syncSiteConfigToSettings(update) {
       autoPublish: true
     }, db);
     triggerAutomaticPricingAriSync("site_pricing_settings_updated");
+  } else if (feesUpdated) {
+    triggerAutomaticPricingAriSync("site_fees_settings_updated");
   }
 }
 
@@ -31480,7 +31493,7 @@ app.get("/api/reservations/availability", (req, res) => {
           ...(siteCfg.ratePlans?.room_only || {}),
           dailyRate: quoteSampleRoomOnly.avgDailyRatePerFlat,
           cleaningFeeEnabled: siteCfg.ratePlans?.room_only?.cleaningFeeEnabled !== false,
-          cleaningFeeAmount: Number(siteCfg.ratePlans?.room_only?.cleaningFeeAmount ?? 70)
+          cleaningFeeAmount: Number(siteCfg.ratePlans?.room_only?.cleaningFeeAmount ?? 50)
         }
       },
       pricing: {
@@ -54260,6 +54273,9 @@ export function getTariffSettings() {
       baseDailyRate: 216.49,
       breakfastSurchargePerGuest: 20.00,
       extraBedFee: 60.00,
+      cleaningFeeSemCafe: 50.00,
+      cleaningFee: 50.00,
+      petFee: 40.00,
       directDiscountPercent: 0,
       cardMarkupPercent: 5,
       pixDiscountPercent: 5,
@@ -54433,6 +54449,39 @@ export function getTariffSettings() {
     try {
       saveDatabase("pricing_unified_v3_migration");
       setTimeout(() => triggerAutomaticPricingAriSync("pricing_unified_v3_migration"), 2000);
+    } catch (_) {}
+  }
+
+  // Migração oficial de Taxa de Limpeza (R$ 50) e Taxa Pet (R$ 40) com sincronização automática de canais
+  if (!isNodeTestRunner && !db.tariffSettings.pricingCleaning50Pet40V1Migrated) {
+    if (!db.siteConfig) db.siteConfig = JSON.parse(JSON.stringify(DEFAULT_SITE_CONFIG));
+    if (!db.siteConfig.ratePlans) db.siteConfig.ratePlans = JSON.parse(JSON.stringify(DEFAULT_SITE_CONFIG.ratePlans));
+    db.siteConfig.ratePlans.room_only = {
+      ...(db.siteConfig.ratePlans.room_only || DEFAULT_SITE_CONFIG.ratePlans.room_only),
+      cleaningFeeEnabled: db.siteConfig.ratePlans.room_only?.cleaningFeeEnabled !== false,
+      cleaningFeeAmount: 50
+    };
+    db.siteConfig.petPolicy = {
+      ...(db.siteConfig.petPolicy || DEFAULT_SITE_CONFIG.petPolicy),
+      enabled: db.siteConfig.petPolicy?.enabled !== false,
+      feeAmount: 40
+    };
+    if (!db.settings) db.settings = {};
+    db.settings.petPolicy = {
+      ...(db.settings.petPolicy || {}),
+      ...db.siteConfig.petPolicy,
+      feeAmount: 40
+    };
+    if (db.settings.ratePlans?.room_only) {
+      db.settings.ratePlans.room_only.cleaningFeeAmount = 50;
+    }
+    db.tariffSettings.cleaningFeeSemCafe = 50;
+    db.tariffSettings.cleaningFee = 50;
+    db.tariffSettings.petFee = 40;
+    db.tariffSettings.pricingCleaning50Pet40V1Migrated = true;
+    try {
+      saveDatabase("pricing_cleaning50_pet40_migration");
+      setTimeout(() => triggerAutomaticPricingAriSync("pricing_cleaning50_pet40_migration"), 2000);
     } catch (_) {}
   }
 
@@ -69062,9 +69111,10 @@ export async function generateAdminCopilotLocalResponse(db, message = "", contex
     reply += `- Booking.com: R$ ${(rev.booking || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}\n`;
     reply += `- Airbnb: R$ ${(rev.airbnb || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}\n\n`;
     reply += `**Parâmetros Tarifários Ativos:**\n`;
-    reply += `• Diária Base: R$ ${res.tariffSettings?.baseDailyRate || 237},00\n`;
-    reply += `• Taxa de Limpeza: R$ ${res.tariffSettings?.cleaningFee || 70},00\n`;
-    reply += `• Café Adicional/Pessoa: R$ ${res.tariffSettings?.breakfastFeePerson || 35},00\n`;
+    reply += `• Diária Base: R$ ${Number(res.tariffSettings?.baseDailyRate ?? 216.49).toFixed(2)}\n`;
+    reply += `• Taxa de Limpeza: R$ ${Number(res.tariffSettings?.cleaningFee ?? 50).toFixed(2)}\n`;
+    reply += `• Taxa Pet: R$ ${Number(res.tariffSettings?.petFee ?? 40).toFixed(2)}\n`;
+    reply += `• Café Adicional/Pessoa: R$ ${Number(res.tariffSettings?.breakfastFeePerson ?? 20).toFixed(2)}\n`;
 
     return { text: reply, data: res };
   }

@@ -63,7 +63,7 @@ export default function PropertySettings() {
 
   // Política Pet & Taxa de Higienização
   const [petEnabled, setPetEnabled] = useState(true)
-  const [petFeeAmount, setPetFeeAmount] = useState(80)
+  const [petFeeAmount, setPetFeeAmount] = useState(40)
   const [petFeeType, setPetFeeType] = useState("per_stay")
   const [petAllowedSpecies, setPetAllowedSpecies] = useState("Cachorros (Cães) de pequeno porte (até 10kg)")
   const [petRulesInput, setPetRulesInput] = useState(DEFAULT_OFFICIAL_PET_RULES)
@@ -113,7 +113,7 @@ export default function PropertySettings() {
       if ((settings as any).petPolicy) {
         const p = (settings as any).petPolicy
         setPetEnabled(p.enabled !== false)
-        setPetFeeAmount(p.feeAmount ?? 80)
+        setPetFeeAmount(p.feeAmount ?? 40)
         setPetFeeType(p.feeType || "per_stay")
         setPetAllowedSpecies(p.allowedSpecies || "Cachorros (Cães) de pequeno porte (até 10kg)")
         setPetRulesInput(p.rules || DEFAULT_OFFICIAL_PET_RULES)

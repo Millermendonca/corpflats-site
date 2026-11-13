@@ -941,7 +941,7 @@ function resolveAgentLivePricingQuote(db, checkin, checkout, hospedes) {
   const roomOnlyPlanCfg = siteCfg.ratePlans?.room_only || {};
   const taxaLimpezaSemCafe = roomOnlyPlanCfg.cleaningFeeEnabled === false
     ? 0.0
-    : Number(roomOnlyPlanCfg.cleaningFeeAmount ?? 70.0);
+    : Number(roomOnlyPlanCfg.cleaningFeeAmount ?? 50.0);
 
   const cardMarkupPercent = Number(
     siteCfg.pricing?.cardMarkupPercent ??

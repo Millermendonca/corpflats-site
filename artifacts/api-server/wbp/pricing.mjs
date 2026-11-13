@@ -612,8 +612,8 @@ export function resolveChannelEffectiveMarkupPct(channelMarkups = {}, channelKey
 export function calculateChannelAdjustedFees(baseFees = {}, channelMarkups = {}) {
   const normalizedBase = {
     breakfastSurchargePerGuest: round2(Number(baseFees.breakfastSurchargePerGuest ?? 20)),
-    cleaningFee: round2(Number(baseFees.cleaningFee ?? 70)),
-    petFee: round2(Number(baseFees.petFee ?? 80)),
+    cleaningFee: round2(Number(baseFees.cleaningFee ?? 50)),
+    petFee: round2(Number(baseFees.petFee ?? 40)),
     extraBedFee: round2(Number(baseFees.extraBedFee ?? 60)),
     twinFee: round2(Number(baseFees.twinFee ?? 30)),
     lateCheckoutFee: round2(Number(baseFees.lateCheckoutFee ?? 50))

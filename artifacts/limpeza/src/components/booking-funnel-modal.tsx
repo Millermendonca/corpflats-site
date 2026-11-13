@@ -1172,7 +1172,7 @@ export function BookingFunnelModal({
     description: "Hospedagem em flat completo sem café da manhã",
     ...rawRoomOnly,
     cleaningFeeEnabled: rawRoomOnly.cleaningFeeEnabled !== false,
-    cleaningFeeAmount: Number(rawRoomOnly.cleaningFeeAmount ?? 70)
+    cleaningFeeAmount: Number(rawRoomOnly.cleaningFeeAmount ?? 50)
   }
   roomOnlyConfig.dailyRate = roomOnlyAvgRate
 
@@ -1200,7 +1200,7 @@ export function BookingFunnelModal({
   const extraBedFee = extraBedCount * (siteConfig?.extraBedConfig?.feeType === "per_night" ? extraBedFeeUnit * nights : extraBedFeeUnit)
 
   // Taxa Pet
-  const petFeePerUnit = siteConfig?.petPolicy?.feeAmount ?? 80
+  const petFeePerUnit = siteConfig?.petPolicy?.feeAmount ?? 40
   const petFee = bringingPet
     ? (siteConfig?.petPolicy?.feeType === "per_night" ? petFeePerUnit * nights * petCount : petFeePerUnit * petCount)
     : 0

@@ -213,7 +213,7 @@ export const gerarLinkReservaTool: AgentToolDefinition<GerarLinkReservaArgs> = {
         const nextResId = db.reservations.length > 0
           ? Math.max(...db.reservations.map((r: any) => Number(r.id) || 0)) + 1
           : 1;
-        const cleaningFee = comCafe ? 0 : 70.0;
+        const cleaningFee = comCafe ? 0 : Number(db.siteConfig?.ratePlans?.room_only?.cleaningFeeAmount ?? 50.0);
         const netRoomTotal = Math.max(0, valorTotal - cleaningFee);
         const dailyRate = Math.round((netRoomTotal / diarias) * 100) / 100;
 
