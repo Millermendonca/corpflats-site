@@ -7637,6 +7637,20 @@ export function findReservationByPhone(db, phone) {
 }
 
 // ── Inclusão de Mensagem na Conversa do WhatsApp ───────────────────────────────
+export function isBuildingReceptionPhone(phone, db = null) {
+  const clean = cleanWhatsAppPhone(phone);
+  if (!clean) return false;
+  const configuredRaw = db?.settings?.receptionEmailFallback?.whatsappPhone || "2237040100";
+  const configuredClean = cleanWhatsAppPhone(configuredRaw) || "552237040100";
+  const last8 = clean.slice(-8);
+  return (
+    clean === "552237040100" ||
+    clean === "2237040100" ||
+    clean === configuredClean ||
+    (last8.length === 8 && (last8 === "37040100" || (configuredClean.length >= 8 && last8 === configuredClean.slice(-8))))
+  );
+}
+
 export function appendMessageToConversation(db, {
   phone,
   senderName = "",
@@ -7667,10 +7681,13 @@ export function appendMessageToConversation(db, {
   if (!cleanPhone) return null;
 
   let conv = db.whatsappConversations.find(c => c.phone === cleanPhone || c.id === cleanPhone);
+  const isReceptionBuilding = !isGroup && isBuildingReceptionPhone(cleanPhone, db);
 
-  const matchedResv = reservationCode
-    ? (db.reservations || []).find(r => r.code === reservationCode)
-    : findReservationByPhone(db, cleanPhone);
+  const matchedResv = isReceptionBuilding
+    ? null
+    : (reservationCode
+      ? (db.reservations || []).find(r => r.code === reservationCode)
+      : findReservationByPhone(db, cleanPhone));
 
   let nowIso = new Date().toISOString();
   if (timestamp !== null && timestamp !== undefined && timestamp !== "") {
@@ -7691,7 +7708,13 @@ export function appendMessageToConversation(db, {
       id: cleanPhone,
       phone: cleanPhone,
       formattedPhone: isGroup ? groupName || cleanPhone : formatPhoneDisplay(cleanPhone),
-      name: isGroup ? groupName || "Grupo WhatsApp" : (isDev ? "Miller Mendonça (Desenvolvedor)" : (matchedResv?.guestName || senderName || formatPhoneDisplay(cleanPhone))),
+      name: isGroup
+        ? groupName || "Grupo WhatsApp"
+        : isReceptionBuilding
+          ? "Recepção Promenade Soho"
+          : isDev
+            ? "Miller Mendonça (Desenvolvedor)"
+            : (matchedResv?.guestName || senderName || formatPhoneDisplay(cleanPhone)),
       avatarUrl: "",
       isGroup: Boolean(isGroup),
       groupId: groupId || null,
@@ -7699,8 +7722,8 @@ export function appendMessageToConversation(db, {
       unreadCount: fromMe ? 0 : 1,
       pinned: false,
       isDeveloper: isDev,
-      aiPaused: false,
-      aiPausedReason: null,
+      aiPaused: isReceptionBuilding ? true : false,
+      aiPausedReason: isReceptionBuilding ? "internal_building_reception" : null,
       reservationCode: matchedResv?.code || null,
       flatNumber: matchedResv?.flatNumber || "",
       checkinDate: matchedResv?.checkinDate || "",
@@ -7714,7 +7737,15 @@ export function appendMessageToConversation(db, {
     };
     db.whatsappConversations.unshift(conv);
   } else {
-    if (isDev) {
+    if (isReceptionBuilding) {
+      if (!conv.name || conv.name === conv.phone || /^ordem\s+de\s+servi[cç]o/i.test(String(conv.name))) {
+        conv.name = "Recepção Promenade Soho";
+      }
+      conv.aiPaused = true;
+      conv.aiPausedReason = conv.aiPausedReason || "internal_building_reception";
+      conv.reservationCode = null;
+      conv.flatNumber = "";
+    } else if (isDev) {
       conv.isDeveloper = true;
       conv.aiPaused = false;
       conv.aiPausedReason = null;
@@ -7722,7 +7753,7 @@ export function appendMessageToConversation(db, {
         conv.name = "Miller Mendonça (Desenvolvedor)";
       }
     }
-    if (!conv.reservationCode && matchedResv) {
+    if (!isReceptionBuilding && !conv.reservationCode && matchedResv) {
       conv.reservationCode = matchedResv.code;
       conv.flatNumber = matchedResv.flatNumber;
       conv.checkinDate = matchedResv.checkinDate;
@@ -7731,7 +7762,7 @@ export function appendMessageToConversation(db, {
       conv.paymentStatus = matchedResv.paymentStatus;
       conv.totalAmount = matchedResv.totalAmount;
     }
-    if (senderName && !fromMe && (!conv.name || conv.name === conv.phone)) {
+    if (!isReceptionBuilding && senderName && !fromMe && (!conv.name || conv.name === conv.phone)) {
       conv.name = senderName;
     }
   }
@@ -10403,16 +10434,21 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     // 5. Agente de IA para WhatsApp (Atuação Híbrida / Resposta Autônoma / Transbordo Humano / Assistente Fiscal)
     let aiProcessResult = null;
     const isSelfHotelTarget = isOwnHotelWhatsAppPhone(cleanTarget, db, req.body?.connectedPhone);
+    const isReceptionBuildingTarget = isBuildingReceptionPhone(cleanTarget, db);
     const isDevSelfTest = Boolean(
       incomingInfo.fromMe &&
       isDeveloperPhone(cleanTarget, db) &&
       !isBot &&
       !preResFromMeResult?.handled
     );
-    if (isSelfHotelTarget || (!incomingInfo.fromMe && isBot)) {
+    if (isSelfHotelTarget || isReceptionBuildingTarget || (!incomingInfo.fromMe && isBot)) {
       aiProcessResult = {
         skipped: true,
-        reason: isSelfHotelTarget ? "self_hotel_phone_loop_guard" : "bot_echo_loop_guard"
+        reason: isSelfHotelTarget
+          ? "self_hotel_phone_loop_guard"
+          : isReceptionBuildingTarget
+            ? "internal_building_reception_guard"
+            : "bot_echo_loop_guard"
       };
     } else if (npsInboundResult?.npsHandled) {
       aiProcessResult = {

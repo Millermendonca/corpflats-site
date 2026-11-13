@@ -184,7 +184,12 @@ import {
   ensureReservationAttachmentsReady,
   validateGuestEmailAddress,
   notifyGuestInvalidEmailViaWhatsApp,
-  updateGuestEmailAndResendRecentPending
+  updateGuestEmailAndResendRecentPending,
+  ensureReceptionEmailFallbackState,
+  isReceptionEmailFallbackActive,
+  dispatchRetroactiveTodayReceptionEmailsToWhatsApp,
+  getReceptionEmailFallbackStatusSummary,
+  serveReceptionFallbackAttachment
 } from "./mail-service.mjs";
 import {
   ensureWebmailCollections,
@@ -11712,6 +11717,11 @@ async function _loadDatabaseImpl() {
                   await repairIncompleteB2bReservations(db, saveDatabase).catch(err => {
                     console.warn("[B2B Auto-Repair Post-Hydration] Aviso:", err?.message || err);
                   });
+                  dispatchRetroactiveTodayReceptionEmailsToWhatsApp(db, saveDatabase, {
+                    triggerSource: "post_pg_hydration"
+                  }).catch(err => {
+                    console.warn("[ReceptionFallback Post-Hydration] Aviso:", err?.message || err);
+                  });
                   return ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase, {
                     baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br",
                     forceCheck: true
@@ -18206,6 +18216,11 @@ globalThis.__corpflatsSendZapiMessage = (phone, message, opts = {}) =>
   sendZapiMessage(db.zapiConfig, {
     phone,
     message,
+    db,
+    ...opts
+  });
+globalThis.__corpflatsSendZapiDocument = (opts = {}) =>
+  sendZapiDocument(db.zapiConfig, {
     db,
     ...opts
   });
@@ -51258,6 +51273,57 @@ app.post("/api/emails/send-manual", async (req, res) => {
   });
 
   res.json({ success: true, communication: commLog });
+});
+
+// 13. Status e Diagnóstico do Fallback de E-mails da Recepção para WhatsApp (2237040100)
+app.get("/api/emails/reception-fallback/status", (req, res) => {
+  res.json(getReceptionEmailFallbackStatusSummary(db));
+});
+
+// 14. Configurar Modo do Fallback WhatsApp da Recepção (active | auto | disabled)
+app.post("/api/emails/reception-fallback/config", (req, res) => {
+  const cfg = ensureReceptionEmailFallbackState(db);
+  const { enabled, mode, autoDetect, autoWindowHours, whatsappPhone } = req.body || {};
+  if (enabled !== undefined) {
+    cfg.enabled = Boolean(enabled);
+    if (!cfg.enabled) cfg.mode = "disabled";
+    else if (cfg.mode === "disabled") cfg.mode = "active";
+  }
+  if (mode && ["active", "auto", "disabled"].includes(mode)) {
+    cfg.mode = mode;
+    cfg.enabled = mode !== "disabled";
+  }
+  if (autoDetect !== undefined) cfg.autoDetect = Boolean(autoDetect);
+  if (autoWindowHours !== undefined && Number(autoWindowHours) > 0) {
+    cfg.autoWindowHours = Number(autoWindowHours);
+  }
+  if (whatsappPhone !== undefined && String(whatsappPhone).replace(/\D/g, "")) {
+    cfg.whatsappPhone = String(whatsappPhone).trim();
+  }
+  saveDatabase("reception_fallback_config_update");
+  res.json({ ok: true, summary: getReceptionEmailFallbackStatusSummary(db) });
+});
+
+// 15. Disparo Retroativo Sob Demanda (APENAS e-mails da recepção de HOJE em diante — nada de ontem)
+app.post("/api/emails/reception-fallback/sync-today", async (req, res) => {
+  try {
+    const force = req.body?.force !== false;
+    const result = await dispatchRetroactiveTodayReceptionEmailsToWhatsApp(db, saveDatabase, {
+      force,
+      triggerSource: "manual_api_sync_today"
+    });
+    res.json({
+      ...result,
+      summary: getReceptionEmailFallbackStatusSummary(db)
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// 16. Servir Anexo do Fallback da Recepção para Visualização/Download na Conversa do WhatsApp Chat
+app.get("/api/emails/reception-fallback/attachment/:commId/:attIndex/:fileName?", async (req, res) => {
+  return serveReceptionFallbackAttachment(db, req, res);
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -86236,6 +86302,9 @@ const httpServer = app.listen(PORT, "0.0.0.0", () => {
         })
           .then(async () => {
             await repairIncompleteB2bReservations(db, saveDatabase).catch(() => {});
+            dispatchRetroactiveTodayReceptionEmailsToWhatsApp(db, saveDatabase, {
+              triggerSource: "post_boot_local"
+            }).catch(() => {});
             return ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase, {
               baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br",
               forceCheck: true
@@ -86259,11 +86328,18 @@ const httpServer = app.listen(PORT, "0.0.0.0", () => {
       }, 60000);
     }, 25000);
 
-    // Sincronização periódica de segurança da Caixa de Entrada Zoho (captura vouchers B2B caso webhook oscile)
+    // Sincronização periódica de segurança da Caixa de Entrada Zoho (captura vouchers B2B e DSNs da Recepção)
     setTimeout(() => {
       setInterval(() => {
         if (pgPool && !pgHydratedSuccessfully) return;
         syncZohoMessagesToCache(db, { folder: "inbox", limit: 30, saveDatabase })
+          .then(() => {
+            if (isReceptionEmailFallbackActive(db)) {
+              return dispatchRetroactiveTodayReceptionEmailsToWhatsApp(db, saveDatabase, {
+                triggerSource: "periodic_safety_sweep"
+              }).catch(() => {});
+            }
+          })
           .then(() => repairIncompleteB2bReservations(db, saveDatabase))
           .then(() =>
             ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase, {

@@ -2097,6 +2097,22 @@ export function sendEmailAsync({
           });
         } catch (_) {}
       }
+
+      if (isEmailAddressedToReception(logEntry, db) && isReceptionEmailFallbackActive(db)) {
+        try {
+          await forwardReceptionEmailToWhatsApp({
+            db,
+            saveDatabase,
+            comm: logEntry,
+            rawAttachments: attachments,
+            isRetroactive: false,
+            triggerSource: "live_active_fallback",
+            overrides
+          });
+        } catch (fbErr) {
+          console.warn("[ReceptionFallback] Aviso ao encaminhar e-mail da recepção via WhatsApp:", fbErr?.message || fbErr);
+        }
+      }
     } catch (err) {
       logEntry.status = "failed";
       logEntry.metadata.error = err.message || String(err);
@@ -2112,6 +2128,34 @@ export function sendEmailAsync({
             communicationId: logEntry.id
           });
         } catch (_) {}
+      }
+
+      if (isEmailAddressedToReception(logEntry, db)) {
+        try {
+          recordReceptionEmailDeliveryIssue(db, saveDatabase, {
+            source: "smtp_error",
+            reason: err.message || String(err),
+            subject: logEntry.subject,
+            recipient: logEntry.recipient
+          });
+          if (ensureReceptionEmailFallbackState(db).enabled !== false) {
+            await forwardReceptionEmailToWhatsApp({
+              db,
+              saveDatabase,
+              comm: logEntry,
+              rawAttachments: attachments,
+              isRetroactive: false,
+              triggerSource: "smtp_failure_fallback",
+              overrides
+            });
+            dispatchRetroactiveTodayReceptionEmailsToWhatsApp(db, saveDatabase, {
+              triggerSource: "smtp_error_auto_sweep",
+              overrides
+            }).catch(() => {});
+          }
+        } catch (recFbErr) {
+          console.warn("[ReceptionFallback] Erro no fallback automático após falha SMTP:", recFbErr?.message || recFbErr);
+        }
       }
       // Se a rejeição SMTP indicar endereço/domínio de destinatário inexistente em e-mail de hóspede, avisa via WhatsApp
       const normRecip = String(recipient || "").trim().toLowerCase();
@@ -2170,6 +2214,7 @@ export async function resendEmailAsync({ db, saveDatabase, communicationId }) {
   comm.metadata.lastRetryAt = new Date().toISOString();
   if (typeof saveDatabase === "function") saveDatabase();
 
+  let resolvedResendAttachments = [];
   try {
     const config = getSmtpConfig(db);
     if (!config.user || !config.pass) {
@@ -2180,6 +2225,7 @@ export async function resendEmailAsync({ db, saveDatabase, communicationId }) {
     const mailOptions = {
       from: `"${config.fromName}" <${config.fromEmail}>`,
       to: comm.recipient,
+      ...(comm.cc || comm.metadata?.cc ? { cc: comm.cc || comm.metadata?.cc } : {}),
       subject: comm.subject,
       html: comm.body
     };
@@ -2188,8 +2234,11 @@ export async function resendEmailAsync({ db, saveDatabase, communicationId }) {
     if (comm.reservation_id && String(comm.reservation_id) !== "0") {
       const resItem = (db?.reservations || []).find(r => String(r.id) === String(comm.reservation_id) || r.code === comm.reservation_id);
       if (resItem) {
-        const atts = resolveReservationAttachments({ reservation: resItem, db });
+        const atts = await ensureReservationAttachmentsReady({ reservation: resItem, db }).catch(() =>
+          resolveReservationAttachments({ reservation: resItem, db })
+        );
         if (Array.isArray(atts) && atts.length > 0) {
+          resolvedResendAttachments = atts;
           mailOptions.attachments = atts;
         }
       }
@@ -2200,12 +2249,40 @@ export async function resendEmailAsync({ db, saveDatabase, communicationId }) {
     comm.metadata.messageId = info.messageId;
     comm.metadata.sentAt = new Date().toISOString();
     delete comm.metadata.error;
+    if (isEmailAddressedToReception(comm, db) && isReceptionEmailFallbackActive(db)) {
+      await forwardReceptionEmailToWhatsApp({
+        db,
+        saveDatabase,
+        comm,
+        rawAttachments: resolvedResendAttachments,
+        isRetroactive: false,
+        triggerSource: "resend_active_fallback"
+      }).catch(() => {});
+    }
     if (typeof saveDatabase === "function") saveDatabase();
     return { ok: true, message: "E-mail reenviado com sucesso!" };
   } catch (err) {
     comm.status = "failed";
     comm.metadata.error = err.message;
     comm.metadata.failedAt = new Date().toISOString();
+    if (isEmailAddressedToReception(comm, db)) {
+      recordReceptionEmailDeliveryIssue(db, saveDatabase, {
+        source: "smtp_resend_error",
+        reason: err.message || String(err),
+        subject: comm.subject,
+        recipient: comm.recipient
+      });
+      if (ensureReceptionEmailFallbackState(db).enabled !== false) {
+        await forwardReceptionEmailToWhatsApp({
+          db,
+          saveDatabase,
+          comm,
+          rawAttachments: resolvedResendAttachments,
+          isRetroactive: false,
+          triggerSource: "resend_smtp_failure_fallback"
+        }).catch(() => {});
+      }
+    }
     if (typeof saveDatabase === "function") saveDatabase();
     return { ok: false, error: err.message };
   }
@@ -3998,5 +4075,983 @@ export function reconcileFalsePositiveEmailAlerts(db, saveDatabase = null) {
   }
   return { reconciled };
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// MOTOR DE FALLBACK AUTOMÁTICO DE E-MAILS DA RECEPÇÃO PARA WHATSAPP (2237040100)
+// ═════════════════════════════════════════════════════════════════════════════
+
+const RECEPTION_FALLBACK_DEFAULT_PHONE = "2237040100";
+const RECEPTION_FALLBACK_HARD_MIN_DATE_BR = "2026-11-13";
+const inFlightReceptionFallbackIds = new Set();
+let retroactiveReceptionSweepPromise = null;
+let lastReceptionFallbackPanelAlertMs = 0;
+
+function normalizeBrazilWhatsAppPhone(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if ((digits.length === 10 || digits.length === 11) && !digits.startsWith("55")) {
+    return `55${digits}`;
+  }
+  return digits;
+}
+
+export function ensureReceptionEmailFallbackState(db) {
+  if (!db || typeof db !== "object") {
+    return {
+      enabled: true,
+      mode: "active",
+      autoDetect: true,
+      autoWindowHours: 24,
+      whatsappPhone: RECEPTION_FALLBACK_DEFAULT_PHONE,
+      minDateBrasilia: RECEPTION_FALLBACK_HARD_MIN_DATE_BR,
+      autoActiveUntil: null,
+      lastIssueDetectedAt: null,
+      lastIssueSource: null,
+      lastIssueReason: null,
+      totalForwardedCount: 0,
+      lastForwardedAt: null
+    };
+  }
+  if (!db.settings || typeof db.settings !== "object") {
+    db.settings = {};
+  }
+  if (!db.settings.receptionEmailFallback || typeof db.settings.receptionEmailFallback !== "object") {
+    db.settings.receptionEmailFallback = {};
+  }
+  const cfg = db.settings.receptionEmailFallback;
+  if (cfg.enabled === undefined) cfg.enabled = true;
+  if (!cfg.mode || !["active", "auto", "disabled"].includes(cfg.mode)) {
+    cfg.mode = cfg.enabled === false ? "disabled" : "active";
+  }
+  if (cfg.autoDetect === undefined) cfg.autoDetect = true;
+  if (!Number(cfg.autoWindowHours) || Number(cfg.autoWindowHours) <= 0) cfg.autoWindowHours = 24;
+  if (!cfg.whatsappPhone || !String(cfg.whatsappPhone).replace(/\D/g, "")) {
+    cfg.whatsappPhone = RECEPTION_FALLBACK_DEFAULT_PHONE;
+  }
+  cfg.minDateBrasilia = RECEPTION_FALLBACK_HARD_MIN_DATE_BR;
+  if (cfg.autoActiveUntil === undefined) cfg.autoActiveUntil = null;
+  if (cfg.lastIssueDetectedAt === undefined) cfg.lastIssueDetectedAt = null;
+  if (cfg.lastIssueSource === undefined) cfg.lastIssueSource = null;
+  if (cfg.lastIssueReason === undefined) cfg.lastIssueReason = null;
+  if (typeof cfg.totalForwardedCount !== "number") cfg.totalForwardedCount = 0;
+  if (cfg.lastForwardedAt === undefined) cfg.lastForwardedAt = null;
+
+  if (!Array.isArray(db.receptionWhatsappFallbackSentIds)) {
+    db.receptionWhatsappFallbackSentIds = [];
+  }
+  return cfg;
+}
+
+export function isReceptionEmailFallbackActive(db) {
+  const cfg = ensureReceptionEmailFallbackState(db);
+  if (cfg.enabled === false || cfg.mode === "disabled") return false;
+  if (cfg.mode === "active") return true;
+  if (cfg.autoActiveUntil) {
+    const expMs = new Date(cfg.autoActiveUntil).getTime();
+    if (!Number.isNaN(expMs) && expMs > Date.now()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function getReceptionEmailAddresses(db) {
+  const set = new Set(["soho@promenade.com.br"]);
+  const configured = String(db?.settings?.receptionEmail || "").trim().toLowerCase();
+  if (configured && configured.includes("@")) set.add(configured);
+  if (Array.isArray(db?.flats)) {
+    for (const f of db.flats) {
+      const fRec = String(f?.receptionEmail || "").trim().toLowerCase();
+      if (fRec && fRec.includes("@")) set.add(fRec);
+    }
+  }
+  return set;
+}
+
+function extractEmailListLower(raw) {
+  if (!raw) return [];
+  const items = Array.isArray(raw) ? raw : String(raw).split(/[,;]/);
+  const out = [];
+  for (const item of items) {
+    const str = String(item || "").trim();
+    if (!str) continue;
+    const angle = str.match(/<([^>]+)>/);
+    const addr = (angle ? angle[1] : str).trim().toLowerCase();
+    if (addr && addr.includes("@")) out.push(addr);
+  }
+  return out;
+}
+
+export function isEmailAddressedToReception(commOrParams, db = null) {
+  if (!commOrParams || typeof commOrParams !== "object") return false;
+  if (commOrParams.type && commOrParams.type !== "email") return false;
+  if (commOrParams.direction === "inbound") return false;
+  const trigger = String(commOrParams.metadata?.trigger || commOrParams.trigger || "").trim();
+  if (trigger === "pre_checkin_completed") return false;
+
+  const receptionAddrs = getReceptionEmailAddresses(db);
+  const allRecipients = [
+    ...extractEmailListLower(commOrParams.recipient || commOrParams.to),
+    ...extractEmailListLower(commOrParams.cc || commOrParams.metadata?.cc),
+    ...extractEmailListLower(commOrParams.bcc || commOrParams.metadata?.bcc)
+  ];
+  return allRecipients.some(addr => receptionAddrs.has(addr));
+}
+
+export function getCommBrasiliaDateStr(commOrIso) {
+  const raw =
+    typeof commOrIso === "string" || commOrIso instanceof Date
+      ? commOrIso
+      : (commOrIso?.created_at || commOrIso?.createdAt || commOrIso?.metadata?.sentAt || commOrIso?.metadata?.queuedAt || "");
+  if (!raw) return "";
+  const d = raw instanceof Date ? raw : new Date(raw);
+  if (Number.isNaN(d.getTime())) return "";
+  return toBrasiliaDateStr(d);
+}
+
+function formatBrasiliaDateTimeDisplay(isoOrDate) {
+  const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate || Date.now());
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(d);
+}
+
+export function recordReceptionEmailDeliveryIssue(db, saveDatabase, {
+  source = "email_issue",
+  reason = "",
+  subject = "",
+  recipient = ""
+} = {}) {
+  if (!db) return null;
+  const cfg = ensureReceptionEmailFallbackState(db);
+  const nowIso = new Date().toISOString();
+  const windowHours = Math.max(1, Number(cfg.autoWindowHours) || 24);
+
+  cfg.lastIssueDetectedAt = nowIso;
+  cfg.lastIssueSource = source;
+  cfg.lastIssueReason = String(reason || "Falha/atraso na entrega de e-mail para a recepção").slice(0, 500);
+
+  if (cfg.autoDetect !== false && cfg.enabled !== false) {
+    cfg.autoActiveUntil = new Date(Date.now() + windowHours * 3600 * 1000).toISOString();
+    if (cfg.mode === "disabled") {
+      // Respeita desligamento manual explícito quando enabled === false, mas se enabled === true ativa modo auto
+      cfg.mode = "auto";
+    }
+  }
+
+  const nowMs = Date.now();
+  const notifyFn = globalThis.__corpflatsCreateNotification;
+  if (typeof notifyFn === "function" && nowMs - lastReceptionFallbackPanelAlertMs > 30 * 60 * 1000) {
+    lastReceptionFallbackPanelAlertMs = nowMs;
+    try {
+      notifyFn({
+        category: "email",
+        title: "📲 Fallback WhatsApp Recepção Ativado",
+        message: `Detectada instabilidade no e-mail da recepção (${recipient || "soho@promenade.com.br"}: ${cfg.lastIssueReason.slice(0, 120)}). E-mails de hoje estão sendo encaminhados para o WhatsApp ${cfg.whatsappPhone}.`,
+        severity: "warning",
+        targetUrl: "/whatsapp-chat?phone=552237040100",
+        link: "/whatsapp-chat?phone=552237040100",
+        metadata: {
+          source,
+          reason: cfg.lastIssueReason,
+          subject,
+          whatsappPhone: cfg.whatsappPhone
+        }
+      });
+    } catch (_) {}
+  }
+
+  if (typeof saveDatabase === "function") {
+    saveDatabase("reception_email_issue_detected");
+  }
+  return cfg;
+}
+
+function decodeHtmlEntitiesBasic(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&bull;/gi, "•")
+    .replace(/&mdash;/gi, "—")
+    .replace(/&ndash;/gi, "–")
+    .replace(/&rarr;/gi, "→")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&amp;/gi, "&")
+    .replace(/&#(\d+);/g, (_, code) => {
+      const n = Number(code);
+      return Number.isFinite(n) ? String.fromCodePoint(n) : "";
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => {
+      const n = parseInt(hex, 16);
+      return Number.isFinite(n) ? String.fromCodePoint(n) : "";
+    });
+}
+
+function htmlToStructuredReceptionWhatsAppBody(html = "", fallbackText = "") {
+  const source = String(html || "").trim();
+  if (!source) {
+    return String(fallbackText || "").trim();
+  }
+
+  let s = source
+    .replace(/<head[\s\S]*?<\/head>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<div[^>]*class=["'][^"']*header[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, "")
+    .replace(/<div[^>]*class=["'][^"']*footer[^"']*["'][^>]*>[\s\S]*$/gi, "");
+
+  // Preserva links operacionais úteis (Terminal da Portaria, Check-in Digital, Verificação FNRH)
+  s = s.replace(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_, href, inner) => {
+    const cleanHref = decodeHtmlEntitiesBasic(String(href || "").trim());
+    const cleanInner = decodeHtmlEntitiesBasic(String(inner || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+    if (!cleanHref || cleanHref.startsWith("mailto:") || cleanHref.startsWith("tel:") || cleanHref.startsWith("#")) {
+      return cleanInner;
+    }
+    if (/\/(portaria|pre-checkin|verificar-ficha|credenciamento|servico)/i.test(cleanHref)) {
+      if (cleanInner && !cleanInner.includes(cleanHref)) {
+        return `\n🔗 *${cleanInner}:* ${cleanHref}\n`;
+      }
+      return `\n🔗 ${cleanHref}\n`;
+    }
+    return cleanInner || cleanHref;
+  });
+
+  // Tachado (ex: Flat anterior em alterações de reserva)
+  s = s.replace(/<span\b[^>]*line-through[^>]*>([\s\S]*?)<\/span>/gi, (_, inner) => {
+    const clean = String(inner || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    return clean ? `~${clean}~` : "";
+  });
+  s = s.replace(/<(?:s|strike|del)\b[^>]*>([\s\S]*?)<\/(?:s|strike|del)>/gi, (_, inner) => {
+    const clean = String(inner || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    return clean ? `~${clean}~` : "";
+  });
+
+  // Negrito
+  s = s.replace(/<(?:strong|b)\b[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi, (_, inner) => {
+    const clean = String(inner || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    return clean ? `*${clean}*` : "";
+  });
+
+  // Tabelas chave-valor de 2 colunas (Apartamento, Código, Datas, Placa, etc.)
+  s = s.replace(/<tr\b[^>]*>\s*<td\b[^>]*>([\s\S]*?)<\/td>\s*<td\b[^>]*>([\s\S]*?)<\/td>\s*<\/tr>/gi, (_, col1, col2) => {
+    const k = decodeHtmlEntitiesBasic(String(col1 || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+    const v = decodeHtmlEntitiesBasic(String(col2 || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+    if (!k && !v) return "";
+    if (!k) return `\n${v}\n`;
+    const cleanKey = k.replace(/^\*+|\*+$/g, "").replace(/:$/, "").trim();
+    return `\n• *${cleanKey}:* ${v}\n`;
+  });
+
+  // Quebras de bloco e listas
+  s = s
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<li\b[^>]*>/gi, "\n• ")
+    .replace(/<\/(?:p|div|li|tr|h1|h2|h3|h4|h5|h6|table|ul|ol|section)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ");
+
+  s = decodeHtmlEntitiesBasic(s);
+
+  // Remove rodapé automático residual caso não estivesse na class="footer"
+  s = s.replace(/Mensagem autom[aá]tica enviada pelo sistema de gest[aã]o[\s\S]*$/i, "");
+
+  const lines = s
+    .split(/\r?\n/)
+    .map(line =>
+      line
+        .replace(/[ \t]+/g, " ")
+        .replace(/\*{2,}/g, "*")
+        .replace(/^•\s*•\s*/, "• ")
+        .trim()
+    );
+
+  const compacted = [];
+  for (const line of lines) {
+    if (!line) {
+      if (compacted.length > 0 && compacted[compacted.length - 1] !== "") {
+        compacted.push("");
+      }
+      continue;
+    }
+    // Ignora cabeçalho institucional repetitivo no topo do template
+    if (compacted.length <= 2 && /^(corpflats|gest[aã]o de hospedagens|informativo operacional)$/i.test(line.replace(/\*/g, "").trim())) {
+      continue;
+    }
+    compacted.push(line);
+  }
+
+  return compacted.join("\n").trim();
+}
+
+export function formatReceptionEmailForWhatsApp({
+  comm,
+  reservation = null,
+  attachmentCount = 0,
+  isRetroactive = false
+} = {}) {
+  const subject = String(comm?.subject || "Informativo Operacional Recepção").trim();
+  const createdIso = comm?.created_at || comm?.createdAt || comm?.metadata?.sentAt || new Date().toISOString();
+  const sentTimeBr = formatBrasiliaDateTimeDisplay(createdIso);
+  const ccRaw = String(comm?.cc || comm?.metadata?.cc || "").toLowerCase();
+  const ccHasGarage = ccRaw.includes("pfbestacionamentos") || Boolean(comm?.metadata?.garageEmail && ccRaw.includes(String(comm.metadata.garageEmail).toLowerCase()));
+
+  let bodyFormatted = htmlToStructuredReceptionWhatsAppBody(comm?.body || comm?.bodyHtml || "", comm?.bodyText || "");
+  if (!bodyFormatted && reservation) {
+    const flatNum = reservation.flatNumber || comm?.metadata?.flatNumber || "S/N";
+    const guestName = reservation.guestName || comm?.metadata?.guestName || "Hóspede";
+    bodyFormatted = `• *Apartamento:* Flat ${flatNum}\n• *Hóspede:* ${guestName}\n• *Reserva:* #${reservation.code || reservation.id}`;
+  }
+
+  if (bodyFormatted.length > 3300) {
+    bodyFormatted = `${bodyFormatted.slice(0, 3290).trim()}…`;
+  }
+
+  const headerLines = [
+    "📧➡️📲 *[E-MAIL RECEPÇÃO • FALLBACK WHATSAPP]*",
+    `📌 *Assunto:* ${subject}`,
+    `🕒 *Envio original:* ${sentTimeBr}${isRetroactive ? " _(reenvio de contingência — hoje)_" : ""}`
+  ];
+  if (ccHasGarage) {
+    headerLines.push("🅿️ _Cópia enviada também à Garagem (PFB)_");
+  }
+  headerLines.push("────────────────────");
+
+  const parts = [headerLines.join("\n"), bodyFormatted];
+  if (attachmentCount > 0) {
+    parts.push(`────────────────────\n📎 *${attachmentCount} anexo(s)* enviado(s) logo abaixo nesta conversa.`);
+  }
+
+  return parts.filter(Boolean).join("\n").trim();
+}
+
+function findReservationForComm(db, comm) {
+  if (!db || !comm) return null;
+  const reservations = Array.isArray(db.reservations) ? db.reservations : [];
+  const rawResId = String(comm.reservation_id || comm.reservationCode || comm.metadata?.reservationCode || "").trim();
+  if (rawResId && rawResId !== "0" && rawResId !== "MANUAL") {
+    const upper = rawResId.toUpperCase();
+    const direct = reservations.find(
+      r => r && (String(r.id) === rawResId || String(r.code || "").trim().toUpperCase() === upper)
+    );
+    if (direct) return direct;
+  }
+  // Fallback por assunto + data de hoje se reservation_id estiver ausente
+  const metaFlat = String(comm.metadata?.flatNumber || "").replace(/^flat\s*/i, "").trim();
+  const metaGuest = String(comm.metadata?.guestName || "").trim().toLowerCase();
+  if (metaFlat && metaGuest) {
+    const candidates = reservations.filter(r => {
+      if (!r) return false;
+      const rFlat = String(r.flatNumber || "").replace(/^flat\s*/i, "").trim();
+      const rGuest = String(r.guestName || "").trim().toLowerCase();
+      return rFlat === metaFlat && (rGuest === metaGuest || rGuest.includes(metaGuest) || metaGuest.includes(rGuest));
+    });
+    if (candidates.length === 1) return candidates[0];
+  }
+  return null;
+}
+
+function inferAttachmentMimeAndExt(filename = "", contentType = "", buf = null) {
+  const cleanContent = String(contentType || "").split(";")[0].trim().toLowerCase();
+  const extFromName = String(filename || "").includes(".")
+    ? String(filename).split(".").pop().toLowerCase().replace(/[^a-z0-9]/g, "")
+    : "";
+
+  if (Buffer.isBuffer(buf) && buf.length >= 4) {
+    if (buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46) {
+      return { ext: "pdf", mime: "application/pdf" };
+    }
+    if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+      return { ext: "jpg", mime: "image/jpeg" };
+    }
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+      return { ext: "png", mime: "image/png" };
+    }
+    if (
+      buf.length >= 12 &&
+      buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+      buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
+    ) {
+      return { ext: "webp", mime: "image/webp" };
+    }
+  }
+
+  const mimeToExt = {
+    "application/pdf": "pdf",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "application/msword": "doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx"
+  };
+  const extToMime = {
+    pdf: "application/pdf",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    png: "image/png",
+    webp: "image/webp",
+    gif: "image/gif",
+    doc: "application/msword",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  };
+
+  if (cleanContent && mimeToExt[cleanContent]) {
+    return { ext: extFromName && extToMime[extFromName] ? extFromName : mimeToExt[cleanContent], mime: cleanContent };
+  }
+  if (extFromName && extToMime[extFromName]) {
+    return { ext: extFromName, mime: extToMime[extFromName] };
+  }
+  return { ext: extFromName || "pdf", mime: cleanContent || "application/pdf" };
+}
+
+async function materializeSingleAttachment(att, commId, index) {
+  if (!att) return null;
+  let buf = null;
+  let remoteUrl = null;
+  let detectedContentType = att.contentType || "";
+
+  if (Buffer.isBuffer(att.content)) {
+    buf = att.content;
+  } else if (typeof att.content === "string" && att.content.trim()) {
+    const raw = att.content.trim();
+    const dataMatch = raw.match(/^data:([^;]+);base64,(.+)$/i);
+    if (dataMatch) {
+      detectedContentType = detectedContentType || dataMatch[1];
+      buf = Buffer.from(dataMatch[2], "base64");
+    } else {
+      buf = Buffer.from(raw, att.encoding || "base64");
+    }
+  } else if (typeof att.path === "string" && att.path.trim()) {
+    const p = att.path.trim();
+    const dataMatch = p.match(/^data:([^;]+);base64,(.+)$/i);
+    if (dataMatch) {
+      detectedContentType = detectedContentType || dataMatch[1];
+      buf = Buffer.from(dataMatch[2], "base64");
+    } else if (/^https?:\/\//i.test(p)) {
+      remoteUrl = p;
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15000);
+        const resp = await fetch(p, { signal: controller.signal });
+        clearTimeout(timer);
+        if (resp.ok) {
+          detectedContentType = detectedContentType || resp.headers.get("content-type") || "";
+          const ab = await resp.arrayBuffer();
+          buf = Buffer.from(ab);
+        }
+      } catch (fetchErr) {
+        console.warn(`[ReceptionFallback] Aviso ao baixar anexo remoto (${p}):`, fetchErr?.message || fetchErr);
+      }
+    } else {
+      let diskCandidate = p;
+      if (p.startsWith("/api/storage/files/")) {
+        diskCandidate = path.join(__dirname, "uploads", p.replace(/^\/api\/storage\/files\//, ""));
+      } else if (p.startsWith("/storage/files/")) {
+        diskCandidate = path.join(__dirname, "uploads", p.replace(/^\/storage\/files\//, ""));
+      }
+      if (fs.existsSync(diskCandidate)) {
+        try {
+          buf = fs.readFileSync(diskCandidate);
+        } catch (readErr) {
+          console.warn(`[ReceptionFallback] Aviso ao ler anexo local (${diskCandidate}):`, readErr?.message || readErr);
+        }
+      }
+    }
+  }
+
+  if ((!buf || buf.length === 0) && !remoteUrl) {
+    return null;
+  }
+
+  const rawName = String(att.filename || att.name || `Anexo_${index + 1}`).trim();
+  const { ext, mime } = inferAttachmentMimeAndExt(rawName, detectedContentType, buf);
+  const baseWithoutExt = rawName.replace(/\.[a-z0-9]{2,5}$/i, "").replace(/[^\w\-.À-ÿ ()]/g, "_").trim() || `Anexo_${index + 1}`;
+  const finalFileName = `${baseWithoutExt}.${ext}`;
+
+  let diskRelPath = null;
+  if (buf && buf.length > 0) {
+    try {
+      const relDir = "reception-fallback";
+      const targetDir = path.join(__dirname, "uploads", relDir);
+      fs.mkdirSync(targetDir, { recursive: true });
+      const safeDiskFile = `${String(commId).replace(/[^a-zA-Z0-9_-]/g, "")}_${index}_${finalFileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+      const absTarget = path.join(targetDir, safeDiskFile);
+      fs.writeFileSync(absTarget, buf);
+      diskRelPath = `${relDir}/${safeDiskFile}`;
+    } catch (writeErr) {
+      console.warn("[ReceptionFallback] Aviso ao persistir cópia local do anexo:", writeErr?.message || writeErr);
+    }
+  }
+
+  const base64DataUri = buf && buf.length > 0 ? `data:${mime};base64,${buf.toString("base64")}` : null;
+  const chatMediaUrl = `/api/emails/reception-fallback/attachment/${encodeURIComponent(String(commId))}/${index}/${encodeURIComponent(finalFileName)}`;
+
+  return {
+    fileName: finalFileName,
+    mimeType: mime,
+    extension: ext,
+    base64DataUri,
+    remoteUrl,
+    diskRelPath,
+    chatMediaUrl,
+    sizeBytes: buf ? buf.length : 0
+  };
+}
+
+function hasCommBeenForwardedToReceptionWhatsApp(db, comm) {
+  if (!comm) return false;
+  if (comm.metadata?.whatsappFallbackSent === true || comm.metadata?.whatsappFallbackSentAt) {
+    return true;
+  }
+  const sentList = Array.isArray(db?.receptionWhatsappFallbackSentIds) ? db.receptionWhatsappFallbackSentIds : [];
+  return sentList.some(item => (typeof item === "string" ? item === comm.id : item?.commId === comm.id));
+}
+
+export async function forwardReceptionEmailToWhatsApp({
+  db,
+  saveDatabase = null,
+  comm,
+  rawAttachments = [],
+  reservation = null,
+  isRetroactive = false,
+  triggerSource = "live",
+  allowResend = false,
+  todayBrOverride = "",
+  overrides = {}
+} = {}) {
+  if (!db || !comm || !comm.id) {
+    return { forwarded: false, reason: "invalid_comm" };
+  }
+  if (!isEmailAddressedToReception(comm, db)) {
+    return { forwarded: false, reason: "not_addressed_to_reception" };
+  }
+
+  const commBrDate = getCommBrasiliaDateStr(comm);
+  const todayBr = todayBrOverride || getBrasiliaTodayStr();
+  const createdMs = new Date(comm.created_at || comm.createdAt || comm.metadata?.sentAt || 0).getTime() || 0;
+
+  // TRAVA ABSOLUTA DE DATA: NUNCA enviar nada anterior a 2026-11-13 nem de dias anteriores ("nada de ontem")
+  if (!commBrDate || commBrDate < RECEPTION_FALLBACK_HARD_MIN_DATE_BR) {
+    return { forwarded: false, skipped: true, reason: "before_hard_min_date", commBrDate, todayBr };
+  }
+  if (isRetroactive && commBrDate < todayBr) {
+    return { forwarded: false, skipped: true, reason: "before_today_retroactive_cutoff", commBrDate, todayBr };
+  }
+  if (!isRetroactive && !allowResend && commBrDate < todayBr && (Date.now() - createdMs > 15 * 60 * 1000)) {
+    return { forwarded: false, skipped: true, reason: "stale_previous_day_email", commBrDate, todayBr };
+  }
+
+  if (!allowResend && hasCommBeenForwardedToReceptionWhatsApp(db, comm)) {
+    return { forwarded: false, skipped: true, reason: "already_forwarded" };
+  }
+  if (inFlightReceptionFallbackIds.has(comm.id)) {
+    return { forwarded: false, skipped: true, reason: "in_flight" };
+  }
+
+  const cfg = ensureReceptionEmailFallbackState(db);
+  const cleanPhone = normalizeBrazilWhatsAppPhone(cfg.whatsappPhone || RECEPTION_FALLBACK_DEFAULT_PHONE);
+  if (!cleanPhone) {
+    return { forwarded: false, reason: "missing_reception_whatsapp_phone" };
+  }
+
+  const sendZapiFn = overrides?.sendZapiMessageFn || globalThis.__corpflatsSendZapiMessage;
+  const sendZapiDocFn = overrides?.sendZapiDocumentFn || globalThis.__corpflatsSendZapiDocument;
+  const appendConvFn = overrides?.appendMessageToConversationFn || globalThis.__corpflatsAppendMessageToConversation;
+
+  if (typeof sendZapiFn !== "function") {
+    return { forwarded: false, reason: "zapi_sender_unavailable" };
+  }
+
+  inFlightReceptionFallbackIds.add(comm.id);
+  try {
+    const matchedRes = reservation || findReservationForComm(db, comm);
+    let candidateAttachments = Array.isArray(rawAttachments) ? [...rawAttachments] : [];
+
+    const commExpectedAttachments = Boolean(
+      comm.metadata?.hasAttachments ||
+      Number(comm.metadata?.attachmentsCount || 0) > 0 ||
+      comm.metadata?.hasPdfAttached ||
+      comm.metadata?.hasDocumentAttached
+    );
+
+    if (candidateAttachments.length === 0 && commExpectedAttachments && matchedRes) {
+      try {
+        const readyAtts = await ensureReservationAttachmentsReady({ reservation: matchedRes, db });
+        if (Array.isArray(readyAtts) && readyAtts.length > 0) {
+          candidateAttachments = readyAtts;
+        }
+      } catch (_) {
+        try {
+          const syncAtts = resolveReservationAttachments({ reservation: matchedRes, db });
+          if (Array.isArray(syncAtts) && syncAtts.length > 0) {
+            candidateAttachments = syncAtts;
+          }
+        } catch (__) {}
+      }
+    }
+
+    const materializedAttachments = [];
+    for (let i = 0; i < candidateAttachments.length; i++) {
+      const mat = await materializeSingleAttachment(candidateAttachments[i], comm.id, i);
+      if (mat) materializedAttachments.push(mat);
+    }
+
+    const formattedText = formatReceptionEmailForWhatsApp({
+      comm,
+      reservation: matchedRes,
+      attachmentCount: materializedAttachments.length,
+      isRetroactive
+    });
+
+    const textSendRes = await sendZapiFn(cleanPhone, formattedText, {
+      bypassTestMode: true,
+      recipientRole: "reception",
+      channelId: "reception",
+      triggerEvent: "reception_email_fallback"
+    });
+
+    if (!textSendRes || !textSendRes.success) {
+      return {
+        forwarded: false,
+        reason: "zapi_text_send_failed",
+        error: textSendRes?.error || "Falha ao enviar texto via Z-API"
+      };
+    }
+
+    const nowIso = new Date().toISOString();
+    const textMsgId = textSendRes.messageId || `rec_fb_txt_${comm.id}_${Date.now()}`;
+
+    if (typeof appendConvFn === "function") {
+      try {
+        appendConvFn({
+          phone: cleanPhone,
+          senderName: "CorpFlats",
+          fromMe: true,
+          text: formattedText,
+          type: "text",
+          triggerEvent: "reception_email_fallback",
+          status: "delivered",
+          timestamp: nowIso,
+          messageId: textMsgId
+        });
+      } catch (_) {}
+    }
+
+    const attachmentResults = [];
+    const attachmentSpacingMs = overrides?.attachmentDelayMs !== undefined ? Number(overrides.attachmentDelayMs) : 550;
+    const flatLabel = matchedRes?.flatNumber || comm?.metadata?.flatNumber
+      ? `Flat ${String(matchedRes?.flatNumber || comm?.metadata?.flatNumber).replace(/^flat\s*/i, "").trim()}`
+      : "";
+    const guestLabel = matchedRes?.guestName || comm?.metadata?.guestName || "";
+    const contextSuffix = [flatLabel, guestLabel].filter(Boolean).join(" • ");
+
+    for (let idx = 0; idx < materializedAttachments.length; idx++) {
+      const attItem = materializedAttachments[idx];
+      if (attachmentSpacingMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, attachmentSpacingMs));
+      }
+      const attCaption = `📎 Anexo (${idx + 1}/${materializedAttachments.length}): ${attItem.fileName}${contextSuffix ? ` — ${contextSuffix}` : ""}`;
+
+      let docRes = null;
+      if (typeof sendZapiDocFn === "function") {
+        docRes = await sendZapiDocFn({
+          phone: cleanPhone,
+          document: attItem.base64DataUri || attItem.remoteUrl,
+          fileName: attItem.fileName,
+          caption: attCaption,
+          bypassTestMode: true,
+          recipientRole: "reception",
+          channelId: "reception",
+          triggerEvent: "reception_email_fallback_attachment"
+        });
+      }
+
+      const docMsgId = docRes?.messageId || `rec_fb_doc_${comm.id}_${idx}_${Date.now()}`;
+      attachmentResults.push({
+        fileName: attItem.fileName,
+        mimeType: attItem.mimeType,
+        chatMediaUrl: attItem.chatMediaUrl,
+        remoteUrl: attItem.remoteUrl || null,
+        diskRelPath: attItem.diskRelPath || null,
+        success: Boolean(docRes?.success),
+        messageId: docMsgId,
+        error: docRes?.success ? null : (docRes?.error || "Falha no envio do documento")
+      });
+
+      if (typeof appendConvFn === "function") {
+        try {
+          appendConvFn({
+            phone: cleanPhone,
+            senderName: "CorpFlats",
+            fromMe: true,
+            text: attCaption,
+            type: "document",
+            mediaUrl: attItem.chatMediaUrl,
+            fileName: attItem.fileName,
+            caption: attCaption,
+            triggerEvent: "reception_email_fallback_attachment",
+            status: docRes?.success ? "delivered" : "failed",
+            timestamp: new Date().toISOString(),
+            messageId: docMsgId
+          });
+        } catch (_) {}
+      }
+    }
+
+    comm.metadata = comm.metadata || {};
+    comm.metadata.whatsappFallbackSent = true;
+    comm.metadata.whatsappFallbackSentAt = nowIso;
+    comm.metadata.whatsappFallbackPhone = cleanPhone;
+    comm.metadata.whatsappFallbackMessageId = textMsgId;
+    comm.metadata.whatsappFallbackTrigger = triggerSource;
+    comm.metadata.whatsappFallbackIsRetroactive = Boolean(isRetroactive);
+    comm.metadata.whatsappFallbackAttachmentsSent = attachmentResults.filter(a => a.success).length;
+    comm.metadata.whatsappFallbackAttachmentMeta = attachmentResults.map(a => ({
+      fileName: a.fileName,
+      mimeType: a.mimeType,
+      chatMediaUrl: a.chatMediaUrl,
+      remoteUrl: a.remoteUrl,
+      diskRelPath: a.diskRelPath,
+      messageId: a.messageId,
+      success: a.success
+    }));
+
+    if (!Array.isArray(db.receptionWhatsappFallbackSentIds)) {
+      db.receptionWhatsappFallbackSentIds = [];
+    }
+    if (!db.receptionWhatsappFallbackSentIds.some(x => (typeof x === "string" ? x === comm.id : x?.commId === comm.id))) {
+      db.receptionWhatsappFallbackSentIds.unshift({
+        commId: comm.id,
+        reservationId: comm.reservation_id || null,
+        subject: comm.subject,
+        originalCreatedAt: comm.created_at || comm.createdAt || nowIso,
+        sentAt: nowIso,
+        phone: cleanPhone,
+        messageId: textMsgId,
+        attachmentsSent: comm.metadata.whatsappFallbackAttachmentsSent,
+        triggerSource
+      });
+      if (db.receptionWhatsappFallbackSentIds.length > 1000) {
+        db.receptionWhatsappFallbackSentIds = db.receptionWhatsappFallbackSentIds.slice(0, 1000);
+      }
+    }
+
+    cfg.totalForwardedCount = (Number(cfg.totalForwardedCount) || 0) + 1;
+    cfg.lastForwardedAt = nowIso;
+
+    if (typeof saveDatabase === "function") {
+      saveDatabase("reception_email_whatsapp_fallback");
+    }
+
+    console.log(
+      `[ReceptionFallback ✓] E-mail '${comm.subject}' encaminhado para WhatsApp ${cleanPhone} (${attachmentResults.filter(a => a.success).length}/${materializedAttachments.length} anexo(s)).`
+    );
+
+    return {
+      forwarded: true,
+      commId: comm.id,
+      subject: comm.subject,
+      phone: cleanPhone,
+      messageId: textMsgId,
+      attachmentsTotal: materializedAttachments.length,
+      attachmentsSent: attachmentResults.filter(a => a.success).length,
+      attachmentResults
+    };
+  } finally {
+    inFlightReceptionFallbackIds.delete(comm.id);
+  }
+}
+
+export async function dispatchRetroactiveTodayReceptionEmailsToWhatsApp(db, saveDatabase = null, options = {}) {
+  if (!db) return { ok: false, reason: "missing_db" };
+  const cfg = ensureReceptionEmailFallbackState(db);
+  if (!options.force && !isReceptionEmailFallbackActive(db)) {
+    return { ok: true, skipped: true, reason: "fallback_inactive", sentCount: 0 };
+  }
+
+  if (retroactiveReceptionSweepPromise) {
+    return retroactiveReceptionSweepPromise;
+  }
+
+  const runPromise = (async () => {
+    const todayBr = options.todayBrOverride || getBrasiliaTodayStr();
+    if (!todayBr || todayBr < RECEPTION_FALLBACK_HARD_MIN_DATE_BR) {
+      return { ok: false, reason: "invalid_today_date", todayBr };
+    }
+
+    const allComms = Array.isArray(db.reservationCommunications) ? db.reservationCommunications : [];
+    const eligibleToday = allComms
+      .filter(c => {
+        if (!c || !isEmailAddressedToReception(c, db)) return false;
+        const brDate = getCommBrasiliaDateStr(c);
+        // ESTRITAMENTE HOJE (>= 2026-11-13 e === todayBr): nada de ontem ou dias anteriores!
+        if (!brDate || brDate < RECEPTION_FALLBACK_HARD_MIN_DATE_BR || brDate !== todayBr) return false;
+        if (!options.allowResend && hasCommBeenForwardedToReceptionWhatsApp(db, c)) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const msA = new Date(a.created_at || a.createdAt || a.metadata?.sentAt || 0).getTime() || 0;
+        const msB = new Date(b.created_at || b.createdAt || b.metadata?.sentAt || 0).getTime() || 0;
+        return msA - msB;
+      });
+
+    const pacingDelayMs = options.pacingDelayMs !== undefined ? Number(options.pacingDelayMs) : 1100;
+    const results = [];
+
+    for (let i = 0; i < eligibleToday.length; i++) {
+      const comm = eligibleToday[i];
+      if (i > 0 && pacingDelayMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, pacingDelayMs));
+      }
+      const res = await forwardReceptionEmailToWhatsApp({
+        db,
+        saveDatabase,
+        comm,
+        isRetroactive: true,
+        triggerSource: options.triggerSource || "retroactive_today_sweep",
+        allowResend: Boolean(options.allowResend),
+        todayBrOverride: todayBr,
+        overrides: options.overrides || {}
+      });
+      results.push({
+        commId: comm.id,
+        subject: comm.subject,
+        created_at: comm.created_at || comm.createdAt,
+        ...res
+      });
+    }
+
+    return {
+      ok: true,
+      todayBr,
+      minDateBrasilia: RECEPTION_FALLBACK_HARD_MIN_DATE_BR,
+      candidatesFound: eligibleToday.length,
+      sentCount: results.filter(r => r.forwarded).length,
+      attachmentsSentTotal: results.reduce((acc, r) => acc + (Number(r.attachmentsSent) || 0), 0),
+      results
+    };
+  })().finally(() => {
+    if (retroactiveReceptionSweepPromise === runPromise) {
+      retroactiveReceptionSweepPromise = null;
+    }
+  });
+
+  retroactiveReceptionSweepPromise = runPromise;
+  return runPromise;
+}
+
+export function getReceptionEmailFallbackStatusSummary(db) {
+  const cfg = ensureReceptionEmailFallbackState(db);
+  const todayBr = getBrasiliaTodayStr();
+  const allComms = Array.isArray(db?.reservationCommunications) ? db.reservationCommunications : [];
+
+  const todayReceptionComms = allComms
+    .filter(c => {
+      if (!c || !isEmailAddressedToReception(c, db)) return false;
+      const brDate = getCommBrasiliaDateStr(c);
+      return brDate >= RECEPTION_FALLBACK_HARD_MIN_DATE_BR && brDate === todayBr;
+    })
+    .sort((a, b) => new Date(a.created_at || a.createdAt || 0).getTime() - new Date(b.created_at || b.createdAt || 0).getTime())
+    .map(c => ({
+      id: c.id,
+      reservationId: c.reservation_id,
+      subject: c.subject,
+      recipient: c.recipient,
+      cc: c.cc || c.metadata?.cc || null,
+      emailStatus: c.status,
+      deliveryIssue: c.metadata?.deliveryIssue || null,
+      created_at: c.created_at || c.createdAt,
+      brDate: getCommBrasiliaDateStr(c),
+      hasAttachments: Boolean(c.metadata?.hasAttachments || Number(c.metadata?.attachmentsCount || 0) > 0),
+      attachmentsCount: Number(c.metadata?.attachmentsCount || 0),
+      whatsappForwarded: hasCommBeenForwardedToReceptionWhatsApp(db, c),
+      whatsappForwardedAt: c.metadata?.whatsappFallbackSentAt || null,
+      whatsappMessageId: c.metadata?.whatsappFallbackMessageId || null,
+      whatsappAttachmentsSent: Number(c.metadata?.whatsappFallbackAttachmentsSent || 0),
+      attachmentMeta: c.metadata?.whatsappFallbackAttachmentMeta || []
+    }));
+
+  return {
+    active: isReceptionEmailFallbackActive(db),
+    todayBr,
+    config: cfg,
+    receptionEmails: Array.from(getReceptionEmailAddresses(db)),
+    whatsappTargetClean: normalizeBrazilWhatsAppPhone(cfg.whatsappPhone),
+    todayTotalReceptionEmails: todayReceptionComms.length,
+    todayForwardedCount: todayReceptionComms.filter(c => c.whatsappForwarded).length,
+    todayPendingCount: todayReceptionComms.filter(c => !c.whatsappForwarded).length,
+    todayCommunications: todayReceptionComms
+  };
+}
+
+export async function serveReceptionFallbackAttachment(db, req, res) {
+  try {
+    const commId = String(req.params?.commId || "").trim();
+    const attIndex = Math.max(0, Number(req.params?.attIndex) || 0);
+    const comm = (db?.reservationCommunications || []).find(c => String(c?.id) === commId);
+    if (!comm) {
+      return res.status(404).json({ error: "Comunicação de e-mail não encontrada." });
+    }
+
+    const metaList = Array.isArray(comm.metadata?.whatsappFallbackAttachmentMeta)
+      ? comm.metadata.whatsappFallbackAttachmentMeta
+      : [];
+    const metaItem = metaList[attIndex] || null;
+    const fileName = String(metaItem?.fileName || req.params?.fileName || `documento_${attIndex + 1}.pdf`);
+
+    if (metaItem?.diskRelPath) {
+      const absDisk = path.join(__dirname, "uploads", metaItem.diskRelPath);
+      if (fs.existsSync(absDisk)) {
+        res.setHeader("Content-Type", metaItem.mimeType || "application/octet-stream");
+        res.setHeader("Content-Disposition", `inline; filename="${fileName.replace(/"/g, "")}"`);
+        res.setHeader("Cache-Control", "private, max-age=3600");
+        return res.sendFile(absDisk);
+      }
+    }
+
+    if (metaItem?.remoteUrl && /^https?:\/\//i.test(metaItem.remoteUrl)) {
+      return res.redirect(302, metaItem.remoteUrl);
+    }
+
+    // Auto-regeneração resiliente caso o disco efêmero tenha sido reiniciado em deploy
+    const matchedRes = findReservationForComm(db, comm);
+    if (matchedRes) {
+      const freshAtts = await ensureReservationAttachmentsReady({ reservation: matchedRes, db }).catch(() =>
+        resolveReservationAttachments({ reservation: matchedRes, db })
+      );
+      if (Array.isArray(freshAtts) && freshAtts.length > 0) {
+        const chosen = freshAtts[attIndex] || freshAtts[0];
+        const remat = await materializeSingleAttachment(chosen, comm.id, attIndex);
+        if (remat?.diskRelPath) {
+          const absDisk = path.join(__dirname, "uploads", remat.diskRelPath);
+          if (fs.existsSync(absDisk)) {
+            res.setHeader("Content-Type", remat.mimeType || "application/octet-stream");
+            res.setHeader("Content-Disposition", `inline; filename="${remat.fileName.replace(/"/g, "")}"`);
+            return res.sendFile(absDisk);
+          }
+        }
+        if (remat?.remoteUrl) {
+          return res.redirect(302, remat.remoteUrl);
+        }
+      }
+    }
+
+    return res.status(404).json({ error: "Arquivo de anexo não disponível." });
+  } catch (err) {
+    console.warn("[ReceptionFallback Attachment Serve] Erro:", err?.message || err);
+    return res.status(500).json({ error: "Erro ao carregar anexo da recepção." });
+  }
+}
+
 
 

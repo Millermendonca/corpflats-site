@@ -19,7 +19,16 @@ import {
   validateGuestEmailAddress,
   isInternalOrThirdPartyOperationalEmail,
   notifyGuestInvalidEmailViaWhatsApp,
-  reconcileFalsePositiveEmailAlerts
+  reconcileFalsePositiveEmailAlerts,
+  ensureReceptionEmailFallbackState,
+  isReceptionEmailFallbackActive,
+  isEmailAddressedToReception,
+  getReceptionEmailAddresses,
+  getCommBrasiliaDateStr,
+  getBrasiliaTodayStr,
+  recordReceptionEmailDeliveryIssue,
+  forwardReceptionEmailToWhatsApp,
+  dispatchRetroactiveTodayReceptionEmailsToWhatsApp
 } from "./mail-service.mjs";
 import { extractTextFromPdfBuffer } from "./pdf-extract-service.mjs";
 import {
@@ -1501,13 +1510,44 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
         matchedRes
       );
 
-      if (!existingMsg?.guestBounceProcessed && mapped.direction === "inbound") {
-        const bounceHandled = await processInboundBounceForGuestEmail(db, saveDatabase, mapped, matchedRes);
-        if (bounceHandled?.isBounce) {
+      if (mapped.direction === "inbound" && isLikelyInboundBounceEnvelope(mapped)) {
+        const msgTimeMs = Number(mapped.receivedTimeMs) || new Date(isoDate || 0).getTime() || 0;
+        const isRecentBounceCandidate = !msgTimeMs || (nowSyncMs - msgTimeMs) <= 48 * 3600 * 1000;
+        const needsGuestEval = !existingMsg?.guestBounceProcessed;
+        const needsReceptionEval = !existingMsg?.receptionBounceProcessed;
+
+        if (isRecentBounceCandidate && (needsGuestEval || needsReceptionEval) && !mapped.bodyHtml && mapped.zohoMessageId && mapped.zohoFolderId) {
+          try {
+            const dsnContentRes = await callZohoMailApi(
+              db,
+              `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/content`
+            );
+            if (dsnContentRes.ok && dsnContentRes.data?.content) {
+              mapped.bodyHtml = dsnContentRes.data.content;
+            }
+          } catch (_) {}
+        }
+
+        if (needsReceptionEval) {
+          const recBounceHandled = await processInboundBounceOrDelayForReceptionEmail(db, saveDatabase, mapped);
+          if (recBounceHandled?.isBounce) {
+            mapped.receptionBounceProcessed = true;
+          }
+        } else {
+          mapped.receptionBounceProcessed = true;
+        }
+
+        if (needsGuestEval) {
+          const bounceHandled = await processInboundBounceForGuestEmail(db, saveDatabase, mapped, matchedRes);
+          if (bounceHandled?.isBounce) {
+            mapped.guestBounceProcessed = true;
+          }
+        } else {
           mapped.guestBounceProcessed = true;
         }
-      } else if (existingMsg?.guestBounceProcessed) {
-        mapped.guestBounceProcessed = true;
+      } else {
+        if (existingMsg?.guestBounceProcessed) mapped.guestBounceProcessed = true;
+        if (existingMsg?.receptionBounceProcessed) mapped.receptionBounceProcessed = true;
       }
 
       if (existingIdx >= 0) {
@@ -1517,7 +1557,8 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
           existingMsg.folder !== mapped.folder ||
           (!existingMsg.b2bParsed && mapped.b2bParsed) ||
           (!existingMsg.b2bCancelProcessed && mapped.b2bCancelProcessed) ||
-          (!existingMsg.guestBounceProcessed && mapped.guestBounceProcessed);
+          (!existingMsg.guestBounceProcessed && mapped.guestBounceProcessed) ||
+          (!existingMsg.receptionBounceProcessed && mapped.receptionBounceProcessed);
         db.zohoMessagesCache[existingIdx] = { ...existingMsg, ...mapped };
         if (changed) addedOrUpdated++;
       } else {
@@ -1567,6 +1608,106 @@ function isLikelyInboundBounceEnvelope(msgItem = {}) {
  * exige que o endereço de e-mail do hóspede esteja explicitamente citado no corpo da falha (sem suposição por horário/reserva),
  * marca a comunicação original como "bounced" e avisa o hóspede no WhatsApp para corrigir o e-mail.
  */
+export async function processInboundBounceOrDelayForReceptionEmail(db, saveDatabase, msgItem = {}) {
+  try {
+    if (!db || !msgItem) return { isBounce: false };
+    if (!isLikelyInboundBounceEnvelope(msgItem)) {
+      return { isBounce: false };
+    }
+
+    const msgBrDate = getCommBrasiliaDateStr(msgItem);
+    const todayBr = getBrasiliaTodayStr();
+    if (!msgBrDate || msgBrDate < "2026-11-13" || msgBrDate < todayBr) {
+      return { isBounce: true, ignoredReason: "dsn_before_today" };
+    }
+
+    const rawBodyPlain = String(msgItem.bodyHtml || "")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ");
+    const combinedText = `${msgItem.subject || ""}\n${msgItem.snippet || ""}\n${msgItem.bodyText || ""}\n${rawBodyPlain}`;
+    const combinedLower = combinedText.toLowerCase();
+
+    const receptionAddrs = getReceptionEmailAddresses(db);
+    let matchedReceptionAddr = "";
+    for (const addr of receptionAddrs) {
+      if (addr && combinedLower.includes(addr)) {
+        matchedReceptionAddr = addr;
+        break;
+      }
+    }
+    if (!matchedReceptionAddr && combinedLower.includes("@promenade.com.br")) {
+      const m = combinedLower.match(/[a-z0-9._%+-]+@promenade\.com\.br/);
+      if (m) matchedReceptionAddr = m[0];
+    }
+
+    if (!matchedReceptionAddr) {
+      return { isBounce: true, ignoredReason: "not_reception_dsn" };
+    }
+
+    const isDelaySignal =
+      /delivery\s+status\s+notification\s*\(\s*delay\s*\)/i.test(combinedText) ||
+      /action\s*:\s*delayed\b/i.test(combinedText) ||
+      /\b(?:45[012]|421|4\.[0-9]\.\d+)\b/.test(combinedText) ||
+      /(?:temporary\s+server\s+error|delivery\s+is\s+delayed|will\s+be\s+retried|will\s+continue\s+trying|substrate-int\.office\.com|prod\.outlook\.com)/i.test(combinedText);
+
+    const isPermanentBounceSignal =
+      /action\s*:\s*failed\b/i.test(combinedText) ||
+      /\b(?:55[0-4]|51[0-3]|5\.[0-9]\.\d+)\b/.test(combinedText) ||
+      /(?:undelivered|undeliverable|delivery\s+failed|delivery\s+failure|mail\s+delivery\s+failed|returned\s+mail|recipient\s+address\s+rejected|mailbox\s+unavailable|falha\s+na\s+entrega|n[aã]o\s+foi\s+poss[ií]vel\s+entregar)/i.test(combinedText);
+
+    if (!isDelaySignal && !isPermanentBounceSignal) {
+      return { isBounce: true, ignoredReason: "no_delay_or_failure_signal" };
+    }
+
+    const diagMatch = combinedText.match(/Diagnostic-Code:\s*([^\r\n]+)/i);
+    const reasonText = diagMatch
+      ? `${msgItem.subject || "DSN"} — ${diagMatch[1].trim()}`
+      : `${msgItem.subject || "Falha/Atraso de entrega"} (${matchedReceptionAddr})`;
+
+    const nowIso = new Date().toISOString();
+    if (Array.isArray(db.reservationCommunications)) {
+      for (const c of db.reservationCommunications) {
+        if (!c || !isEmailAddressedToReception(c, db)) continue;
+        const cBrDate = getCommBrasiliaDateStr(c);
+        if (!cBrDate || cBrDate < "2026-11-13" || cBrDate !== todayBr) continue;
+        c.metadata = c.metadata || {};
+        if (!c.metadata.deliveryIssue) {
+          c.metadata.deliveryIssue = isPermanentBounceSignal ? "bounced" : "delayed";
+          c.metadata.deliveryIssueAt = nowIso;
+          c.metadata.deliveryIssueReason = reasonText.slice(0, 300);
+        }
+      }
+    }
+
+    recordReceptionEmailDeliveryIssue(db, saveDatabase, {
+      source: isPermanentBounceSignal ? "zoho_dsn_bounce" : "zoho_dsn_delay",
+      reason: reasonText,
+      subject: msgItem.subject || "",
+      recipient: matchedReceptionAddr
+    });
+
+    let sweepResult = null;
+    if (ensureReceptionEmailFallbackState(db).enabled !== false) {
+      sweepResult = await dispatchRetroactiveTodayReceptionEmailsToWhatsApp(db, saveDatabase, {
+        triggerSource: isPermanentBounceSignal ? "zoho_dsn_bounce_auto_sweep" : "zoho_dsn_delay_auto_sweep"
+      });
+    }
+
+    return {
+      isBounce: true,
+      isReceptionIssue: true,
+      issueType: isPermanentBounceSignal ? "bounced" : "delayed",
+      receptionEmail: matchedReceptionAddr,
+      autoFallbackActivated: true,
+      retroactiveSentCount: sweepResult?.sentCount || 0,
+      sweepResult
+    };
+  } catch (err) {
+    console.warn("[Reception Bounce/Delay Handler] Aviso:", err?.message || err);
+    return { isBounce: false, error: err?.message };
+  }
+}
+
 export async function processInboundBounceForGuestEmail(db, saveDatabase, msgItem = {}, matchedResSummary = null) {
   try {
     if (!db || !msgItem) return { isBounce: false };
@@ -2766,6 +2907,13 @@ export async function sendWebmailMessage(db, saveDatabase, payload = {}) {
     if (zohoRes.ok) {
       sentViaZohoRest = true;
       zohoMsgId = zohoRes.data?.messageId || `zoho_sent_${Date.now()}`;
+    } else if (isEmailAddressedToReception({ recipient: recipientStr, cc: ccStr, bcc: bccStr, type: "email", direction: "outbound" }, db)) {
+      recordReceptionEmailDeliveryIssue(db, saveDatabase, {
+        source: "zoho_rest_error",
+        reason: zohoRes.error || `Erro HTTP ${zohoRes.status || ""} na API Zoho Mail`,
+        subject: subjectStr,
+        recipient: recipientStr
+      });
     }
   }
 
@@ -2798,6 +2946,21 @@ export async function sendWebmailMessage(db, saveDatabase, payload = {}) {
     if (!db.reservationCommunications) db.reservationCommunications = [];
     db.reservationCommunications.unshift(commLog);
     if (typeof saveDatabase === "function") saveDatabase();
+    if (isEmailAddressedToReception(commLog, db) && isReceptionEmailFallbackActive(db)) {
+      setImmediate(() => {
+        forwardReceptionEmailToWhatsApp({
+          db,
+          saveDatabase,
+          comm: commLog,
+          rawAttachments: attachments,
+          reservation,
+          isRetroactive: false,
+          triggerSource: "webmail_zoho_rest_fallback"
+        }).catch(err => {
+          console.warn("[ReceptionFallback Webmail] Aviso:", err?.message || err);
+        });
+      });
+    }
     return {
       ok: true,
       method: "zoho_rest_api",
@@ -7394,6 +7557,17 @@ export async function handleZohoIncomingWebhook(db, saveDatabase, payload = {}) 
       }
     }
   }
+
+  await processInboundBounceOrDelayForReceptionEmail(db, saveDatabase, {
+    fromEmail: rawFrom,
+    from: rawFrom,
+    subject: rawSubj,
+    bodyHtml: rawHtml,
+    bodyText: combinedRawText,
+    snippet: rawText,
+    direction: "inbound",
+    created_at: nowIso
+  });
 
   await processInboundBounceForGuestEmail(db, saveDatabase, {
     fromEmail: rawFrom,

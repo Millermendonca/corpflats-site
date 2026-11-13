@@ -1,6 +1,0 @@
-﻿# llms.txt
-
-## Table of contents
-
- - [WebBookingPro <-> PMS API](https://webbookingpro.redocly.app/wbpapi.md)
-
