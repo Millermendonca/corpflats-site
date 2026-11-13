@@ -1996,6 +1996,7 @@ export function sendEmailAsync({
   }
 
   const finalHtml = bodyHtml || html || "";
+  const preExtractedCleanBody = htmlToStructuredReceptionWhatsAppBody(finalHtml, bodyText);
   const commId = crypto.randomUUID();
   const now = new Date().toISOString();
 
@@ -2014,6 +2015,7 @@ export function sendEmailAsync({
       ...metadata,
       cc: cc ? String(cc).trim() : undefined,
       bcc: bcc ? String(bcc).trim() : undefined,
+      cleanBodyText: preExtractedCleanBody ? preExtractedCleanBody.slice(0, 3500) : undefined,
       hasAttachments: Array.isArray(attachments) && attachments.length > 0,
       attachmentsCount: Array.isArray(attachments) ? attachments.length : 0,
       attempts: 1,
@@ -2098,19 +2100,23 @@ export function sendEmailAsync({
         } catch (_) {}
       }
 
-      if (isEmailAddressedToReception(logEntry, db) && isReceptionEmailFallbackActive(db)) {
-        try {
-          await forwardReceptionEmailToWhatsApp({
-            db,
-            saveDatabase,
-            comm: logEntry,
-            rawAttachments: attachments,
-            isRetroactive: false,
-            triggerSource: "live_active_fallback",
-            overrides
-          });
-        } catch (fbErr) {
-          console.warn("[ReceptionFallback] Aviso ao encaminhar e-mail da recepção via WhatsApp:", fbErr?.message || fbErr);
+      if (isEmailAddressedToReception(logEntry, db)) {
+        evaluateReceptionEmailFallbackAutoRecovery(db, saveDatabase);
+        if (isReceptionEmailFallbackActive(db)) {
+          try {
+            await forwardReceptionEmailToWhatsApp({
+              db,
+              saveDatabase,
+              comm: logEntry,
+              rawBodyHtml: finalHtml,
+              rawAttachments: attachments,
+              isRetroactive: false,
+              triggerSource: "live_active_fallback",
+              overrides
+            });
+          } catch (fbErr) {
+            console.warn("[ReceptionFallback] Aviso ao encaminhar e-mail da recepção via WhatsApp:", fbErr?.message || fbErr);
+          }
         }
       }
     } catch (err) {
@@ -2136,13 +2142,15 @@ export function sendEmailAsync({
             source: "smtp_error",
             reason: err.message || String(err),
             subject: logEntry.subject,
-            recipient: logEntry.recipient
+            recipient: logEntry.recipient,
+            eventAt: logEntry.metadata.failedAt
           });
           if (ensureReceptionEmailFallbackState(db).enabled !== false) {
             await forwardReceptionEmailToWhatsApp({
               db,
               saveDatabase,
               comm: logEntry,
+              rawBodyHtml: finalHtml,
               rawAttachments: attachments,
               isRetroactive: false,
               triggerSource: "smtp_failure_fallback",
@@ -4082,6 +4090,8 @@ export function reconcileFalsePositiveEmailAlerts(db, saveDatabase = null) {
 
 const RECEPTION_FALLBACK_DEFAULT_PHONE = "2237040100";
 const RECEPTION_FALLBACK_HARD_MIN_DATE_BR = "2026-11-13";
+const RECEPTION_FALLBACK_DEFAULT_AUTO_WINDOW_MINUTES = 75;
+const RECEPTION_FALLBACK_CLEAN_DELIVERY_VERIFY_MINUTES = 45;
 const inFlightReceptionFallbackIds = new Set();
 let retroactiveReceptionSweepPromise = null;
 let lastReceptionFallbackPanelAlertMs = 0;
@@ -4099,15 +4109,23 @@ export function ensureReceptionEmailFallbackState(db) {
   if (!db || typeof db !== "object") {
     return {
       enabled: true,
-      mode: "active",
+      mode: "auto",
+      manualForce: false,
       autoDetect: true,
-      autoWindowHours: 24,
+      autoWindowMinutes: RECEPTION_FALLBACK_DEFAULT_AUTO_WINDOW_MINUTES,
+      autoWindowHours: 1.25,
       whatsappPhone: RECEPTION_FALLBACK_DEFAULT_PHONE,
       minDateBrasilia: RECEPTION_FALLBACK_HARD_MIN_DATE_BR,
       autoActiveUntil: null,
+      lastIssueEventAt: null,
       lastIssueDetectedAt: null,
       lastIssueSource: null,
       lastIssueReason: null,
+      lastRecoveredAt: null,
+      lastRecoverySource: null,
+      lastRecoveryReason: null,
+      previousRecoveredAt: null,
+      processedDsnMessageIds: [],
       totalForwardedCount: 0,
       lastForwardedAt: null
     };
@@ -4120,32 +4138,219 @@ export function ensureReceptionEmailFallbackState(db) {
   }
   const cfg = db.settings.receptionEmailFallback;
   if (cfg.enabled === undefined) cfg.enabled = true;
+  if (cfg.manualForce === undefined) cfg.manualForce = false;
   if (!cfg.mode || !["active", "auto", "disabled"].includes(cfg.mode)) {
-    cfg.mode = cfg.enabled === false ? "disabled" : "active";
+    cfg.mode = cfg.enabled === false ? "disabled" : "auto";
   }
   if (cfg.autoDetect === undefined) cfg.autoDetect = true;
-  if (!Number(cfg.autoWindowHours) || Number(cfg.autoWindowHours) <= 0) cfg.autoWindowHours = 24;
+  if (!Number(cfg.autoWindowMinutes) || Number(cfg.autoWindowMinutes) <= 0) {
+    cfg.autoWindowMinutes = RECEPTION_FALLBACK_DEFAULT_AUTO_WINDOW_MINUTES;
+  }
+  cfg.autoWindowHours = Number((Number(cfg.autoWindowMinutes) / 60).toFixed(2));
   if (!cfg.whatsappPhone || !String(cfg.whatsappPhone).replace(/\D/g, "")) {
     cfg.whatsappPhone = RECEPTION_FALLBACK_DEFAULT_PHONE;
   }
   cfg.minDateBrasilia = RECEPTION_FALLBACK_HARD_MIN_DATE_BR;
   if (cfg.autoActiveUntil === undefined) cfg.autoActiveUntil = null;
+  if (cfg.lastIssueEventAt === undefined) cfg.lastIssueEventAt = null;
   if (cfg.lastIssueDetectedAt === undefined) cfg.lastIssueDetectedAt = null;
   if (cfg.lastIssueSource === undefined) cfg.lastIssueSource = null;
   if (cfg.lastIssueReason === undefined) cfg.lastIssueReason = null;
+  if (cfg.lastRecoveredAt === undefined) cfg.lastRecoveredAt = null;
+  if (cfg.lastRecoverySource === undefined) cfg.lastRecoverySource = null;
+  if (cfg.lastRecoveryReason === undefined) cfg.lastRecoveryReason = null;
+  if (cfg.previousRecoveredAt === undefined) cfg.previousRecoveredAt = null;
+  if (!Array.isArray(cfg.processedDsnMessageIds)) cfg.processedDsnMessageIds = [];
   if (typeof cfg.totalForwardedCount !== "number") cfg.totalForwardedCount = 0;
   if (cfg.lastForwardedAt === undefined) cfg.lastForwardedAt = null;
 
   if (!Array.isArray(db.receptionWhatsappFallbackSentIds)) {
     db.receptionWhatsappFallbackSentIds = [];
   }
+
+  // Migração v2: converte o modo fixo inicial ("active" + janela de 24h) para "auto" com auto-desativação
+  // e limpa bolhas antigas com CSS bruto no histórico local do /whatsapp-chat.
+  if (!cfg.migratedAutoModeV2) {
+    cfg.migratedAutoModeV2 = true;
+    cfg.autoWindowMinutes = RECEPTION_FALLBACK_DEFAULT_AUTO_WINDOW_MINUTES;
+    cfg.autoWindowHours = Number((RECEPTION_FALLBACK_DEFAULT_AUTO_WINDOW_MINUTES / 60).toFixed(2));
+    if (cfg.mode === "active" && !cfg.manualForce) {
+      cfg.mode = cfg.enabled === false ? "disabled" : "auto";
+    }
+
+    const nowMs = Date.now();
+    const windowMs = cfg.autoWindowMinutes * 60 * 1000;
+    let latestRealDsnMs = 0;
+
+    if (Array.isArray(db.zohoMessagesCache)) {
+      for (const m of db.zohoMessagesCache) {
+        if (!m) continue;
+        const fromL = String(m.fromEmail || m.from || "").toLowerCase();
+        const subjL = String(m.subject || "").toLowerCase();
+        const isDsn =
+          fromL.includes("mailer-daemon") ||
+          fromL.includes("postmaster") ||
+          subjL.includes("delivery status notification") ||
+          subjL.includes("undelivered");
+        if (!isDsn) continue;
+        const mId = String(m.id || m.zohoMessageId || "").trim();
+        if (mId && !cfg.processedDsnMessageIds.includes(mId)) {
+          cfg.processedDsnMessageIds.unshift(mId);
+        }
+        const combined = `${m.subject || ""} ${m.snippet || ""} ${m.bodyText || ""} ${m.bodyHtml || ""}`.toLowerCase();
+        if (combined.includes("promenade.com.br")) {
+          const ts = new Date(m.created_at || m.date || 0).getTime() || 0;
+          if (ts > latestRealDsnMs) latestRealDsnMs = ts;
+        }
+      }
+      if (cfg.processedDsnMessageIds.length > 500) {
+        cfg.processedDsnMessageIds.length = 500;
+      }
+    }
+
+    if (latestRealDsnMs > 0) {
+      cfg.lastIssueEventAt = new Date(latestRealDsnMs).toISOString();
+    }
+
+    // Se não há DSN recente nos últimos 75 minutos, desativa imediatamente o circuito de contingência
+    if (!latestRealDsnMs || nowMs - latestRealDsnMs > windowMs) {
+      cfg.autoActiveUntil = null;
+      cfg.lastRecoveredAt = new Date(nowMs).toISOString();
+      cfg.lastRecoverySource = "auto_recovery_v2";
+      cfg.lastRecoveryReason = "Serviço de e-mail da recepção normalizado (sem novos avisos DSN recentes)";
+    } else {
+      cfg.autoActiveUntil = new Date(latestRealDsnMs + windowMs).toISOString();
+    }
+
+    try {
+      healDirtyCssReceptionFallbackMessages(db);
+    } catch (_) {}
+  }
+
   return cfg;
+}
+
+export function markReceptionEmailRecovered(db, saveDatabase = null, {
+  source = "auto_recovery",
+  reason = "Entrega de e-mails para a recepção normalizada"
+} = {}) {
+  if (!db) return { recovered: false };
+  const cfg = ensureReceptionEmailFallbackState(db);
+  const wasActive = Boolean(
+    (cfg.mode === "active" && !cfg.manualForce) ||
+    (cfg.autoActiveUntil && new Date(cfg.autoActiveUntil).getTime() > Date.now()) ||
+    cfg.autoActiveUntil
+  );
+
+  const nowIso = new Date().toISOString();
+  cfg.autoActiveUntil = null;
+  if (cfg.mode === "active" && !cfg.manualForce) {
+    cfg.mode = cfg.enabled === false ? "disabled" : "auto";
+  }
+  cfg.lastRecoveredAt = nowIso;
+  cfg.lastRecoverySource = source;
+  cfg.lastRecoveryReason = String(reason || "Serviço normalizado").slice(0, 400);
+
+  if (wasActive) {
+    console.log(`[ReceptionFallback ✅] E-mail da recepção normalizado (${source}): fallback WhatsApp desativado automaticamente.`);
+    const notifyFn = globalThis.__corpflatsCreateNotification;
+    if (typeof notifyFn === "function") {
+      try {
+        notifyFn({
+          category: "email",
+          title: "✅ E-mail da Recepção Normalizado",
+          message: `O recebimento de e-mails da recepção voltou ao normal (${cfg.lastRecoveryReason}). O fallback para WhatsApp (${cfg.whatsappPhone}) foi desativado automaticamente.`,
+          severity: "info",
+          targetUrl: "/emails",
+          link: "/emails",
+          metadata: {
+            source,
+            reason: cfg.lastRecoveryReason,
+            recoveredAt: nowIso
+          }
+        });
+      } catch (_) {}
+    }
+    if (typeof saveDatabase === "function") {
+      saveDatabase("reception_email_recovered");
+    }
+  }
+
+  return { recovered: wasActive, cfg };
+}
+
+export function evaluateReceptionEmailFallbackAutoRecovery(db, saveDatabase = null, {
+  inboundFromEmail = "",
+  inboundCreatedAt = "",
+  lastZohoInboxSyncMs = 0
+} = {}) {
+  if (!db) return { recovered: false };
+  const cfg = ensureReceptionEmailFallbackState(db);
+  if (cfg.enabled === false || cfg.mode === "disabled") return { recovered: false };
+  if (cfg.mode === "active" && cfg.manualForce === true) return { recovered: false };
+
+  const nowMs = Date.now();
+  const lastIssueMs = new Date(cfg.lastIssueEventAt || cfg.lastIssueDetectedAt || 0).getTime() || 0;
+
+  // Sinal 1: E-mail legítimo recebido da própria recepção / domínio @promenade.com.br após o incidente
+  if (inboundFromEmail) {
+    const cleanSender = String(inboundFromEmail).replace(/.*<([^>]+)>.*/, "$1").trim().toLowerCase();
+    const recAddrs = getReceptionEmailAddresses(db);
+    const isFromReception =
+      recAddrs.has(cleanSender) ||
+      (cleanSender.endsWith("@promenade.com.br") && !cleanSender.includes("mailer-daemon") && !cleanSender.includes("postmaster"));
+    const inboundMs = inboundCreatedAt ? new Date(inboundCreatedAt).getTime() : nowMs;
+    if (isFromReception && inboundMs > 0 && (!lastIssueMs || inboundMs > lastIssueMs)) {
+      if (cfg.autoActiveUntil || !cfg.lastRecoveredAt) {
+        return markReceptionEmailRecovered(db, saveDatabase, {
+          source: "inbound_reception_email",
+          reason: `E-mail recebido normalmente de ${cleanSender}`
+        });
+      }
+    }
+  }
+
+  if (!cfg.autoActiveUntil) {
+    return { recovered: false };
+  }
+
+  const expMs = new Date(cfg.autoActiveUntil).getTime();
+
+  // Sinal 2: Janela de contingência expirou sem novas falhas SMTP nem novos DSNs de atraso/erro
+  if (Number.isNaN(expMs) || nowMs >= expMs) {
+    return markReceptionEmailRecovered(db, saveDatabase, {
+      source: "cooldown_window_expired",
+      reason: `Sem novas falhas SMTP ou avisos de atraso (DSN) nos últimos ${cfg.autoWindowMinutes || RECEPTION_FALLBACK_DEFAULT_AUTO_WINDOW_MINUTES} minutos`
+    });
+  }
+
+  // Sinal 3: E-mail enviado à recepção APÓS o incidente permaneceu sem qualquer DSN após sincronização do Zoho Mail
+  const verifyWaitMs = RECEPTION_FALLBACK_CLEAN_DELIVERY_VERIFY_MINUTES * 60 * 1000;
+  const syncMs = Number(lastZohoInboxSyncMs) || (db?.settings?.zohoOAuth?.lastSyncAt ? new Date(db.settings.zohoOAuth.lastSyncAt).getTime() : 0) || 0;
+  if (lastIssueMs > 0 && syncMs > lastIssueMs && Array.isArray(db.reservationCommunications)) {
+    const cleanProbeComm = db.reservationCommunications.find(c => {
+      if (!c || c.status !== "sent" || c.metadata?.deliveryIssue) return false;
+      if (!isEmailAddressedToReception(c, db)) return false;
+      const sentMs = new Date(c.metadata?.sentAt || c.created_at || c.createdAt || 0).getTime() || 0;
+      if (!sentMs || sentMs <= lastIssueMs) return false;
+      return (nowMs - sentMs) >= verifyWaitMs && syncMs >= (sentMs + verifyWaitMs - 5 * 60 * 1000);
+    });
+    if (cleanProbeComm) {
+      return markReceptionEmailRecovered(db, saveDatabase, {
+        source: "verified_clean_outbound_delivery",
+        reason: `Entrega normalizada confirmada (e-mail '${cleanProbeComm.subject}' sem retorno de DSN)`
+      });
+    }
+  }
+
+  return { recovered: false };
 }
 
 export function isReceptionEmailFallbackActive(db) {
   const cfg = ensureReceptionEmailFallbackState(db);
   if (cfg.enabled === false || cfg.mode === "disabled") return false;
-  if (cfg.mode === "active") return true;
+  if (cfg.mode === "active" && cfg.manualForce === true) return true;
+  evaluateReceptionEmailFallbackAutoRecovery(db);
   if (cfg.autoActiveUntil) {
     const expMs = new Date(cfg.autoActiveUntil).getTime();
     if (!Number.isNaN(expMs) && expMs > Date.now()) {
@@ -4226,34 +4431,77 @@ export function recordReceptionEmailDeliveryIssue(db, saveDatabase, {
   source = "email_issue",
   reason = "",
   subject = "",
-  recipient = ""
+  recipient = "",
+  eventAt = null,
+  messageId = ""
 } = {}) {
-  if (!db) return null;
+  if (!db) return { activated: false, reason: "missing_db" };
   const cfg = ensureReceptionEmailFallbackState(db);
-  const nowIso = new Date().toISOString();
-  const windowHours = Math.max(1, Number(cfg.autoWindowHours) || 24);
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const windowMinutes = Math.max(10, Number(cfg.autoWindowMinutes) || RECEPTION_FALLBACK_DEFAULT_AUTO_WINDOW_MINUTES);
+  const windowMs = windowMinutes * 60 * 1000;
 
+  const cleanMsgId = String(messageId || "").trim();
+  if (cleanMsgId) {
+    if (cfg.processedDsnMessageIds.includes(cleanMsgId)) {
+      return { activated: false, ignoredReason: "dsn_already_processed", cfg };
+    }
+    cfg.processedDsnMessageIds.unshift(cleanMsgId);
+    if (cfg.processedDsnMessageIds.length > 500) {
+      cfg.processedDsnMessageIds.length = 500;
+    }
+  }
+
+  const parsedEventMs = eventAt ? new Date(eventAt).getTime() : nowMs;
+  const eventMs = !Number.isNaN(parsedEventMs) && parsedEventMs > 0 ? Math.min(parsedEventMs, nowMs) : nowMs;
+
+  // Ignora DSNs antigos (fora da janela de frescor) para que sincronizações históricas nunca reativem o fallback
+  if (nowMs - eventMs > windowMs) {
+    if (cleanMsgId && typeof saveDatabase === "function") {
+      saveDatabase("reception_dsn_stale_seen");
+    }
+    return { activated: false, ignoredReason: "stale_event_outside_window", cfg };
+  }
+
+  // Ignora eventos cujo carimbo de tempo seja anterior ou igual à última recuperação confirmada
+  const lastRecoveredMs = cfg.lastRecoveredAt ? new Date(cfg.lastRecoveredAt).getTime() : 0;
+  if (lastRecoveredMs > 0 && eventMs <= lastRecoveredMs) {
+    if (cleanMsgId && typeof saveDatabase === "function") {
+      saveDatabase("reception_dsn_before_recovery");
+    }
+    return { activated: false, ignoredReason: "event_older_than_recovery", cfg };
+  }
+
+  const wasActiveBefore = isReceptionEmailFallbackActive(db);
+
+  cfg.lastIssueEventAt = new Date(eventMs).toISOString();
   cfg.lastIssueDetectedAt = nowIso;
   cfg.lastIssueSource = source;
   cfg.lastIssueReason = String(reason || "Falha/atraso na entrega de e-mail para a recepção").slice(0, 500);
 
-  if (cfg.autoDetect !== false && cfg.enabled !== false) {
-    cfg.autoActiveUntil = new Date(Date.now() + windowHours * 3600 * 1000).toISOString();
-    if (cfg.mode === "disabled") {
-      // Respeita desligamento manual explícito quando enabled === false, mas se enabled === true ativa modo auto
-      cfg.mode = "auto";
-    }
+  if (cfg.lastRecoveredAt) {
+    cfg.previousRecoveredAt = cfg.lastRecoveredAt;
+    cfg.lastRecoveredAt = null;
   }
 
-  const nowMs = Date.now();
+  let activatedNow = false;
+  if (cfg.autoDetect !== false && cfg.enabled !== false && cfg.mode !== "disabled") {
+    cfg.autoActiveUntil = new Date(eventMs + windowMs).toISOString();
+    if (!cfg.manualForce) {
+      cfg.mode = "auto";
+    }
+    activatedNow = true;
+  }
+
   const notifyFn = globalThis.__corpflatsCreateNotification;
-  if (typeof notifyFn === "function" && nowMs - lastReceptionFallbackPanelAlertMs > 30 * 60 * 1000) {
+  if (activatedNow && typeof notifyFn === "function" && (!wasActiveBefore || nowMs - lastReceptionFallbackPanelAlertMs > 30 * 60 * 1000)) {
     lastReceptionFallbackPanelAlertMs = nowMs;
     try {
       notifyFn({
         category: "email",
         title: "📲 Fallback WhatsApp Recepção Ativado",
-        message: `Detectada instabilidade no e-mail da recepção (${recipient || "soho@promenade.com.br"}: ${cfg.lastIssueReason.slice(0, 120)}). E-mails de hoje estão sendo encaminhados para o WhatsApp ${cfg.whatsappPhone}.`,
+        message: `Detectada instabilidade no e-mail da recepção (${recipient || "soho@promenade.com.br"}: ${cfg.lastIssueReason.slice(0, 120)}). Contingência ativa automaticamente por ${windowMinutes} min no WhatsApp ${cfg.whatsappPhone}.`,
         severity: "warning",
         targetUrl: "/whatsapp-chat?phone=552237040100",
         link: "/whatsapp-chat?phone=552237040100",
@@ -4261,6 +4509,8 @@ export function recordReceptionEmailDeliveryIssue(db, saveDatabase, {
           source,
           reason: cfg.lastIssueReason,
           subject,
+          eventAt: cfg.lastIssueEventAt,
+          autoActiveUntil: cfg.autoActiveUntil,
           whatsappPhone: cfg.whatsappPhone
         }
       });
@@ -4270,7 +4520,7 @@ export function recordReceptionEmailDeliveryIssue(db, saveDatabase, {
   if (typeof saveDatabase === "function") {
     saveDatabase("reception_email_issue_detected");
   }
-  return cfg;
+  return { activated: activatedNow, cfg };
 }
 
 function decodeHtmlEntitiesBasic(str) {
@@ -4296,19 +4546,78 @@ function decodeHtmlEntitiesBasic(str) {
     });
 }
 
-function htmlToStructuredReceptionWhatsAppBody(html = "", fallbackText = "") {
-  const source = String(html || "").trim();
-  if (!source) {
-    return String(fallbackText || "").trim();
+function stripResidualCssNoise(input = "") {
+  if (!input) return "";
+  let t = String(input);
+
+  // Remove blocos @media aninhados e regras CSS com chaves completas
+  t = t.replace(/@media[^{]*\{[\s\S]*?\}\s*\}/gi, " ");
+  let prev = "";
+  let guard = 0;
+  while (t !== prev && guard < 8) {
+    prev = t;
+    guard++;
+    t = t.replace(/(?:^|\n)\s*[.#@a-zA-Z0-9_,\s>+~:[\]="'-]{1,140}\{[^{}]*\}/g, "\n");
   }
 
-  let s = source
-    .replace(/<head[\s\S]*?<\/head>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<div[^>]*class=["'][^"']*header[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, "")
-    .replace(/<div[^>]*class=["'][^"']*footer[^"']*["'][^>]*>[\s\S]*$/gi, "");
+  // Remove regra CSS truncada no final da string (ex: ".guest-box { background-color: #FFF; margin-top:")
+  t = t.replace(/(?:^|\n)\s*[.#@a-zA-Z0-9_,\s>+~:-]{1,100}\{[^{}]*$/g, "\n");
+
+  const cssPropLineRe =
+    /^\s*(?:margin(?:-\w+)?|padding(?:-\w+)?|font-(?:family|size|weight|style)|background(?:-color|-image)?|border(?:-\w+)?|color|width|max-width|min-width|height|display|line-height|letter-spacing|text-(?:align|transform|decoration)|vertical-align|border-collapse|border-radius|-webkit-[\w-]+|-ms-[\w-]+|mso-[\w-]+)\s*:[^;\n]*;?\s*$/i;
+  const cssSelectorOnlyLineRe =
+    /^\s*(?:body,\s*table|table,\s*td|\.[a-z0-9_-]+(?:\s+\.[a-z0-9_-]+|\s+[a-z0-9_-]+)*|@media\b)[,\s]*\{?\s*$/i;
+
+  return t
+    .split(/\r?\n/)
+    .filter(line => {
+      const trimmed = line.trim();
+      if (!trimmed) return true;
+      if (trimmed === "{" || trimmed === "}") return false;
+      if (cssPropLineRe.test(trimmed)) return false;
+      if (cssSelectorOnlyLineRe.test(trimmed)) return false;
+      return true;
+    })
+    .join("\n");
+}
+
+export function htmlToStructuredReceptionWhatsAppBody(html = "", fallbackText = "") {
+  const source = String(html || "").trim();
+  if (!source) {
+    return stripResidualCssNoise(String(fallbackText || "")).trim();
+  }
+
+  let s = source;
+
+  // Se o template completo CorpFlats tiver <div class="content">, extrai diretamente o miolo útil antes do rodapé
+  const contentMatch = s.match(/<div\b[^>]*class=["'][^"']*\bcontent\b[^"']*["'][^>]*>([\s\S]*?)(?:<!--\s*Footer|<hr\b[^>]*margin:\s*32px|<div\b[^>]*class=["'][^"']*\bfooter\b)/i);
+  if (contentMatch && contentMatch[1]) {
+    s = contentMatch[1];
+  } else {
+    // Remove blocos completos e TAMBÉM blocos truncados sem tag de fechamento (caso comm.body tenha sido cortado em 3000 chars!)
+    s = s
+      .replace(/<head\b[\s\S]*?<\/head>/gi, "")
+      .replace(/<style\b[\s\S]*?<\/style>/gi, "")
+      .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+      .replace(/<title\b[\s\S]*?<\/title>/gi, "")
+      .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, "")
+      .replace(/<xml\b[\s\S]*?<\/xml>/gi, "")
+      .replace(/<!--[\s\S]*?-->/g, "");
+
+    // Se <style, <script, <!-- ou <head (sem <body) ficou aberto por truncamento, descarta tudo dali até o fim
+    s = s
+      .replace(/<style\b[\s\S]*$/gi, "")
+      .replace(/<script\b[\s\S]*$/gi, "")
+      .replace(/<!--[\s\S]*$/g, "");
+
+    if (/<head\b/i.test(s) && !/<body\b/i.test(s)) {
+      s = s.replace(/<head\b[\s\S]*$/gi, "");
+    }
+
+    s = s
+      .replace(/<div[^>]*class=["'][^"']*header[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, "")
+      .replace(/<div[^>]*class=["'][^"']*footer[^"']*["'][^>]*>[\s\S]*$/gi, "");
+  }
 
   // Preserva links operacionais úteis (Terminal da Portaria, Check-in Digital, Verificação FNRH)
   s = s.replace(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_, href, inner) => {
@@ -4348,6 +4657,9 @@ function htmlToStructuredReceptionWhatsAppBody(html = "", fallbackText = "") {
     const v = decodeHtmlEntitiesBasic(String(col2 || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
     if (!k && !v) return "";
     if (!k) return `\n${v}\n`;
+    if (/^corpflats\b/i.test(k) && /gest[aã]o de hospedag/i.test(k)) {
+      return v ? `\n*${v}*\n` : "";
+    }
     const cleanKey = k.replace(/^\*+|\*+$/g, "").replace(/:$/, "").trim();
     return `\n• *${cleanKey}:* ${v}\n`;
   });
@@ -4360,9 +4672,13 @@ function htmlToStructuredReceptionWhatsAppBody(html = "", fallbackText = "") {
     .replace(/<[^>]+>/g, " ");
 
   s = decodeHtmlEntitiesBasic(s);
+  s = stripResidualCssNoise(s);
 
-  // Remove rodapé automático residual caso não estivesse na class="footer"
-  s = s.replace(/Mensagem autom[aá]tica enviada pelo sistema de gest[aã]o[\s\S]*$/i, "");
+  // Remove rodapés institucionais automáticos
+  s = s
+    .replace(/CorpFlats\s*•\s*Sistema Transacional de Hotelaria[\s\S]*$/i, "")
+    .replace(/Este [eé] um e-mail transacional automatizado[\s\S]*$/i, "")
+    .replace(/Mensagem autom[aá]tica enviada pelo sistema de gest[aã]o[\s\S]*$/i, "");
 
   const lines = s
     .split(/\r?\n/)
@@ -4382,19 +4698,128 @@ function htmlToStructuredReceptionWhatsAppBody(html = "", fallbackText = "") {
       }
       continue;
     }
-    // Ignora cabeçalho institucional repetitivo no topo do template
-    if (compacted.length <= 2 && /^(corpflats|gest[aã]o de hospedagens|informativo operacional)$/i.test(line.replace(/\*/g, "").trim())) {
+    if (
+      compacted.length <= 3 &&
+      /^(corpflats(?:\s*•\s*gest[aã]o de hospedage[mn]s?)?|gest[aã]o de hospedage[mn]s?|informativo operacional)$/i.test(
+        line.replace(/\*/g, "").trim()
+      )
+    ) {
       continue;
+    }
+    if (
+      line.startsWith("• ") &&
+      compacted.length >= 2 &&
+      compacted[compacted.length - 1] === "" &&
+      compacted[compacted.length - 2].startsWith("• ")
+    ) {
+      compacted.pop();
     }
     compacted.push(line);
   }
 
-  return compacted.join("\n").trim();
+  const out = compacted.join("\n").trim();
+  if (out) return out;
+  return stripResidualCssNoise(String(fallbackText || "")).trim();
+}
+
+function formatIsoDateToBrShort(dateStr) {
+  const s = String(dateStr || "").trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  return s;
+}
+
+function buildReceptionSummaryFromReservationAndMeta(comm, reservation = null, db = null) {
+  const subject = String(comm?.subject || "").trim();
+  const trigger = String(comm?.metadata?.trigger || "").trim().toLowerCase();
+  const lines = [];
+
+  const isCancel = trigger.includes("cancel") || /cancelamento|cancelad[oa]/i.test(subject);
+  const flatChangeMatch = subject.match(/Flat\s*(\w+)\s+alterad[oa]\s+para\s+Flat\s*(\w+)/i);
+  const isUpdate = Boolean(flatChangeMatch) || trigger.includes("update") || /atualiza[cç][aã]o|alterad[oa]/i.test(subject);
+
+  if (isCancel) {
+    lines.push("🚫 *Reserva Cancelada — Desautorizar Acesso na Portaria*");
+  } else if (isUpdate) {
+    lines.push("🔄 *Atualização de Reserva / Unidade*");
+  } else {
+    lines.push("✅ *Autorização de Hospedagem e Liberação na Portaria*");
+  }
+  lines.push("");
+
+  const flatFromSubj = subject.match(/Flat\s*(\d+[A-Za-z]?)/i)?.[1] || "";
+  const flatNum = String(
+    (flatChangeMatch ? flatChangeMatch[2] : "") ||
+    reservation?.flatNumber ||
+    comm?.metadata?.flatNumber ||
+    flatFromSubj ||
+    ""
+  ).replace(/^flat\s*/i, "").trim();
+
+  if (flatChangeMatch) {
+    lines.push(`• *Mudança de Unidade:* ~Flat ${flatChangeMatch[1]}~ → *Flat ${flatChangeMatch[2]}*`);
+  } else if (flatNum) {
+    lines.push(`• *Apartamento:* Flat ${flatNum}`);
+  }
+
+  const resCode = reservation?.code || (comm?.reservation_id && comm.reservation_id !== "0" ? comm.reservation_id : comm?.metadata?.reservationCode) || "";
+  if (resCode && resCode !== "MANUAL") {
+    lines.push(`• *Reserva:* #${resCode}`);
+  }
+
+  let guestName = reservation?.guestName || comm?.metadata?.guestName || "";
+  if (!guestName) {
+    const subjGuest = subject.match(/Flat\s*\w+\s*-\s*([^(]+?)(?:\s*\(|$)/i);
+    if (subjGuest) guestName = subjGuest[1].trim();
+  }
+  const guestDoc = reservation?.guestDocument || reservation?.guestCpf || reservation?.cpf || "";
+  if (guestName) {
+    lines.push(`• *Hóspede Titular:* ${guestName}${guestDoc ? ` (Doc: ${guestDoc})` : ""}`);
+  }
+
+  const companions = Array.isArray(reservation?.additionalGuests)
+    ? reservation.additionalGuests
+    : (Array.isArray(reservation?.companions) ? reservation.companions : []);
+  for (let i = 0; i < companions.length; i++) {
+    const comp = companions[i];
+    const cName = String(comp?.name || comp?.fullName || "").trim();
+    const cDoc = String(comp?.cpf || comp?.document || comp?.rg || "").trim();
+    if (cName) {
+      lines.push(`• *Acompanhante ${i + 1}:* ${cName}${cDoc ? ` (Doc: ${cDoc})` : ""}`);
+    }
+  }
+
+  const datesFromSubj = subject.match(/\((\d{2}\/\d{2}\/\d{4})\s*a\s*(\d{2}\/\d{2}\/\d{4})\)/i);
+  const checkinBr = reservation?.checkinDate ? formatIsoDateToBrShort(reservation.checkinDate) : (datesFromSubj?.[1] || "");
+  const checkoutBr = reservation?.checkoutDate ? formatIsoDateToBrShort(reservation.checkoutDate) : (datesFromSubj?.[2] || "");
+  if (checkinBr && checkoutBr) {
+    const ciTime = reservation?.earlyCheckinTime || reservation?.checkinTime || "14:00";
+    const coTime = reservation?.lateCheckoutTime || reservation?.checkoutTime || "12:00";
+    lines.push(`• *Período:* ${checkinBr} (entrada ${ciTime}) a ${checkoutBr} (saída ${coTime})`);
+  }
+
+  const plate = String(reservation?.vehiclePlate || reservation?.carPlate || reservation?.licensePlate || "").trim();
+  const model = [reservation?.vehicleModel || reservation?.carModel, reservation?.vehicleColor || reservation?.carColor]
+    .map(v => String(v || "").trim())
+    .filter(Boolean)
+    .join(" ");
+  if (plate || model) {
+    lines.push(`• *Veículo:* ${[model, plate ? `Placa *${plate.toUpperCase()}*` : ""].filter(Boolean).join(" — ")}`);
+  }
+
+  if (!isCancel) {
+    const baseUrl = String(process.env.SERVER_BASE_URL || db?.settings?.publicBaseUrl || "https://corpflats.com.br").replace(/\/+$/, "");
+    lines.push(`\n🔗 *Terminal da Portaria:* ${baseUrl}/portaria`);
+  }
+
+  return lines.join("\n").trim();
 }
 
 export function formatReceptionEmailForWhatsApp({
   comm,
+  rawBodyHtml = "",
   reservation = null,
+  db = null,
   attachmentCount = 0,
   isRetroactive = false
 } = {}) {
@@ -4404,11 +4829,19 @@ export function formatReceptionEmailForWhatsApp({
   const ccRaw = String(comm?.cc || comm?.metadata?.cc || "").toLowerCase();
   const ccHasGarage = ccRaw.includes("pfbestacionamentos") || Boolean(comm?.metadata?.garageEmail && ccRaw.includes(String(comm.metadata.garageEmail).toLowerCase()));
 
-  let bodyFormatted = htmlToStructuredReceptionWhatsAppBody(comm?.body || comm?.bodyHtml || "", comm?.bodyText || "");
-  if (!bodyFormatted && reservation) {
-    const flatNum = reservation.flatNumber || comm?.metadata?.flatNumber || "S/N";
-    const guestName = reservation.guestName || comm?.metadata?.guestName || "Hóspede";
-    bodyFormatted = `• *Apartamento:* Flat ${flatNum}\n• *Hóspede:* ${guestName}\n• *Reserva:* #${reservation.code || reservation.id}`;
+  let bodyFormatted = "";
+  if (rawBodyHtml && String(rawBodyHtml).trim()) {
+    bodyFormatted = htmlToStructuredReceptionWhatsAppBody(rawBodyHtml, comm?.bodyText || "");
+  }
+  if (!bodyFormatted && comm?.metadata?.cleanBodyText) {
+    bodyFormatted = stripResidualCssNoise(String(comm.metadata.cleanBodyText)).trim();
+  }
+  if (!bodyFormatted) {
+    bodyFormatted = htmlToStructuredReceptionWhatsAppBody(comm?.body || comm?.bodyHtml || "", comm?.bodyText || "");
+  }
+  // Caso o corpo salvo em comm.body tenha sido truncado no meio do <head>/<style> ou contenha apenas o assunto repetido
+  if (!bodyFormatted || bodyFormatted === subject || bodyFormatted.length < 15) {
+    bodyFormatted = buildReceptionSummaryFromReservationAndMeta(comm, reservation, db);
   }
 
   if (bodyFormatted.length > 3300) {
@@ -4431,6 +4864,60 @@ export function formatReceptionEmailForWhatsApp({
   }
 
   return parts.filter(Boolean).join("\n").trim();
+}
+
+export function healDirtyCssReceptionFallbackMessages(db) {
+  if (!db || !db.whatsappConversations || typeof db.whatsappConversations !== "object") {
+    return 0;
+  }
+  const commsByMsgId = new Map();
+  if (Array.isArray(db.reservationCommunications)) {
+    for (const c of db.reservationCommunications) {
+      const mid = c?.metadata?.whatsappFallbackMessageId;
+      if (mid) commsByMsgId.set(String(mid), c);
+    }
+  }
+
+  let healed = 0;
+  for (const [phoneKey, conv] of Object.entries(db.whatsappConversations)) {
+    const digits = String(conv?.phone || phoneKey || "").replace(/\D/g, "");
+    if (!digits.endsWith("2237040100") && !digits.endsWith("37040100")) continue;
+    if (!Array.isArray(conv?.messages)) continue;
+
+    for (const msg of conv.messages) {
+      if (!msg || typeof msg.text !== "string") continue;
+      const looksLikeCssLeak =
+        msg.text.includes("-webkit-text-size-adjust") ||
+        msg.text.includes("mso-table-lspace") ||
+        msg.text.includes(".email-card") ||
+        msg.text.includes(".info-table");
+      if (!looksLikeCssLeak) continue;
+
+      let matchedComm = msg.messageId ? commsByMsgId.get(String(msg.messageId)) : null;
+      if (!matchedComm && Array.isArray(db.reservationCommunications)) {
+        const subjMatch = msg.text.match(/\*Assunto:\*\s*([^\r\n]+)/);
+        const subj = subjMatch ? subjMatch[1].trim() : "";
+        if (subj) {
+          matchedComm = db.reservationCommunications.find(c => String(c?.subject || "").trim() === subj) || null;
+        }
+      }
+      if (matchedComm) {
+        const res = findReservationForComm(db, matchedComm);
+        const attCount = Number(matchedComm.metadata?.whatsappFallbackAttachmentsSent || 0);
+        msg.text = formatReceptionEmailForWhatsApp({
+          comm: matchedComm,
+          reservation: res,
+          db,
+          attachmentCount: attCount,
+          isRetroactive: Boolean(matchedComm.metadata?.whatsappFallbackIsRetroactive)
+        });
+      } else {
+        msg.text = stripResidualCssNoise(msg.text).trim();
+      }
+      healed++;
+    }
+  }
+  return healed;
 }
 
 function findReservationForComm(db, comm) {
@@ -4621,6 +5108,7 @@ export async function forwardReceptionEmailToWhatsApp({
   db,
   saveDatabase = null,
   comm,
+  rawBodyHtml = "",
   rawAttachments = [],
   reservation = null,
   isRetroactive = false,
@@ -4708,7 +5196,9 @@ export async function forwardReceptionEmailToWhatsApp({
 
     const formattedText = formatReceptionEmailForWhatsApp({
       comm,
+      rawBodyHtml,
       reservation: matchedRes,
+      db,
       attachmentCount: materializedAttachments.length,
       isRetroactive
     });
@@ -4889,6 +5379,10 @@ export async function dispatchRetroactiveTodayReceptionEmailsToWhatsApp(db, save
       return { ok: false, reason: "invalid_today_date", todayBr };
     }
 
+    const prevRecoveredMs = !options.force && cfg.previousRecoveredAt
+      ? new Date(cfg.previousRecoveredAt).getTime() || 0
+      : 0;
+
     const allComms = Array.isArray(db.reservationCommunications) ? db.reservationCommunications : [];
     const eligibleToday = allComms
       .filter(c => {
@@ -4897,6 +5391,13 @@ export async function dispatchRetroactiveTodayReceptionEmailsToWhatsApp(db, save
         // ESTRITAMENTE HOJE (>= 2026-11-13 e === todayBr): nada de ontem ou dias anteriores!
         if (!brDate || brDate < RECEPTION_FALLBACK_HARD_MIN_DATE_BR || brDate !== todayBr) return false;
         if (!options.allowResend && hasCommBeenForwardedToReceptionWhatsApp(db, c)) return false;
+        // Se o e-mail já havia normalizado antes no mesmo dia e houve nova queda depois, varre apenas o período da nova queda
+        if (prevRecoveredMs > 0 && c.status !== "failed" && !c.metadata?.deliveryIssue) {
+          const cMs = new Date(c.created_at || c.createdAt || c.metadata?.sentAt || 0).getTime() || 0;
+          if (cMs > 0 && cMs < prevRecoveredMs - 45 * 60 * 1000) {
+            return false;
+          }
+        }
         return true;
       })
       .sort((a, b) => {

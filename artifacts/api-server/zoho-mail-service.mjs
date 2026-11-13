@@ -27,6 +27,8 @@ import {
   getCommBrasiliaDateStr,
   getBrasiliaTodayStr,
   recordReceptionEmailDeliveryIssue,
+  evaluateReceptionEmailFallbackAutoRecovery,
+  htmlToStructuredReceptionWhatsAppBody,
   forwardReceptionEmailToWhatsApp,
   dispatchRetroactiveTodayReceptionEmailsToWhatsApp
 } from "./mail-service.mjs";
@@ -1548,6 +1550,12 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
       } else {
         if (existingMsg?.guestBounceProcessed) mapped.guestBounceProcessed = true;
         if (existingMsg?.receptionBounceProcessed) mapped.receptionBounceProcessed = true;
+        if (mapped.direction === "inbound") {
+          evaluateReceptionEmailFallbackAutoRecovery(db, saveDatabase, {
+            inboundFromEmail: mapped.fromEmail || mapped.from || "",
+            inboundCreatedAt: mapped.created_at || isoDate || ""
+          });
+        }
       }
 
       if (existingIdx >= 0) {
@@ -1575,6 +1583,11 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
 
     zohoTokenCache.lastFolderSyncAt[folder] = Date.now();
     zohoTokenCache.lastSyncAt = new Date().toISOString();
+    if (folder === "inbox") {
+      evaluateReceptionEmailFallbackAutoRecovery(db, saveDatabase, {
+        lastZohoInboxSyncMs: Date.now()
+      });
+    }
     return { ok: true, synced: addedOrUpdated, mode: "zoho_api" };
   } catch (err) {
     return { ok: false, error: err.message, mode: "hybrid_fallback" };
@@ -1664,27 +1677,46 @@ export async function processInboundBounceOrDelayForReceptionEmail(db, saveDatab
       ? `${msgItem.subject || "DSN"} — ${diagMatch[1].trim()}`
       : `${msgItem.subject || "Falha/Atraso de entrega"} (${matchedReceptionAddr})`;
 
+    const dsnEventIso = msgItem.created_at || msgItem.date || new Date().toISOString();
+    const dsnEventMs = new Date(dsnEventIso).getTime() || Date.now();
+    const dsnMsgId = String(msgItem.id || msgItem.zohoMessageId || "").trim();
+
+    const issueRes = recordReceptionEmailDeliveryIssue(db, saveDatabase, {
+      source: isPermanentBounceSignal ? "zoho_dsn_bounce" : "zoho_dsn_delay",
+      reason: reasonText,
+      subject: msgItem.subject || "",
+      recipient: matchedReceptionAddr,
+      eventAt: dsnEventIso,
+      messageId: dsnMsgId
+    });
+
+    if (!issueRes?.activated) {
+      return {
+        isBounce: true,
+        isReceptionIssue: true,
+        issueType: isPermanentBounceSignal ? "bounced" : "delayed",
+        receptionEmail: matchedReceptionAddr,
+        autoFallbackActivated: false,
+        ignoredReason: issueRes?.ignoredReason || "inactive_or_stale"
+      };
+    }
+
     const nowIso = new Date().toISOString();
     if (Array.isArray(db.reservationCommunications)) {
       for (const c of db.reservationCommunications) {
         if (!c || !isEmailAddressedToReception(c, db)) continue;
         const cBrDate = getCommBrasiliaDateStr(c);
         if (!cBrDate || cBrDate < "2026-11-13" || cBrDate !== todayBr) continue;
+        const cSentMs = new Date(c.metadata?.sentAt || c.created_at || c.createdAt || 0).getTime() || 0;
+        if (cSentMs > 0 && cSentMs > dsnEventMs + 5 * 60 * 1000) continue;
         c.metadata = c.metadata || {};
         if (!c.metadata.deliveryIssue) {
           c.metadata.deliveryIssue = isPermanentBounceSignal ? "bounced" : "delayed";
-          c.metadata.deliveryIssueAt = nowIso;
+          c.metadata.deliveryIssueAt = dsnEventIso || nowIso;
           c.metadata.deliveryIssueReason = reasonText.slice(0, 300);
         }
       }
     }
-
-    recordReceptionEmailDeliveryIssue(db, saveDatabase, {
-      source: isPermanentBounceSignal ? "zoho_dsn_bounce" : "zoho_dsn_delay",
-      reason: reasonText,
-      subject: msgItem.subject || "",
-      recipient: matchedReceptionAddr
-    });
 
     let sweepResult = null;
     if (ensureReceptionEmailFallbackState(db).enabled !== false) {
@@ -2919,6 +2951,7 @@ export async function sendWebmailMessage(db, saveDatabase, payload = {}) {
 
   if (sentViaZohoRest) {
     const now = new Date().toISOString();
+    const cleanBodyText = htmlToStructuredReceptionWhatsAppBody(finalHtml, payload.bodyText || "");
     const commLog = {
       id: crypto.randomUUID(),
       reservation_id: String(reservation?.code || reservation?.id || payload.reservationCode || "MANUAL"),
@@ -2935,6 +2968,7 @@ export async function sendWebmailMessage(db, saveDatabase, payload = {}) {
         sentVia: "zoho_rest_api",
         messageId: zohoMsgId,
         sentAt: now,
+        cleanBodyText: cleanBodyText ? cleanBodyText.slice(0, 3500) : undefined,
         reservationCode: reservation?.code || null,
         guestName: reservation?.guestName || null,
         hasAttachments: attachments.length > 0,
@@ -2952,6 +2986,7 @@ export async function sendWebmailMessage(db, saveDatabase, payload = {}) {
           db,
           saveDatabase,
           comm: commLog,
+          rawBodyHtml: finalHtml,
           rawAttachments: attachments,
           reservation,
           isRetroactive: false,
@@ -7558,7 +7593,8 @@ export async function handleZohoIncomingWebhook(db, saveDatabase, payload = {}) 
     }
   }
 
-  await processInboundBounceOrDelayForReceptionEmail(db, saveDatabase, {
+  const recWebhookBounce = await processInboundBounceOrDelayForReceptionEmail(db, saveDatabase, {
+    id: payload?.messageId ? `zoho_${payload.messageId}` : "",
     fromEmail: rawFrom,
     from: rawFrom,
     subject: rawSubj,
@@ -7568,6 +7604,13 @@ export async function handleZohoIncomingWebhook(db, saveDatabase, payload = {}) 
     direction: "inbound",
     created_at: nowIso
   });
+
+  if (!recWebhookBounce?.isBounce) {
+    evaluateReceptionEmailFallbackAutoRecovery(db, saveDatabase, {
+      inboundFromEmail: rawFrom,
+      inboundCreatedAt: nowIso
+    });
+  }
 
   await processInboundBounceForGuestEmail(db, saveDatabase, {
     fromEmail: rawFrom,

@@ -17699,15 +17699,23 @@ function pruneDatabase() {
       if (!rc) continue;
       delete rc.attachments;
       const rcDate = String(rc.created_at || rc.sentAt || "").split("T")[0];
-      const maxLen = (rcDate && rcDate < cutoffComm) ? 1200 : 3000;
+      const maxLen = (rcDate && rcDate < cutoffComm) ? 1200 : 6000;
+      const stripHeadCssBeforeTruncate = val => {
+        if (typeof val !== "string") return val;
+        if (val.length <= maxLen) return sanitizeSafeJsonString(val, maxLen);
+        const slimmed = val
+          .replace(/<!--[\s\S]*?-->/g, "")
+          .replace(/<style\b[\s\S]*?<\/style>/gi, "");
+        return sanitizeSafeJsonString(slimmed, maxLen);
+      };
       if (typeof rc.body === "string") {
-        rc.body = sanitizeSafeJsonString(rc.body, maxLen);
+        rc.body = stripHeadCssBeforeTruncate(rc.body);
       }
       if (typeof rc.bodyHtml === "string") {
-        rc.bodyHtml = sanitizeSafeJsonString(rc.bodyHtml, maxLen);
+        rc.bodyHtml = stripHeadCssBeforeTruncate(rc.bodyHtml);
       }
       if (typeof rc.html === "string") {
-        rc.html = sanitizeSafeJsonString(rc.html, maxLen);
+        rc.html = stripHeadCssBeforeTruncate(rc.html);
       }
     }
   }
@@ -51755,22 +51763,43 @@ app.get("/api/emails/reception-fallback/status", (req, res) => {
   res.json(getReceptionEmailFallbackStatusSummary(db));
 });
 
-// 14. Configurar Modo do Fallback WhatsApp da Recepção (active | auto | disabled)
+// 14. Configurar Modo do Fallback WhatsApp da Recepção (auto | active | disabled)
 app.post("/api/emails/reception-fallback/config", (req, res) => {
   const cfg = ensureReceptionEmailFallbackState(db);
-  const { enabled, mode, autoDetect, autoWindowHours, whatsappPhone } = req.body || {};
+  const { enabled, mode, manualForce, autoDetect, autoWindowMinutes, autoWindowHours, whatsappPhone } = req.body || {};
   if (enabled !== undefined) {
     cfg.enabled = Boolean(enabled);
-    if (!cfg.enabled) cfg.mode = "disabled";
-    else if (cfg.mode === "disabled") cfg.mode = "active";
+    if (!cfg.enabled) {
+      cfg.mode = "disabled";
+      cfg.manualForce = false;
+      cfg.autoActiveUntil = null;
+    } else if (cfg.mode === "disabled") {
+      cfg.mode = "auto";
+      cfg.manualForce = false;
+    }
   }
   if (mode && ["active", "auto", "disabled"].includes(mode)) {
     cfg.mode = mode;
     cfg.enabled = mode !== "disabled";
+    if (mode === "active") {
+      cfg.manualForce = manualForce !== false;
+    } else {
+      cfg.manualForce = false;
+      if (mode === "disabled") {
+        cfg.autoActiveUntil = null;
+      }
+    }
+  }
+  if (manualForce !== undefined && mode === undefined) {
+    cfg.manualForce = Boolean(manualForce);
   }
   if (autoDetect !== undefined) cfg.autoDetect = Boolean(autoDetect);
-  if (autoWindowHours !== undefined && Number(autoWindowHours) > 0) {
+  if (autoWindowMinutes !== undefined && Number(autoWindowMinutes) >= 5) {
+    cfg.autoWindowMinutes = Number(autoWindowMinutes);
+    cfg.autoWindowHours = Number((Number(autoWindowMinutes) / 60).toFixed(2));
+  } else if (autoWindowHours !== undefined && Number(autoWindowHours) > 0) {
     cfg.autoWindowHours = Number(autoWindowHours);
+    cfg.autoWindowMinutes = Math.round(Number(autoWindowHours) * 60);
   }
   if (whatsappPhone !== undefined && String(whatsappPhone).replace(/\D/g, "")) {
     cfg.whatsappPhone = String(whatsappPhone).trim();

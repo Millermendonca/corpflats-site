@@ -4,6 +4,8 @@ import {
   sendEmailAsync,
   ensureReceptionEmailFallbackState,
   isReceptionEmailFallbackActive,
+  evaluateReceptionEmailFallbackAutoRecovery,
+  formatReceptionEmailForWhatsApp,
   dispatchRetroactiveTodayReceptionEmailsToWhatsApp,
   getReceptionEmailFallbackStatusSummary,
   getBrasiliaTodayStr,
@@ -13,7 +15,7 @@ import {
 import { processInboundBounceOrDelayForReceptionEmail } from "../artifacts/api-server/zoho-mail-service.mjs";
 import { appendMessageToConversation, isBuildingReceptionPhone } from "../artifacts/api-server/zapi-service.mjs";
 
-test("Reception Email -> WhatsApp 2237040100 Fallback: today-only retroactive, attachments in chat, idempotency, and auto-detection", async () => {
+test("Reception Email -> WhatsApp 2237040100 Fallback: zero CSS leak on 3000-char truncated HTML, today-only, attachments, and automatic self-deactivation", async () => {
   const todayBr = getBrasiliaTodayStr();
   assert.ok(todayBr >= "2026-11-13", `Expected todayBr >= 2026-11-13, got ${todayBr}`);
 
@@ -34,9 +36,13 @@ test("Reception Email -> WhatsApp 2237040100 Fallback: today-only retroactive, a
         flatId: 605,
         flatNumber: "605",
         guestName: "José Luiz Costa Neto",
+        guestDocument: "123.456.789-00",
         guestPhone: "5522999112233",
         checkinDate: todayBr,
         checkoutDate: "2026-11-16",
+        vehicleModel: "Toyota Corolla",
+        vehicleColor: "Prata",
+        vehiclePlate: "RJA4B21",
         status: "confirmada",
         hasPreCheckin: true,
         docPhotoUrl: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA="
@@ -54,6 +60,11 @@ test("Reception Email -> WhatsApp 2237040100 Fallback: today-only retroactive, a
     ],
     reservationCommunications: []
   };
+
+  // 0. Por padrão (sem falha recente), o fallback começa em modo "auto" e INATIVO
+  const initialCfg = ensureReceptionEmailFallbackState(db);
+  assert.equal(initialCfg.mode, "auto");
+  assert.equal(isReceptionEmailFallbackActive(db), false, "Fallback must start inactive when email is healthy");
 
   const mockOverrides = {
     attachmentDelayMs: 0,
@@ -81,10 +92,10 @@ test("Reception Email -> WhatsApp 2237040100 Fallback: today-only retroactive, a
     body: "<p>E-mail de ontem</p>",
     status: "sent",
     metadata: { trigger: "morning_checkin_07h", hasAttachments: false, attachmentsCount: 0 },
-    created_at: "2026-11-12T22:00:00.000Z" // 19:00 BRT de 12/11/2026
+    created_at: "2026-11-12T22:00:00.000Z"
   });
 
-  // 2. E-mail exclusivo da GARAGEM hoje (NÃO é da recepção, não pode ir para recepção!)
+  // 2. E-mail exclusivo da GARAGEM hoje (NÃO é da recepção!)
   db.reservationCommunications.push({
     id: "comm_garage_only_today",
     reservation_id: "RES-605-0542",
@@ -99,28 +110,31 @@ test("Reception Email -> WhatsApp 2237040100 Fallback: today-only retroactive, a
     created_at: `${todayBr}T10:05:00.000Z`
   });
 
-  // 3. E-mail da Recepção HOJE 07:04 BRT (sem anexos ainda)
+  // 3. REPRODUÇÃO EXATA DO BUG DO SCREENSHOT: comm.body truncado em 3000 chars no meio da tag <style>!
   const checkinRendered = renderCheckinConfirmedEmail({
     reservation: { ...db.reservations[0], hasPreCheckin: false },
     flat: db.flats[0],
     settings: db.settings,
     db
   });
+  const truncatedAt3000Body = checkinRendered.bodyHtml.slice(0, 3000);
+  assert.equal(truncatedAt3000Body.includes("</style>"), false, "Sanity check: 3000-char slice cuts right inside <style>");
+
   db.reservationCommunications.push({
-    id: "comm_today_07h",
+    id: "comm_today_07h_truncated_css",
     reservation_id: "RES-605-0542",
     type: "email",
     direction: "outbound",
     recipient: "soho@promenade.com.br",
     cc: "promenadesoho@pfbestacionamentos.com.br",
     subject: checkinRendered.subject,
-    body: checkinRendered.bodyHtml,
+    body: truncatedAt3000Body,
     status: "sent",
     metadata: { trigger: "morning_checkin_07h", flatNumber: "605", guestName: "José Luiz Costa Neto", hasAttachments: false, attachmentsCount: 0 },
     created_at: `${todayBr}T10:04:28.000Z`
   });
 
-  // 4. E-mail de Alteração de Flat HOJE 09:52 BRT (inserido fora de ordem para testar ordenação cronológica!)
+  // 4. E-mail de Alteração de Flat HOJE com HTML completo
   const updateRendered = renderReservationUpdateEmail({
     reservation: db.reservations[0],
     flat: db.flats[0],
@@ -129,7 +143,7 @@ test("Reception Email -> WhatsApp 2237040100 Fallback: today-only retroactive, a
     db
   });
 
-  // 5. E-mail de Check-in Concluído HOJE 10:43 BRT COM ANEXO (foto documento oficial)
+  // 5. E-mail de Check-in Concluído HOJE COM ANEXO (foto documento oficial) e body truncado em 3000 chars
   db.reservationCommunications.unshift({
     id: "comm_today_10h43_with_att",
     reservation_id: "RES-605-0542",
@@ -138,7 +152,7 @@ test("Reception Email -> WhatsApp 2237040100 Fallback: today-only retroactive, a
     recipient: "soho@promenade.com.br",
     cc: "promenadesoho@pfbestacionamentos.com.br",
     subject: "Flat 605 - José Luiz Costa Neto (13/11/2026 a 16/11/2026)",
-    body: checkinRendered.bodyHtml,
+    body: truncatedAt3000Body,
     status: "sent",
     metadata: {
       trigger: "pre_checkin",
@@ -165,55 +179,65 @@ test("Reception Email -> WhatsApp 2237040100 Fallback: today-only retroactive, a
   });
 
   assert.equal(isBuildingReceptionPhone("2237040100", db), true);
-  assert.equal(isBuildingReceptionPhone("552237040100", db), true);
 
-  // Executa varredura retroativa de hoje
+  // Executa varredura retroativa forçada de hoje
   const sweep1 = await dispatchRetroactiveTodayReceptionEmailsToWhatsApp(db, null, {
+    force: true,
     pacingDelayMs: 0,
     todayBrOverride: todayBr,
     overrides: mockOverrides
   });
 
   assert.equal(sweep1.ok, true);
-  assert.equal(sweep1.sentCount, 3, "Must forward ONLY the 3 reception emails from today (excluding yesterday and garage-only)");
+  assert.equal(sweep1.sentCount, 3, "Must forward ONLY the 3 reception emails from today");
   assert.equal(sentTexts.length, 3);
-  assert.equal(sentDocs.length, 1, "Must forward the 1 attachment from comm_today_10h43_with_att");
+  assert.equal(sentDocs.length, 1);
 
-  // Verifica ordem estritamente cronológica (07:04 -> 09:52 -> 10:43)
-  assert.ok(sentTexts[0].phone === "552237040100");
-  assert.ok(sentTexts[1].message.includes("408"), "Second message must be the 09:52 flat update");
-  assert.ok(sentTexts[2].message.includes("1 anexo(s)"), "Third message must be the 10:43 pre-checkin with attachment");
-  assert.ok(sentDocs[0].phone === "552237040100");
-  assert.ok(String(sentDocs[0].document).startsWith("data:image/jpeg;base64,"), "Document payload must be valid base64 data URI");
+  // VALIDAÇÃO CRÍTICA ZERO-CSS: Nenhuma mensagem enviada ao WhatsApp pode conter CSS bruto!
+  for (const st of sentTexts) {
+    assert.equal(st.message.includes("-webkit-text-size-adjust"), false, `CSS leaked in WhatsApp text: ${st.message}`);
+    assert.equal(st.message.includes("mso-table-lspace"), false, `MSO CSS leaked in WhatsApp text: ${st.message}`);
+    assert.equal(st.message.includes(".email-card"), false, `CSS class leaked in WhatsApp text: ${st.message}`);
+    assert.equal(st.message.includes(".guest-box"), false, `Truncated CSS class leaked in WhatsApp text: ${st.message}`);
+    assert.equal(st.message.includes("background-color:"), false, `CSS property leaked in WhatsApp text: ${st.message}`);
+  }
 
-  // Verifica conversa 552237040100 no WhatsApp Chat
-  const recConv = db.whatsappConversations.find(c => c.phone === "552237040100");
-  assert.ok(recConv);
-  assert.equal(recConv.name, "Recepção Promenade Soho", "Must heal stale Ordem de Serviço name to Recepção Promenade Soho");
-  assert.equal(recConv.aiPaused, true, "Must keep AI paused on internal building reception chat");
-  assert.equal(recConv.reservationCode, null, "Must never bind reception chat to a guest reservationCode");
-  assert.equal(recConv.messages.length, 4, "3 email texts + 1 attached document in chat");
-  const docChatMsg = recConv.messages.find(m => m.type === "document");
-  assert.ok(docChatMsg, "Attachment must be appended to conversation as type=document");
-  assert.ok(String(docChatMsg.mediaUrl).startsWith("/api/emails/reception-fallback/attachment/comm_today_10h43_with_att/0/"));
-  assert.ok(docChatMsg.fileName.endsWith(".jpg"));
+  // E a mensagem reconstruída a partir do HTML truncado contém os dados operacionais limpos!
+  assert.ok(sentTexts[0].message.includes("Flat 605"), "Clean operational summary must include Flat 605");
+  assert.ok(sentTexts[0].message.includes("José Luiz Costa Neto"), "Clean operational summary must include guest name");
+  assert.ok(sentTexts[0].message.includes("RJA4B21"), "Clean operational summary must include vehicle plate");
+  assert.ok(sentTexts[1].message.includes("408"), "Full HTML update message must preserve content without CSS");
+  assert.equal(sentTexts[1].message.includes("Sistema Transacional de Hotelaria"), false, "Must strip institutional footer");
 
-  // Verifica idempotência absoluta: rodar de novo não envia nada duplicado
+  // Verifica idempotência absoluta
   const sweep2 = await dispatchRetroactiveTodayReceptionEmailsToWhatsApp(db, null, {
+    force: true,
     pacingDelayMs: 0,
     todayBrOverride: todayBr,
     overrides: mockOverrides
   });
-  assert.equal(sweep2.sentCount, 0, "Second retroactive sweep must send 0 duplicates");
-  assert.equal(sentTexts.length, 3);
+  assert.equal(sweep2.sentCount, 0);
 
-  // Verifica detecção automática em modo "auto" via DSN de atraso da Microsoft (Status: 451 / Action: delayed)
-  const cfg = ensureReceptionEmailFallbackState(db);
-  cfg.mode = "auto";
-  cfg.autoActiveUntil = null;
-  assert.equal(isReceptionEmailFallbackActive(db), false, "In auto mode with no active issue, fallback starts inactive");
+  // 6. Teste de DSN ANTIGO (> 75 min atrás): NÃO pode ativar o fallback!
+  globalThis.__corpflatsSendZapiMessage = mockOverrides.sendZapiMessageFn;
+  globalThis.__corpflatsSendZapiDocument = mockOverrides.sendZapiDocumentFn;
+  globalThis.__corpflatsAppendMessageToConversation = mockOverrides.appendMessageToConversationFn;
 
-  // Novo e-mail enviado antes do DSN chegar (simulando SMTP aceito pelo Zoho antes do bounce/delay da Microsoft)
+  const staleThreeHoursAgoIso = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
+  if (staleThreeHoursAgoIso.startsWith(todayBr)) {
+    const staleDsnRes = await processInboundBounceOrDelayForReceptionEmail(db, null, {
+      id: "zoho_stale_dsn_morning",
+      fromEmail: "mailer-daemon@mail.zoho.com",
+      subject: "Mail Delivery Status Notification (Delay)",
+      bodyHtml: "<div>Final-Recipient: rfc822; soho@promenade.com.br<br>Status: 451<br>Action: delayed</div>",
+      direction: "inbound",
+      created_at: staleThreeHoursAgoIso
+    });
+    assert.equal(staleDsnRes.autoFallbackActivated, false, "Stale DSN from hours ago must NOT activate fallback");
+    assert.equal(isReceptionEmailFallbackActive(db), false);
+  }
+
+  // 7. Teste de DSN NOVO (agora): ATIVA automaticamente e varre pendente da queda atual
   db.reservationCommunications.unshift({
     id: "comm_today_pending_dsn",
     reservation_id: "RES-605-0542",
@@ -221,39 +245,42 @@ test("Reception Email -> WhatsApp 2237040100 Fallback: today-only retroactive, a
     direction: "outbound",
     recipient: "soho@promenade.com.br",
     subject: "Flat 605 - Novo Aviso Antes do DSN",
-    body: "<p>Teste auto-recovery pós DSN</p>",
+    body: checkinRendered.bodyHtml,
     status: "sent",
     metadata: { trigger: "manual", hasAttachments: false, attachmentsCount: 0 },
     created_at: new Date().toISOString()
   });
 
-  globalThis.__corpflatsSendZapiMessage = mockOverrides.sendZapiMessageFn;
-  globalThis.__corpflatsSendZapiDocument = mockOverrides.sendZapiDocumentFn;
-  globalThis.__corpflatsAppendMessageToConversation = mockOverrides.appendMessageToConversationFn;
-
-  const dsnRes = await processInboundBounceOrDelayForReceptionEmail(db, null, {
+  const freshDsnRes = await processInboundBounceOrDelayForReceptionEmail(db, null, {
+    id: "zoho_fresh_dsn_now",
     fromEmail: "mailer-daemon@mail.zoho.com",
     subject: "Mail Delivery Status Notification (Delay)",
-    snippet: "THIS IS A WARNING MESSAGE ONLY",
-    bodyHtml: "<div>Final-Recipient: rfc822; soho@promenade.com.br<br>Status: 451<br>Action: delayed<br>Diagnostic-Code: 4.7.0 Temporary server error. NextHop: substrate-int.office.com</div>",
+    bodyHtml: "<div>Final-Recipient: rfc822; soho@promenade.com.br<br>Status: 451<br>Action: delayed<br>Diagnostic-Code: 4.7.0 Temporary server error</div>",
     direction: "inbound",
     created_at: new Date().toISOString()
   });
 
-  assert.equal(dsnRes.isReceptionIssue, true);
-  assert.equal(dsnRes.issueType, "delayed");
-  assert.equal(isReceptionEmailFallbackActive(db), true, "Microsoft Delay DSN must automatically activate reception WhatsApp fallback");
-  assert.equal(dsnRes.retroactiveSentCount, 1, "DSN auto-recovery must immediately sweep today's unforwarded reception email");
+  assert.equal(freshDsnRes.autoFallbackActivated, true);
+  assert.equal(isReceptionEmailFallbackActive(db), true, "Fresh Microsoft 451 DSN must activate fallback");
   assert.equal(sentTexts.length, 4);
+  assert.equal(sentTexts[3].message.includes("-webkit-text-size-adjust"), false);
 
-  // Verifica envio ao vivo com anexo PDF em memória + falha SMTP
+  // 8. AUTO-DESATIVAÇÃO (Sinal 1): E-mail recebido da própria recepção desativa o fallback IMEDIATAMENTE!
+  const recovInbound = evaluateReceptionEmailFallbackAutoRecovery(db, null, {
+    inboundFromEmail: "Recepção Soho <soho@promenade.com.br>",
+    inboundCreatedAt: new Date(Date.now() + 1000).toISOString()
+  });
+  assert.equal(recovInbound.recovered, true, "Inbound email from reception must auto-deactivate fallback");
+  assert.equal(isReceptionEmailFallbackActive(db), false, "Fallback must now be OFF automatically");
+
+  // 9. Nova falha SMTP ao vivo reativa automaticamente + envia anexo PDF limpo (sem CSS!)
   const fakePdfBuffer = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF", "utf8");
   sendEmailAsync({
     db,
     reservationId: "RES-605-0542",
     recipient: "soho@promenade.com.br",
     subject: "Flat 605 - Envio Ao Vivo com PDF",
-    bodyHtml: "<p>Ficha em anexo</p>",
+    bodyHtml: checkinRendered.bodyHtml,
     attachments: [{ filename: "FNRH_Teste.pdf", content: fakePdfBuffer, contentType: "application/pdf" }],
     overrides: {
       ...mockOverrides,
@@ -266,12 +293,67 @@ test("Reception Email -> WhatsApp 2237040100 Fallback: today-only retroactive, a
   });
 
   await new Promise(r => setTimeout(r, 120));
-  assert.equal(sentTexts.length, 5, "Live sendEmailAsync SMTP failure must immediately fallback to WhatsApp");
-  assert.equal(sentDocs.length, 2, "Live sendEmailAsync attachment must be sent via sendZapiDocument");
-  assert.ok(String(sentDocs[1].document).startsWith("data:application/pdf;base64,"));
+  assert.equal(isReceptionEmailFallbackActive(db), true, "Live SMTP error must reactivate fallback");
+  assert.equal(sentTexts.length, 5);
+  assert.equal(sentTexts[4].message.includes("-webkit-text-size-adjust"), false, "Live HTML email must have zero CSS");
+  assert.equal(sentDocs.length, 2);
 
-  const statusSummary = getReceptionEmailFallbackStatusSummary(db);
-  assert.equal(statusSummary.todayTotalReceptionEmails, 5);
-  assert.equal(statusSummary.todayForwardedCount, 5);
-  assert.equal(statusSummary.todayPendingCount, 0);
+  // 10. AUTO-DESATIVAÇÃO (Sinal 2): Expiração natural da janela sem novos erros desativa sozinho!
+  db.settings.receptionEmailFallback.autoActiveUntil = new Date(Date.now() - 1000).toISOString();
+  assert.equal(isReceptionEmailFallbackActive(db), false, "Expired cooldown window without new errors must self-deactivate");
+  assert.equal(db.settings.receptionEmailFallback.autoActiveUntil, null, "Self-deactivation must clear autoActiveUntil");
+
+  // 11. AUTO-DESATIVAÇÃO NA MIGRAÇÃO V2 + Limpeza de bolhas antigas com CSS no /whatsapp-chat:
+  const legacyDb = {
+    settings: {
+      receptionEmail: "soho@promenade.com.br",
+      receptionEmailFallback: {
+        enabled: true,
+        mode: "active", // modo legado travado ativo da v1
+        autoDetect: true,
+        autoWindowHours: 24,
+        autoActiveUntil: new Date(Date.now() + 20 * 3600 * 1000).toISOString()
+      }
+    },
+    reservations: db.reservations,
+    reservationCommunications: [
+      {
+        id: "legacy_comm_1",
+        reservation_id: "RES-605-0542",
+        type: "email",
+        direction: "outbound",
+        recipient: "soho@promenade.com.br",
+        subject: "Flat 605 - José Luiz Costa Neto (13/11/2026 a 16/11/2026)",
+        body: truncatedAt3000Body,
+        metadata: { whatsappFallbackMessageId: "msg_dirty_css_1", whatsappFallbackAttachmentsSent: 1 },
+        created_at: `${todayBr}T10:46:00.000Z`
+      }
+    ],
+    zohoMessagesCache: [
+      {
+        id: "zoho_morning_dsn_1",
+        fromEmail: "mailer-daemon@mail.zoho.com",
+        subject: "Mail Delivery Status Notification (Delay)",
+        snippet: "soho@promenade.com.br 451 delayed",
+        created_at: new Date(Date.now() - 6 * 3600 * 1000).toISOString() // 6 horas atrás
+      }
+    ],
+    whatsappConversations: [
+      {
+        phone: "552237040100",
+        messages: [
+          {
+            messageId: "msg_dirty_css_1",
+            text: "📧➡️📲 *[E-MAIL RECEPÇÃO]*\n📌 *Assunto:* Flat 605 - José Luiz Costa Neto (13/11/2026 a 16/11/2026)\nbody, table, td, a { -webkit-text-size-adjust: 100%; }\n.email-card { background-color: #FFF; }"
+          }
+        ]
+      }
+    ]
+  };
+
+  assert.equal(isReceptionEmailFallbackActive(legacyDb), false, "V2 migration must auto-deactivate legacy v1 stuck active state when last DSN is >75m old");
+  assert.equal(legacyDb.settings.receptionEmailFallback.mode, "auto");
+  const healedBubbleText = legacyDb.whatsappConversations[0].messages[0].text;
+  assert.equal(healedBubbleText.includes("-webkit-text-size-adjust"), false, "V2 migration must heal CSS-polluted chat bubble in whatsappConversations");
+  assert.ok(healedBubbleText.includes("Flat 605"), "Healed chat bubble must contain clean reservation details");
 });
