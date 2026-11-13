@@ -188,6 +188,54 @@ Você também pode consultar o extrato detalhado e efetuar o pagamento via PIX o
     category: "pagamento"
   },
   {
+    id: "node_additional_daily_expiring_soon",
+    stageNumber: 2,
+    stageName: "2. Confirmação & Pagamento",
+    title: "Lembrete • Pré-Reserva de Diária Extra Expira em Breve",
+    subtitle: "Enviado antes de vencer o prazo da diária extra não quitada",
+    triggerEvent: "additional_daily_expiring_soon",
+    channelType: "whatsapp",
+    recipients: ["solicitante"],
+    timingLabel: "Faltando 10 min / 30 min / 2h para expirar",
+    condition: "Diária extra em pré-reserva ainda aguardando pagamento",
+    channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    description: "Disparado automaticamente antes do vencimento da Pré-Reserva da Diária Extra com código PIX Copia e Cola e link do portal, informando que caso não seja pago apenas o período extra expira e a reserva original permanece confirmada.",
+    messagePreview: `Olá, *{{nome_destinatario}}*! ⏰
+Passando para lembrar que a *Pré-Reserva de Diária Extra ({{diarias_extras_expiradas}})* da sua reserva *{{numero_reserva}}* (*Flat {{quarto}}*) *expira em {{tempo_restante_pre_reserva}}* (limite: *{{validade_pre_reserva}}*).
+
+⚠️ _Caso o pagamento da diária extra não seja confirmado até o horário limite, apenas o período adicional expira e sua reserva original ({{data_checkin_original}} a {{data_checkout_original}}) permanece 100% confirmada._`,
+    buttons: [
+      { label: "💳 Ver Detalhes & Pagar", type: "URL", url: "{{link_portal_hospede}}" },
+      { label: "📋 Copiar Código PIX", type: "COPY", url: "{{link_copiar_pix}}" },
+      { label: "📞 Falar com Atendimento", type: "CALL", url: "{{telefone_hotel}}" }
+    ],
+    editUrl: "/whatsapp?tab=rules&tpl=tpl_additional_daily_expiring_soon",
+    category: "pagamento"
+  },
+  {
+    id: "node_additional_daily_expired",
+    stageNumber: 2,
+    stageName: "2. Confirmação & Pagamento",
+    title: "Diária Extra Expirada • Reserva Original Mantida",
+    subtitle: "Reverte apenas as diárias extras não pagas e tranquiliza o hóspede",
+    triggerEvent: "additional_daily_expired",
+    channelType: "whatsapp",
+    recipients: ["solicitante"],
+    timingLabel: "Imediato ao fim do prazo da diária extra",
+    condition: "Prazo de validade da diária extra encerrado sem pagamento",
+    channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    description: "Enviado automaticamente quando a diária extra pendente expira: libera apenas as datas adicionais no calendário, restaura a reserva original paga e avisa com clareza que a hospedagem principal continua 100% confirmada.",
+    messagePreview: `Olá, *{{nome_destinatario}}*! ⏳
+Informamos que o prazo de pagamento da *Pré-Reserva de Diária Extra ({{diarias_extras_expiradas}})* vinculada à reserva *{{numero_reserva}}* *expirou*.
+
+✅ *Fique tranquilo(a):* Sua reserva principal de *{{data_checkin_original}} a {{data_checkout_original}}* (*Flat {{quarto}}*) permanece *100% confirmada e garantida*!`,
+    buttons: [
+      { label: "📞 Falar com Atendimento", type: "CALL", url: "{{telefone_hotel}}" }
+    ],
+    editUrl: "/whatsapp?tab=rules&tpl=tpl_additional_daily_expired",
+    category: "pagamento"
+  },
+  {
     id: "node_payment_confirmed",
     stageNumber: 2,
     stageName: "2. Confirmação & Pagamento",
@@ -1013,6 +1061,8 @@ const SIMULATION_SCENARIOS: Scenario[] = [
     currentStage: "Alteração Pendente",
     activeNodeIds: [
       "node_additional_daily_pending",
+      "node_additional_daily_expiring_soon",
+      "node_additional_daily_expired",
       "node_reservation_updated"
     ],
     description: "Hóspede de qualquer canal (inclusive Booking/Airbnb) solicita mais 1 diária pelo WhatsApp. Ao lançar a alteração com saldo a pagar, dispara mensagem com resumo, noites atualizadas, valor pendente, botão de copiar código PIX e link seguro para quitação."
@@ -1202,6 +1252,8 @@ export default function ReservationJourney() {
         "node_pre_reserva",
         "node_payment_pending",
         "node_additional_daily_pending",
+        "node_additional_daily_expiring_soon",
+        "node_additional_daily_expired",
         "node_payment_confirmed",
         "node_res_created_direct",
         "node_sameday_reservation",
@@ -1235,6 +1287,8 @@ export default function ReservationJourney() {
         "node_pre_reserva",
         "node_payment_pending",
         "node_additional_daily_pending",
+        "node_additional_daily_expiring_soon",
+        "node_additional_daily_expired",
         "node_payment_confirmed",
         "node_res_created_direct",
         "node_sameday_reservation",
@@ -1266,6 +1320,8 @@ export default function ReservationJourney() {
       breakfastRule: "☕ Geralmente sem café incluso (ou adquirido à parte).",
       allowedNodeIds: [
         "node_additional_daily_pending",
+        "node_additional_daily_expiring_soon",
+        "node_additional_daily_expired",
         "node_res_created_ota",
         "node_sameday_reservation",
         "node_pre_checkin_reminder",

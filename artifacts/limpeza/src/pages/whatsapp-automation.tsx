@@ -150,7 +150,16 @@ interface WhatsAppTemplate {
 type RecipientType = "guest" | "requester" | `guest_${number}`
 
 // Mesma regra do backend: eventos financeiros não vão para acompanhantes por padrão
-const COMPANION_EXCLUDED_EVENTS = ["pre_reservation_created", "pre_reservation_expiring_soon", "pre_reservation_expired", "payment_pending", "additional_daily_pending", "payment_confirmed"]
+const COMPANION_EXCLUDED_EVENTS = [
+  "pre_reservation_created",
+  "pre_reservation_expiring_soon",
+  "pre_reservation_expired",
+  "payment_pending",
+  "additional_daily_pending",
+  "additional_daily_expiring_soon",
+  "additional_daily_expired",
+  "payment_confirmed"
+]
 const defaultIncludeCompanions = (tpl: { triggerEvent?: string; includeCompanions?: boolean }) =>
   typeof tpl.includeCompanions === "boolean" ? tpl.includeCompanions : !COMPANION_EXCLUDED_EVENTS.includes(tpl.triggerEvent || "")
 
@@ -269,6 +278,10 @@ const TAG_GROUPS = [
       { tag: "{{alerta_mudanca_flat}}", label: "Alerta de Mudança de Flat (Condicional)", example: "⚠️ *ATENÇÃO: MUDANÇA PARA O FLAT 113*" },
       { tag: "{{confirmacao_mudanca_flat}}", label: "Pedido de OK na Troca de Flat (Condicional)", example: "Por favor, confirme com *OK* que viu a mudança." },
       { tag: "{{resumo_alteracoes}}", label: "Itens Alterados (Antigo Riscado / Novo em Destaque)", example: "• *Acomodação / Quarto:*\n  ❌ Flat anterior: ~Flat 101~\n  ✅ *SEU NOVO FLAT: Flat 113* 🔑" },
+      { tag: "{{data_checkin_original}}", label: "Check-in Original Pago (Pré-Reserva Extra)", example: "10/11/2026" },
+      { tag: "{{data_checkout_original}}", label: "Check-out Original Pago (Pré-Reserva Extra)", example: "12/11/2026" },
+      { tag: "{{data_checkout_solicitado}}", label: "Check-out Solicitado na Extensão", example: "13/11/2026" },
+      { tag: "{{diarias_extras_expiradas}}", label: "Resumo das Diárias Extras", example: "+1 diária(s) (12/11/2026)" },
     ]
   },
   {
@@ -436,22 +449,22 @@ const BOT_ACTIONS_METADATA: BotActionMeta[] = [
   },
   {
     key: "alterar_datas_reserva",
-    title: "Alterar Datas da Reserva (Trava 24h)",
+    title: "Alterar Datas da Reserva (Trava 24h + Pré-Reserva 30m)",
     endpoint: "Tool: alterar_datas_reserva",
     method: "POST",
-    description: "Permite alterar datas com no mínimo 24h de antecedência do check-in, recalculando tarifas e disponibilidade.",
+    description: "Permite alterar datas com no mínimo 24h de antecedência; se gerar saldo adicional, entra como Pré-Reserva da Diária Extra por 30 min.",
     iconName: "Calendar",
     badgeText: "Trava >= 24h",
     colorClass: "blue"
   },
   {
     key: "estender_estadia",
-    title: "Prorrogar Estadia & Remanejamento Inteligente",
+    title: "Prorrogar Estadia (Pré-Reserva 30m + Remanejamento)",
     endpoint: "Tool: estender_estadia",
     method: "POST",
-    description: "Gera PIX para diárias extras ou consulta o gestor no WhatsApp (#EXT) para remanejar reserva futura para o Flat da Vez.",
+    description: "Bloqueia diárias extras em Pré-Reserva por 30 min com PIX/Cartão ou consulta o gestor no WhatsApp (#EXT) para remanejar reserva futura.",
     iconName: "ArrowLeftRight",
-    badgeText: "Prorrogação + PIX",
+    badgeText: "Hold 30m + PIX",
     colorClass: "emerald"
   },
   {
