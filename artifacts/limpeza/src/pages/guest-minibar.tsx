@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo";
+import { DirectBookingPerkCard } from "@/components/direct-booking-perk-card";
 import { formatSmartPhone } from "@/lib/phone-mask";
 import {
   Refrigerator,
@@ -2365,6 +2366,13 @@ export default function GuestMinibar() {
               </div>
             )}
           </Card>
+
+          {/* Benefício Reserva Direta Zero-Spam (Modo Escuro Compacto) */}
+          <DirectBookingPerkCard
+            portalSource="guest_minibar"
+            variant="dark"
+            compact={true}
+          />
         </main>
 
         {/* ── Barra Fixa Inferior (Bloqueada antes da Conferência Pós Check-out / Liberada após Conferência) ── */}
@@ -2792,6 +2800,13 @@ export default function GuestMinibar() {
               <ExternalLink className="w-3.5 h-3.5" />
             </a>
           )}
+
+          {/* Avaliação 5★ no Google + Benefício Reserva Direta Zero-Spam */}
+          <DirectBookingPerkCard
+            portalSource="guest_minibar"
+            variant="dark"
+            showGoogleReviewCta={true}
+          />
 
           <div className="space-y-2 pt-2">
             <Button

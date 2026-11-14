@@ -189,8 +189,28 @@ import {
   isReceptionEmailFallbackActive,
   dispatchRetroactiveTodayReceptionEmailsToWhatsApp,
   getReceptionEmailFallbackStatusSummary,
-  serveReceptionFallbackAttachment
+  serveReceptionFallbackAttachment,
+  buildDirectBookingEmailFooterHtml
 } from "./mail-service.mjs";
+import {
+  DEFAULT_SEO_PAGES_CONFIG,
+  isPublicIndexablePath,
+  resolveSpaSeoPolicy,
+  buildSsrSemanticSnapshotHtml,
+  buildSeoHeadExtraHtml,
+  buildDynamicSitemapXml,
+  CANONICAL_ROBOTS_TXT,
+  buildOfficialHotelVcard
+} from "./seo-prerender.mjs";
+import {
+  sanitizeTrackingSettings,
+  getPublicTrackingConfig,
+  buildPublicTrackingHeadStub,
+  dispatchServerSidePurchaseConversion,
+  sendTestMetaCapiEvent,
+  buildCustomerMatchCsv,
+  buildGoogleOfflineConversionsCsv
+} from "./marketing-capi-service.mjs";
 import {
   ensureWebmailCollections,
   getZohoOAuthConfig,
@@ -4359,7 +4379,9 @@ const DEFAULT_SITE_CONFIG = {
     pixDiscountPercent: 5,
     cardMarkupPercent: 5,
     breakfastSurchargePerGuest: 20
-  }
+  },
+  showDirectBookingFooter: true,
+  seoPages: DEFAULT_SEO_PAGES_CONFIG
 };
 
 // ── Motor de Purificação e Recuperação Fiel das Limpezas de Setembro ─────────
@@ -12036,6 +12058,9 @@ async function _loadDatabaseImpl() {
             syncMaidCredits(2);
             syncMaidCredits(3);
           } catch (_) {}
+          if (db.adSettings) {
+            sanitizeTrackingSettings(db.adSettings);
+          }
           pgHydratedSuccessfully = true;
           if (hydrationRetryTimer) {
             clearTimeout(hydrationRetryTimer);
@@ -12086,6 +12111,9 @@ async function _loadDatabaseImpl() {
             }, 1500);
           }
         } else if (querySucceeded) {
+          if (db.adSettings) {
+            sanitizeTrackingSettings(db.adSettings);
+          }
           pgHydratedSuccessfully = true;
           if (hydrationRetryTimer) {
             clearTimeout(hydrationRetryTimer);
@@ -18890,6 +18918,7 @@ export function sanitizeUserMenuPreferences(raw, existing = null) {
     base.mobileMode = raw.mobileMode;
   }
 
+
   return base;
 }
 
@@ -20800,13 +20829,24 @@ app.get("/api/public/checkout/context", (req, res) => {
       checkinDate: r.checkinDate,
       checkoutDate: r.checkoutDate,
       checkoutTime: r.checkoutTime || db.settings?.checkoutTime || "12:00",
-      isAlreadyCheckedOut
+      isAlreadyCheckedOut,
+      channel: r.channel || null,
+      isB2b: isB2bReservation(r)
     },
     flat: {
       number: resolvedFlatNum,
       isOccupied: flat ? flat.isOccupied : false
     }
   });
+});
+
+// Cartão Oficial de Contato Público (.vcf) para Retenção Silenciosa na Agenda do Celular
+app.get("/api/public/contact.vcf", (_req, res) => {
+  const vcfContent = buildOfficialHotelVcard(db);
+  res.setHeader("Content-Type", "text/vcard; charset=utf-8");
+  res.setHeader("Content-Disposition", 'attachment; filename="CorpFlats_Soho_Campos.vcf"');
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  return res.status(200).send(vcfContent);
 });
 
 app.post("/api/public/checkout", async (req, res) => {
@@ -31736,6 +31776,24 @@ app.get("/api/site-content", (req, res) => {
     gallery: Array.isArray(current.gallery) && current.gallery.length > 0 ? current.gallery : DEFAULT_SITE_CONFIG.gallery,
     testimonials: Array.isArray(current.testimonials) ? current.testimonials : DEFAULT_SITE_CONFIG.testimonials,
     faq: Array.isArray(current.faq) && current.faq.length > 0 ? current.faq : DEFAULT_SITE_CONFIG.faq,
+    showDirectBookingFooter: current.showDirectBookingFooter !== false,
+    seoPages: (() => {
+      const mergedSeoPages = {};
+      const customSeoPages = current.seoPages && typeof current.seoPages === "object" ? current.seoPages : {};
+      for (const [slug, baseCfg] of Object.entries(DEFAULT_SEO_PAGES_CONFIG)) {
+        mergedSeoPages[slug] = {
+          ...baseCfg,
+          ...(customSeoPages[slug] && typeof customSeoPages[slug] === "object" ? customSeoPages[slug] : {})
+        };
+      }
+      for (const [slug, customCfg] of Object.entries(customSeoPages)) {
+        if (!mergedSeoPages[slug] && customCfg && typeof customCfg === "object") {
+          mergedSeoPages[slug] = { ...customCfg };
+        }
+      }
+      return mergedSeoPages;
+    })(),
+    tracking: getPublicTrackingConfig(db.adSettings),
   });
 });
 
@@ -32813,7 +32871,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       if (!cleanPhone || cleanPhone.length < (isIntlDirectPhone ? 8 : 10)) {
         return res.status(400).json({ error: "Telefone / WhatsApp válido com DDD (ou DDI internacional com +) é obrigatório para finalizar a reserva." });
       }
-      if (!hasDocFile) {
+      if (!hasDocFile && !req.body?.deferDocToPreCheckin) {
         return res.status(400).json({ error: "O anexo do documento oficial com foto (RG, CNH ou Passaporte em PDF ou Imagem) é obrigatório para finalizar a reserva." });
       }
     } else if (rawDocStr && !isDocValid) {
@@ -33413,6 +33471,20 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
     reservation.docPhotoUrl = guest?.docPhotoUrl || docPhotoUrl || null;
     reservation.signatureUrl = null;
     reservation.fnhrCompleted = false;
+    reservation.pendingDocumentUpload = !Boolean(reservation.docPhotoUrl || hasDocFile);
+
+    const rawAttribution = req.body?.attribution && typeof req.body.attribution === "object" ? req.body.attribution : {};
+    const clientForwardedIp = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.ip || "";
+    const clientUa = String(req.headers["user-agent"] || "");
+    reservation.attribution = {
+      ...rawAttribution,
+      sessionId: rawAttribution.sessionId || sessionId || undefined,
+      clientIp: rawAttribution.clientIp || clientForwardedIp || undefined,
+      clientIpAddress: rawAttribution.clientIpAddress || clientForwardedIp || undefined,
+      clientUserAgent: rawAttribution.clientUserAgent || clientUa || undefined,
+      purchaseEventId: rawAttribution.purchaseEventId || `pur_${resCode}`,
+      capturedAt: new Date().toISOString()
+    };
 
     // ── Integração Automática SERPRO FNRH se Modo Gov.br Estiver Ativo ────────
     if (
@@ -33460,20 +33532,29 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
     if (!linkedCart && payerPhone) {
       linkedCart = db.abandonedCarts.find(c => c.guestPhone === payerPhone && c.status !== "concluido");
     }
+    const isImmediateConfirmedPaid =
+      reservation.paymentStatus === "pago_total" ||
+      reservation.paymentStatus === "pago";
     if (linkedCart) {
-      linkedCart.status = "concluido";
-      linkedCart.recoveredAt = new Date().toISOString();
+      if (isImmediateConfirmedPaid) {
+        linkedCart.status = "concluido";
+        linkedCart.recoveredAt = new Date().toISOString();
+      } else {
+        linkedCart.status = "aguardando_pagamento";
+        linkedCart.currentStep = 4;
+        linkedCart.currentStepName = "Aguardando Pagamento";
+      }
       linkedCart.reservationCode = resCode;
       linkedCart.totalAmount = Number(totalAmount);
     }
 
-    // Registra evento de conversão do funil de vendas
+    // Registra evento de conversão do funil de vendas (purchase confirmado apenas após liquidação real)
     if (!db.funnelEvents) db.funnelEvents = [];
     db.funnelEvents.push({
       id: Date.now(),
       sessionId: sessionId || `sess_${Date.now()}`,
-      step: 5,
-      stepName: "booking_confirmed",
+      step: isImmediateConfirmedPaid ? 5 : 4,
+      stepName: isImmediateConfirmedPaid ? "booking_confirmed" : "awaiting_payment",
       reservationCode: resCode,
       guestName: actorDisplayName,
       guestPhone: payerPhone,
@@ -46621,6 +46702,21 @@ app.get("/api/pms/guests", (req, res) => {
       tags.push("Consumo Alto");
     }
 
+    const channelsUsed = Array.from(
+      new Set(
+        guestReservations
+          .filter(r => r && r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "bloqueio")
+          .map(r => String(r.channel || r.source || "").trim().toLowerCase())
+          .filter(Boolean)
+      )
+    );
+    const hasOtaStay = channelsUsed.some(ch => /booking|airbnb|expedia|decolar|hotels\.com|vrbo|hoteis|channex|ota/i.test(ch));
+    const hasDirectStay = channelsUsed.some(ch => /site|direto|whatsapp|balcao|recepcao|walkin|telefone|motor_reservas/i.test(ch));
+    const isOtaOriginOnly = hasOtaStay && !hasDirectStay;
+    if (isOtaOriginOnly && !tags.includes("Origem OTA")) {
+      tags.push("Origem OTA");
+    }
+
     // Verifica se possui empresa parceira associada
     let companyName = g.companyName || "";
     if (g.companyId) {
@@ -46749,6 +46845,8 @@ app.get("/api/pms/guests", (req, res) => {
       favoriteFlat,
       lastStayDate,
       tags: Array.from(new Set(tags)),
+      channelsUsed,
+      isOtaOriginOnly,
       companyName,
       invoicesCount: guestInvoices.length,
       reservationsCount: guestReservations.length,
@@ -48994,6 +49092,30 @@ app.get("/api/pms/guests/export/csv", (req, res) => {
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename=hospedes_corpflats_${new Date().toISOString().substring(0, 10)}.csv`);
   res.send(csvContent);
+});
+
+// Exportação de Audiências Customer Match / Lookalike (Meta Ads & Google Ads — LGPD art. 7º, IX)
+app.get("/api/pms/guests/export/customer-match", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
+    return res.status(403).json({ error: "Acesso restrito a administradores." });
+  }
+  if (!db.guests) db.guests = [];
+  reconcileAndMergeGuests(db);
+
+  const platform = String(req.query.platform || "meta").toLowerCase().trim() === "google" ? "google" : "meta";
+  const segment = String(req.query.segment || "ota_only").toLowerCase().trim().replace(/[^a-z0-9_-]/g, "") || "ota_only";
+  const hashed = req.query.hashed;
+
+  const csvBody = buildCustomerMatchCsv(db, { platform, segment, hashed });
+  const dateTag = new Date().toISOString().substring(0, 10);
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="corpflats_customer_match_${platform}_${segment}_${dateTag}.csv"`
+  );
+  return res.send(csvBody);
 });
 
 
@@ -51747,7 +51869,12 @@ export function ensureReservationScheduledEmails(db, saveDatabase, r) {
         <div style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px; font-size: 15px; color: #374151; line-height: 1.6;">
           Lembramos que hoje encerra sua estadia no <strong>Flat ${r.flatNumber}</strong>. O horário limite de saída é às 12:00. Ao desocupar a unidade, basta entregar a chave na portaria.
         </div>
-      `
+      `,
+      footerHtml: buildDirectBookingEmailFooterHtml({
+        reservation: r,
+        triggerSource: "checkout_reminder",
+        db
+      })
     });
     const checkoutBodyText = `Bom dia, ${r.guestName}! Lembramos que hoje é a data de saída do Flat ${r.flatNumber} até as 12:00.`;
     const checkoutScheduledFor = `${r.checkoutDate}T08:30:00.000Z`;
@@ -58274,15 +58401,21 @@ function getMarketingData() {
       autoPilotEnabled: true,
       lowOccupancyThresholdPct: 60,
       highOccupancyPausePct: 85,
-      defaultDailyBudget: 35,
-      dailyBudgetLimit: 35,
-      metaPixelId: "7489123891023",
-      metaApiToken: "EAABwz...",
-      googleAdsId: "AW-9481923"
+      defaultDailyBudget: 50,
+      dailyBudgetLimit: 50,
+      ga4MeasurementId: "",
+      googleAdsId: "",
+      googleAdsConversionLabel: "",
+      googleSiteVerification: "",
+      metaPixelId: "",
+      metaCapiToken: "",
+      metaApiToken: "",
+      metaTestEventCode: ""
     };
   } else if (db.adSettings.dailyBudgetLimit === undefined) {
-    db.adSettings.dailyBudgetLimit = Number(db.adSettings.defaultDailyBudget ?? 35);
+    db.adSettings.dailyBudgetLimit = Number(db.adSettings.defaultDailyBudget ?? 50);
   }
+  sanitizeTrackingSettings(db.adSettings);
 }
 
 function normalizeCartLeadPhone(rawPhone) {
@@ -58800,6 +58933,10 @@ async function sweepAbandonedCartsAutoRecovery(targetDb = db, saveFn = saveDatab
 
 // Get Ad Campaigns & AI Auto-Pilot Status
 app.get("/api/marketing/ad-campaigns", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
+    return res.status(403).json({ error: "Acesso restrito a administradores." });
+  }
   getMarketingData();
   const campaigns = db.adCampaigns || [];
   const settings = db.adSettings;
@@ -58866,8 +59003,26 @@ app.post("/api/marketing/ad-campaigns/:id/toggle", (req, res) => {
 
 // Save Marketing Settings
 app.post("/api/marketing/ad-settings", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
+    return res.status(403).json({ error: "Acesso restrito a administradores." });
+  }
   getMarketingData();
-  const { autoPilotEnabled, lowOccupancyThresholdPct, highOccupancyPausePct, defaultDailyBudget, dailyBudgetLimit, metaPixelId, metaApiToken, googleAdsId } = req.body;
+  const {
+    autoPilotEnabled,
+    lowOccupancyThresholdPct,
+    highOccupancyPausePct,
+    defaultDailyBudget,
+    dailyBudgetLimit,
+    ga4MeasurementId,
+    googleAdsId,
+    googleAdsConversionLabel,
+    googleSiteVerification,
+    metaPixelId,
+    metaCapiToken,
+    metaApiToken,
+    metaTestEventCode
+  } = req.body || {};
 
   if (autoPilotEnabled !== undefined) db.adSettings.autoPilotEnabled = Boolean(autoPilotEnabled);
   if (lowOccupancyThresholdPct !== undefined) db.adSettings.lowOccupancyThresholdPct = Number(lowOccupancyThresholdPct);
@@ -58877,12 +59032,62 @@ app.post("/api/marketing/ad-settings", (req, res) => {
     db.adSettings.defaultDailyBudget = budgetVal;
     db.adSettings.dailyBudgetLimit = budgetVal;
   }
-  if (metaPixelId !== undefined) db.adSettings.metaPixelId = metaPixelId;
-  if (metaApiToken !== undefined) db.adSettings.metaApiToken = metaApiToken;
+  if (ga4MeasurementId !== undefined) db.adSettings.ga4MeasurementId = ga4MeasurementId;
   if (googleAdsId !== undefined) db.adSettings.googleAdsId = googleAdsId;
+  if (googleAdsConversionLabel !== undefined) db.adSettings.googleAdsConversionLabel = googleAdsConversionLabel;
+  if (googleSiteVerification !== undefined) db.adSettings.googleSiteVerification = googleSiteVerification;
+  if (metaPixelId !== undefined) db.adSettings.metaPixelId = metaPixelId;
+  if (metaCapiToken !== undefined) {
+    db.adSettings.metaCapiToken = metaCapiToken;
+    db.adSettings.metaApiToken = metaCapiToken;
+  } else if (metaApiToken !== undefined) {
+    db.adSettings.metaCapiToken = metaApiToken;
+    db.adSettings.metaApiToken = metaApiToken;
+  }
+  if (metaTestEventCode !== undefined) db.adSettings.metaTestEventCode = metaTestEventCode;
+
+  sanitizeTrackingSettings(db.adSettings);
+  if (googleSiteVerification !== undefined && db.siteConfig) {
+    if (!db.siteConfig.seo || typeof db.siteConfig.seo !== "object") db.siteConfig.seo = {};
+    db.siteConfig.seo.googleSiteVerification = db.adSettings.googleSiteVerification || "";
+  }
 
   saveDatabase();
   res.json({ success: true, settings: db.adSettings });
+});
+
+// Disparo Real de Teste para Meta Conversions API (Graph API v20.0)
+app.post("/api/marketing/test-capi", async (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
+    return res.status(403).json({ error: "Acesso restrito a administradores." });
+  }
+  getMarketingData();
+  const clientIp = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.ip || "";
+  const userAgent = String(req.headers["user-agent"] || "");
+  const result = await sendTestMetaCapiEvent(db.adSettings || {}, {
+    ...(req.body || {}),
+    ip: clientIp,
+    userAgent
+  });
+  return res.status(result.ok ? 200 : 400).json(result);
+});
+
+// Exportação de Conversões Offline do Google Ads (GCLID conciliado com reservas pagas)
+app.get("/api/marketing/google-offline-conversions.csv", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
+    return res.status(403).json({ error: "Acesso restrito a administradores." });
+  }
+  const csv = buildGoogleOfflineConversionsCsv(db);
+  const dateTag = new Date().toISOString().substring(0, 10);
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="corpflats_google_offline_conversions_${dateTag}.csv"`
+  );
+  return res.send(csv);
 });
 
 // AI Copy Generator helper endpoint
@@ -72777,7 +72982,20 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
         }
       }
       saveDatabase();
+      let capiConversionMutated = false;
       for (const item of confirmedItems) {
+        try {
+          if (item.r) {
+            await dispatchServerSidePurchaseConversion(db, item.r, {
+              value: item.valorPago || item.r?.paidAmount,
+              paymentMethod: "pix",
+              source: "inter_webhook"
+            });
+            capiConversionMutated = true;
+          }
+        } catch (capiErr) {
+          console.warn("[Banco Inter Webhook CAPI] Aviso:", capiErr?.message || capiErr);
+        }
         try {
           if (item.isComplementaryPayment || item.r?.pendingStayExtension || (item.r?.previousCheckoutDate && item.r.previousCheckoutDate < item.r.checkoutDate)) {
             await ensureExtensionPaymentConfirmationDispatched(item.r, {
@@ -72792,6 +73010,7 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
           console.warn("[Banco Inter Webhook] Falha ao disparar confirmação:", dispErr.message);
         }
       }
+      if (capiConversionMutated) saveDatabase();
     }
 
     res.status(200).send("OK");
@@ -73911,7 +74130,39 @@ async function confirmReservationPayment(r, {
     targetUrl: `/reservas`
   });
 
+  // Sincroniza carrinho abandonado / funil quando o pagamento real é confirmado
+  if (r.paymentStatus === "pago_total" || r.paymentStatus === "sinal_pago") {
+    if (Array.isArray(db.abandonedCarts)) {
+      const rSessionId = r.attribution?.sessionId || "";
+      for (const cart of db.abandonedCarts) {
+        if (!cart) continue;
+        if (
+          (r.code && cart.reservationCode === r.code) ||
+          (rSessionId && cart.sessionId === rSessionId)
+        ) {
+          cart.status = "concluido";
+          cart.recoveredAt = cart.recoveredAt || new Date().toISOString();
+          cart.currentStep = 5;
+          cart.currentStepName = "Reserva Confirmada";
+        }
+      }
+    }
+  }
+
   saveDatabase();
+
+  if (r.paymentStatus === "pago_total") {
+    try {
+      await dispatchServerSidePurchaseConversion(db, r, {
+        value: isComplementaryPayment ? valorPago : (cumulativePaid || valorPago),
+        paymentMethod: r.paymentMethod || (isCard ? "cartao_credito" : "pix"),
+        source
+      });
+      saveDatabase();
+    } catch (capiErr) {
+      console.warn("[confirmReservationPayment CAPI] Aviso:", capiErr?.message || capiErr);
+    }
+  }
 
   const rCodeNorm = String(r.code || "").toUpperCase();
   const rIdNorm = String(r.id || "");
@@ -77855,7 +78106,7 @@ export function resolveSpaOpenGraphMetadata(req, dbRef = db) {
 
   // 3. Avaliação Google (Redirecionamento Imediato + Card 5 Estrelas)
   if (rawPath.startsWith("/avaliar") || rawPath.startsWith("/google-review")) {
-    const targetGoogleReview = zCfg.googleReviewUrl || "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA";
+    const targetGoogleReview = dbRef?.siteConfig?.gbpReviewUrl || zCfg.googleReviewUrl || "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA";
     const reviewTitle = zCfg.reviewPreviewTitle || "⭐ Avalie sua Estadia • CorpFlats Soho Residence";
     const reviewDesc = zCfg.reviewPreviewDescription || "Sua experiência foi 5 estrelas? Toque aqui para avaliar a CorpFlats no Google em menos de 30 segundos!";
     const reviewImg = resolvePreviewImageUrl(zCfg.reviewPreviewImage, "review-preview.jpg");
@@ -78022,7 +78273,7 @@ export function resolveSpaOpenGraphMetadata(req, dbRef = db) {
   const isBreakfastKitchen = rawPath.startsWith("/pedidos-cafe");
   const isGarage = rawPath.startsWith("/garagem") || rawPath.startsWith("/estacionamento");
   const isHrTeam = rawPath.startsWith("/rh") || rawPath.startsWith("/equipe");
-  const isBookingSite = rawPath === "/" || rawPath.startsWith("/reservar") || rawPath.startsWith("/booking");
+  const isBookingSite = isPublicIndexablePath(rawPath) || rawPath.startsWith("/reservar") || rawPath.startsWith("/booking");
   const isOtherAdminPanel =
     rawPath.startsWith("/login") ||
     rawPath.startsWith("/configuracoes") ||
@@ -78256,7 +78507,8 @@ export function resolveSpaOpenGraphMetadata(req, dbRef = db) {
     imageWidth: "1200",
     imageHeight: "630",
     pageUrl,
-    isRestockerKiosk
+    isRestockerKiosk,
+    foundRes
   };
 }
 
@@ -78281,10 +78533,17 @@ function serveSpaWithMetadata(distFolder, req, res) {
       const safeUrl = escapeOgHtmlAttr(meta.pageUrl);
       const safeAlt = escapeOgHtmlAttr(meta.imageAlt);
       const safeTarget = escapeOgHtmlAttr(meta.redirectUrl);
-      const redirectHtml = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8" /><title>${safeTitle}</title><meta name="description" content="${safeDesc}" /><meta property="og:site_name" content="CorpFlats" /><meta property="og:type" content="website" /><meta property="og:title" content="${safeTitle}" /><meta property="og:description" content="${safeDesc}" /><meta property="og:url" content="${safeUrl}" /><meta property="og:image" content="${safeImg}" /><meta property="og:image:secure_url" content="${safeImg}" /><meta property="og:image:width" content="1200" /><meta property="og:image:height" content="630" /><meta property="og:image:type" content="image/jpeg" /><meta property="og:image:alt" content="${safeAlt}" /><meta name="twitter:card" content="summary_large_image" /><meta name="twitter:title" content="${safeTitle}" /><meta name="twitter:description" content="${safeDesc}" /><meta name="twitter:image" content="${safeImg}" /><meta http-equiv="refresh" content="0;url=${safeTarget}" /><script>window.location.replace(${JSON.stringify(meta.redirectUrl)});</script></head><body style="font-family:sans-serif;text-align:center;padding:40px;"><p>Redirecionando para Avaliação 5 Estrelas no Google...</p><p><a href="${safeTarget}">Clique aqui se não for redirecionado automaticamente</a></p></body></html>`;
+      const redirectHtml = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8" /><meta name="robots" content="noindex, nofollow" /><title>${safeTitle}</title><meta name="description" content="${safeDesc}" /><meta property="og:site_name" content="CorpFlats" /><meta property="og:type" content="website" /><meta property="og:title" content="${safeTitle}" /><meta property="og:description" content="${safeDesc}" /><meta property="og:url" content="${safeUrl}" /><meta property="og:image" content="${safeImg}" /><meta property="og:image:secure_url" content="${safeImg}" /><meta property="og:image:width" content="1200" /><meta property="og:image:height" content="630" /><meta property="og:image:type" content="image/jpeg" /><meta property="og:image:alt" content="${safeAlt}" /><meta name="twitter:card" content="summary_large_image" /><meta name="twitter:title" content="${safeTitle}" /><meta name="twitter:description" content="${safeDesc}" /><meta name="twitter:image" content="${safeImg}" /><meta http-equiv="refresh" content="0;url=${safeTarget}" /><script>window.location.replace(${JSON.stringify(meta.redirectUrl)});</script></head><body style="font-family:sans-serif;text-align:center;padding:40px;"><p>Redirecionando para Avaliação 5 Estrelas no Google...</p><p><a href="${safeTarget}">Clique aqui se não for redirecionado automaticamente</a></p></body></html>`;
       res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("X-Robots-Tag", "noindex, nofollow");
       res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
       return res.send(redirectHtml);
+    }
+
+    const seoPolicy = resolveSpaSeoPolicy(req, db, { foundReservation: meta.foundRes });
+    if (seoPolicy.httpRedirectUrl) {
+      res.setHeader("Cache-Control", "public, max-age=300");
+      return res.redirect(seoPolicy.httpStatus || 301, seoPolicy.httpRedirectUrl);
     }
 
     let html = cachedIndexHtml;
@@ -78297,27 +78556,69 @@ function serveSpaWithMetadata(distFolder, req, res) {
       }
     }
 
-    const safeTitle = escapeOgHtmlAttr(meta.title);
-    const safeDesc = escapeOgHtmlAttr(meta.desc);
-    const safeImg = escapeOgHtmlAttr(meta.image);
-    const safeUrl = escapeOgHtmlAttr(meta.pageUrl);
-    const safeAlt = escapeOgHtmlAttr(meta.imageAlt);
+    const effectiveTitle = seoPolicy.title || meta.title;
+    const effectiveDesc = seoPolicy.desc || meta.desc;
+    const effectiveImg = seoPolicy.image || meta.image;
+    const effectiveUrl = seoPolicy.pageUrl || meta.pageUrl;
+    const effectiveAlt = seoPolicy.imageAlt || meta.imageAlt;
+
+    const safeTitle = escapeOgHtmlAttr(effectiveTitle);
+    const safeDesc = escapeOgHtmlAttr(effectiveDesc);
+    const safeImg = escapeOgHtmlAttr(effectiveImg);
+    const safeUrl = escapeOgHtmlAttr(effectiveUrl);
+    const safeAlt = escapeOgHtmlAttr(effectiveAlt);
+    const safeRobots = escapeOgHtmlAttr(seoPolicy.robotsDirective || "noindex, nofollow");
 
     html = html
-      .replace(/<title>.*?<\/title>/i, `<title>${safeTitle}</title>`)
-      .replace(/<meta\s+name=["']description["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="description" content="${safeDesc}" />`)
-      .replace(/<meta\s+property=["']og:title["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:title" content="${safeTitle}" />`)
-      .replace(/<meta\s+property=["']og:description["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:description" content="${safeDesc}" />`)
-      .replace(/<meta\s+property=["']og:url["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:url" content="${safeUrl}" />`)
-      .replace(/<meta\s+property=["']og:image["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image" content="${safeImg}" />`)
-      .replace(/<meta\s+property=["']og:image:secure_url["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image:secure_url" content="${safeImg}" />`)
-      .replace(/<meta\s+property=["']og:image:width["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image:width" content="${meta.imageWidth}" />`)
-      .replace(/<meta\s+property=["']og:image:height["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image:height" content="${meta.imageHeight}" />`)
-      .replace(/<meta\s+property=["']og:image:alt["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image:alt" content="${safeAlt}" />`)
-      .replace(/<link\s+rel=["']image_src["']\s+href=["'].*?["']\s*\/?>/i, `<link rel="image_src" href="${safeImg}" />`)
-      .replace(/<meta\s+name=["']twitter:title["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="twitter:title" content="${safeTitle}" />`)
-      .replace(/<meta\s+name=["']twitter:description["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="twitter:description" content="${safeDesc}" />`)
-      .replace(/<meta\s+name=["']twitter:image["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="twitter:image" content="${safeImg}" />`);
+      .replace(/<title>.*?<\/title>/i, () => `<title>${safeTitle}</title>`)
+      .replace(/<meta\s+name=["']description["']\s+content=["'].*?["']\s*\/?>/i, () => `<meta name="description" content="${safeDesc}" />`)
+      .replace(/<meta\s+name=["']robots["']\s+content=["'].*?["']\s*\/?>/i, () => `<meta name="robots" content="${safeRobots}" />`)
+      .replace(/<meta\s+property=["']og:title["']\s+content=["'].*?["']\s*\/?>/i, () => `<meta property="og:title" content="${safeTitle}" />`)
+      .replace(/<meta\s+property=["']og:description["']\s+content=["'].*?["']\s*\/?>/i, () => `<meta property="og:description" content="${safeDesc}" />`)
+      .replace(/<meta\s+property=["']og:url["']\s+content=["'].*?["']\s*\/?>/i, () => `<meta property="og:url" content="${safeUrl}" />`)
+      .replace(/<meta\s+property=["']og:image["']\s+content=["'].*?["']\s*\/?>/i, () => `<meta property="og:image" content="${safeImg}" />`)
+      .replace(/<meta\s+property=["']og:image:secure_url["']\s+content=["'].*?["']\s*\/?>/i, () => `<meta property="og:image:secure_url" content="${safeImg}" />`)
+      .replace(/<meta\s+property=["']og:image:width["']\s+content=["'].*?["']\s*\/?>/i, () => `<meta property="og:image:width" content="${meta.imageWidth}" />`)
+      .replace(/<meta\s+property=["']og:image:height["']\s+content=["'].*?["']\s*\/?>/i, () => `<meta property="og:image:height" content="${meta.imageHeight}" />`)
+      .replace(/<meta\s+property=["']og:image:alt["']\s+content=["'].*?["']\s*\/?>/i, () => `<meta property="og:image:alt" content="${safeAlt}" />`)
+      .replace(/<link\s+rel=["']image_src["']\s+href=["'].*?["']\s*\/?>/i, () => `<link rel="image_src" href="${safeImg}" />`)
+      .replace(/<meta\s+name=["']twitter:title["']\s+content=["'].*?["']\s*\/?>/i, () => `<meta name="twitter:title" content="${safeTitle}" />`)
+      .replace(/<meta\s+name=["']twitter:description["']\s+content=["'].*?["']\s*\/?>/i, () => `<meta name="twitter:description" content="${safeDesc}" />`)
+      .replace(/<meta\s+name=["']twitter:image["']\s+content=["'].*?["']\s*\/?>/i, () => `<meta name="twitter:image" content="${safeImg}" />`);
+
+    if (seoPolicy.canonicalUrl) {
+      const safeCanonical = escapeOgHtmlAttr(seoPolicy.canonicalUrl);
+      html = html.replace(/<link\s+rel=["']canonical["']\s+href=["'].*?["']\s*\/?>/i, () => `<link rel="canonical" href="${safeCanonical}" />`);
+    } else {
+      html = html.replace(/\s*<link\s+rel=["']canonical["']\s+href=["'].*?["']\s*\/?>/i, "");
+    }
+
+    if (seoPolicy.allowClientTranslation) {
+      html = html
+        .replace(/<html\s+lang=["']pt-BR["']\s+class=["']notranslate["']\s+translate=["']no["']\s*>/i, '<html lang="pt-BR">')
+        .replace(/\s*<meta\s+name=["']google["']\s+content=["']notranslate["']\s*\/?>/i, "");
+    }
+
+    const trackingHeadStubHtml = seoPolicy.isPublicMarketingRoute
+      ? buildPublicTrackingHeadStub(
+          {
+            ...(db.adSettings || {}),
+            googleSiteVerification:
+              db.adSettings?.googleSiteVerification ||
+              db.siteConfig?.seo?.googleSiteVerification ||
+              ""
+          },
+          { includeVerificationMeta: Boolean(seoPolicy.isIndexable) }
+        )
+      : "";
+
+    const headExtraHtml = buildSeoHeadExtraHtml(seoPolicy, db, { trackingHeadStubHtml });
+    html = html.replace("<!-- __SEO_HEAD_EXTRA__ -->", () => headExtraHtml);
+
+    const ssrSnapshotHtml = seoPolicy.isIndexable && seoPolicy.routeSpec
+      ? buildSsrSemanticSnapshotHtml(seoPolicy.routeSpec, db)
+      : "";
+    html = html.replace("<!-- __SSR_SEO_SNAPSHOT__ -->", () => ssrSnapshotHtml);
 
     if (meta.isRestockerKiosk) {
       html = html
@@ -78327,10 +78628,11 @@ function serveSpaWithMetadata(distFolder, req, res) {
     }
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("X-Robots-Tag", seoPolicy.robotsDirective || "noindex, nofollow");
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
-    return res.send(html);
+    return res.status(seoPolicy.httpStatus || 200).send(html);
   } catch {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     res.setHeader("Pragma", "no-cache");
@@ -78671,6 +78973,7 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="robots" content="noindex, nofollow, noarchive">
   <title>${escapeOgHtmlAttr(pixOgTitle)}</title>
   <meta name="description" content="${escapeOgHtmlAttr(pixOgDesc)}">
   <meta property="og:site_name" content="CorpFlats">
@@ -78881,6 +79184,7 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
 </html>`;
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   return res.send(pageHtml);
 });
@@ -78997,6 +79301,7 @@ app.get(["/copiar-boleto/:code", "/copiar-boleto", "/boleto/:code"], (req, res) 
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="robots" content="noindex, nofollow, noarchive">
   <title>${escapeHtml(boletoOgTitle)}</title>
   <meta name="description" content="${escapeHtml(boletoOgDesc)}">
   <meta property="og:site_name" content="CorpFlats">
@@ -79217,6 +79522,7 @@ app.get(["/copiar-boleto/:code", "/copiar-boleto", "/boleto/:code"], (req, res) 
 </html>`;
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   return res.send(pageHtml);
 });
@@ -79227,6 +79533,9 @@ export function setSmartAssetCacheHeaders(res, filePath) {
 
   // 1. HTML principal, Service Worker e páginas críticas: sempre sem cache para garantir atualizações imediatas
   if (fileName === "index.html" || fileName === "sw.js" || normalized.endsWith(".html")) {
+    if (fileName !== "index.html" && normalized.endsWith(".html")) {
+      res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+    }
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
@@ -79234,14 +79543,36 @@ export function setSmartAssetCacheHeaders(res, filePath) {
   }
 
   // 2. Chunks versionados com hash imutável gerados pelo bundler (Vite/Rollup): Cache imutável por 1 ano
-  if (/-[a-zA-Z0-9_-]{6,}\.(js|mjs|css|png|jpg|jpeg|gif|svg|webp|woff|woff2|ttf|eot|ico)$/i.test(fileName)) {
+  if (
+    normalized.includes("/assets/") &&
+    /-[a-zA-Z0-9_-]{6,}\.(js|mjs|css|png|jpg|jpeg|gif|svg|webp|avif|woff|woff2|ttf|eot|ico)$/i.test(fileName)
+  ) {
     res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
     return;
   }
 
-  // 3. Arquivos estáticos sem hash (index.js legado, manifest.json, favicons, etc): revalidação ETag sem travar no cliente
+  // 2.1 Fotos otimizadas da galeria pública (/photos/*.avif, .webp, .jpg): cache público de 30 dias com revalidação suave
+  if (normalized.includes("/photos/") && /\.(avif|webp|jpg|jpeg|png)$/i.test(fileName)) {
+    res.setHeader("Cache-Control", "public, max-age=2592000, stale-while-revalidate=86400");
+    return;
+  }
+
+  // 3. Arquivos estáticos sem hash (manifest.json, favicons, og-previews, etc): revalidação ETag sem travar no cliente
   res.setHeader("Cache-Control", "no-cache");
 }
+
+// ── SEO Oficial: Sitemap XML Dinâmico com <image:image> e robots.txt Canônico ────────────────
+app.get("/sitemap.xml", (_req, res) => {
+  res.setHeader("Content-Type", "application/xml; charset=utf-8");
+  res.setHeader("Cache-Control", "public, max-age=3600");
+  return res.status(200).send(buildDynamicSitemapXml(db));
+});
+
+app.get("/robots.txt", (_req, res) => {
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.setHeader("Cache-Control", "public, max-age=3600");
+  return res.status(200).send(CANONICAL_ROBOTS_TXT);
+});
 
 if (fs.existsSync(distPath)) {
   const assetsDir = path.join(distPath, "assets");
@@ -83545,6 +83876,17 @@ async function dispatchMinibarInvoiceWithMonitoring(order, { channels = ["whatsa
       }
 
       try {
+        const linkedResForMinibar = (db.reservations || []).find(
+          r =>
+            r &&
+            ((order.reservationId && String(r.id) === String(order.reservationId)) ||
+              (order.reservationCode && String(r.code || "").toUpperCase() === String(order.reservationCode).toUpperCase()))
+        ) || null;
+        const minibarDirectFooterHtml = buildDirectBookingEmailFooterHtml({
+          reservation: linkedResForMinibar,
+          triggerSource: "minibar_invoice",
+          db
+        });
         sendEmailAsync({
           db,
           saveDatabase,
@@ -83556,7 +83898,7 @@ async function dispatchMinibarInvoiceWithMonitoring(order, { channels = ["whatsa
 <p>Valor total pago: <strong>R$ ${Number(order.totalAmount || 0).toFixed(2)}</strong></p>
 <p>Você também pode baixar o arquivo diretamente pelo link: <a href="${fullDownloadUrl}">${safeFileName}</a></p>
 <p>Agradecemos imensamente a sua estadia!</p>
-<br/><p>Atenciosamente,<br/><strong>Equipe CorpFlats & Anserve</strong></p>`,
+<br/><p>Atenciosamente,<br/><strong>Equipe CorpFlats & Anserve</strong></p>${minibarDirectFooterHtml ? `<div style="margin-top:20px;">${minibarDirectFooterHtml}</div>` : ""}`,
           attachments: diskFilePath ? [{ filename: safeFileName, path: diskFilePath }] : [],
           onDeliveryResult: async (resMail) => {
             if (resMail.success) {

@@ -14,6 +14,7 @@ import { format, addDays, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { useLocation, useRoute } from "wouter"
 import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo"
+import { DirectBookingPerkCard } from "@/components/direct-booking-perk-card"
 
 interface GuestPreference {
   coffee: string
@@ -863,6 +864,15 @@ export default function GuestBreakfast() {
             </p>
           </div>
 
+          {/* Benefício Reserva Direta Zero-Spam (Compacto) */}
+          <DirectBookingPerkCard
+            portalSource="guest_breakfast"
+            channel={reservationData?.channel}
+            isB2b={Boolean(reservationData?.isB2b || reservationData?.agencyId)}
+            compact={true}
+            variant="light"
+          />
+
           <div className="space-y-2 pt-1">
             {loadedFromReservation && reservationData?.code ? (
               <Button 
@@ -947,8 +957,8 @@ export default function GuestBreakfast() {
       <header className="relative min-h-[140px] sm:min-h-[165px] flex items-center justify-center px-4 sm:px-8 py-6 text-center overflow-hidden">
         <div className="absolute inset-0 z-0">
           <img
-            src="https://images.unsplash.com/photo-1533089860892-a7c6f0a88666?auto=format&fit=crop&w=1920&q=80"
-            alt="Café da Manhã CorpFlats"
+            src="/photos/soho/cafe-mesa-quarto.jpg"
+            alt="Café da Manhã CorpFlats no Edifício Soho Residence"
             className="w-full h-full object-cover object-center"
           />
           <div className="absolute inset-0 bg-gradient-to-b from-[#091E26]/60 via-[#091E26]/65 to-[#091E26]/80" />
@@ -1863,12 +1873,22 @@ export default function GuestBreakfast() {
       </main>
 
       {/* ── Footer Corporativo / Hospitalidade ────────────────────────── */}
-      <footer className="bg-white border-t border-slate-200/80 py-6 px-4 text-center text-xs text-slate-500 space-y-1.5 mt-auto">
+      <footer className="bg-white border-t border-slate-200/80 py-6 px-4 text-center text-xs text-slate-500 space-y-2 mt-auto">
         <div className="flex items-center justify-center gap-2 font-bold text-sm text-slate-800">
           <CorpFlatsIcon className="w-6 h-6" />
           <CorpFlatsWordmark className="text-xs text-[#0F3D4C]" />
           <span className="text-slate-300">•</span>
           <span className="text-slate-500 font-semibold text-xs">Room Service</span>
+        </div>
+        <div>
+          <a
+            href="https://corpflats.com.br/?utm_source=guest_breakfast&utm_medium=portal_footer&utm_campaign=ota_to_direct"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-[11px] font-bold text-[#0F3D4C] hover:underline"
+          >
+            <span>✨ Próxima estadia com Menor Preço + 5% OFF no PIX em corpflats.com.br</span>
+          </a>
         </div>
         <p className="text-[10px] text-slate-400">
           © {new Date().getFullYear()} {brandName}. Todos os direitos reservados.

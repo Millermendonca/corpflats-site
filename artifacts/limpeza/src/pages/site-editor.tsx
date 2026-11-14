@@ -13,22 +13,39 @@ import {
   CheckCircle2, Plus, Trash2, Star, Eye, Layers, HelpCircle,
   MessageSquare, Coffee, Wifi, Wind, Car, Utensils, Tv, Dumbbell, Waves,
   MapPin, Phone, Mail, ShieldCheck, Award, Heart, ShieldAlert,
-  BadgeDollarSign, Building2, Receipt, Coins
+  BadgeDollarSign, Building2, Receipt, Coins, Search, TrendingUp, Copy, Check
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import {
+  PUBLIC_SEO_SLUGS,
+  SEO_LANDING_PAGES,
+  getLandingPageSpec,
+  computeDynamicRatingSummary,
+  GOOGLE_BUSINESS_PROFILE_UTM_URL,
+  CHANNEX_GOOGLE_HOTELS_CUSTOM_URL,
+  type LandingPageSlug,
+} from "@/lib/seo-landing-pages"
 
 const CURATED_AIRY_PHOTOS = [
   {
-    title: "Cobertura com Jacuzzi Aquecida & Deck (Opção A - Oficial)",
+    title: "Cobertura com Jacuzzi Aquecida & Deck (Home Oficial)",
     url: "/photos/soho/hero-jacuzzi-cobertura.jpg"
   },
   {
-    title: "Quarto Integrado & Bancada de Trabalho",
+    title: "Quarto Integrado & Bancada de Trabalho (LP Corporativo)",
     url: "/photos/soho/01-quarto-bancada.jpg"
   },
   {
-    title: "Flat Soho Integrado (Quarto, Estar & Cozinha)",
+    title: "Jacuzzi & Deck na Cobertura (LP Fim de Semana)",
+    url: "/photos/soho/06-cobertura-jacuzzi.jpg"
+  },
+  {
+    title: "Flat Soho Integrado (LP Centro de Campos)",
     url: "/photos/soho/02-flat-integrado.jpg"
+  },
+  {
+    title: "Cozinha Equipada c/ Cooktop 2 Bocas (LP Estadia Longa)",
+    url: "/photos/soho/04-cozinha-equipada.jpg"
   },
   {
     title: "Café da manhã servido na mesa do flat",
@@ -48,6 +65,29 @@ const CURATED_AIRY_PHOTOS = [
   }
 ]
 
+const SEO_PAGE_AUDIENCE_LABELS: Record<LandingPageSlug, { shortName: string; cycleBadge: string }> = {
+  home: {
+    shortName: "Home Oficial (/)",
+    cycleBadge: "Hub Geral Híbrido",
+  },
+  "hospedagem-corporativa-campos": {
+    shortName: "Corporativo & Açu",
+    cycleBadge: "Dom–Qui • B2B & CNPJ",
+  },
+  "fim-de-semana-campos": {
+    shortName: "Fim de Semana & Casais",
+    cycleBadge: "Sex–Dom • Lazer & Pets",
+  },
+  "flat-centro-campos-rj": {
+    shortName: "Centro & Ed. Soho",
+    cycleBadge: "Saúde, Fórum & Ensino",
+  },
+  "estadia-longa-campos": {
+    shortName: "Estadia Longa (7–30d)",
+    cycleBadge: "Semanal & Mensal",
+  },
+}
+
 export default function SiteEditor() {
   const [, setLocation] = useLocation()
   const { toast } = useToast()
@@ -55,6 +95,52 @@ export default function SiteEditor() {
   const [saving, setSaving] = useState(false)
   const [config, setConfig] = useState<any>(null)
   const [activeTab, setActiveTab] = useState("hero")
+  const [selectedSeoSlug, setSelectedSeoSlug] = useState<LandingPageSlug>("home")
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+
+  const handleCopySnippet = async (key: string, value: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopiedKey(key)
+      setTimeout(() => setCopiedKey(prev => (prev === key ? null : prev)), 2200)
+      toast({
+        title: "Copiado para a área de transferência!",
+        description: label,
+      })
+    } catch {
+      toast({
+        title: "Não foi possível copiar automaticamente",
+        description: "Selecione o texto manualmente e pressione Ctrl+C.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const updateSeoPageField = (slug: LandingPageSlug, field: string, value: any) => {
+    setConfig((prev: any) => {
+      const currentSeoPages = { ...(prev?.seoPages || {}) }
+      const currentPage = { ...(currentSeoPages[slug] || {}) }
+      currentPage[field] = value
+      currentSeoPages[slug] = currentPage
+      return { ...prev, seoPages: currentSeoPages }
+    })
+  }
+
+  const resetSingleSeoPage = (slug: LandingPageSlug) => {
+    const label = SEO_PAGE_AUDIENCE_LABELS[slug]?.shortName || slug
+    if (!window.confirm(`Restaurar os textos, títulos, foto e FAQs padrão de SEO para "${label}"?`)) {
+      return
+    }
+    setConfig((prev: any) => {
+      const nextSeoPages = { ...(prev?.seoPages || {}) }
+      delete nextSeoPages[slug]
+      return { ...prev, seoPages: nextSeoPages }
+    })
+    toast({
+      title: "Padrão SEO restaurado",
+      description: `A página "${label}" voltou para a copy otimizada oficial. Clique em Salvar Alterações para publicar.`,
+    })
+  }
 
   useEffect(() => {
     fetchSiteContent()
@@ -141,6 +227,13 @@ export default function SiteEditor() {
     )
   }
 
+  const ratingSummary = computeDynamicRatingSummary(config)
+  const activeSeoDefault = SEO_LANDING_PAGES[selectedSeoSlug]
+  const activeSeoSpec = getLandingPageSpec(selectedSeoSlug, config)
+  const activeSeoCustom = config?.seoPages?.[selectedSeoSlug] || {}
+  const seoTitleLength = (activeSeoSpec.title || "").length
+  const seoDescLength = (activeSeoSpec.metaDescription || "").length
+
   return (
     <Shell>
       <div className="p-4 sm:p-8 max-w-6xl mx-auto space-y-6 pb-28">
@@ -156,11 +249,21 @@ export default function SiteEditor() {
               </h1>
             </div>
             <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
-              Edite todas as fotos, títulos, textos, comodidades e depoimentos do seu site de reservas com visualização em tempo real.
+              Edite todas as fotos, títulos, textos, Landing Pages de SEO, comodidades e depoimentos do site oficial.
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setLocation("/funil-vendas")}
+              className="text-xs font-bold gap-1.5 h-9 rounded-xl border-indigo-300 dark:border-indigo-700 bg-indigo-50/80 text-indigo-900 dark:text-indigo-200 hover:bg-indigo-100 shadow-2xs"
+            >
+              <TrendingUp className="w-3.5 h-3.5 text-indigo-600" />
+              <span>🎯 Pixels, Google Ads & Search Console</span>
+            </Button>
+
             <Button
               variant="outline"
               size="sm"
@@ -185,11 +288,11 @@ export default function SiteEditor() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => window.open("/reservar", "_blank")}
+              onClick={() => window.open("/", "_blank")}
               className="text-xs font-bold gap-1.5 h-9 rounded-xl border-slate-300 dark:border-slate-700 hover:bg-slate-100"
             >
               <Eye className="w-3.5 h-3.5 text-slate-600" />
-              <span>Ver Site Público</span>
+              <span>Ver Site Oficial</span>
             </Button>
 
             <Button
@@ -223,6 +326,10 @@ export default function SiteEditor() {
               <TabsTrigger value="hero" className="rounded-xl py-2 px-3.5 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-sky-700 dark:data-[state=active]:text-sky-300 data-[state=active]:shadow-xs gap-1.5">
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>Banner & Hero</span>
+              </TabsTrigger>
+              <TabsTrigger value="seo" className="rounded-xl py-2 px-3.5 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-indigo-700 dark:data-[state=active]:text-indigo-300 data-[state=active]:shadow-xs gap-1.5">
+                <Search className="w-3.5 h-3.5 text-indigo-600" />
+                <span>SEO & 5 Landing Pages</span>
               </TabsTrigger>
               <TabsTrigger value="branding" className="rounded-xl py-2 px-3.5 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-sky-700 dark:data-[state=active]:text-sky-300 data-[state=active]:shadow-xs gap-1.5">
                 <Globe className="w-3.5 h-3.5" />
@@ -258,6 +365,519 @@ export default function SiteEditor() {
               </TabsTrigger>
             </TabsList>
           </div>
+
+          {/* 0. ABA SEO LOCAL, GOOGLE & 5 LANDING PAGES */}
+          <TabsContent value="seo" className="space-y-6">
+            {/* Banner de Integração com Tráfego Pago, GA4, Meta CAPI & Search Console */}
+            <Card className="rounded-2xl border-indigo-200 dark:border-indigo-900/60 bg-gradient-to-r from-indigo-50/70 via-sky-50/50 to-white dark:from-indigo-950/30 dark:via-slate-900 dark:to-slate-900 shadow-xs">
+              <CardContent className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Badge className="bg-indigo-600 text-white text-[10px] font-bold">
+                      Integração Full-Funnel
+                    </Badge>
+                    <span className="text-xs font-bold text-indigo-900 dark:text-indigo-200">
+                      Google Analytics 4 • Google Ads • Meta Pixel + CAPI • Search Console
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed max-w-2xl">
+                    Configure seus IDs de rastreamento, token da API de Conversões (Meta CAPI no PIX/Cartão) e código de verificação do Google Search Console em um único painel com tutorial passo a passo de 5 minutos.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => window.open("/sitemap.xml", "_blank")}
+                    className="text-xs font-bold h-9 rounded-xl border-slate-300 dark:border-slate-700 gap-1.5"
+                  >
+                    <Globe className="w-3.5 h-3.5 text-sky-600" />
+                    <span>Ver Sitemap.xml</span>
+                    <ExternalLink className="w-3 h-3 opacity-60" />
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => setLocation("/funil-vendas")}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black h-9 px-4 rounded-xl shadow-sm gap-1.5"
+                  >
+                    <TrendingUp className="w-3.5 h-3.5" />
+                    <span>Configurar Pixels, GA4 & Search Console</span>
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Seletor + Editor das 5 Páginas Públicas de SEO */}
+            <Card className="rounded-2xl border-slate-200 dark:border-slate-800 shadow-xs">
+              <CardHeader className="space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-lg font-black flex items-center gap-2">
+                      <Search className="w-5 h-5 text-indigo-600" />
+                      Arquitetura das 5 Páginas Públicas (Home + 4 Landing Pages Conectadas ao Motor)
+                    </CardTitle>
+                    <CardDescription className="text-xs">
+                      Cada URL possui pré-renderização semântica para o Googlebot/IAs, Schema.org dedicado, datas pré-ajustadas no motor de reservas e textos personalizáveis.
+                    </CardDescription>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => window.open(activeSeoSpec.path, "_blank")}
+                      className="text-xs font-bold h-8 rounded-xl gap-1.5 border-sky-300 text-sky-800 dark:text-sky-300"
+                    >
+                      <Eye className="w-3.5 h-3.5 text-sky-600" />
+                      <span>Abrir {activeSeoSpec.path}</span>
+                      <ExternalLink className="w-3 h-3 opacity-60" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => resetSingleSeoPage(selectedSeoSlug)}
+                      className="text-xs font-bold h-8 rounded-xl gap-1.5 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-300"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Restaurar Padrão da Página</span>
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Pílulas de Seleção das 5 URLs */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 pt-1">
+                  {PUBLIC_SEO_SLUGS.map((slug) => {
+                    const specItem = SEO_LANDING_PAGES[slug]
+                    const metaInfo = SEO_PAGE_AUDIENCE_LABELS[slug]
+                    const isSelected = selectedSeoSlug === slug
+                    const hasCustom = Boolean(config?.seoPages?.[slug] && Object.keys(config.seoPages[slug]).length > 0)
+                    return (
+                      <button
+                        key={slug}
+                        type="button"
+                        onClick={() => setSelectedSeoSlug(slug)}
+                        className={`text-left p-3 rounded-xl border transition-all space-y-1 ${
+                          isSelected
+                            ? "border-indigo-500 bg-indigo-50/80 dark:bg-indigo-950/40 ring-1 ring-indigo-500 shadow-2xs"
+                            : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-indigo-300"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 truncate">
+                            {metaInfo.cycleBadge}
+                          </span>
+                          {hasCustom && (
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" title="Personalizada pelo gestor" />
+                          )}
+                        </div>
+                        <p className="text-xs font-black text-slate-900 dark:text-slate-100 truncate">
+                          {metaInfo.shortName}
+                        </p>
+                        <p className="text-[10px] font-mono text-indigo-700 dark:text-indigo-300 truncate">
+                          {specItem.path}
+                        </p>
+                      </button>
+                    )
+                  })}
+                </div>
+              </CardHeader>
+
+              <CardContent className="space-y-6">
+                {/* Simulador Ao Vivo do Resultado no Google (SERP Rich Snippet) */}
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                      🔍 Pré-visualização no Google (Rich Snippet + Estrelas Sincronizadas)
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        className={
+                          seoTitleLength <= 60
+                            ? "bg-emerald-100 text-emerald-800 text-[10px] font-bold"
+                            : "bg-amber-100 text-amber-900 text-[10px] font-bold"
+                        }
+                      >
+                        Title: {seoTitleLength}/60 chars
+                      </Badge>
+                      <Badge
+                        className={
+                          seoDescLength <= 155
+                            ? "bg-emerald-100 text-emerald-800 text-[10px] font-bold"
+                            : "bg-amber-100 text-amber-900 text-[10px] font-bold"
+                        }
+                      >
+                        Description: {seoDescLength}/155 chars
+                      </Badge>
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 space-y-1 max-w-2xl shadow-2xs">
+                    <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                      <div className="w-5 h-5 rounded-full bg-[#0F3D4C] text-[#E5C98B] flex items-center justify-center text-[10px] font-black">
+                        C
+                      </div>
+                      <div className="truncate">
+                        <span className="font-semibold text-slate-800 dark:text-slate-200 block leading-tight">
+                          CorpFlats • Soho Residence
+                        </span>
+                        <span className="text-[11px] text-slate-500 font-mono">
+                          {activeSeoSpec.canonicalUrl}
+                        </span>
+                      </div>
+                    </div>
+                    <h4 className="text-base sm:text-lg font-semibold text-[#1a0dab] dark:text-sky-400 leading-snug pt-0.5 hover:underline cursor-pointer" onClick={() => window.open(activeSeoSpec.path, "_blank")}>
+                      {activeSeoSpec.title}
+                    </h4>
+                    <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
+                      <span className="text-amber-500 tracking-tight">★★★★★</span>
+                      <span>
+                        Avaliação: <strong>{ratingSummary.ratingValuePtBr}</strong> · {ratingSummary.reviewCount} avaliações · Faixa de menor preço oficial (-5% PIX)
+                      </span>
+                    </div>
+                    <p className="text-xs sm:text-[13px] text-slate-700 dark:text-slate-300 leading-relaxed">
+                      {activeSeoSpec.metaDescription}
+                    </p>
+                  </div>
+
+                  {/* Palavras-chave alvo mapeadas para esta URL */}
+                  {activeSeoDefault.primaryKeywords && activeSeoDefault.primaryKeywords.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                      <span className="text-[11px] font-bold text-slate-500 mr-1">
+                        Palavras-chave alvo desta URL:
+                      </span>
+                      {activeSeoDefault.primaryKeywords.map((kw, i) => (
+                        <span
+                          key={`pkw-${i}`}
+                          className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-100/80 dark:bg-indigo-950 text-indigo-800 dark:text-indigo-300"
+                        >
+                          {kw}
+                        </span>
+                      ))}
+                      {(activeSeoDefault.secondaryKeywords || []).map((kw, i) => (
+                        <span
+                          key={`skw-${i}`}
+                          className="text-[10px] px-2 py-0.5 rounded-full bg-slate-200/70 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
+                        >
+                          {kw}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Campos de Meta Tags SEO (Title & Description) */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-bold">Title Tag no Google (Ideal ≤ 60 caracteres)</Label>
+                      <span className={`text-[10px] font-mono font-bold ${seoTitleLength <= 60 ? "text-emerald-600" : "text-amber-600"}`}>
+                        {seoTitleLength}/60
+                      </span>
+                    </div>
+                    <Input
+                      value={activeSeoCustom.title ?? activeSeoSpec.title}
+                      onChange={e => updateSeoPageField(selectedSeoSlug, "title", e.target.value)}
+                      placeholder={activeSeoDefault.title}
+                      className="text-xs font-bold"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold">Faixa Superior de Oferta (Top Bar da Página)</Label>
+                    <Input
+                      value={activeSeoCustom.badgeTop ?? activeSeoSpec.badgeTop}
+                      onChange={e => updateSeoPageField(selectedSeoSlug, "badgeTop", e.target.value)}
+                      placeholder={activeSeoDefault.badgeTop}
+                      className="text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-bold">Meta Description no Google (Ideal ≤ 155 caracteres)</Label>
+                    <span className={`text-[10px] font-mono font-bold ${seoDescLength <= 155 ? "text-emerald-600" : "text-amber-600"}`}>
+                      {seoDescLength}/155
+                    </span>
+                  </div>
+                  <Textarea
+                    rows={2}
+                    value={activeSeoCustom.metaDescription ?? activeSeoSpec.metaDescription}
+                    onChange={e => updateSeoPageField(selectedSeoSlug, "metaDescription", e.target.value)}
+                    placeholder={activeSeoDefault.metaDescription}
+                    className="text-xs leading-relaxed"
+                  />
+                </div>
+
+                {/* Títulos H1, Subtítulo Hero & Foto LCP da Landing Page */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold">Título Principal da Página (&lt;h1&gt;)</Label>
+                    <Input
+                      value={activeSeoCustom.h1 ?? activeSeoSpec.h1}
+                      onChange={e => updateSeoPageField(selectedSeoSlug, "h1", e.target.value)}
+                      placeholder={activeSeoDefault.h1}
+                      className="text-xs font-bold"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold">Destaque Curto Abaixo do H1</Label>
+                    <Input
+                      value={activeSeoCustom.highlightText ?? activeSeoSpec.highlightText}
+                      onChange={e => updateSeoPageField(selectedSeoSlug, "highlightText", e.target.value)}
+                      placeholder={activeSeoDefault.highlightText}
+                      className="text-xs text-sky-700 dark:text-sky-400 font-medium"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold">Parágrafo Descritivo da Hero</Label>
+                  <Textarea
+                    rows={2}
+                    value={activeSeoCustom.subtitle ?? activeSeoSpec.subtitle}
+                    onChange={e => updateSeoPageField(selectedSeoSlug, "subtitle", e.target.value)}
+                    placeholder={activeSeoDefault.subtitle}
+                    className="text-xs leading-relaxed"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold">Foto Principal LCP da Página (AVIF/WebP automático)</Label>
+                    <Input
+                      value={activeSeoCustom.heroImageUrl ?? activeSeoSpec.heroImageUrl}
+                      onChange={e => updateSeoPageField(selectedSeoSlug, "heroImageUrl", e.target.value)}
+                      placeholder={activeSeoDefault.heroImageUrl}
+                      className="text-xs font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold">Texto Alternativo SEO da Foto (alt)</Label>
+                    <Input
+                      value={activeSeoCustom.heroImageAlt ?? activeSeoSpec.heroImageAlt}
+                      onChange={e => updateSeoPageField(selectedSeoSlug, "heroImageAlt", e.target.value)}
+                      placeholder={activeSeoDefault.heroImageAlt}
+                      className="text-xs"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold">Texto do Botão CTA</Label>
+                    <Input
+                      value={activeSeoCustom.ctaButtonText ?? activeSeoSpec.ctaButtonText}
+                      onChange={e => updateSeoPageField(selectedSeoSlug, "ctaButtonText", e.target.value)}
+                      placeholder={activeSeoDefault.ctaButtonText}
+                      className="text-xs"
+                    />
+                  </div>
+                </div>
+
+                {/* Títulos H2 da Seção de Diferenciais + FAQs Específicas da LP */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold">Título da Seção Estratégica (&lt;h2&gt;)</Label>
+                    <Input
+                      value={activeSeoCustom.sectionHeading ?? activeSeoSpec.sectionHeading}
+                      onChange={e => updateSeoPageField(selectedSeoSlug, "sectionHeading", e.target.value)}
+                      placeholder={activeSeoDefault.sectionHeading}
+                      className="text-xs font-bold"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold">Subtítulo da Seção Estratégica</Label>
+                    <Input
+                      value={activeSeoCustom.sectionSubtitle ?? activeSeoSpec.sectionSubtitle}
+                      onChange={e => updateSeoPageField(selectedSeoSlug, "sectionSubtitle", e.target.value)}
+                      placeholder={activeSeoDefault.sectionSubtitle}
+                      className="text-xs"
+                    />
+                  </div>
+                </div>
+
+                {/* FAQs Dedicadas da Página (Schema.org FAQPage) */}
+                <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-xs font-bold flex items-center gap-1.5">
+                        <HelpCircle className="w-4 h-4 text-indigo-600" />
+                        Perguntas Frequentes Específicas desta Página (FAQPage Schema.org)
+                      </Label>
+                      <span className="text-[11px] text-slate-500">
+                        Exibidas na página {activeSeoSpec.path} e estruturadas em JSON-LD para Google e IAs (ChatGPT/Perplexity).
+                      </span>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        const baseList = Array.isArray(activeSeoCustom.faqs)
+                          ? [...activeSeoCustom.faqs]
+                          : activeSeoSpec.faqs.map(item => ({ ...item }))
+                        baseList.push({
+                          q: "Nova pergunta frequente desta página?",
+                          a: "Resposta objetiva e transparente...",
+                        })
+                        updateSeoPageField(selectedSeoSlug, "faqs", baseList)
+                      }}
+                      className="text-xs font-bold h-8 rounded-xl gap-1.5"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Adicionar FAQ na Página</span>
+                    </Button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {activeSeoSpec.faqs.map((faqItem, idx) => (
+                      <div
+                        key={`${selectedSeoSlug}-faq-${idx}`}
+                        className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 space-y-2 relative"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const baseList = Array.isArray(activeSeoCustom.faqs)
+                              ? [...activeSeoCustom.faqs]
+                              : activeSeoSpec.faqs.map(item => ({ ...item }))
+                            const nextList = baseList.filter((_, i) => i !== idx)
+                            updateSeoPageField(selectedSeoSlug, "faqs", nextList)
+                          }}
+                          title="Remover pergunta desta página"
+                          className="absolute top-3 right-3 p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                        <div className="pr-8">
+                          <Input
+                            value={faqItem.q}
+                            onChange={e => {
+                              const baseList = Array.isArray(activeSeoCustom.faqs)
+                                ? [...activeSeoCustom.faqs]
+                                : activeSeoSpec.faqs.map(item => ({ ...item }))
+                              baseList[idx] = { ...baseList[idx], q: e.target.value }
+                              updateSeoPageField(selectedSeoSlug, "faqs", baseList)
+                            }}
+                            className="text-xs font-bold h-8 bg-white dark:bg-slate-900"
+                          />
+                        </div>
+                        <Textarea
+                          rows={2}
+                          value={faqItem.a}
+                          onChange={e => {
+                            const baseList = Array.isArray(activeSeoCustom.faqs)
+                              ? [...activeSeoCustom.faqs]
+                              : activeSeoSpec.faqs.map(item => ({ ...item }))
+                            baseList[idx] = { ...baseList[idx], a: e.target.value }
+                            updateSeoPageField(selectedSeoSlug, "faqs", baseList)
+                          }}
+                          className="text-xs leading-relaxed bg-white dark:bg-slate-900"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Guia Prático: Google Meu Negócio + Links Gratuitos do Google Hotéis (via Channex R$ 0 Comissão) */}
+            <Card className="rounded-2xl border-emerald-200 dark:border-emerald-900/50 shadow-xs">
+              <CardHeader>
+                <CardTitle className="text-base sm:text-lg font-black flex items-center gap-2 text-emerald-950 dark:text-emerald-200">
+                  <MapPin className="w-5 h-5 text-emerald-600" />
+                  Google Meu Negócio (5★) & Links Gratuitos do Google Hotéis (R$ 0 de Comissão via Channex)
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  Copie os links prontos abaixo para rastrear 100% das reservas vindas do Google Maps e exibir o selo azul &quot;Site Oficial&quot; abaixo do preço da Booking.com.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Bloco 1: Google Meu Negócio */}
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-black text-slate-900 dark:text-slate-100">
+                      1. Link Oficial p/ Perfil da Empresa no Google (Maps)
+                    </span>
+                    <Badge className="bg-sky-100 text-sky-800 text-[10px] font-bold">
+                      UTM Orgânica
+                    </Badge>
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      readOnly
+                      value={GOOGLE_BUSINESS_PROFILE_UTM_URL}
+                      className="text-[11px] font-mono h-8 bg-white dark:bg-slate-950"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        handleCopySnippet(
+                          "gbp_url",
+                          GOOGLE_BUSINESS_PROFILE_UTM_URL,
+                          "Cole no campo Website do seu Perfil da Empresa no Google."
+                        )
+                      }
+                      className="h-8 px-3 rounded-xl text-xs font-bold gap-1 shrink-0"
+                    >
+                      {copiedKey === "gbp_url" ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>Copiar</span>
+                    </Button>
+                  </div>
+                  <ul className="text-[11px] text-slate-600 dark:text-slate-400 space-y-1 leading-relaxed list-disc pl-4">
+                    <li><strong>Categoria Principal obrigatória:</strong> <code>Apart-hotel</code> (ou <code>Hotel</code>) — habilita a aba de Preços/Hotéis no Google Maps.</li>
+                    <li><strong>Anti-fusão no nº 209:</strong> use na Linha 2 do endereço <code>Edifício Soho Residence Service — Recepção CorpFlats</code> e telefone exclusivo <code>(22) 99712-4021</code>.</li>
+                    <li><strong>Atributos chave:</strong> Estacionamento coberto gratuito (Sim), Wi-Fi gratuito (Sim), Banheira quente/Jacuzzi (Sim), Aceita cães (Sim), Piscina (Não).</li>
+                  </ul>
+                </div>
+
+                {/* Bloco 2: Google Hotel Free Booking Links via Channex */}
+                <div className="p-4 rounded-2xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/50 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-black text-emerald-950 dark:text-emerald-200">
+                      2. URL Custom Booking Engine p/ Google Hotel Search (Channex)
+                    </span>
+                    <Badge className="bg-emerald-600 text-white text-[10px] font-bold">
+                      0% Comissão
+                    </Badge>
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      readOnly
+                      value={CHANNEX_GOOGLE_HOTELS_CUSTOM_URL}
+                      className="text-[11px] font-mono h-8 bg-white dark:bg-slate-950"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        handleCopySnippet(
+                          "channex_ghs",
+                          CHANNEX_GOOGLE_HOTELS_CUSTOM_URL,
+                          "Cole em Custom Booking Engine ao criar o canal Google Hotel Search na Channex."
+                        )
+                      }
+                      className="h-8 px-3 rounded-xl text-xs font-bold gap-1 shrink-0 bg-white dark:bg-slate-900"
+                    >
+                      {copiedKey === "channex_ghs" ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>Copiar</span>
+                    </Button>
+                  </div>
+                  <ul className="text-[11px] text-slate-700 dark:text-slate-300 space-y-1 leading-relaxed list-disc pl-4">
+                    <li>Em <strong>/caixa-entrada-ota → Conectar Canais → Google Hotel Search</strong>, escolha <code>Custom Booking Engine</code> e cole a URL acima: o site já abre com check-in, check-out e adultos preenchidos!</li>
+                    <li><strong>Paridade 100% (Price Accuracy):</strong> mapeie no Google o plano <code>Com Café</code> (taxa extra de limpeza R$ 0,00) com markup <code>0%</code> no Google vs <code>+15%</code> nas OTAs.</li>
+                  </ul>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           {/* 1. ABA BANNER & HERO */}
           <TabsContent value="hero" className="space-y-6">
@@ -1534,11 +2154,11 @@ export default function SiteEditor() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => window.open("/reservar", "_blank")}
+            onClick={() => window.open(activeTab === "seo" ? activeSeoSpec.path : "/", "_blank")}
             className="text-xs font-bold gap-1.5 h-9 rounded-xl"
           >
             <Eye className="w-3.5 h-3.5 text-sky-600" />
-            <span>Ver Site</span>
+            <span>{activeTab === "seo" ? `Ver ${activeSeoSpec.path}` : "Ver Site Oficial"}</span>
           </Button>
 
           <Button

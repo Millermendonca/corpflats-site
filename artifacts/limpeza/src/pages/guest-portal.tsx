@@ -20,6 +20,7 @@ import { format, parseISO, differenceInDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { AddToCalendar } from "@/components/add-to-calendar"
 import { CorpFlatsIcon, CorpFlatsWordmark, CorpFlatsSplashScreen } from "@/components/brand-logo"
+import { DirectBookingPerkCard } from "@/components/direct-booking-perk-card"
 import { generateLodgingJsonLd } from "@/lib/calendar-helper"
 import { calculateCancellationPolicy } from "@/lib/cancellation-helper"
 import { FrozenSlot, useStableCallback } from "@/lib/render-freeze"
@@ -5043,6 +5044,19 @@ export default function GuestPortal() {
             </Card>
           )
         })()}
+
+        {/* ── Card: Benefício Reserva Direta Zero-Spam (Próxima Estadia) ───── */}
+        {!isCancelled &&
+          reservation.status !== "cancelada" &&
+          reservation.status !== "CANCELLED" &&
+          !reservation.isCancelled && (
+            <DirectBookingPerkCard
+              portalSource="guest_portal"
+              channel={reservation.channel}
+              isB2b={isB2b}
+              variant="light"
+            />
+          )}
 
         {/* ── Card: Central de Atendimento & Suporte ao Hóspede ───────────── */}
         <Card className="bg-gradient-to-br from-slate-900 via-slate-900 to-emerald-950 text-white rounded-3xl p-6 sm:p-8 shadow-xl border border-slate-800 space-y-4 overflow-hidden relative">

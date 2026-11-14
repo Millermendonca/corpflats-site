@@ -263,17 +263,56 @@ export async function loginWithGooglePopup(onSuccess: (user: UserProfile) => voi
       if ((window as any).google?.accounts?.oauth2) {
         launchOAuthPopup()
       } else {
-        const script = document.createElement("script")
-        script.src = "https://accounts.google.com/gsi/client"
-        script.async = true
-        script.defer = true
-        script.onload = launchOAuthPopup
-        document.head.appendChild(script)
+        loadGoogleGsiScript().then(launchOAuthPopup).catch(() => {
+          resolve({ success: false, error: "Falha ao carregar autenticação Google." })
+        })
       }
     } catch (err: any) {
       resolve({ success: false, error: err.message })
     }
   })
+}
+
+let googleGsiLoadPromise: Promise<void> | null = null
+
+/**
+ * Carrega o SDK do Google Identity Services (gsi/client) estritamente sob demanda
+ * com fetchPriority="low" para jamais competir com o LCP da página inicial.
+ */
+export function loadGoogleGsiScript(): Promise<void> {
+  if (typeof window === "undefined") return Promise.resolve()
+  if ((window as any).google?.accounts) return Promise.resolve()
+  if (googleGsiLoadPromise) return googleGsiLoadPromise
+
+  googleGsiLoadPromise = new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector('script[src*="accounts.google.com/gsi/client"]') as HTMLScriptElement | null
+    if (existing) {
+      if ((window as any).google?.accounts) {
+        resolve()
+        return
+      }
+      existing.addEventListener("load", () => resolve(), { once: true })
+      existing.addEventListener("error", () => {
+        googleGsiLoadPromise = null
+        reject(new Error("Falha ao carregar Google GSI"))
+      }, { once: true })
+      return
+    }
+
+    const script = document.createElement("script")
+    script.src = "https://accounts.google.com/gsi/client"
+    script.async = true
+    script.defer = true
+    ;(script as any).fetchPriority = "low"
+    script.onload = () => resolve()
+    script.onerror = () => {
+      googleGsiLoadPromise = null
+      reject(new Error("Falha ao carregar Google GSI"))
+    }
+    document.head.appendChild(script)
+  })
+
+  return googleGsiLoadPromise
 }
 
 let inflightSessionPromise: Promise<UserProfile | null> | null = null
@@ -679,12 +718,7 @@ export async function initGoogleOneTap(
     if ((window as any).google?.accounts?.id) {
       setupGoogle()
     } else {
-      const script = document.createElement("script")
-      script.src = "https://accounts.google.com/gsi/client"
-      script.async = true
-      script.defer = true
-      script.onload = setupGoogle
-      document.head.appendChild(script)
+      loadGoogleGsiScript().then(setupGoogle).catch(() => {})
     }
   } catch {}
 }

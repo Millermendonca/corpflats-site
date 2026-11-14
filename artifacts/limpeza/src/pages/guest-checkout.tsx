@@ -11,6 +11,7 @@ import {
   Lightbulb, ShieldCheck, DoorOpen
 } from "lucide-react"
 import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo"
+import { DirectBookingPerkCard } from "@/components/direct-booking-perk-card"
 
 interface ReservationContext {
   id: string | number
@@ -22,6 +23,8 @@ interface ReservationContext {
   checkoutDate?: string
   checkoutTime?: string
   isAlreadyCheckedOut?: boolean
+  channel?: string
+  isB2b?: boolean
 }
 
 export default function GuestCheckout() {
@@ -250,6 +253,15 @@ export default function GuestCheckout() {
                   Foi uma imensa satisfação receber você no {hotelName}. Esperamos ter a honra de recebê-lo novamente em breve! ✨
                 </p>
               </div>
+
+              {/* Avaliação 5★ no Google + Benefício Reserva Direta Zero-Spam */}
+              <DirectBookingPerkCard
+                portalSource="guest_checkout"
+                channel={resContext?.channel}
+                isB2b={resContext?.isB2b}
+                showGoogleReviewCta={true}
+                variant="light"
+              />
 
               {/* Botões de Ação Opcionais */}
               <div className="pt-2 flex flex-col gap-2">

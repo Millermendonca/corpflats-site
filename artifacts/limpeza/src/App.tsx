@@ -7,16 +7,16 @@ import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
 import { cancelGoogleOneTap } from '@/lib/auth-client';
 import { useGetMe, getGetMeQueryKey } from '@workspace/api-client-react';
 import { AccessDenied } from '@/components/access-denied';
-import { FloatingNewReservationButton } from '@/components/floating-new-reservation';
-import { RestockerVoiceNotifier } from '@/components/restocker-voice-notifier';
 import { CorpFlatsSplashScreen } from '@/components/brand-logo';
 import { hasModuleAccess } from '@/lib/permissions';
+import NotFound from '@/pages/not-found';
 
 const AdminAiCopilot = lazy(() => import('@/components/admin-ai-copilot').then(m => ({ default: m.AdminAiCopilot })));
 
-// Páginas públicas e operacionais principais (Login e NotFound estáticos; 15 operacionais via lazyWithRetry)
-import Login from '@/pages/login';
-import NotFound from '@/pages/not-found';
+const INITIAL_SSR_SNAPSHOT_HTML =
+  typeof document !== 'undefined'
+    ? document.getElementById('ssr-seo-snapshot')?.outerHTML || ''
+    : '';
 
 function lazyWithRetry<T extends React.ComponentType<any>>(
   factory: () => Promise<{ default: T }>
@@ -123,6 +123,34 @@ const MinibarAdmin = lazyWithRetry(() => import('@/pages/minibar-admin'));
 const MinibarInvoices = lazyWithRetry(() => import('@/pages/minibar-invoices'));
 const HrDashboard = lazyWithRetry(() => import('@/pages/hr-dashboard'));
 const PontoMobile = lazyWithRetry(() => import('@/pages/ponto-mobile'));
+const Login = lazyWithRetry(() => import('@/pages/login'));
+const FloatingNewReservationButton = lazyWithRetry(() =>
+  import('@/components/floating-new-reservation').then((m) => ({
+    default: m.FloatingNewReservationButton,
+  }))
+);
+const RestockerVoiceNotifier = lazyWithRetry(() =>
+  import('@/components/restocker-voice-notifier').then((m) => ({
+    default: m.RestockerVoiceNotifier,
+  }))
+);
+
+const PUBLIC_BOOKING_SEO_PATHS = new Set([
+  '/',
+  '/hospedagem-corporativa-campos',
+  '/fim-de-semana-campos',
+  '/flat-centro-campos-rj',
+  '/estadia-longa-campos',
+  '/reservar',
+  '/booking',
+]);
+
+if (typeof window !== 'undefined') {
+  const initPath = (window.location.pathname || '/').replace(/\/+$/, '') || '/';
+  if (PUBLIC_BOOKING_SEO_PATHS.has(initPath)) {
+    BookingEngine.preload().catch(() => {});
+  }
+}
 
 
 const SESSION_USER_KEY = 'gfm_auth_user_session_v1';
@@ -348,7 +376,34 @@ function GuestPortalWrapper(props: any) {
 }
 
 function PageLoadingFallback() {
+  if (typeof window !== 'undefined') {
+    const curPath = (window.location.pathname || '/').replace(/\/+$/, '') || '/';
+    if (PUBLIC_BOOKING_SEO_PATHS.has(curPath)) {
+      if (INITIAL_SSR_SNAPSHOT_HTML) {
+        return <div dangerouslySetInnerHTML={{ __html: INITIAL_SSR_SNAPSHOT_HTML }} />;
+      }
+      return <div className="min-h-dvh bg-slate-50" aria-busy="true" />;
+    }
+  }
   return <CorpFlatsSplashScreen label="Carregando módulo..." />;
+}
+
+function LegacyBookingAliasRoute() {
+  const [, setLocation] = useLocation();
+  const search = typeof window !== 'undefined' ? window.location.search : '';
+  const isVisualEditor =
+    new URLSearchParams(search).get('edit') === 'true' ||
+    (typeof window !== 'undefined' && window.location.hash.includes('edit=true'));
+
+  useEffect(() => {
+    if (!isVisualEditor && typeof window !== 'undefined') {
+      const target = `/${window.location.search || ''}${window.location.hash || ''}`;
+      window.history.replaceState(null, '', target);
+      setLocation('/', { replace: true } as any);
+    }
+  }, [isVisualEditor, setLocation]);
+
+  return <BookingEngine landingSlug="home" />;
 }
 
 function Router() {
@@ -364,9 +419,21 @@ function Router() {
         <Route path="/admin/smart-flat-preview" component={SmartFlatPreview} />
         <Route path="/admin/smart-flat-preview/" component={SmartFlatPreview} />
 
-        {/* Public Booking Engine & Guest Hub */}
-        <Route path="/reservar" component={BookingEngine} />
-        <Route path="/booking" component={BookingEngine} />
+        {/* Public Booking Engine & SEO Landing Pages */}
+        <Route path="/reservar" component={LegacyBookingAliasRoute} />
+        <Route path="/booking" component={LegacyBookingAliasRoute} />
+        <Route path="/hospedagem-corporativa-campos">
+          {() => <BookingEngine landingSlug="hospedagem-corporativa-campos" />}
+        </Route>
+        <Route path="/fim-de-semana-campos">
+          {() => <BookingEngine landingSlug="fim-de-semana-campos" />}
+        </Route>
+        <Route path="/flat-centro-campos-rj">
+          {() => <BookingEngine landingSlug="flat-centro-campos-rj" />}
+        </Route>
+        <Route path="/estadia-longa-campos">
+          {() => <BookingEngine landingSlug="estadia-longa-campos" />}
+        </Route>
         <Route path="/minha-conta" component={MyAccount} />
         <Route path="/minhaconta" component={MyAccount} />
         <Route path="/perfil" component={MyAccount} />
@@ -612,7 +679,9 @@ function Router() {
         <ReceptionRoute path="/ajuda-wbp" component={AjudaWbpPage} moduleName="o Manual de Integração Channex.io" />
         <ReceptionRoute path="/ajuda-channex" component={AjudaWbpPage} moduleName="o Manual de Integração Channex.io" />
 
-        <Route path="/" component={BookingEngine} />
+        <Route path="/">
+          {() => <BookingEngine landingSlug="home" />}
+        </Route>
         <Route component={NotFound} />
       </Switch>
       </Suspense>
@@ -626,7 +695,8 @@ function RoutedErrorBoundary({ children }: { children: ReactNode }) {
     const isGuestLoggedIn = Boolean(
       localStorage.getItem("corpflats_guest_profile") || localStorage.getItem("corpflats_guest_email")
     );
-    if (isGuestLoggedIn || (location !== "/reservar" && location !== "/booking" && location !== "/")) {
+    const cleanPath = (location || "/").split("?")[0].replace(/\/+$/, "") || "/";
+    if (isGuestLoggedIn || !PUBLIC_BOOKING_SEO_PATHS.has(cleanPath)) {
       cancelGoogleOneTap();
     }
   }, [location]);
@@ -677,6 +747,10 @@ function VersionGuard({ children }: { children: ReactNode }) {
 const PUBLIC_GUEST_PATH_PREFIXES = [
   "/reservar",
   "/booking",
+  "/hospedagem-corporativa-campos",
+  "/fim-de-semana-campos",
+  "/flat-centro-campos-rj",
+  "/estadia-longa-campos",
   "/pre-checkin",
   "/minha-conta",
   "/minha-reserva",
@@ -704,13 +778,11 @@ function StaffGlobalOverlays() {
   }
 
   return (
-    <>
+    <Suspense fallback={null}>
       <RestockerVoiceNotifier />
       <FloatingNewReservationButton />
-      <Suspense fallback={null}>
-        <AdminAiCopilot />
-      </Suspense>
-    </>
+      <AdminAiCopilot />
+    </Suspense>
   );
 }
 

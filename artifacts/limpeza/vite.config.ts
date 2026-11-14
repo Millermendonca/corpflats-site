@@ -58,10 +58,20 @@ export default defineConfig({
         },
         manualChunks: (id) => {
           if (id.includes('node_modules')) {
-            if (id.includes('react') || id.includes('react-dom') || id.includes('scheduler')) {
+            if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) {
               return 'vendor-react';
             }
+            if (/[\\/]node_modules[\\/]@radix-ui[\\/]/.test(id)) {
+              return 'vendor-radix';
+            }
+            if (/[\\/]node_modules[\\/]lucide-react[\\/]/.test(id)) {
+              return 'vendor-icons';
+            }
+            if (/[\\/]node_modules[\\/](date-fns|react-day-picker)[\\/]/.test(id)) {
+              return 'vendor-dates';
+            }
           }
+          return undefined;
         },
       },
     },

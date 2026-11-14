@@ -20,7 +20,7 @@ import {
   FileText, Building2, Building, ExternalLink, Download, Send, MapPin, 
   CheckCircle2, UserCheck, Eye, Sparkles, RefreshCw, Trash2, Heart, Award, 
   Car, Coffee, Filter, ZoomIn, Camera, PenTool, Maximize2, AlertTriangle,
-  BarChart3, TrendingUp
+  BarChart3, TrendingUp, Target, Lock, Globe
 } from "lucide-react"
 
 import { AccessDenied } from "@/components/access-denied"
@@ -52,10 +52,14 @@ export default function CrmGuests() {
   const [search, setSearch] = useState("")
   const [selectedTagFilter, setSelectedTagFilter] = useState<string>("all")
 
-  // Lightbox de Mídias (Selfie, Documento, Assinatura)
+  // Lightbox de Mídias (Selfie, Documento, Assinatura) — <Dialog> já registra useBackLayer automaticamente
   const [lightboxMedia, setLightboxMedia] = useState<{ url: string; title: string; subtitle?: string } | null>(null)
   useBackTabState(activeTab, setActiveTab, { id: "crm-main-tabs" })
-  useBackLayer(Boolean(lightboxMedia), () => setLightboxMedia(null), "crm-lightbox")
+  const [customerMatchModalOpen, setCustomerMatchModalOpen] = useState(false)
+  const [cmPlatform, setCmPlatform] = useState<"meta" | "google">("meta")
+  const [cmSegment, setCmSegment] = useState<"ota_only" | "all" | "corporate" | "weekend_leisure" | "vip_ltv">("ota_only")
+  const [cmHashed, setCmHashed] = useState<boolean>(false)
+  useBackLayer(customerMatchModalOpen, () => setCustomerMatchModalOpen(false), "crm-customer-match")
   // Visualizador de PDF (PDF.js) — funciona também no celular
   const [pdfViewer, setPdfViewer] = useState<{ url: string; title: string } | null>(null)
 
@@ -1312,6 +1316,12 @@ export default function CrmGuests() {
       if (!matchesSearch) return false
 
       if (selectedTagFilter === "all") return true
+      if (selectedTagFilter === "ota_only") {
+        const chs = Array.isArray(g.channelsUsed) ? g.channelsUsed.map((c: string) => String(c || "").toLowerCase()) : []
+        const hasOta = chs.some((c: string) => c.includes("booking") || c.includes("airbnb") || c.includes("expedia") || c.includes("decolar") || c.includes("ota"))
+        const hasDirect = chs.some((c: string) => c.includes("site") || c.includes("diret") || c.includes("whats") || c.includes("balc"))
+        return Boolean(g.isOtaOriginOnly || (g.tags || []).includes("Origem OTA") || (hasOta && !hasDirect))
+      }
       if (selectedTagFilter === "vip") return (g.tags || []).includes("VIP")
       if (selectedTagFilter === "recurrent") return (g.tags || []).includes("Recorrente")
       if (selectedTagFilter === "corporate") return Boolean(g.companyId || (g.tags || []).includes("Corporativo"))
@@ -1358,6 +1368,24 @@ export default function CrmGuests() {
   const totalGuests = guests.length
   const totalLtv = useMemo(() => guests.reduce((acc, g) => acc + (g.totalSpent || 0), 0), [guests])
   const vipCount = useMemo(() => guests.filter(g => (g.tags || []).includes("VIP")).length, [guests])
+  const customerMatchCounts = useMemo(() => {
+    const withContact = guests.filter(g => Boolean((g.email || "").trim() || (g.phone || "").trim()))
+    const otaOnly = withContact.filter(g => {
+      const chs = Array.isArray(g.channelsUsed) ? g.channelsUsed.map((c: string) => String(c || "").toLowerCase()) : []
+      const hasOta = chs.some((c: string) => c.includes("booking") || c.includes("airbnb") || c.includes("expedia") || c.includes("decolar") || c.includes("ota"))
+      const hasDirect = chs.some((c: string) => c.includes("site") || c.includes("diret") || c.includes("whats") || c.includes("balc"))
+      return Boolean(g.isOtaOriginOnly || (g.tags || []).includes("Origem OTA") || (hasOta && !hasDirect))
+    }).length
+    const corporate = withContact.filter(g => Boolean(g.companyId || g.companyName || (g.tags || []).includes("Corporativo"))).length
+    const vipLtv = withContact.filter(g => Boolean((g.tags || []).includes("VIP") || (g.tags || []).includes("Recorrente") || Number(g.totalSpent || 0) >= 800 || Number(g.totalStays || 0) >= 2)).length
+    return {
+      all: withContact.length,
+      ota_only: otaOnly,
+      corporate,
+      weekend_leisure: Math.max(0, withContact.length - corporate),
+      vip_ltv: vipLtv,
+    }
+  }, [guests])
   const totalCompanies = companies.length
   const totalAgencies = agencies.length
 
@@ -1375,7 +1403,8 @@ export default function CrmGuests() {
     Boolean(lightboxMedia) ||
     Boolean(pdfViewer) ||
     deleteDialogOpen ||
-    googleContactsModalOpen
+    googleContactsModalOpen ||
+    customerMatchModalOpen
 
   return (
     <Shell>
@@ -1437,6 +1466,16 @@ export default function CrmGuests() {
               {googleStatus?.connected && (
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               )}
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCustomerMatchModalOpen(true)}
+              className="h-10 px-3.5 rounded-2xl text-xs font-bold gap-1.5 border-sky-500/40 bg-sky-500/5 hover:bg-sky-500/15 text-sky-700 dark:text-sky-300"
+            >
+              <Target className="w-3.5 h-3.5 text-sky-600" />
+              <span>Exportar p/ Ads (Customer Match)</span>
             </Button>
 
             <Button 
@@ -1628,6 +1667,7 @@ export default function CrmGuests() {
               <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
                 {[
                   { id: "all", label: "Todos" },
+                  { id: "ota_only", label: "🌐 Ex-OTA (Booking/Airbnb)" },
                   { id: "vip", label: "⭐ VIPs" },
                   { id: "recurrent", label: "🔁 Recorrentes" },
                   { id: "corporate", label: "🏢 Corporativo" },
@@ -1788,11 +1828,17 @@ export default function CrmGuests() {
 
                           <td className="p-3.5">
                             <div className="flex flex-wrap gap-1">
+                              {Boolean(g.isOtaOriginOnly && !(g.tags || []).includes("Origem OTA")) && (
+                                <Badge className="text-[9px] px-1.5 py-0 bg-sky-600 text-white">
+                                  Origem OTA
+                                </Badge>
+                              )}
                               {(g.tags || []).map((t: string) => (
                                 <Badge 
                                   key={t} 
                                   className={`text-[9px] px-1.5 py-0 ${
                                     t === 'VIP' ? 'bg-amber-500 text-white' :
+                                    t === 'Origem OTA' ? 'bg-sky-600 text-white' :
                                     t === 'Recorrente' ? 'bg-emerald-600 text-white' :
                                     t === 'Corporativo' ? 'bg-indigo-600 text-white' :
                                     t === 'Consumidor Nespresso' ? 'bg-amber-800 text-white' :
@@ -5021,6 +5067,255 @@ export default function CrmGuests() {
                 className="rounded-xl text-xs font-bold"
               >
                 Fechar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ── MODAL: EXPORTAÇÃO CUSTOMER MATCH (META ADS & GOOGLE ADS — 100% ZERO SPAM) ── */}
+        <Dialog open={customerMatchModalOpen} onOpenChange={setCustomerMatchModalOpen}>
+          <DialogContent className="max-w-2xl rounded-3xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="text-lg font-black flex items-center gap-2">
+                <Target className="w-5 h-5 text-sky-600 shrink-0" />
+                <span>Exportar Público p/ Anúncios (Customer Match)</span>
+                <Badge className="bg-emerald-600 text-white text-[10px] border-0">
+                  100% Zero Spam Z-API
+                </Badge>
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Reative ex-hóspedes da Booking.com e Airbnb exibindo anúncios silenciosos no Instagram, Facebook e Google — sem disparar nenhuma mensagem fria no WhatsApp.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4 py-1">
+              {/* Banner Anti-Spam */}
+              <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-start gap-3">
+                <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                <div className="space-y-0.5 text-xs">
+                  <div className="font-black text-emerald-800 dark:text-emerald-300">
+                    Proteção Total do Número Oficial de WhatsApp (Zero Disparo em Massa)
+                  </div>
+                  <p className="text-emerald-700/90 dark:text-emerald-200/80 text-[11px] leading-relaxed">
+                    Esta ferramenta gera apenas a planilha oficial criptografável para upload no Gerenciador de Anúncios. Nenhuma mensagem é enviada via Z-API ou e-mail.
+                  </p>
+                </div>
+              </div>
+
+              {/* Passo 1: Plataforma */}
+              <div className="space-y-2">
+                <Label className="text-xs font-black uppercase tracking-wider text-muted-foreground">
+                  1. Escolha a Plataforma de Destino
+                </Label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setCmPlatform("meta")}
+                    className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
+                      cmPlatform === "meta"
+                        ? "border-sky-600 bg-sky-500/10 ring-1 ring-sky-600/30"
+                        : "border-border bg-card hover:bg-muted/40"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <span className="font-black text-xs text-foreground flex items-center gap-1.5">
+                        <Globe className="w-3.5 h-3.5 text-sky-600" />
+                        <span>Meta Ads (Instagram & Facebook)</span>
+                      </span>
+                      {cmPlatform === "meta" && (
+                        <Badge className="bg-sky-600 text-white text-[9px] px-1.5 py-0">Selecionado</Badge>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-snug">
+                      Colunas oficiais <code className="font-mono">email, phone, fn, ln, ct, st, country, value</code> (com LTV em R$ p/ Público Semelhante Lookalike 1%).
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setCmPlatform("google")}
+                    className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
+                      cmPlatform === "google"
+                        ? "border-sky-600 bg-sky-500/10 ring-1 ring-sky-600/30"
+                        : "border-border bg-card hover:bg-muted/40"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <span className="font-black text-xs text-foreground flex items-center gap-1.5">
+                        <TrendingUp className="w-3.5 h-3.5 text-amber-600" />
+                        <span>Google Ads (Busca, YouTube & Maps)</span>
+                      </span>
+                      {cmPlatform === "google" && (
+                        <Badge className="bg-sky-600 text-white text-[9px] px-1.5 py-0">Selecionado</Badge>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-snug">
+                      Cabeçalhos oficiais <code className="font-mono">Email, Phone, First Name, Last Name, Country, Zip</code> no padrão E.164 (<code className="font-mono">+55...</code>).
+                    </p>
+                  </button>
+                </div>
+              </div>
+
+              {/* Passo 2: Segmento Estratégico */}
+              <div className="space-y-2">
+                <Label className="text-xs font-black uppercase tracking-wider text-muted-foreground">
+                  2. Escolha o Segmento de Hóspedes
+                </Label>
+                <div className="grid grid-cols-1 gap-2">
+                  {[
+                    {
+                      id: "ota_only" as const,
+                      title: "🌐 Ex-Hóspedes de OTAs (Booking.com / Airbnb)",
+                      desc: "Ideal para campanha 'Na próxima vez em Campos, reserve em corpflats.com.br com 5% OFF no PIX e sem taxas'.",
+                      count: customerMatchCounts.ota_only,
+                      recommended: true,
+                    },
+                    {
+                      id: "vip_ltv" as const,
+                      title: "⭐ Campeões de LTV & Recorrentes (Semente p/ Lookalike 1%)",
+                      desc: "Hóspedes VIP, recorrentes ou maior faturamento — ideal para a Meta encontrar novos clientes com perfil idêntico.",
+                      count: customerMatchCounts.vip_ltv,
+                      recommended: false,
+                    },
+                    {
+                      id: "corporate" as const,
+                      title: "🏢 Público Executivo & Corporativo (Seg–Qui)",
+                      desc: "Hóspedes vinculados a empresas/CNPJ para anúncios focados em NFS-e Nacional automática, Wi-Fi fibra e garagem.",
+                      count: customerMatchCounts.corporate,
+                      recommended: false,
+                    },
+                    {
+                      id: "weekend_leisure" as const,
+                      title: "🥂 Lazer, Casais & Fim de Semana",
+                      desc: "Hóspedes PF sem vínculo PJ — ideal para campanhas de sexta a domingo no Soho Residence.",
+                      count: customerMatchCounts.weekend_leisure,
+                      recommended: false,
+                    },
+                    {
+                      id: "all" as const,
+                      title: "📋 Base Completa Qualificada (Todos os Hóspedes com E-mail/Telefone)",
+                      desc: "Exporta toda a base higienizada deduplicada (exceto reservas confidenciais de agências B2B).",
+                      count: customerMatchCounts.all,
+                      recommended: false,
+                    },
+                  ].map((seg) => (
+                    <button
+                      key={seg.id}
+                      type="button"
+                      onClick={() => setCmSegment(seg.id)}
+                      className={`p-3 rounded-2xl border text-left transition-all flex items-center justify-between gap-3 cursor-pointer ${
+                        cmSegment === seg.id
+                          ? "border-primary bg-primary/8 ring-1 ring-primary/25"
+                          : "border-border bg-card hover:bg-muted/30"
+                      }`}
+                    >
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-xs text-foreground">{seg.title}</span>
+                          {seg.recommended && (
+                            <Badge className="bg-amber-500 text-white text-[9px] px-1.5 py-0 border-0">
+                              Recomendado
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-muted-foreground leading-snug">{seg.desc}</p>
+                      </div>
+                      <Badge variant="outline" className="shrink-0 font-mono text-[10px] px-2 py-0.5">
+                        ~{seg.count} contatos
+                      </Badge>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Passo 3: Criptografia SHA-256 LGPD */}
+              <div className="p-3.5 rounded-2xl border border-border bg-muted/25 flex items-center justify-between gap-3">
+                <div className="flex items-start gap-2.5">
+                  <Lock className="w-4 h-4 text-slate-600 dark:text-slate-300 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <div className="text-xs font-bold text-foreground">
+                      Pré-criptografar dados em SHA-256 no servidor (Modo LGPD Estrito)
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-snug">
+                      Quando ativado, e-mails, telefones e nomes já saem hasheados em SHA-256 (padrão oficial Meta/Google). Desativado exporta normalizado em E.164 para hash automático no navegador do Ads Manager.
+                    </p>
+                  </div>
+                </div>
+                <Switch checked={cmHashed} onCheckedChange={setCmHashed} />
+              </div>
+
+              {/* Instrução Rápida de Uso */}
+              <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-border text-[11px] text-muted-foreground space-y-1">
+                <div className="font-bold text-foreground">Como subir em 1 minuto:</div>
+                {cmPlatform === "meta" ? (
+                  <p>
+                    Abra <strong>Gerenciador de Negócios Meta → Públicos → Criar Público → Público Personalizado → Lista de Clientes</strong>, marque <em>&quot;Inclui coluna de valor do cliente (LTV)&quot;</em> e envie o CSV baixado.
+                  </p>
+                ) : (
+                  <p>
+                    Abra <strong>Google Ads → Ferramentas → Gerenciador de Públicos-Alvo → Segmentos de Dados → + Lista de Clientes</strong> e faça o upload do arquivo CSV gerado.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <DialogFooter className="border-t border-border pt-3 flex flex-col sm:flex-row items-center justify-between gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCustomerMatchModalOpen(false)}
+                className="rounded-xl text-xs font-bold w-full sm:w-auto"
+              >
+                Cancelar
+              </Button>
+              <Button
+                size="sm"
+                onClick={async () => {
+                  try {
+                    const url = `/api/pms/guests/export/customer-match?platform=${encodeURIComponent(
+                      cmPlatform
+                    )}&segment=${encodeURIComponent(cmSegment)}&hashed=${cmHashed ? "1" : "0"}`
+                    const res = await fetch(url, { credentials: "include" })
+                    if (!res.ok) {
+                      const errData = await res.json().catch(() => ({}))
+                      throw new Error(errData.error || "Não foi possível exportar o arquivo Customer Match.")
+                    }
+                    const blob = await res.blob()
+                    const disp = res.headers.get("Content-Disposition") || ""
+                    const matchName = disp.match(/filename="?([^";]+)"?/i)
+                    const fileName =
+                      matchName?.[1] ||
+                      `corpflats_customer_match_${cmPlatform}_${cmSegment}_${new Date()
+                        .toISOString()
+                        .slice(0, 10)}.csv`
+                    const dlUrl = URL.createObjectURL(blob)
+                    const a = document.createElement("a")
+                    a.href = dlUrl
+                    a.download = fileName
+                    document.body.appendChild(a)
+                    a.click()
+                    document.body.removeChild(a)
+                    URL.revokeObjectURL(dlUrl)
+                    toast({
+                      title: "Lista Customer Match exportada!",
+                      description: `Arquivo ${fileName} pronto para upload no ${
+                        cmPlatform === "meta" ? "Meta Ads" : "Google Ads"
+                      } (Zero Spam).`,
+                    })
+                  } catch (err: any) {
+                    toast({
+                      title: "Erro ao exportar Customer Match",
+                      description: err?.message || "Tente novamente em instantes.",
+                      variant: "destructive",
+                    })
+                  }
+                }}
+                className="rounded-xl text-xs font-black gap-1.5 bg-sky-600 hover:bg-sky-700 text-white w-full sm:w-auto px-4 h-9"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>
+                  Baixar CSV {cmPlatform === "meta" ? "Meta Ads (+ LTV)" : "Google Ads"}
+                </span>
               </Button>
             </DialogFooter>
           </DialogContent>

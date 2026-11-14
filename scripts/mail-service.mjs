@@ -107,6 +107,100 @@ export function isOtaOrB2bReservation(reservation) {
   );
 }
 
+export function isConfidentialB2bReservation(reservation) {
+  if (!reservation || typeof reservation !== "object") return false;
+  const raw = String(reservation.channel || reservation.source || "").toLowerCase().trim();
+  return Boolean(
+    raw.includes("b2b") ||
+    raw.includes("agenc") ||
+    raw.includes("agênc") ||
+    reservation.isB2B ||
+    reservation.isB2b ||
+    reservation.agencyId ||
+    reservation.agencyName ||
+    reservation.b2bReservationNumber ||
+    reservation.b2bLocatorRloc ||
+    reservation.nfHideFromGuest ||
+    reservation.hideFinancialForGuest
+  );
+}
+
+export function buildDirectBookingEmailFooterHtml(
+  reservationOrOptions = null,
+  maybeTriggerSource = "transactional",
+  maybeDb = null
+) {
+  const isOptionsObject =
+    reservationOrOptions &&
+    typeof reservationOrOptions === "object" &&
+    ("reservation" in reservationOrOptions ||
+      "triggerSource" in reservationOrOptions ||
+      "db" in reservationOrOptions ||
+      "settings" in reservationOrOptions);
+
+  const reservation = isOptionsObject ? reservationOrOptions.reservation : reservationOrOptions;
+  const triggerSource = String(
+    (isOptionsObject ? reservationOrOptions.triggerSource : maybeTriggerSource) || "transactional"
+  )
+    .toLowerCase()
+    .trim();
+  const dbInstance = isOptionsObject ? reservationOrOptions.db : maybeDb;
+  const settingsObj = isOptionsObject ? reservationOrOptions.settings : null;
+
+  // Bloqueio estrito para e-mails operacionais de portaria, garagem ou agências B2B
+  if (
+    triggerSource.includes("portaria") ||
+    triggerSource.includes("reception") ||
+    triggerSource.includes("garage") ||
+    triggerSource.includes("garagem") ||
+    triggerSource.includes("agency") ||
+    triggerSource.includes("b2b")
+  ) {
+    return "";
+  }
+
+  // Respeita toggle administrativo em settings.emailSettings.showDirectBookingFooter
+  const emailSettings =
+    dbInstance?.settings?.emailSettings ||
+    settingsObj?.emailSettings ||
+    (settingsObj && "showDirectBookingFooter" in settingsObj ? settingsObj : null) ||
+    {};
+  if (emailSettings.showDirectBookingFooter === false) {
+    return "";
+  }
+
+  // Bloqueio automático para reservas B2B / agências corporativas com sigilo tarifário
+  if (isConfidentialB2bReservation(reservation)) {
+    return "";
+  }
+
+  const safeCampaign = encodeURIComponent(triggerSource.replace(/[^a-z0-9_-]/gi, "_") || "transactional");
+  const directUrl = `https://corpflats.com.br/?utm_source=transactional_email&utm_medium=email_footer&utm_campaign=${safeCampaign}`;
+  const vcardUrl = "https://corpflats.com.br/api/public/contact.vcf";
+
+  return `
+    <div style="margin: 8px 0 14px 0; padding: 14px 16px; background-color: #F8FAFC; border: 1px solid #E2E8F0; border-left: 4px solid #0F3D4C; border-radius: 8px; text-align: left;">
+      <div style="font-size: 13px; font-weight: 700; color: #0F3D4C; margin-bottom: 4px;">
+        ✨ Vai voltar a Campos dos Goytacazes? Reserve direto com Menor Preço Garantido
+      </div>
+      <div style="font-size: 12px; color: #475569; line-height: 1.55; margin-bottom: 10px;">
+        Em sua próxima viagem a trabalho ou lazer, reservando pelo site oficial <strong style="color: #0F3D4C;">corpflats.com.br</strong> você garante <strong>5% OFF no PIX</strong>, garagem coberta inclusa, confirmação imediata sem taxas de intermediários e emissão automática de <strong>NFS-e Nacional</strong>.
+      </div>
+      <div style="font-size: 12px; line-height: 1.8;">
+        <a href="${directUrl}" target="_blank" rel="noopener noreferrer" style="display: inline-block; background-color: #0F3D4C; color: #FFFFFF !important; font-weight: 700; font-size: 12px; padding: 7px 14px; border-radius: 6px; text-decoration: none; margin-right: 10px;">
+          Conhecer Tarifas em corpflats.com.br →
+        </a>
+        <a href="${vcardUrl}" target="_blank" rel="noopener noreferrer" style="color: #0F3D4C; font-weight: 600; font-size: 12px; text-decoration: underline;">
+          Salvar Contato Oficial 24h (.vcf)
+        </a>
+      </div>
+    </div>
+    <div style="font-size: 11px; color: #6B7280; line-height: 1.5;">
+      Este é um e-mail transacional automatizado referente à sua hospedagem na CorpFlats (Edifício Soho Residence Service).
+    </div>
+  `;
+}
+
 export function evaluateReceptionCheckinStage(reservation) {
   const expectedGuests = Math.max(1, resolveEmailGuestCount(reservation));
   const hasExplicitCount = Boolean(
@@ -1431,7 +1525,13 @@ export function renderReservationConfirmationEmail({ reservation, flat, settings
   `;
 
   const badge = `<span class="badge badge-checkin" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #ECFDF5; color: #047857; border: 1px solid #A7F3D0;">Reserva Confirmada</span>`;
-  const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
+  const footerHtml = buildDirectBookingEmailFooterHtml({
+    reservation,
+    triggerSource: "reservation_confirmation",
+    db,
+    settings,
+  });
+  const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml, footerHtml });
   return { subject, bodyHtml, html: bodyHtml, checkinUrl };
 }
 export const renderConfirmationEmail = renderReservationConfirmationEmail;
@@ -1507,7 +1607,13 @@ export function renderPreCheckinReminderEmail({ reservation, flat, settings, bas
   `;
 
   const badge = `<span class="badge badge-update" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #FFFBEB; color: #B45309; border: 1px solid #FDE68A;">Lembrete de Check-in</span>`;
-  const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
+  const footerHtml = buildDirectBookingEmailFooterHtml({
+    reservation,
+    triggerSource: "precheckin_reminder",
+    db,
+    settings,
+  });
+  const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml, footerHtml });
   return { subject, bodyHtml, html: bodyHtml, checkinUrl };
 }
 export const renderReminderEmail = renderPreCheckinReminderEmail;
@@ -1576,7 +1682,13 @@ export function renderAccessInstructionsEmail({ reservation, flat, settings, bas
   `;
 
   const badge = `<span class="badge badge-general" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #F9FAFB; color: #374151; border: 1px solid #E5E7EB;">Instruções de Acesso</span>`;
-  const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
+  const footerHtml = buildDirectBookingEmailFooterHtml({
+    reservation,
+    triggerSource: "access_instructions",
+    db,
+    settings,
+  });
+  const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml, footerHtml });
   return { subject, bodyHtml, html: bodyHtml, checkinUrl };
 }
 export const renderAccessInstructionEmail = renderAccessInstructionsEmail;

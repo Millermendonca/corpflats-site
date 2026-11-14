@@ -15,14 +15,16 @@ import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { AddToCalendar } from "@/components/add-to-calendar"
 import { calculateCancellationPolicy } from "@/lib/cancellation-helper"
-import { RoomConfig } from "@/pages/booking-engine"
-import { loginWithGooglePopup, updateAccountProfile, saveSessionLocally } from "@/lib/auth-client"
+import type { RoomConfig } from "@/pages/booking-engine"
+import { loginWithGooglePopup, initGoogleOneTap, cancelGoogleOneTap, updateAccountProfile, saveSessionLocally } from "@/lib/auth-client"
 import { maskPhone, maskCpf } from "@/components/complete-profile-modal"
 import { isPlausibleCpfOrPassport } from "@/lib/phone-mask"
 import { compressImage } from "@/lib/image-compression"
 import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo"
 import { useStableCallback } from "@/lib/render-freeze"
 import { useToast } from "@/hooks/use-toast"
+import { getStoredAttribution, trackGenerateLead, trackAddPaymentInfo, trackPurchase } from "@/lib/analytics-tracking"
+import { openSmartWhatsAppConcierge, buildSmartConciergeUrl } from "@/lib/whatsapp-concierge"
 
 const FUNNEL_SESSION_STORAGE_KEY = "corpflats_funnel_session_v1"
 const FUNNEL_DRAFT_STORAGE_KEY = "corpflats_funnel_draft_v1"
@@ -345,10 +347,11 @@ const FunnelStaySummaryCard = memo(function FunnelStaySummaryCard({
               className="rounded-lg overflow-hidden border border-[#C5A059]/40 shrink-0 group/bf focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0F3D4C]"
             >
               <img
-                src="/photos/soho/cafe-mesa-close.jpg"
+                src="/photos/soho/cafe-mesa-close-160w.webp"
                 alt="Café da manhã servido na mesa do flat"
                 width={112}
                 height={84}
+                loading="lazy"
                 decoding="async"
                 className="w-14 h-10.5 aspect-[4/3] object-cover block group-hover/bf:scale-105 transition-transform"
               />
@@ -369,12 +372,12 @@ const FunnelStaySummaryCard = memo(function FunnelStaySummaryCard({
               <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1">
                 <span>•</span>
                 {otaSelectedDailyRate && otaSelectedDailyRate > selectedDailyRate && (
-                  <span className="text-[11px] text-slate-400 line-through" title="Valor no Booking e Airbnb">
+                  <span translate="no" className="text-[11px] text-slate-400 line-through" title="Valor no Booking e Airbnb">
                     R$ {formatBrl(otaSelectedDailyRate)}
                   </span>
                 )}
                 <span className="text-slate-800 dark:text-slate-200 font-bold">
-                  R$ {formatBrl(selectedDailyRate)}/noite no PIX
+                  <span translate="no">R$ {formatBrl(selectedDailyRate)}</span>/noite no <span translate="no">PIX</span>
                 </span>
               </span>
             </div>
@@ -386,7 +389,7 @@ const FunnelStaySummaryCard = memo(function FunnelStaySummaryCard({
           variant="outline"
           size="sm"
           onClick={onToggleRatePlan}
-          className="h-8 px-3 text-xs font-bold rounded-xl border-slate-200 dark:border-slate-700 text-[#0F3D4C] dark:text-[#E5C98B] hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0 self-start sm:self-auto gap-1.5 transition-all"
+          className="min-h-[44px] sm:h-8 px-3 text-xs font-bold rounded-xl border-slate-200 dark:border-slate-700 text-[#0F3D4C] dark:text-[#E5C98B] hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0 self-start sm:self-auto gap-1.5 transition-all"
         >
           <RefreshCw className="w-3.5 h-3.5 text-[#0F3D4C]" />
           <span>Trocar para {ratePlan === "with_breakfast" ? "Sem Café" : "Com Café"}</span>
@@ -408,14 +411,18 @@ const FunnelStaySummaryCard = memo(function FunnelStaySummaryCard({
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-2xl overflow-hidden border border-slate-200 bg-slate-100">
-            <img
-              src="/photos/soho/cafe-mesa-close.jpg"
-              alt="Mesa posta de café da manhã no flat da CorpFlats Soho Residence"
-              width={1200}
-              height={670}
-              decoding="async"
-              className="w-full h-auto aspect-[1200/670] object-cover block"
-            />
+            <picture>
+              <source type="image/webp" srcSet="/photos/soho/cafe-mesa-close-640w.webp" />
+              <img
+                src="/photos/soho/cafe-mesa-close.jpg"
+                alt="Mesa posta de café da manhã no flat da CorpFlats Soho Residence"
+                width={1200}
+                height={670}
+                loading="lazy"
+                decoding="async"
+                className="w-full h-auto aspect-[1200/670] object-cover block"
+              />
+            </picture>
           </div>
           <div className="flex items-center justify-between gap-2 pt-0.5">
             <span className="text-[11px] text-slate-500 font-medium text-pretty">
@@ -511,7 +518,7 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
                 <select
                   value={r.bedType}
                   onChange={e => updateRoom(r.id, "bedType", e.target.value as any)}
-                  className="w-full h-8 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 text-xs font-bold text-slate-900 dark:text-slate-100"
+                  className="w-full min-h-[44px] sm:min-h-[36px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 text-base sm:text-xs font-bold text-slate-900 dark:text-slate-100"
                 >
                   <option value="queen">1 Cama Queen Casal</option>
                   {showTwinOption && (
@@ -527,7 +534,7 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
                 )}
                 {r.bedType === "twin" && otaTwinFeeUnit && otaTwinFeeUnit > twinFeeUnit && (
                   <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
-                    Nas plataformas: <span className="line-through text-slate-400">R$ {formatBrl(otaTwinFeeUnit)}</span> • Direto: R$ {formatBrl(twinFeeUnit)}
+                    Nas plataformas: <span translate="no" className="line-through text-slate-400">R$ {formatBrl(otaTwinFeeUnit)}</span> • Direto: <span translate="no">R$ {formatBrl(twinFeeUnit)}</span>
                   </p>
                 )}
               </div>
@@ -537,7 +544,7 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
                 <select
                   value={allowThirdGuest ? r.adults : Math.min(2, r.adults)}
                   onChange={e => updateRoom(r.id, "adults", Number(e.target.value))}
-                  className="w-full h-8 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 text-xs font-bold text-slate-900 dark:text-slate-100"
+                  className="w-full min-h-[44px] sm:min-h-[36px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 text-base sm:text-xs font-bold text-slate-900 dark:text-slate-100"
                 >
                   <option value="1">1 Hóspede</option>
                   <option value="2">
@@ -555,7 +562,7 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
                 </select>
                 {allowThirdGuest && r.adults === 3 && otaExtraBedFeeUnit && otaExtraBedFeeUnit > extraBedFeeUnit && (
                   <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
-                    Colchonete nas plataformas: <span className="line-through text-slate-400">R$ {formatBrl(otaExtraBedFeeUnit)}</span> • Direto: R$ {formatBrl(extraBedFeeUnit)}
+                    Colchonete nas plataformas: <span translate="no" className="line-through text-slate-400">R$ {formatBrl(otaExtraBedFeeUnit)}</span> • Direto: <span translate="no">R$ {formatBrl(extraBedFeeUnit)}</span>
                   </p>
                 )}
               </div>
@@ -700,8 +707,8 @@ const FunnelPriceBreakdownCard = memo(function FunnelPriceBreakdownCard({
 
         {paymentMethod === "pix" && pixDiscountAmount > 0 && (
           <div className="flex justify-between gap-2 text-[#0F3D4C] dark:text-[#E5C98B] font-semibold pt-1 border-t border-slate-200 dark:border-slate-700">
-            <span>Desconto no PIX:</span>
-            <span className="shrink-0">- R$ {formatBrl(pixDiscountAmount)}</span>
+            <span>Desconto no <span translate="no">PIX</span>:</span>
+            <span translate="no" className="shrink-0">- R$ {formatBrl(pixDiscountAmount)}</span>
           </div>
         )}
 
@@ -709,18 +716,18 @@ const FunnelPriceBreakdownCard = memo(function FunnelPriceBreakdownCard({
           <div className="pt-2 border-t border-slate-200/80 dark:border-slate-700/80 space-y-1">
             <div className="flex justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
               <span>Mesma estadia no Booking / Airbnb (c/ taxas):</span>
-              <span className="line-through shrink-0">R$ {formatBrl(otaReferenceTotal)}</span>
+              <span translate="no" className="line-through shrink-0">R$ {formatBrl(otaReferenceTotal)}</span>
             </div>
             <div className="flex justify-between gap-2 text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
               <span>Economia reservando direto no site:</span>
-              <span className="shrink-0">- R$ {formatBrl(otaSavingsAmount)}</span>
+              <span translate="no" className="shrink-0">- R$ {formatBrl(otaSavingsAmount)}</span>
             </div>
           </div>
         )}
 
         <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center gap-2 text-sm font-black text-slate-900 dark:text-white">
           <span>Valor Final a Pagar:</span>
-          <span className="text-[#091E26] dark:text-[#E5C98B] text-xl shrink-0">
+          <span translate="no" className="text-[#091E26] dark:text-[#E5C98B] text-xl shrink-0">
             R$ {formatBrl(totalAmount)}
           </span>
         </div>
@@ -834,6 +841,10 @@ export interface BookingFunnelModalProps {
   onOpenAuthModal: () => void
   onSuccessBooking?: (reservation: any) => void
   availabilityData?: any
+  initialIsWorkTrip?: boolean
+  initialBringingPet?: boolean
+  pagePath?: string
+  pageLabel?: string
 }
 
 export function BookingFunnelModal({
@@ -852,7 +863,11 @@ export function BookingFunnelModal({
   guestAccount,
   onOpenAuthModal,
   onSuccessBooking,
-  availabilityData
+  availabilityData,
+  initialIsWorkTrip,
+  initialBringingPet,
+  pagePath,
+  pageLabel,
 }: BookingFunnelModalProps) {
   const [, setLocation] = useLocation()
   const { toast } = useToast()
@@ -1100,7 +1115,7 @@ export function BookingFunnelModal({
   }
 
   // PJ Corporate Billing
-  const [isWorkTrip, setIsWorkTrip] = useState(false)
+  const [isWorkTrip, setIsWorkTrip] = useState(() => Boolean(initialIsWorkTrip || readSavedFunnelDraft()?.isWorkTrip))
   const [companyCnpj, setCompanyCnpj] = useState("")
   const [companyName, setCompanyName] = useState("")
   const [companyEmail, setCompanyEmail] = useState("")
@@ -1111,13 +1126,25 @@ export function BookingFunnelModal({
   const [vehiclePlate, setVehiclePlate] = useState("")
   const [vehicleModel, setVehicleModel] = useState("")
 
+  // Opção de enviar foto do documento depois no Pré-Check-in Digital (redução de atrito mobile)
+  const [deferDocToPreCheckin, setDeferDocToPreCheckin] = useState(() =>
+    Boolean(readSavedFunnelDraft()?.deferDocToPreCheckin)
+  )
+  const purchaseTrackedRef = useRef<string | null>(null)
+
   // Upsells & Extras
   const earlyCheckin = false // Early check-in nunca oferecido conforme regra de negócio
   const [lateCheckout, setLateCheckout] = useState(false)
   const [lateCheckoutTime, setLateCheckoutTime] = useState("18:00")
-  const [bringingPet, setBringingPet] = useState(() => Boolean(readSavedFunnelDraft()?.bringingPet))
+  const [bringingPet, setBringingPet] = useState(() => Boolean(initialBringingPet || readSavedFunnelDraft()?.bringingPet))
   const [petCount, setPetCount] = useState(() => Number(readSavedFunnelDraft()?.petCount) || 1)
   const [petRulesAccepted, setPetRulesAccepted] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    if (initialIsWorkTrip) setIsWorkTrip(true)
+    if (initialBringingPet && siteConfig?.petPolicy?.enabled !== false) setBringingPet(true)
+  }, [open, initialIsWorkTrip, initialBringingPet, siteConfig?.petPolicy?.enabled])
 
   // Valida se o check-out ocorre no Domingo (0 = Domingo)
   const isSundayCheckout = useMemo(() => {
@@ -1161,6 +1188,8 @@ export function BookingFunnelModal({
           guestEmail: guestEmail.trim(),
           bringingPet,
           petCount: bringingPet ? petCount : 0,
+          isWorkTrip,
+          deferDocToPreCheckin,
           paymentMethod,
         })
       )
@@ -1180,6 +1209,8 @@ export function BookingFunnelModal({
     guestEmail,
     bringingPet,
     petCount,
+    isWorkTrip,
+    deferDocToPreCheckin,
     paymentMethod,
   ])
 
@@ -1195,11 +1226,17 @@ export function BookingFunnelModal({
   const [pixKeyCopied, setPixKeyCopied] = useState(false)
   const [isPixPaid, setIsPixPaid] = useState(false)
 
-  // Polling para checar status do pagamento PIX automaticamente na etapa 4 (Concluído)
+  // Polling para checar status do pagamento (PIX e Cartão) automaticamente na etapa 4 e disparar Purchase real
   useEffect(() => {
-    if (currentStep !== 4 || paymentMethod !== "pix" || !confirmedReservation || isPixPaid) return;
-    const resCode = confirmedReservation.code || confirmedReservation.reservationCode;
+    if (currentStep !== 4 || !confirmedReservation || isPixPaid) return;
+    const resCode = String(confirmedReservation.code || confirmedReservation.reservationCode || "");
     if (!resCode) return;
+    const confirmedValue = Number(
+      confirmedReservation.totalPrice ??
+      confirmedReservation.totalAmount ??
+      confirmedReservation.pixTotalAmount ??
+      0
+    );
 
     const interval = setInterval(async () => {
       try {
@@ -1208,6 +1245,16 @@ export function BookingFunnelModal({
           const data = await res.json();
           if (data.paid || data.paymentStatus === "pago_total" || data.paymentStatus === "pago") {
             setIsPixPaid(true);
+            if (purchaseTrackedRef.current !== resCode) {
+              purchaseTrackedRef.current = resCode;
+              trackPurchase({
+                reservationCode: resCode,
+                value: Number(data.amount || confirmedValue || 0),
+                paymentMethod,
+                nights,
+                roomsCount: rooms.length,
+              });
+            }
             clearInterval(interval);
           }
         }
@@ -1215,7 +1262,7 @@ export function BookingFunnelModal({
     }, 4000);
 
     return () => clearInterval(interval);
-  }, [currentStep, paymentMethod, confirmedReservation, isPixPaid]);
+  }, [currentStep, paymentMethod, confirmedReservation, isPixPaid, nights, rooms.length]);
 
   const handleResetAndNewBooking = () => {
     setCurrentStep(1);
@@ -1225,10 +1272,16 @@ export function BookingFunnelModal({
     setMpInitPoint(null);
     setPixCopied(false);
     setPixKeyCopied(false);
+    purchaseTrackedRef.current = null;
   };
 
-  const handleCloseModal = () => {
+  // Exit-Intent Modal (Desktop mouseleave + Mobile/Desktop fechamento em Etapas 2 e 3)
+  const [showExitIntent, setShowExitIntent] = useState(false)
+  const exitIntentTriggeredRef = useRef(false)
+
+  const handleForceCloseModal = () => {
     const resCode = confirmedReservation?.code || confirmedReservation?.id;
+    setShowExitIntent(false);
     onOpenChange(false);
     if (currentStep === 4) {
       setTimeout(() => {
@@ -1240,16 +1293,57 @@ export function BookingFunnelModal({
     }
   };
 
+  const handleCloseModal = () => {
+    if ((currentStep === 2 || currentStep === 3) && !exitIntentTriggeredRef.current) {
+      exitIntentTriggeredRef.current = true;
+      setShowExitIntent(true);
+      return;
+    }
+    handleForceCloseModal();
+  };
+
   // Se o modal for reaberto e estava na etapa 4 (concluída), reinicia na etapa 1 para uma nova reserva
   useEffect(() => {
+    if (!open) {
+      exitIntentTriggeredRef.current = false;
+      setShowExitIntent(false);
+      return;
+    }
     if (open && currentStep === 4 && isPixPaid) {
       handleResetAndNewBooking();
     }
   }, [open]);
 
-  // Exit-Intent Modal
-  const [showExitIntent, setShowExitIntent] = useState(false)
-  const exitIntentTriggeredRef = useRef(false)
+  // Google One Tap carregado sob demanda apenas na Etapa 2 (nunca no cold-load sobre o Hero LCP)
+  useEffect(() => {
+    if (open && currentStep === 2 && !guestAccount && !guestEmail) {
+      initGoogleOneTap((user) => {
+        if (user.name) setGuestName(user.name)
+        if (user.email) setGuestEmail(user.email)
+        if (user.phone) setGuestPhone(maskPhone(user.phone))
+        if (user.document) setGuestDocument(maskCpf(user.document))
+        if (user.address) setGuestAddress(user.address)
+        if (user.city) setGuestCity(user.city)
+        if (user.state) setGuestState(user.state)
+        if (user.cep) setGuestCep(user.cep)
+        if (user.docPhotoUrl) {
+          setDocFileBase64(user.docPhotoUrl)
+          setDocFileName("documento_salvo_no_cadastro")
+          setDocFileType(
+            user.docPhotoUrl.startsWith("data:application/pdf") ||
+              user.docPhotoUrl.toLowerCase().includes(".pdf")
+              ? "pdf"
+              : "image"
+          )
+        }
+      })
+    } else {
+      cancelGoogleOneTap()
+    }
+    return () => {
+      cancelGoogleOneTap()
+    }
+  }, [open, currentStep, guestAccount, guestEmail])
 
   // Auto-fill from guestAccount if logged in or when modal opens
   useEffect(() => {
@@ -1750,6 +1844,13 @@ export function BookingFunnelModal({
         setInvalidField(null)
         setStepValidationError(null)
         sendFunnelTelemetry(3, "identificacao_lead", "em_andamento")
+        trackGenerateLead({
+          name: requesterName.trim(),
+          email: requesterEmail.trim(),
+          phone: requesterPhone.trim(),
+          isWorkTrip,
+          value: pixTotalAmount,
+        })
         setCurrentStep(3)
         return
       }
@@ -1794,60 +1895,62 @@ export function BookingFunnelModal({
         )
         return
       }
-      if (!docFileBase64) {
+      if (!docFileBase64 && !deferDocToPreCheckin) {
         reportValidationFailure(
           "docFile",
           null,
-          "Documento com foto obrigatório",
-          "Anexe seu documento oficial com foto (RG, CNH ou Passaporte em PDF ou imagem) para liberar a portaria."
+          "Documento com foto ou Pré-Check-in Digital",
+          "Anexe seu documento com foto (RG, CNH ou Passaporte) ou selecione acima 'Enviar depois no Pré-Check-in Digital' para concluir sua reserva agora."
         )
         return
       }
-      if (isInspectingDoc) {
-        toast({
-          title: "Analisando documento",
-          description: "Aguarde alguns segundos até a conclusão da leitura do documento oficial.",
-        })
-        return
-      }
-      if (aiInspectionResult && aiInspectionResult.isOfficialDocument === false) {
-        reportValidationFailure(
-          "docFile",
-          null,
-          "Documento não reconhecido",
-          "O arquivo anexado não foi reconhecido como documento oficial de identificação com foto. Envie RG, CNH ou Passaporte."
-        )
-        return
-      }
-      if (aiInspectionResult && aiInspectionResult.isLegible === false) {
-        reportValidationFailure(
-          "docFile",
-          null,
-          "Documento ilegível",
-          `O documento anexado não pôde ser aceito: ${aiInspectionResult.legibilityReason || "Documento ilegível"}. Envie uma foto mais nítida ou o PDF original.`
-        )
-        return
-      }
-      if (
-        aiInspectionResult &&
-        (aiInspectionResult.identityMatches === false ||
-          aiInspectionResult.nameMatches === false ||
-          aiInspectionResult.cpfMatches === false)
-      ) {
-        const reasons = Array.isArray(aiInspectionResult.mismatchReasons) && aiInspectionResult.mismatchReasons.length > 0
-          ? aiInspectionResult.mismatchReasons.join(" • ")
-          : "Os dados do documento anexado (Nome ou CPF) não conferem com o titular da reserva."
-        reportValidationFailure(
-          "docFile",
-          "funnel-guest-name",
-          "Divergência de titularidade no documento",
-          `${reasons} Anexe o documento pertencente ao titular da reserva ou corrija os dados informados.`
-        )
-        return
-      }
-      if (aiInspectionResult?.isMinor && !minorNoticeAcknowledged) {
-        setShowMinorNoticeModal(true)
-        return
+      if (docFileBase64) {
+        if (isInspectingDoc) {
+          toast({
+            title: "Analisando documento",
+            description: "Aguarde alguns segundos até a conclusão da leitura do documento oficial.",
+          })
+          return
+        }
+        if (aiInspectionResult && aiInspectionResult.isOfficialDocument === false) {
+          reportValidationFailure(
+            "docFile",
+            null,
+            "Documento não reconhecido",
+            "O arquivo anexado não foi reconhecido como documento oficial de identificação com foto. Envie RG, CNH ou Passaporte."
+          )
+          return
+        }
+        if (aiInspectionResult && aiInspectionResult.isLegible === false) {
+          reportValidationFailure(
+            "docFile",
+            null,
+            "Documento ilegível",
+            `O documento anexado não pôde ser aceito: ${aiInspectionResult.legibilityReason || "Documento ilegível"}. Envie uma foto mais nítida ou o PDF original.`
+          )
+          return
+        }
+        if (
+          aiInspectionResult &&
+          (aiInspectionResult.identityMatches === false ||
+            aiInspectionResult.nameMatches === false ||
+            aiInspectionResult.cpfMatches === false)
+        ) {
+          const reasons = Array.isArray(aiInspectionResult.mismatchReasons) && aiInspectionResult.mismatchReasons.length > 0
+            ? aiInspectionResult.mismatchReasons.join(" • ")
+            : "Os dados do documento anexado (Nome ou CPF) não conferem com o titular da reserva."
+          reportValidationFailure(
+            "docFile",
+            "funnel-guest-name",
+            "Divergência de titularidade no documento",
+            `${reasons} Anexe o documento pertencente ao titular da reserva ou corrija os dados informados.`
+          )
+          return
+        }
+        if (aiInspectionResult?.isMinor && !minorNoticeAcknowledged) {
+          setShowMinorNoticeModal(true)
+          return
+        }
       }
 
       const resolvedFunnelDocType = /[a-zA-Z]/.test(rawFunnelDoc) ? "Passaporte" : "CPF"
@@ -1911,6 +2014,13 @@ export function BookingFunnelModal({
 
       // Registra o lead imediatamente no backend como carrinho ativo
       sendFunnelTelemetry(3, "identificacao_lead", "em_andamento")
+      trackGenerateLead({
+        name: guestName.trim(),
+        email: guestEmail.trim(),
+        phone: guestPhone.trim(),
+        isWorkTrip,
+        value: pixTotalAmount,
+      })
       setCurrentStep(3)
     }
   }
@@ -1926,6 +2036,8 @@ export function BookingFunnelModal({
       const payload = {
         sessionId,
         requesterType: resolvedRequesterType,
+        deferDocToPreCheckin: Boolean((deferDocToPreCheckin || isSeparateRequester) && !docFileBase64),
+        attribution: getStoredAttribution(),
         ...(isSeparateRequester
           ? {
               requesterName: requesterName.trim(),
@@ -2014,6 +2126,7 @@ export function BookingFunnelModal({
 
       const data = await res.json()
       if (res.ok && data.reservation) {
+        const createdResCode = String(data.reservation.code || data.reservation.reservationCode || "")
         setConfirmedReservation(data.reservation)
         if (paymentMethod === "pix" && data.pixData) {
           setPixData(data.pixData)
@@ -2021,6 +2134,13 @@ export function BookingFunnelModal({
         if (data.initPoint) {
           setMpInitPoint(data.initPoint)
         }
+        trackAddPaymentInfo({
+          reservationCode: createdResCode,
+          paymentMethod,
+          value: totalAmount,
+          nights,
+          roomsCount: rooms.length,
+        })
         sendFunnelTelemetry(5, "reserva_confirmada", "concluido")
         try {
           localStorage.removeItem(FUNNEL_DRAFT_STORAGE_KEY)
@@ -2106,9 +2226,41 @@ export function BookingFunnelModal({
   }
 
   const whatsappNumber = siteConfig?.branding?.whatsapp || "5522997124021"
-  const whatsappUrl = `https://wa.me/${whatsappNumber.replace(/[^0-9]/g, "")}?text=${encodeURIComponent(
-    `Olá! Estou concluindo minha reserva no site da CorpFlats para os dias ${checkin} a ${checkout} e gostaria de tirar uma dúvida.`
-  )}`
+  const activeStepLabel = FUNNEL_STEPS.find((s) => s.step === currentStep)?.label
+  const handleOpenFunnelConcierge = (placement: "funnel_step_helper" | "funnel_exit_intent" | "footer_contact") => {
+    openSmartWhatsAppConcierge({
+      whatsappNumber,
+      placement,
+      pagePath: pagePath || (typeof window !== "undefined" ? window.location.pathname : "/"),
+      pageLabel,
+      checkinDate: checkin,
+      checkoutDate: checkout,
+      nights,
+      adultsCount: totalGuestsCount,
+      roomsCount: rooms.length,
+      bedType: rooms.some((r) => r.bedType === "twin") ? "twin" : "queen",
+      ratePlan,
+      pixTotalAmount,
+      funnelStep: currentStep,
+      funnelStepLabel: activeStepLabel,
+      isWorkTrip,
+    })
+  }
+  const whatsappUrl = buildSmartConciergeUrl({
+    whatsappNumber,
+    placement: "footer_contact",
+    pagePath: pagePath || (typeof window !== "undefined" ? window.location.pathname : "/"),
+    pageLabel,
+    checkinDate: checkin,
+    checkoutDate: checkout,
+    nights,
+    adultsCount: totalGuestsCount,
+    roomsCount: rooms.length,
+    bedType: rooms.some((r) => r.bedType === "twin") ? "twin" : "queen",
+    ratePlan,
+    pixTotalAmount,
+    isWorkTrip,
+  })
 
   return (
     <>
@@ -2241,7 +2393,7 @@ export function BookingFunnelModal({
                             <select
                               value={lateCheckoutTime}
                               onChange={(e) => setLateCheckoutTime(e.target.value)}
-                              className="h-8 text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-2.5 py-0 text-slate-800 dark:text-slate-100 shadow-xs focus:ring-1 focus:ring-[#0F3D4C] outline-none"
+                              className="min-h-[44px] sm:h-8 text-base sm:text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-2.5 py-0 text-slate-800 dark:text-slate-100 shadow-xs focus:ring-1 focus:ring-[#0F3D4C] outline-none"
                             >
                               <optgroup label="Cortesia CorpFlats (Gratuito)">
                                 <option value="12:30">Até 12:30 — Cortesia (R$ 0)</option>
@@ -2394,7 +2546,7 @@ export function BookingFunnelModal({
               <Button
                 variant="outline"
                 onClick={handleCloseModal}
-                className="text-xs font-bold rounded-xl h-10 px-4 w-full sm:w-auto"
+                className="text-xs font-bold rounded-xl min-h-[44px] sm:h-10 px-4 w-full sm:w-auto"
               >
                 <ArrowLeft className="w-3.5 h-3.5 mr-1 shrink-0" />
                 Voltar ao site
@@ -2402,11 +2554,22 @@ export function BookingFunnelModal({
 
               <Button
                 onClick={handleNextStep}
-                className="bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-black text-xs h-auto min-h-10 py-2.5 px-6 rounded-xl shadow-md gap-1.5 w-full sm:w-auto whitespace-normal leading-tight text-center"
+                className="bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-black text-xs h-auto min-h-[44px] sm:min-h-10 py-2.5 px-6 rounded-xl shadow-md gap-1.5 w-full sm:w-auto whitespace-normal leading-tight text-center"
               >
                 <span>Avançar para Seus Dados</span>
                 <ArrowRight className="w-4 h-4 shrink-0 text-[#E5C98B]" />
               </Button>
+            </div>
+
+            <div className="pt-1 text-center">
+              <button
+                type="button"
+                onClick={() => handleOpenFunnelConcierge("funnel_step_helper")}
+                className="inline-flex items-center justify-center gap-1.5 text-[11px] font-semibold text-slate-500 hover:text-[#0F3D4C] dark:text-slate-400 dark:hover:text-[#E5C98B] py-1.5 px-2.5 rounded-lg transition-colors"
+              >
+                <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>Dúvida rápida sobre camas, café ou regras pet? Falar com Concierge 24h</span>
+              </button>
             </div>
           </div>
         )}
@@ -2567,14 +2730,14 @@ export function BookingFunnelModal({
                       name="requesterName"
                       autoComplete="name"
                       required
-                      aria-invalid={invalidField === "requesterName" ? "true" : undefined}
+                      aria-invalid={invalidField === "requesterName" ? "true" : "false"}
                       value={requesterName}
                       onChange={e => {
                         setRequesterName(e.target.value)
                         clearFieldValidation("requesterName")
                       }}
                       placeholder="Ex: Maria Oliveira / RH Empresa"
-                      className="text-xs h-9 rounded-xl bg-white dark:bg-slate-900"
+                      className="text-base sm:text-xs min-h-[44px] sm:h-9 rounded-xl bg-white dark:bg-slate-900"
                     />
                   </div>
 
@@ -2589,14 +2752,14 @@ export function BookingFunnelModal({
                       inputMode="tel"
                       autoComplete="tel"
                       required
-                      aria-invalid={invalidField === "requesterPhone" ? "true" : undefined}
+                      aria-invalid={invalidField === "requesterPhone" ? "true" : "false"}
                       value={requesterPhone}
                       onChange={e => {
                         setRequesterPhone(maskPhone(e.target.value))
                         clearFieldValidation("requesterPhone")
                       }}
                       placeholder="(22) 99999-9999"
-                      className="text-xs h-9 rounded-xl bg-white dark:bg-slate-900 font-bold text-slate-900 dark:text-slate-100"
+                      className="text-base sm:text-xs min-h-[44px] sm:h-9 rounded-xl bg-white dark:bg-slate-900 font-bold text-slate-900 dark:text-slate-100"
                     />
                   </div>
 
@@ -2613,20 +2776,20 @@ export function BookingFunnelModal({
                       autoCapitalize="none"
                       spellCheck={false}
                       required
-                      aria-invalid={invalidField === "requesterEmail" ? "true" : undefined}
+                      aria-invalid={invalidField === "requesterEmail" ? "true" : "false"}
                       value={requesterEmail}
                       onChange={e => {
                         setRequesterEmail(e.target.value)
                         clearFieldValidation("requesterEmail")
                       }}
                       placeholder="solicitante@empresa.com.br"
-                      className="text-xs h-9 rounded-xl bg-white dark:bg-slate-900"
+                      className="text-base sm:text-xs min-h-[44px] sm:h-9 rounded-xl bg-white dark:bg-slate-900"
                     />
                   </div>
 
                   <div className="space-y-1">
                     <Label htmlFor="funnel-requester-doc" className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                      CPF ou CNPJ do Solicitante (Opcional)
+                      <span translate="no">CPF</span> ou <span translate="no">CNPJ</span> do Solicitante (Opcional)
                     </Label>
                     <Input
                       id="funnel-requester-doc"
@@ -2637,7 +2800,7 @@ export function BookingFunnelModal({
                       value={requesterDocument}
                       onChange={e => setRequesterDocument(maskCpf(e.target.value))}
                       placeholder="000.000.000-00"
-                      className="text-xs h-9 rounded-xl bg-white dark:bg-slate-900 font-mono"
+                      className="text-base sm:text-xs min-h-[44px] sm:h-9 rounded-xl bg-white dark:bg-slate-900 font-mono"
                     />
                   </div>
                 </div>
@@ -2672,14 +2835,14 @@ export function BookingFunnelModal({
                     name="guestName"
                     autoComplete={isSeparateRequester ? "off" : "name"}
                     required={!isSeparateRequester}
-                    aria-invalid={invalidField === "guestName" ? "true" : undefined}
+                    aria-invalid={invalidField === "guestName" ? "true" : (!isSeparateRequester ? "false" : undefined)}
                     value={guestName}
                     onChange={e => {
                       setGuestName(e.target.value)
                       clearFieldValidation("guestName")
                     }}
                     placeholder={isSeparateRequester ? "Preencher agora ou deixar para o link" : "Ex: Carlos Eduardo Silveira"}
-                    className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800"
+                    className="text-base sm:text-xs min-h-[44px] sm:h-9 rounded-xl bg-slate-50 dark:bg-slate-800"
                   />
                 </div>
 
@@ -2694,14 +2857,14 @@ export function BookingFunnelModal({
                     inputMode="tel"
                     autoComplete={isSeparateRequester ? "off" : "tel"}
                     required={!isSeparateRequester}
-                    aria-invalid={invalidField === "guestPhone" ? "true" : undefined}
+                    aria-invalid={invalidField === "guestPhone" ? "true" : (!isSeparateRequester ? "false" : undefined)}
                     value={guestPhone}
                     onChange={e => {
                       setGuestPhone(maskPhone(e.target.value))
                       clearFieldValidation("guestPhone")
                     }}
                     placeholder="(22) 99999-9999"
-                    className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold text-slate-900 dark:text-slate-100"
+                    className="text-base sm:text-xs min-h-[44px] sm:h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold text-slate-900 dark:text-slate-100"
                   />
                 </div>
 
@@ -2718,20 +2881,20 @@ export function BookingFunnelModal({
                     autoCapitalize="none"
                     spellCheck={false}
                     required={!isSeparateRequester}
-                    aria-invalid={invalidField === "guestEmail" ? "true" : undefined}
+                    aria-invalid={invalidField === "guestEmail" ? "true" : (!isSeparateRequester ? "false" : undefined)}
                     value={guestEmail}
                     onChange={e => {
                       setGuestEmail(e.target.value)
                       clearFieldValidation("guestEmail")
                     }}
                     placeholder="seu@email.com"
-                    className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800"
+                    className="text-base sm:text-xs min-h-[44px] sm:h-9 rounded-xl bg-slate-50 dark:bg-slate-800"
                   />
                 </div>
 
                 <div className="space-y-1">
                   <Label htmlFor="funnel-guest-doc" className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    {isSeparateRequester ? "CPF ou Passaporte do Hóspede (Opcional)" : <>CPF ou Passaporte <span aria-hidden="true">*</span></>}
+                    {isSeparateRequester ? <><span translate="no">CPF</span> ou Passaporte do Hóspede (Opcional)</> : <><span translate="no">CPF</span> ou Passaporte <span aria-hidden="true">*</span></>}
                   </Label>
                   <Input
                     id="funnel-guest-doc"
@@ -2741,72 +2904,122 @@ export function BookingFunnelModal({
                     autoCapitalize="none"
                     spellCheck={false}
                     required={!isSeparateRequester}
-                    aria-invalid={invalidField === "guestDocument" ? "true" : undefined}
+                    aria-invalid={invalidField === "guestDocument" ? "true" : (!isSeparateRequester ? "false" : undefined)}
                     value={guestDocument}
                     onChange={e => {
                       setGuestDocument(maskCpf(e.target.value))
                       clearFieldValidation("guestDocument")
                     }}
                     placeholder="000.000.000-00 ou Passaporte"
-                    className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-mono"
+                    className="text-base sm:text-xs min-h-[44px] sm:h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-mono"
                   />
                 </div>
 
-                <div className="space-y-1">
-                  <Label htmlFor="funnel-guest-cep" className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
-                    <span>CEP Residencial (Opcional)</span>
-                    {loadingFunnelCep && <span className="text-[10px] text-[#0F3D4C] font-normal">Buscando...</span>}
-                  </Label>
-                  <Input
-                    id="funnel-guest-cep"
-                    name="guestCep"
-                    inputMode="numeric"
-                    autoComplete={isSeparateRequester ? "off" : "postal-code"}
-                    value={guestCep}
-                    onChange={async e => {
-                      const val = e.target.value.replace(/\D/g, "");
-                      setGuestCep(val);
-                      if (val.length === 8) {
-                        setLoadingFunnelCep(true);
-                        try {
-                          const res = await fetch(`/api/lookup-cep/${val}`);
-                          if (res.ok) {
-                            const data = await res.json();
-                            if (data.logradouro) setGuestAddress(`${data.logradouro}, ${data.bairro || ''}`.trim());
-                            if (data.cidade) setGuestCity(data.cidade);
-                            if (data.uf) setGuestState(data.uf);
+                <details
+                  open={Boolean(isWorkTrip || guestCep || guestAddress)}
+                  className="sm:col-span-2 rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-slate-50/60 dark:bg-slate-800/40 p-2.5"
+                >
+                  <summary className="cursor-pointer text-xs font-semibold text-slate-600 dark:text-slate-300 select-none flex items-center justify-between gap-2 py-0.5">
+                    <span>Adicionar CEP e Endereço Residencial agora (Opcional)</span>
+                    <span className="text-[10px] text-slate-400 font-normal">Para FNRH / Nota Fiscal</span>
+                  </summary>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2.5">
+                    <div className="space-y-1">
+                      <Label htmlFor="funnel-guest-cep" className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                        <span>CEP Residencial (Opcional)</span>
+                        {loadingFunnelCep && <span className="text-[10px] text-[#0F3D4C] font-normal">Buscando...</span>}
+                      </Label>
+                      <Input
+                        id="funnel-guest-cep"
+                        name="guestCep"
+                        inputMode="numeric"
+                        autoComplete={isSeparateRequester ? "off" : "postal-code"}
+                        value={guestCep}
+                        onChange={async e => {
+                          const val = e.target.value.replace(/\D/g, "");
+                          setGuestCep(val);
+                          if (val.length === 8) {
+                            setLoadingFunnelCep(true);
+                            try {
+                              const res = await fetch(`/api/lookup-cep/${val}`);
+                              if (res.ok) {
+                                const data = await res.json();
+                                if (data.logradouro) setGuestAddress(`${data.logradouro}, ${data.bairro || ''}`.trim());
+                                if (data.cidade) setGuestCity(data.cidade);
+                                if (data.uf) setGuestState(data.uf);
+                              }
+                            } catch {}
+                            finally {
+                              setLoadingFunnelCep(false);
+                            }
                           }
-                        } catch {}
-                        finally {
-                          setLoadingFunnelCep(false);
-                        }
-                      }
-                    }}
-                    placeholder="00000-000"
-                    maxLength={9}
-                    className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-mono"
-                  />
-                </div>
+                        }}
+                        placeholder="00000-000"
+                        maxLength={9}
+                        className="text-base sm:text-xs min-h-[44px] sm:h-9 rounded-xl bg-white dark:bg-slate-900 font-mono"
+                      />
+                    </div>
 
-                <div className="space-y-1 sm:col-span-2">
-                  <Label htmlFor="funnel-guest-address" className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    Endereço Residencial (Opcional)
-                  </Label>
-                  <Input
-                    id="funnel-guest-address"
-                    name="guestAddress"
-                    autoComplete={isSeparateRequester ? "off" : "street-address"}
-                    value={guestAddress}
-                    onChange={e => setGuestAddress(e.target.value)}
-                    placeholder="Rua, número, bairro e cidade"
-                    className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800"
-                  />
-                </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="funnel-guest-address" className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                        Endereço Residencial (Opcional)
+                      </Label>
+                      <Input
+                        id="funnel-guest-address"
+                        name="guestAddress"
+                        autoComplete={isSeparateRequester ? "off" : "street-address"}
+                        value={guestAddress}
+                        onChange={e => setGuestAddress(e.target.value)}
+                        placeholder="Rua, número, bairro e cidade"
+                        className="text-base sm:text-xs min-h-[44px] sm:h-9 rounded-xl bg-white dark:bg-slate-900"
+                      />
+                    </div>
+                  </div>
+                </details>
               </div>
             </div>
 
-            {/* Anexo de Documento Oficial com Foto (Obrigatório para o próprio hóspede; Opcional para solicitante terceiro) */}
+            {/* Anexo de Documento Oficial com Foto (Check-in Express agora OU Pré-Check-in Digital depois) */}
             <div className="p-3.5 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/40 space-y-3">
+              {!isSeparateRequester && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-200/60 dark:bg-slate-900/70">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeferDocToPreCheckin(false)
+                      clearFieldValidation("docFile")
+                    }}
+                    className={`min-h-[40px] px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all text-center ${
+                      !deferDocToPreCheckin
+                        ? "bg-[#0F3D4C] text-white shadow-xs"
+                        : "text-slate-600 dark:text-slate-300 hover:text-slate-900"
+                    }`}
+                  >
+                    📸 Enviar foto agora (Check-in Express)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeferDocToPreCheckin(true)
+                      clearFieldValidation("docFile")
+                    }}
+                    className={`min-h-[40px] px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all text-center ${
+                      deferDocToPreCheckin
+                        ? "bg-[#0F3D4C] text-white shadow-xs"
+                        : "text-slate-600 dark:text-slate-300 hover:text-slate-900"
+                    }`}
+                  >
+                    🔗 Enviar depois no Pré-Check-in Digital
+                  </button>
+                </div>
+              )}
+
+              {!isSeparateRequester && deferDocToPreCheckin && !docFileBase64 && (
+                <div className="p-2.5 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/60 text-[11px] text-emerald-900 dark:text-emerald-200 leading-relaxed">
+                  <strong>Reserva imediata liberada:</strong> você garante sua tarifa agora via <span translate="no">PIX</span> ou Cartão e recebe no WhatsApp/E-mail o link seguro do Pré-Check-in Digital para anexar o RG, CNH ou Passaporte antes de retirar o cartão da porta na recepção 24h.
+                </div>
+              )}
+
               <input
                 ref={docFileInputRef}
                 type="file"
@@ -2821,7 +3034,7 @@ export function BookingFunnelModal({
                 aiInspectionResult={aiInspectionResult}
                 isInspectingDoc={isInspectingDoc}
                 docInspectionError={docInspectionError}
-                isOptional={isSeparateRequester}
+                isOptional={isSeparateRequester || deferDocToPreCheckin}
                 onOpenFilePicker={handleOpenDocPicker}
                 onClearDocFile={handleClearDocFile}
               />
@@ -2838,7 +3051,7 @@ export function BookingFunnelModal({
                   type="checkbox"
                   checked={hasVehicle}
                   onChange={e => setHasVehicle(e.target.checked)}
-                  className="rounded text-[#0F3D4C] accent-[#0F3D4C] shrink-0"
+                  className="w-5 h-5 rounded text-[#0F3D4C] accent-[#0F3D4C] shrink-0"
                 />
               </div>
 
@@ -2848,13 +3061,13 @@ export function BookingFunnelModal({
                     value={vehiclePlate}
                     onChange={e => setVehiclePlate(e.target.value.toUpperCase())}
                     placeholder="Placa do Carro"
-                    className="text-xs h-8 rounded-xl uppercase font-mono"
+                    className="text-base sm:text-xs min-h-[44px] sm:h-9 rounded-xl uppercase font-mono"
                   />
                   <Input
                     value={vehicleModel}
                     onChange={e => setVehicleModel(e.target.value)}
                     placeholder="Modelo (Ex: Corolla)"
-                    className="text-xs h-8 rounded-xl"
+                    className="text-base sm:text-xs min-h-[44px] sm:h-9 rounded-xl"
                   />
                 </div>
               )}
@@ -2865,13 +3078,13 @@ export function BookingFunnelModal({
               <div className="flex items-center justify-between gap-2">
                 <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                   <Building2 className="w-3.5 h-3.5 text-[#0F3D4C] shrink-0" />
-                  <span>Viagem Corporativa / Nota Fiscal PJ</span>
+                  <span>Viagem Corporativa / Nota Fiscal PJ (<span translate="no">NFS-e</span>)</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={isWorkTrip}
                   onChange={e => setIsWorkTrip(e.target.checked)}
-                  className="rounded text-[#0F3D4C] accent-[#0F3D4C] shrink-0"
+                  className="w-5 h-5 rounded text-[#0F3D4C] accent-[#0F3D4C] shrink-0"
                 />
               </div>
 
@@ -2881,13 +3094,13 @@ export function BookingFunnelModal({
                     value={companyCnpj}
                     onChange={e => setCompanyCnpj(e.target.value)}
                     placeholder="CNPJ da Empresa"
-                    className="text-xs h-8 rounded-xl font-mono"
+                    className="text-base sm:text-xs min-h-[44px] sm:h-9 rounded-xl font-mono"
                   />
                   <Input
                     value={companyName}
                     onChange={e => setCompanyName(e.target.value)}
                     placeholder="Razão Social"
-                    className="text-xs h-8 rounded-xl"
+                    className="text-base sm:text-xs min-h-[44px] sm:h-9 rounded-xl"
                   />
                 </div>
               )}
@@ -2898,7 +3111,7 @@ export function BookingFunnelModal({
               <Button
                 variant="outline"
                 onClick={() => setCurrentStep(1)}
-                className="text-xs font-bold rounded-xl h-10 px-4 w-full sm:w-auto"
+                className="text-xs font-bold rounded-xl min-h-[44px] sm:h-10 px-4 w-full sm:w-auto"
               >
                 <ArrowLeft className="w-3.5 h-3.5 mr-1 shrink-0" />
                 Voltar
@@ -2906,11 +3119,22 @@ export function BookingFunnelModal({
 
               <Button
                 onClick={handleNextStep}
-                className="bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-black text-xs h-auto min-h-10 py-2.5 px-6 rounded-xl shadow-md gap-1.5 w-full sm:w-auto whitespace-normal leading-tight text-center"
+                className="bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-black text-xs h-auto min-h-[44px] sm:min-h-10 py-2.5 px-6 rounded-xl shadow-md gap-1.5 w-full sm:w-auto whitespace-normal leading-tight text-center"
               >
                 <span>Avançar para Pagamento</span>
                 <ArrowRight className="w-4 h-4 shrink-0 text-[#E5C98B]" />
               </Button>
+            </div>
+
+            <div className="pt-1 text-center">
+              <button
+                type="button"
+                onClick={() => handleOpenFunnelConcierge("funnel_step_helper")}
+                className="inline-flex items-center justify-center gap-1.5 text-[11px] font-semibold text-slate-500 hover:text-[#0F3D4C] dark:text-slate-400 dark:hover:text-[#E5C98B] py-1.5 px-2.5 rounded-lg transition-colors"
+              >
+                <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>Dúvida com cadastro, CNPJ ou reserva corporativa? Falar no WhatsApp 24h</span>
+              </button>
             </div>
           </div>
         )}
@@ -2943,14 +3167,14 @@ export function BookingFunnelModal({
                       <QrCode className="w-4 h-4" />
                     </div>
                     <div>
-                      <span className="font-bold text-xs block text-slate-900 dark:text-slate-100">PIX Instantâneo</span>
-                      <span className="text-[#091E26] dark:text-slate-100 font-black text-base">
+                      <span className="font-bold text-xs block text-slate-900 dark:text-slate-100"><span translate="no">PIX</span> Instantâneo</span>
+                      <span translate="no" className="text-[#091E26] dark:text-slate-100 font-black text-base">
                         R$ {formatBrl(pixTotalAmount)}
                       </span>
                     </div>
                   </div>
                   <p className="text-[10.5px] text-slate-600 dark:text-slate-400 font-medium mt-1.5">
-                    Economia de R$ {formatBrl(pixDiscountAmount)} no PIX • Liberação na hora
+                    Economia de <span translate="no">R$ {formatBrl(pixDiscountAmount)}</span> no <span translate="no">PIX</span> • Liberação na hora
                   </p>
                 </div>
 
@@ -2973,7 +3197,7 @@ export function BookingFunnelModal({
                     </div>
                     <div>
                       <span className="font-bold text-xs block text-slate-900 dark:text-slate-100">Cartão de Crédito</span>
-                      <span className="text-[#091E26] dark:text-slate-100 font-black text-base">
+                      <span translate="no" className="text-[#091E26] dark:text-slate-100 font-black text-base">
                         R$ {formatBrl(baseTotalAmount)}
                       </span>
                     </div>
@@ -3017,7 +3241,7 @@ export function BookingFunnelModal({
               <Button
                 variant="outline"
                 onClick={() => setCurrentStep(2)}
-                className="text-xs font-bold rounded-xl h-10 px-4 w-full sm:w-auto"
+                className="text-xs font-bold rounded-xl min-h-[44px] sm:h-10 px-4 w-full sm:w-auto"
               >
                 <ArrowLeft className="w-3.5 h-3.5 mr-1 shrink-0" />
                 Voltar
@@ -3026,13 +3250,30 @@ export function BookingFunnelModal({
               <Button
                 onClick={handleConfirmReservation}
                 disabled={isProcessing}
-                className="bg-gradient-to-r from-[#091E26] via-[#0F3D4C] to-[#091E26] hover:brightness-110 text-white border border-[#C5A059]/50 font-black text-xs h-auto min-h-11 py-2.5 px-6 rounded-xl shadow-md shadow-[#091E26]/20 gap-2 w-full sm:w-auto whitespace-normal leading-tight text-center"
+                className="bg-gradient-to-r from-[#091E26] via-[#0F3D4C] to-[#091E26] hover:brightness-110 text-white border border-[#C5A059]/50 font-black text-xs h-auto min-h-[44px] py-2.5 px-6 rounded-xl shadow-md shadow-[#091E26]/20 gap-2 w-full sm:w-auto whitespace-normal leading-tight text-center"
               >
                 <Lock className="w-4 h-4 shrink-0 text-[#E5C98B]" />
                 <span>
-                  {isProcessing ? "Confirmando..." : (paymentMethod === "pix" ? `Pagar com PIX: R$ ${formatBrl(totalAmount)}` : `Pagar com Cartão: R$ ${formatBrl(totalAmount)}`)}
+                  {isProcessing ? (
+                    "Confirmando..."
+                  ) : paymentMethod === "pix" ? (
+                    <>Pagar com <span translate="no">PIX: R$ {formatBrl(totalAmount)}</span></>
+                  ) : (
+                    <>Pagar com Cartão: <span translate="no">R$ {formatBrl(totalAmount)}</span></>
+                  )}
                 </span>
               </Button>
+            </div>
+
+            <div className="pt-1 text-center">
+              <button
+                type="button"
+                onClick={() => handleOpenFunnelConcierge("funnel_step_helper")}
+                className="inline-flex items-center justify-center gap-1.5 text-[11px] font-semibold text-slate-500 hover:text-[#0F3D4C] dark:text-slate-400 dark:hover:text-[#E5C98B] py-1.5 px-2.5 rounded-lg transition-colors"
+              >
+                <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>Precisa de faturamento corporativo ou ajuda no pagamento? Falar no WhatsApp 24h</span>
+              </button>
             </div>
           </div>
         )}
@@ -3041,7 +3282,7 @@ export function BookingFunnelModal({
         {currentStep === 4 && confirmedReservation && (
           <div className="space-y-4 py-2 text-center animate-in zoom-in-95">
             <div className="w-12 h-12 rounded-2xl bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40 flex items-center justify-center mx-auto shadow-xs">
-              {paymentMethod === "pix" && !isPixPaid ? (
+              {!isPixPaid ? (
                 <Clock className="w-6 h-6" />
               ) : (
                 <CheckCircle2 className="w-6 h-6" />
@@ -3050,15 +3291,19 @@ export function BookingFunnelModal({
 
             <div className="space-y-1">
               <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-slate-100">
-                {paymentMethod === "pix" && !isPixPaid 
-                  ? "Conclua o Pagamento PIX" 
+                {paymentMethod === "pix" && !isPixPaid
+                  ? <>Conclua o Pagamento <span translate="no">PIX</span></>
+                  : paymentMethod === "card" && !isPixPaid
+                  ? "Conclua o Pagamento no Cartão"
                   : "Reserva Confirmada!"}
               </h3>
               <p className="text-xs text-slate-500">
                 {paymentMethod === "pix" && !isPixPaid ? (
                   <>Escaneie o QR Code ou copie o código abaixo para confirmação imediata.</>
+                ) : paymentMethod === "card" && !isPixPaid ? (
+                  <>Clique no botão seguro do Mercado Pago abaixo para finalizar seu pagamento.</>
                 ) : (
-                  <>Seu voucher foi enviado para <strong className="break-all">{isSeparateRequester ? requesterEmail : guestEmail}</strong>.</>
+                  <>Seu voucher foi enviado para <strong translate="no" className="break-all">{isSeparateRequester ? requesterEmail : guestEmail}</strong>.</>
                 )}
               </p>
             </div>
@@ -3066,7 +3311,7 @@ export function BookingFunnelModal({
             <div className="bg-slate-50 dark:bg-slate-800/80 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 text-left space-y-2 text-xs">
               <div className="flex justify-between items-center gap-2">
                 <span className="text-slate-500 shrink-0">Código da Reserva:</span>
-                <span className="font-mono font-black text-[#0F3D4C] dark:text-[#E5C98B] text-sm text-right">
+                <span translate="no" className="font-mono font-black text-[#0F3D4C] dark:text-[#E5C98B] text-sm text-right">
                   {confirmedReservation.code || confirmedReservation.reservationCode}
                 </span>
               </div>
@@ -3088,7 +3333,7 @@ export function BookingFunnelModal({
               </div>
               <div className="flex justify-between items-center gap-2">
                 <span className="text-slate-500 shrink-0">Acomodação:</span>
-                <span className="font-bold text-slate-900 dark:text-slate-100 text-right">Flat {confirmedReservation.flatNumber}</span>
+                <span translate="no" className="font-bold text-slate-900 dark:text-slate-100 text-right">Flat {confirmedReservation.flatNumber}</span>
               </div>
               <div className="flex flex-wrap justify-between items-center gap-2 pt-1.5 border-t border-slate-200 dark:border-slate-700">
                 <span className="text-slate-500">Status:</span>
@@ -3104,13 +3349,20 @@ export function BookingFunnelModal({
               </div>
             </div>
 
-            {isSeparateRequester && (!guestName.trim() || !docFileBase64 || confirmedReservation.guestPending) && (
+            {((isSeparateRequester && (!guestName.trim() || !docFileBase64 || confirmedReservation.guestPending)) ||
+              (!isSeparateRequester && !docFileBase64)) && (
               <div className="p-3.5 rounded-2xl border border-[#C5A059]/50 bg-[#0F3D4C]/[0.05] dark:bg-slate-800/60 text-left text-xs text-slate-700 dark:text-slate-200 space-y-1">
                 <span className="font-bold text-[#0F3D4C] dark:text-[#E5C98B] block">
-                  📋 Cadastro Posterior do Hóspede
+                  {isSeparateRequester
+                    ? "📋 Cadastro Posterior do Hóspede"
+                    : "📸 Envio do Documento no Pré-Check-in Digital"}
                 </span>
                 <p className="text-[11px] leading-relaxed">
-                  Assim que o pagamento for confirmado, enviaremos automaticamente para seu <strong>WhatsApp</strong> e <strong>E-mail</strong> o link seguro de credenciamento para preencher (ou encaminhar ao hóspede) os dados e o documento oficial antes do check-in.
+                  {isSeparateRequester ? (
+                    <>Assim que o pagamento for confirmado, enviaremos automaticamente para seu <strong>WhatsApp</strong> e <strong>E-mail</strong> o link seguro de credenciamento para preencher (ou encaminhar ao hóspede) os dados e o documento oficial antes do check-in.</>
+                  ) : (
+                    <>Assim que o pagamento for confirmado, você poderá anexar a foto do seu documento oficial (RG, CNH ou Passaporte) diretamente no portal <strong>Minha Reserva / Pré-Check-in Digital</strong> antes de retirar o cartão da porta na recepção 24h.</>
+                  )}
                 </p>
               </div>
             )}
@@ -3124,7 +3376,7 @@ export function BookingFunnelModal({
                       <Check className="w-5 h-5" />
                     </div>
                     <h4 className="text-sm font-black text-slate-900 dark:text-slate-100">
-                      Pagamento PIX Confirmado!
+                      Pagamento <span translate="no">PIX</span> Confirmado!
                     </h4>
                     <p className="text-xs text-slate-600 dark:text-slate-300">
                       Sua reserva está 100% quitada e garantida.
@@ -3138,19 +3390,22 @@ export function BookingFunnelModal({
                           <img
                             src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(pixData.pixCopiaECola)}`}
                             alt="QR Code PIX"
+                            width={144}
+                            height={144}
                             className="w-36 h-36 mx-auto rounded-lg"
                           />
                         </div>
 
                         <div className="space-y-1.5 text-left">
                           <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                            Código PIX Copia e Cola
+                            Código <span translate="no">PIX</span> Copia e Cola
                           </span>
                           <div className="flex gap-2">
                             <Input
                               readOnly
+                              translate="no"
                               value={pixData.pixCopiaECola}
-                              className="text-[11px] font-mono bg-white dark:bg-slate-900 h-9 min-w-0"
+                              className="text-[11px] font-mono bg-white dark:bg-slate-900 min-h-[44px] sm:h-9 min-w-0"
                             />
                             <Button
                               size="sm"
@@ -3159,7 +3414,7 @@ export function BookingFunnelModal({
                                 setPixCopied(true)
                                 setTimeout(() => setPixCopied(false), 3000)
                               }}
-                              className="bg-[#0F3D4C] hover:bg-[#091E26] text-white font-bold text-xs h-9 px-3.5 rounded-xl shrink-0"
+                              className="bg-[#0F3D4C] hover:bg-[#091E26] text-white font-bold text-xs min-h-[44px] sm:h-9 px-3.5 rounded-xl shrink-0"
                             >
                               {pixCopied ? <Check className="w-3.5 h-3.5 mr-1 text-[#E5C98B]" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
                               <span>{pixCopied ? "Copiado!" : "Copiar"}</span>
@@ -3172,8 +3427,8 @@ export function BookingFunnelModal({
                     {/* Chave Pix Direta CNPJ como alternativa */}
                     <div className="pt-2 border-t border-slate-200/80 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2 text-xs bg-white dark:bg-slate-900 p-2.5 rounded-xl border border-slate-200/60">
                       <div className="text-left">
-                        <span className="text-[10px] text-slate-500 font-semibold block">Chave PIX (CNPJ Banco Inter):</span>
-                        <span className="font-mono font-bold text-slate-800 dark:text-slate-100 text-xs">47.964.813/0001-65</span>
+                        <span className="text-[10px] text-slate-500 font-semibold block">Chave <span translate="no">PIX (CNPJ</span> Banco Inter):</span>
+                        <span translate="no" className="font-mono font-bold text-slate-800 dark:text-slate-100 text-xs">47.964.813/0001-65</span>
                       </div>
                       <Button
                         size="sm"
@@ -3183,7 +3438,7 @@ export function BookingFunnelModal({
                           setPixKeyCopied(true)
                           setTimeout(() => setPixKeyCopied(false), 3000)
                         }}
-                        className="h-8 text-xs font-semibold border-slate-200 text-[#0F3D4C] hover:bg-slate-100 rounded-xl px-3 shrink-0"
+                        className="min-h-[40px] sm:h-8 text-xs font-semibold border-slate-200 text-[#0F3D4C] hover:bg-slate-100 rounded-xl px-3 shrink-0"
                       >
                         {pixKeyCopied ? <Check className="w-3.5 h-3.5 mr-1 text-[#0F3D4C]" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
                         <span>{pixKeyCopied ? "Copiado!" : "Copiar CNPJ"}</span>
@@ -3195,19 +3450,35 @@ export function BookingFunnelModal({
             )}
 
             {/* Se Pagamento foi Cartão */}
-            {paymentMethod === "card" && mpInitPoint && (
+            {paymentMethod === "card" && (isPixPaid || mpInitPoint) && (
               <div className="p-4 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-2xl space-y-2.5">
-                <p className="text-xs text-slate-700 dark:text-slate-200 font-bold">
-                  Prossiga para finalizar o pagamento no ambiente seguro do Mercado Pago:
-                </p>
-                <Button
-                  onClick={() => window.open(mpInitPoint, "_blank")}
-                  className="w-full bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-black text-xs h-auto min-h-10 py-2.5 rounded-xl shadow-md gap-2 whitespace-normal leading-tight text-center"
-                >
-                  <CreditCard className="w-4 h-4 shrink-0 text-[#E5C98B]" />
-                  <span>Pagar com Cartão no Mercado Pago</span>
-                  <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                </Button>
+                {isPixPaid ? (
+                  <div className="py-3 text-center space-y-1.5">
+                    <div className="w-10 h-10 bg-[#0F3D4C] text-[#E5C98B] rounded-full flex items-center justify-center mx-auto shadow-xs">
+                      <Check className="w-5 h-5" />
+                    </div>
+                    <h4 className="text-sm font-black text-slate-900 dark:text-slate-100">
+                      Pagamento no Cartão Confirmado!
+                    </h4>
+                    <p className="text-xs text-slate-600 dark:text-slate-300">
+                      Sua reserva está 100% quitada e garantida.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-xs text-slate-700 dark:text-slate-200 font-bold">
+                      Prossiga para finalizar o pagamento no ambiente seguro do Mercado Pago:
+                    </p>
+                    <Button
+                      onClick={() => mpInitPoint && window.open(mpInitPoint, "_blank")}
+                      className="w-full bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-black text-xs h-auto min-h-[44px] py-2.5 rounded-xl shadow-md gap-2 whitespace-normal leading-tight text-center"
+                    >
+                      <CreditCard className="w-4 h-4 shrink-0 text-[#E5C98B]" />
+                      <span>Pagar com Cartão no Mercado Pago</span>
+                      <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                    </Button>
+                  </>
+                )}
               </div>
             )}
 
@@ -3255,41 +3526,52 @@ export function BookingFunnelModal({
           </div>
         )}
 
-        {/* ── Modal Suave de Retenção de Saída (Exit-Intent) ──────────────── */}
+        {/* ── Modal Suave de Retenção de Saída (Exit-Intent Desktop + Mobile) ── */}
         {showExitIntent && (
           <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-sm w-full text-center space-y-3 shadow-2xl animate-in zoom-in-95">
-              <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto">
-                <Sparkles className="w-5 h-5" />
+              <div className="w-10 h-10 rounded-2xl bg-[#0F3D4C]/10 text-[#0F3D4C] border border-[#C5A059]/40 flex items-center justify-center mx-auto">
+                <Sparkles className="w-5 h-5 text-[#C5A059]" />
               </div>
 
               <h4 className="font-black text-slate-900 dark:text-slate-100 text-base">
-                Ficou com alguma dúvida sobre a estadia?
+                Falta pouco para garantir sua tarifa direta!
               </h4>
 
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Nossa equipe de atendimento está online no WhatsApp para tirar dúvidas sobre o flat ou aplicar condições especiais para seu período.
+              <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                Seus dados ficam salvos. No site oficial você garante <strong>-5% OFF no <span translate="no">PIX</span></strong>, <strong>1 vaga coberta inclusa</strong> e <strong><span translate="no">NFS-e</span> automática</strong>. Se tiver qualquer dúvida, nossa Concierge 24h ajuda na hora:
               </p>
 
               <div className="space-y-2 pt-1">
-                <a
-                  href={whatsappUrl}
-                  target="_blank"
-                  rel="noreferrer"
+                <Button
+                  type="button"
                   onClick={() => setShowExitIntent(false)}
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs h-10 rounded-xl flex items-center justify-center gap-2 shadow-md"
+                  className="w-full bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-black text-xs min-h-[44px] rounded-xl flex items-center justify-center gap-2 shadow-md"
                 >
-                  <MessageCircle className="w-4 h-4" />
-                  <span>Falar com Atendente no WhatsApp</span>
-                </a>
+                  <ShieldCheck className="w-4 h-4 text-[#E5C98B] shrink-0" />
+                  <span>Continuar Reserva Online (-5% OFF PIX)</span>
+                </Button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowExitIntent(false)
+                    handleOpenFunnelConcierge("funnel_exit_intent")
+                  }}
+                  className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-xs min-h-[44px] rounded-xl flex items-center justify-center gap-2 transition-colors px-3"
+                >
+                  <MessageCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Tirar Dúvida / Concluir no WhatsApp 24h</span>
+                </button>
 
                 <Button
+                  type="button"
                   variant="ghost"
                   size="sm"
-                  onClick={() => setShowExitIntent(false)}
-                  className="w-full text-xs text-slate-500 font-bold"
+                  onClick={handleForceCloseModal}
+                  className="w-full text-[11px] text-slate-400 hover:text-slate-600 font-semibold min-h-[36px]"
                 >
-                  Continuar no Funil de Reservas
+                  Fechar janela mesmo assim
                 </Button>
               </div>
             </div>
@@ -3307,3 +3589,5 @@ export function BookingFunnelModal({
     </>
   )
 }
+
+export default BookingFunnelModal
