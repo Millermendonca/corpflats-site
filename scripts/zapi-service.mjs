@@ -5215,6 +5215,417 @@ export async function sendZapiDocument(config, {
   }
 }
 
+// ── Resolução Inteligente de Preview Visual Nativo na Z-API (/send-button-actions image + /send-link LARGE) ──
+export const OUTBOUND_PREVIEW_IMAGES = {
+  credential: "https://corpflats.com.br/previews/credenciamento-preview.jpg",
+  preCheckin: "https://corpflats.com.br/previews/precheckin-preview.jpg",
+  portal: "https://corpflats.com.br/previews/portal-preview.jpg",
+  pix: "https://corpflats.com.br/previews/pix-preview.jpg",
+  boleto: "https://corpflats.com.br/previews/boleto-preview.jpg",
+  breakfast: "https://corpflats.com.br/previews/breakfast-preview.jpg",
+  minibar: "https://corpflats.com.br/previews/frigobar-preview.jpg",
+  checkout: "https://corpflats.com.br/previews/checkout-preview.jpg",
+  review: "https://corpflats.com.br/previews/review-preview.jpg",
+  flat: "https://corpflats.com.br/previews/reservar-preview.jpg",
+  fnrh: "https://corpflats.com.br/previews/fnrh-preview.jpg",
+  manutencao: "https://corpflats.com.br/previews/manutencao-preview.jpg",
+  equipe: "https://corpflats.com.br/previews/equipe-preview.jpg",
+  sistema: "https://corpflats.com.br/previews/sistema-preview.jpg"
+};
+
+function isLegacyOutboundPreviewImage(url) {
+  if (!url) return true;
+  return /\/(flat|breakfast)-preview\.jpg(\?.*)?$/i.test(String(url).trim()) && !/\/previews\//i.test(String(url).trim());
+}
+
+export function resolveSlotPreviewImageUrls(slot, config = null) {
+  const defaultUrl = OUTBOUND_PREVIEW_IMAGES[slot] || OUTBOUND_PREVIEW_IMAGES.portal;
+  const rawCfgImg = config?.[`${slot}PreviewImage`] ? String(config[`${slot}PreviewImage`]).trim() : "";
+  const rawCfgBase64 = config?.[`${slot}PreviewImageBase64`] ? String(config[`${slot}PreviewImageBase64`]).trim() : "";
+
+  let publicImageUrl = defaultUrl;
+  if (rawCfgImg && !isLegacyOutboundPreviewImage(rawCfgImg)) {
+    let normalized = rawCfgImg;
+    if (normalized.startsWith("/")) {
+      normalized = `https://corpflats.com.br${normalized}`;
+    } else if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(normalized)) {
+      normalized = normalized.replace(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i, "https://corpflats.com.br");
+    }
+    // Para arquivos estáticos em /previews/*.jpg, remove query string para preservar extensão .jpg limpa na Z-API
+    if (/\/previews\/[a-z0-9_-]+\.(jpe?g|png|webp)\?/i.test(normalized)) {
+      normalized = normalized.split("?")[0];
+    }
+    publicImageUrl = normalized;
+  }
+
+  const buttonHeaderImage = (rawCfgBase64 && /^data:image\//i.test(rawCfgBase64))
+    ? rawCfgBase64
+    : publicImageUrl;
+
+  return { publicImageUrl, buttonHeaderImage };
+}
+
+function lookupOutboundPreviewReservation(rawParam, db = null, isFlatParam = false) {
+  let cleanParam = "";
+  try {
+    cleanParam = decodeURIComponent(String(rawParam || "")).split(/[?#]/)[0].trim();
+  } catch {
+    cleanParam = String(rawParam || "").split(/[?#]/)[0].trim();
+  }
+  if (!cleanParam) return { flatLabel: "", guestFirst: "" };
+
+  if (isFlatParam && /^\d{2,4}[A-Za-z]?$/.test(cleanParam)) {
+    return { flatLabel: `Flat ${cleanParam}`, guestFirst: "" };
+  }
+
+  const upper = cleanParam.toUpperCase();
+  const resv = (db?.reservations || []).find(r =>
+    r && (
+      (r.code && String(r.code).toUpperCase() === upper) ||
+      (r.reservationCode && String(r.reservationCode).toUpperCase() === upper) ||
+      (r.breakfastToken && String(r.breakfastToken) === cleanParam) ||
+      `RES-${r.flatNumber}-${r.id}`.toUpperCase() === upper ||
+      `RES-${r.flatNumber}-${String(r.id).padStart(4, "0")}`.toUpperCase() === upper ||
+      ( /^\d+$/.test(cleanParam) && Number(r.id) === Number(cleanParam) )
+    )
+  );
+
+  let flatLabel = resv?.flatNumber ? `Flat ${resv.flatNumber}` : "";
+  if (!flatLabel) {
+    const codeFlatMatch = /^RES-(\d{2,4}[A-Za-z]?)-/i.exec(cleanParam);
+    if (codeFlatMatch) flatLabel = `Flat ${codeFlatMatch[1]}`;
+  }
+
+  let guestFirst = "";
+  const rawGuestName = String(resv?.guestName || "").trim();
+  if (
+    rawGuestName &&
+    !/^(h[oó]spede(\s|$)|guest|titular|a\s*definir|n[aã]o\s*informad|pendente|bloqueio|ag[eê]ncia|empresa|corporat|booking|airbnb|expedia|b2b)/i.test(rawGuestName)
+  ) {
+    guestFirst = rawGuestName.split(/\s+/)[0].replace(/[^A-Za-zÀ-ÿ'-]/g, "");
+  }
+
+  return { flatLabel, guestFirst };
+}
+
+export function classifyOutboundPreviewUrl(rawUrl, config = null, db = null) {
+  const cleaned = String(rawUrl || "").trim().replace(/[),.;!?>\]*_]+$/, "");
+  if (!/^https?:\/\//i.test(cleaned)) return null;
+
+  let parsed = null;
+  try {
+    parsed = new URL(cleaned);
+  } catch {
+    return null;
+  }
+
+  const host = String(parsed.hostname || "").toLowerCase();
+  const pathname = parsed.pathname || "/";
+
+  // Ignora links utilitários externos (OTP nativo, wa.me, Google Maps)
+  if (
+    host.includes("whatsapp.com") ||
+    host === "wa.me" ||
+    host.includes("maps.app.goo.gl") ||
+    host.includes("goo.gl") ||
+    host.includes("share.google") ||
+    host.startsWith("maps.google.") ||
+    (host.includes("google.") && pathname.startsWith("/maps"))
+  ) {
+    return null;
+  }
+
+  // Google Review direto (writereview?placeid= ou g.page/r/)
+  if (/writereview\?placeid=/i.test(cleaned) || /g\.page\/r\//i.test(cleaned)) {
+    return {
+      slot: "review",
+      linkUrl: cleaned,
+      ...resolveSlotPreviewImageUrls("review", config),
+      title: config?.reviewPreviewTitle || "⭐ Avalie sua Estadia • CorpFlats Soho Residence",
+      linkDescription: config?.reviewPreviewDescription || "Sua experiência foi 5 estrelas? Toque aqui para avaliar a CorpFlats no Google em menos de 30 segundos!"
+    };
+  }
+
+  let envHost = "";
+  try {
+    if (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) {
+      envHost = new URL(process.env.SERVER_BASE_URL).hostname.toLowerCase();
+    }
+  } catch {}
+
+  const isCorpFlatsHost =
+    /(^|\.)corpflats\.com\.br$/i.test(host) ||
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    (envHost && host === envHost);
+
+  if (!isCorpFlatsHost) return null;
+  if (/^\/api\//i.test(pathname) || /\.(pdf|png|jpe?g|webp|gif|mp4|mp3|zip)$/i.test(pathname)) {
+    return null;
+  }
+
+  const segments = pathname.split("/").filter(Boolean);
+  const secondSeg = segments[1] || "";
+
+  if (/^\/(avaliar|google-review|avaliacao)(\/|$)/i.test(pathname)) {
+    return {
+      slot: "review",
+      linkUrl: cleaned,
+      ...resolveSlotPreviewImageUrls("review", config),
+      title: config?.reviewPreviewTitle || "⭐ Avalie sua Estadia • CorpFlats Soho Residence",
+      linkDescription: config?.reviewPreviewDescription || "Sua experiência foi 5 estrelas? Toque aqui para avaliar a CorpFlats no Google em menos de 30 segundos!"
+    };
+  }
+
+  const isMinibarRoute = /^\/(frigobar|minibar)(\/|$)/i.test(pathname);
+  const { flatLabel, guestFirst } = lookupOutboundPreviewReservation(secondSeg, db, isMinibarRoute);
+  const flatSuffix = flatLabel ? ` • ${flatLabel}` : "";
+  const guestPrefix = guestFirst ? `${guestFirst}, ` : "";
+  const capDesc = (txt) => txt ? txt.charAt(0).toUpperCase() + txt.slice(1) : "";
+
+  if (/^\/(credenciamento|identificar-reserva|identificar|cadastro-hospede)(\/|$)/i.test(pathname)) {
+    return {
+      slot: "credential",
+      linkUrl: cleaned,
+      ...resolveSlotPreviewImageUrls("credential", config),
+      title: `🪪 Preencher Dados do Hóspede${flatSuffix} • CorpFlats`,
+      linkDescription: "Informe nome completo, documento e WhatsApp do hóspede para liberar o acesso na recepção 24h."
+    };
+  }
+
+  if (/^\/(copiar-boleto|boleto)(\/|$)/i.test(pathname)) {
+    return {
+      slot: "boleto",
+      linkUrl: cleaned,
+      ...resolveSlotPreviewImageUrls("boleto", config),
+      title: `🏦 Boleto Bancário & PIX${flatSuffix} • CorpFlats`,
+      linkDescription: "Toque para copiar a Linha Digitável do boleto, pagar via PIX imediato ou baixar o PDF oficial."
+    };
+  }
+
+  if (/^\/(copiar-pix|pix)(\/|$)/i.test(pathname)) {
+    return {
+      slot: "pix",
+      linkUrl: cleaned,
+      ...resolveSlotPreviewImageUrls("pix", config),
+      title: `💠 PIX Copia e Cola${flatSuffix} • CorpFlats`,
+      linkDescription: "Toque aqui para copiar o código PIX da reserva com confirmação automática em segundos."
+    };
+  }
+
+  if (/^\/(cafe|breakfast|room-service)(\/|$)/i.test(pathname)) {
+    return {
+      slot: "breakfast",
+      linkUrl: cleaned,
+      ...resolveSlotPreviewImageUrls("breakfast", config),
+      title: `☕ Cardápio de Café da Manhã${flatSuffix} • CorpFlats`,
+      linkDescription: capDesc(`${guestPrefix}escolha seus itens favoritos e agende o horário para receber na porta do flat.`)
+    };
+  }
+
+  if (isMinibarRoute) {
+    return {
+      slot: "minibar",
+      linkUrl: cleaned,
+      ...resolveSlotPreviewImageUrls("minibar", config),
+      title: `🍫 Frigobar & Conveniência${flatSuffix} • CorpFlats`,
+      linkDescription: "Consulte a tabela de bebidas e snacks do flat e registre seu consumo pelo celular."
+    };
+  }
+
+  if (/^\/(checkout|check-out|saida)(\/|$)/i.test(pathname)) {
+    return {
+      slot: "checkout",
+      linkUrl: cleaned,
+      ...resolveSlotPreviewImageUrls("checkout", config),
+      title: `🚪 Check-out Expresso${flatSuffix} • CorpFlats`,
+      linkDescription: capDesc(`${guestPrefix}confirme sua saída com 1 toque pelo celular e entregue o cartão magnético na recepção 24h.`)
+    };
+  }
+
+  if (/^\/(pre-checkin|checkin)(\/|$)/i.test(pathname)) {
+    return {
+      slot: "preCheckin",
+      linkUrl: cleaned,
+      ...resolveSlotPreviewImageUrls("preCheckin", config),
+      title: `📝 Check-in Digital Online${flatSuffix} • CorpFlats`,
+      linkDescription: capDesc(`${guestPrefix}confirme seus dados na Ficha FNRH antes da chegada para retirar seu cartão na recepção 24h.`)
+    };
+  }
+
+  if (/^\/verificar-ficha(\/|$)/i.test(pathname)) {
+    return {
+      slot: "fnrh",
+      linkUrl: cleaned,
+      ...resolveSlotPreviewImageUrls("fnrh", config),
+      title: "🛡️ Validação Oficial FNRH • CorpFlats",
+      linkDescription: "Consulte a autenticidade digital e assinatura eletrônica da Ficha Nacional de Registro de Hóspedes."
+    };
+  }
+
+  if (/^\/(servico|manutencao|faz-tudo)\//i.test(pathname)) {
+    return {
+      slot: "manutencao",
+      linkUrl: cleaned,
+      ...resolveSlotPreviewImageUrls("manutencao", config),
+      title: "🔧 Ordem de Serviço & Manutenção • CorpFlats",
+      linkDescription: "Acesse os detalhes do chamado técnico, flat, checklist de execução e registro fotográfico."
+    };
+  }
+
+  if (/^\/(ponto|tarefas|meu-extrato|extrato|relatorios|ocorrencias|avarias|achados-perdidos|lista-compras|vistorias)(\/|$)/i.test(pathname)) {
+    return {
+      slot: "equipe",
+      linkUrl: cleaned,
+      ...resolveSlotPreviewImageUrls("equipe", config),
+      title: "🧹 Portal da Equipe & Operação • CorpFlats",
+      linkDescription: "Acesso rápido para registro de ponto, tarefas de governança, vistorias e extrato operacional."
+    };
+  }
+
+  if (/^\/(minha-reserva|portal-hospede|guest-portal|portal|minha-conta)(\/|$)/i.test(pathname)) {
+    return {
+      slot: "portal",
+      linkUrl: cleaned,
+      ...resolveSlotPreviewImageUrls("portal", config),
+      title: `🏨 Minha Reserva${flatSuffix} • CorpFlats`,
+      linkDescription: capDesc(`${guestPrefix}acesse senha do Wi-Fi, instruções da recepção 24h e garagem, guia do flat e NFS-e.`)
+    };
+  }
+
+  if (pathname === "/" || /^\/(reservar|booking)(\/|$)/i.test(pathname)) {
+    return {
+      slot: "flat",
+      linkUrl: cleaned,
+      ...resolveSlotPreviewImageUrls("flat", config),
+      title: "🏨 Reservar Flat Executivo • CorpFlats Soho Residence",
+      linkDescription: "Reserve direto sem taxas: flats completos com estacionamento gratuito, recepção 24h e café no flat."
+    };
+  }
+
+  return {
+    slot: "sistema",
+    linkUrl: cleaned,
+    ...resolveSlotPreviewImageUrls("sistema", config),
+    title: "📊 Painel de Gestão • CorpFlats Guest Flow",
+    linkDescription: "Acesso administrativo ao mapa de reservas, recepção ao vivo, governança, financeiro e WhatsApp."
+  };
+}
+
+export function resolveZapiOutboundPreview({
+  message = "",
+  buttons = [],
+  rawButtons = [],
+  triggerEvent = "",
+  config = null,
+  db = null,
+  disableLinkPreview = false
+} = {}) {
+  if (disableLinkPreview) return null;
+
+  const ev = String(triggerEvent || "").trim().toLowerCase();
+  if (
+    ev === "nps_approved" ||
+    ev === "reservation_cancelled" ||
+    ev === "lost_item_registered" ||
+    ev === "nps_satisfaction_check" ||
+    ev.startsWith("nps_score_") ||
+    ev === "nps_feedback_thanks"
+  ) {
+    return null;
+  }
+
+  const msgStr = String(message || "");
+  if (/confirmamos o cancelamento da sua reserva/i.test(msgStr)) {
+    return null;
+  }
+
+  const allButtons = [...(Array.isArray(buttons) ? buttons : []), ...(Array.isArray(rawButtons) ? rawButtons : [])];
+  const btnCandidates = [];
+  const seenBtnUrls = new Set();
+  for (const b of allButtons) {
+    if (!b || !b.url) continue;
+    const u = String(b.url).trim();
+    if (!u || seenBtnUrls.has(u)) continue;
+    seenBtnUrls.add(u);
+    const classified = classifyOutboundPreviewUrl(u, config, db);
+    if (classified) btnCandidates.push(classified);
+  }
+
+  const msgCandidates = [];
+  const urlMatches = msgStr.match(/https?:\/\/[^\s*_<>"]+/gi) || [];
+  const seenMsgUrls = new Set();
+  for (const u of urlMatches) {
+    if (seenMsgUrls.has(u)) continue;
+    seenMsgUrls.add(u);
+    const classified = classifyOutboundPreviewUrl(u, config, db);
+    if (classified) msgCandidates.push(classified);
+  }
+
+  const isPixBillingTrigger = [
+    "payment_pending",
+    "pre_reservation_created",
+    "pre_reservation_expiring_soon",
+    "additional_daily_pending",
+    "additional_daily_expiring_soon",
+    "sunday_upsell_offer"
+  ].includes(ev);
+
+  const hasBoletoBtn = allButtons.some(b => b && /boleto|linha\s*digit/i.test(String(b.label || "")));
+  const hasPixBtn = allButtons.some(b =>
+    b && (
+      b.id === "btn_pix" ||
+      /pix/i.test(String(b.label || "")) ||
+      String(b.copyCode || b.code || "").startsWith("000201")
+    )
+  );
+
+  // Prioridade: 1) Boleto explícito -> 2) PIX explícito -> 3) Primeiro botão CorpFlats na ordem -> 4) Primeiro link no texto
+  let selected =
+    btnCandidates.find(c => c.slot === "boleto") ||
+    msgCandidates.find(c => c.slot === "boleto") ||
+    btnCandidates.find(c => c.slot === "pix") ||
+    msgCandidates.find(c => c.slot === "pix") ||
+    btnCandidates[0] ||
+    msgCandidates[0] ||
+    null;
+
+  // Se a mensagem é cobrança PIX/Boleto mas o único link HTTP era o portal (/minha-reserva), aplica a arte contextual de cobrança mantendo linkUrl válido
+  if (selected && selected.slot === "portal" && (hasBoletoBtn || hasPixBtn || isPixBillingTrigger)) {
+    const targetBillingSlot = hasBoletoBtn ? "boleto" : "pix";
+    const imgs = resolveSlotPreviewImageUrls(targetBillingSlot, config);
+    selected = {
+      ...selected,
+      slot: targetBillingSlot,
+      ...imgs,
+      title: targetBillingSlot === "boleto"
+        ? "🏦 Boleto Bancário & PIX • CorpFlats"
+        : "💠 Pagamento PIX Imediato • CorpFlats",
+      linkDescription: targetBillingSlot === "boleto"
+        ? "Toque para copiar a Linha Digitável do boleto, pagar via PIX imediato ou baixar o PDF oficial."
+        : "Finalize seu pagamento via PIX Copia e Cola com confirmação automática imediata."
+    };
+  }
+
+  // Caso especial: mensagem com botões apenas de código PIX/Boleto sem URL HTTP
+  if (!selected && allButtons.length > 0 && (hasBoletoBtn || hasPixBtn || isPixBillingTrigger)) {
+    const targetBillingSlot = hasBoletoBtn ? "boleto" : "pix";
+    return {
+      slot: targetBillingSlot,
+      linkUrl: "",
+      ...resolveSlotPreviewImageUrls(targetBillingSlot, config),
+      title: targetBillingSlot === "boleto"
+        ? "🏦 Boleto Bancário & PIX • CorpFlats"
+        : "💠 PIX Copia e Cola • CorpFlats",
+      linkDescription: targetBillingSlot === "boleto"
+        ? "Toque para copiar a Linha Digitável do boleto ou pagar via PIX imediato."
+        : "Toque para copiar o código PIX da reserva com confirmação automática."
+    };
+  }
+
+  return selected;
+}
+
 // ── Disparo Oficial Z-API ──────────────────────────────────────────────────────
 export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thirdOpts = {}) {
   let config = configOrPhone;
@@ -5396,7 +5807,7 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
 
   let primaryResult = null;
 
-  // 1. Envio Direto via Texto Simples (/send-text)
+  // 1. Envio Direto via Link Rico (/send-link LARGE) ou Texto Simples (/send-text)
   if (shouldSendText) {
     let textWithLinks = formatMessageWithLinks(
       finalMessage,
@@ -5407,6 +5818,66 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
       const btnReviewUrl = validButtons.find(b => b && b.url && reviewUrlRegex.test(String(b.url)))?.url ||
         "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA";
       textWithLinks = `${textWithLinks.trim()}\n\n${btnReviewUrl}`;
+    }
+
+    const textPreview = resolveZapiOutboundPreview({
+      message: textWithLinks,
+      buttons: [],
+      rawButtons: isGoogleReviewMsg ? [] : validButtons,
+      triggerEvent,
+      config,
+      db: activeDb,
+      disableLinkPreview: Boolean(rawOpts.disableLinkPreview || rawOpts.isAdminAlert)
+    });
+
+    if (textPreview && textPreview.linkUrl && textPreview.publicImageUrl) {
+      const sendLinkUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-link`;
+      const messageForLink = textWithLinks.includes(textPreview.linkUrl)
+        ? textWithLinks
+        : `${textWithLinks.trim()}\n\n${textPreview.linkUrl}`;
+      const linkPayload = {
+        phone: targetPhone,
+        message: messageForLink,
+        image: textPreview.publicImageUrl,
+        linkUrl: textPreview.linkUrl,
+        title: textPreview.title,
+        linkDescription: textPreview.linkDescription,
+        linkType: "LARGE"
+      };
+      if (delayTyping && Number(delayTyping) > 0) {
+        linkPayload.delayTyping = Math.min(15, Math.max(1, Math.round(Number(delayTyping))));
+      }
+
+      try {
+        console.log(`[Z-API] Enviando mensagem com Link Preview LARGE (${textPreview.slot}) para ${targetPhone}...`);
+        const linkRes = await fetch(sendLinkUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(linkPayload),
+          signal: AbortSignal.timeout(25000)
+        });
+        const linkData = await linkRes.json().catch(() => ({}));
+        if (linkRes.ok && !linkData.error && (linkData.zaapId || linkData.id || linkData.messageId)) {
+          const msgId = linkData.zaapId || linkData.id || linkData.messageId;
+          console.log(`[Z-API ✓] Link Preview (${textPreview.slot}) entregue para ${targetPhone}. ID: ${msgId}`);
+          primaryResult = {
+            success: true,
+            method: "send_link",
+            previewSlot: textPreview.slot,
+            messageId: msgId,
+            phone: targetPhone,
+            originalPhone: cleanPhone,
+            redirected: Boolean(policy.redirected),
+            channelId: policy.channelId,
+            data: linkData
+          };
+          recordBotSentMessage({ messageId: primaryResult.messageId, phone: targetPhone, text: finalMessage });
+        } else {
+          console.warn(`[Z-API] /send-link recusado (HTTP ${linkRes.status}), aplicando fallback para /send-text:`, linkData);
+        }
+      } catch (linkErr) {
+        console.warn(`[Z-API] Exceção em /send-link (${linkErr.message}), aplicando fallback para /send-text...`);
+      }
     }
 
     if (!primaryResult) {
@@ -5451,7 +5922,7 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
       }
     }
   } else {
-    // 2. Tentativa com Botões Interativos (/send-button-actions)
+    // 2. Tentativa com Botões Interativos + Header Visual Contextual (/send-button-actions)
     const buttonActionsUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-actions`;
 
     const hasCallOrUrl = validButtons.some(b => b.type === "CALL" || b.type === "URL" || b.type === "COPY" || b.copyCode);
@@ -5514,29 +5985,56 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
       return action;
     });
 
+    const buttonPreview = resolveZapiOutboundPreview({
+      message: finalMessage,
+      buttons: formattedActions,
+      rawButtons: filteredButtons,
+      triggerEvent,
+      config,
+      db: activeDb,
+      disableLinkPreview: Boolean(rawOpts.disableLinkPreview || rawOpts.isAdminAlert)
+    });
+
     const buttonActionsPayload = {
       phone: targetPhone,
       message: finalMessage,
       // Omitido 'title' para que a mensagem inicie direto com a saudação, sem cabeçalho com o nome interno do template
       ...(footer ? { footer } : {}),
+      ...(buttonPreview?.buttonHeaderImage ? { image: buttonPreview.buttonHeaderImage } : {}),
       buttonActions: formattedActions
     };
 
     try {
-      console.log(`[Z-API] Enviando mensagem com botões para ${targetPhone}...`);
-      const res = await fetch(buttonActionsUrl, {
+      console.log(`[Z-API] Enviando mensagem com botões${buttonPreview?.slot ? ` + foto (${buttonPreview.slot})` : ""} para ${targetPhone}...`);
+      let res = await fetch(buttonActionsUrl, {
         method: "POST",
         headers,
         body: JSON.stringify(buttonActionsPayload),
         signal: AbortSignal.timeout(25000)
       });
-      const data = await res.json().catch(() => ({}));
+      let data = await res.json().catch(() => ({}));
+      let imageFallbackUsed = false;
 
-      if (res.ok && (data.zaapId || data.id || data.messageId || data.value)) {
+      // Caso a imagem de cabeçalho tenha sido recusada temporariamente, retenta os botões sem imagem antes de cair para texto
+      if (!(res.ok && !data.error && (data.zaapId || data.id || data.messageId || data.value)) && buttonActionsPayload.image) {
+        console.warn(`[Z-API] /send-button-actions com imagem retornou HTTP ${res.status}, retentando botões sem imagem...`, data);
+        const { image: _droppedImage, ...payloadWithoutImage } = buttonActionsPayload;
+        res = await fetch(buttonActionsUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payloadWithoutImage),
+          signal: AbortSignal.timeout(25000)
+        });
+        data = await res.json().catch(() => ({}));
+        imageFallbackUsed = true;
+      }
+
+      if (res.ok && !data.error && (data.zaapId || data.id || data.messageId || data.value)) {
         console.log(`[Z-API ✓] Mensagem com botões aceita para ${targetPhone}. ID: ${data.zaapId || data.id}`);
         primaryResult = {
           success: true,
           method: "buttons",
+          previewSlot: imageFallbackUsed ? null : (buttonPreview?.slot || null),
           messageId: data.zaapId || data.id || "ok",
           phone: targetPhone,
           originalPhone: cleanPhone,
@@ -5548,38 +6046,90 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
       } else {
         console.warn(`[Z-API] Falha ao enviar com botões (HTTP ${res.status}):`, data);
 
-        // Fallback para texto formatado se configurado
+        // Fallback para Link Rico (/send-link LARGE) ou texto formatado (/send-text) se configurado
         if (fallbackToText) {
-          console.log(`[Z-API Fallback] Reenviando como texto formatado para ${targetPhone}...`);
+          console.log(`[Z-API Fallback] Reenviando com links diretos para ${targetPhone}...`);
           const textWithLinks = formatMessageWithLinks(finalMessage, footer, validButtons);
-          const textUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-text`;
-          const textRes = await fetch(textUrl, {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ phone: targetPhone, message: textWithLinks }),
-            signal: AbortSignal.timeout(25000)
+          const fallbackPreview = resolveZapiOutboundPreview({
+            message: textWithLinks,
+            buttons: [],
+            rawButtons: validButtons,
+            triggerEvent,
+            config,
+            db: activeDb,
+            disableLinkPreview: Boolean(rawOpts.disableLinkPreview || rawOpts.isAdminAlert)
           });
-          const textData = await textRes.json().catch(() => ({}));
 
-          if (textRes.ok && (textData.zaapId || textData.id)) {
-            primaryResult = {
-              success: true,
-              method: "fallback_text",
-              warning: "Mensagem entregue via texto com links diretos após recusa de botões pela Z-API.",
-              buttonError: data.message || data.error || `Erro HTTP ${res.status}`,
-              messageId: textData.zaapId || textData.id,
-              phone: targetPhone,
-              originalPhone: cleanPhone,
-              redirected: Boolean(policy.redirected),
-              channelId: policy.channelId,
-              data: textData
-            };
-            recordBotSentMessage({ messageId: primaryResult.messageId, phone: targetPhone, text: finalMessage });
-          } else {
-            primaryResult = {
-              success: false,
-              error: data.message || data.error || `Erro HTTP ${res.status} na Z-API`
-            };
+          if (fallbackPreview && fallbackPreview.linkUrl && fallbackPreview.publicImageUrl) {
+            try {
+              const sendLinkUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-link`;
+              const messageForLink = textWithLinks.includes(fallbackPreview.linkUrl)
+                ? textWithLinks
+                : `${textWithLinks.trim()}\n\n${fallbackPreview.linkUrl}`;
+              const linkRes = await fetch(sendLinkUrl, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                  phone: targetPhone,
+                  message: messageForLink,
+                  image: fallbackPreview.publicImageUrl,
+                  linkUrl: fallbackPreview.linkUrl,
+                  title: fallbackPreview.title,
+                  linkDescription: fallbackPreview.linkDescription,
+                  linkType: "LARGE"
+                }),
+                signal: AbortSignal.timeout(25000)
+              });
+              const linkData = await linkRes.json().catch(() => ({}));
+              if (linkRes.ok && !linkData.error && (linkData.zaapId || linkData.id || linkData.messageId)) {
+                primaryResult = {
+                  success: true,
+                  method: "fallback_link",
+                  previewSlot: fallbackPreview.slot,
+                  warning: "Mensagem entregue via Link Preview rico após recusa de botões pela Z-API.",
+                  buttonError: data.message || data.error || `Erro HTTP ${res.status}`,
+                  messageId: linkData.zaapId || linkData.id || linkData.messageId,
+                  phone: targetPhone,
+                  originalPhone: cleanPhone,
+                  redirected: Boolean(policy.redirected),
+                  channelId: policy.channelId,
+                  data: linkData
+                };
+                recordBotSentMessage({ messageId: primaryResult.messageId, phone: targetPhone, text: finalMessage });
+              }
+            } catch {}
+          }
+
+          if (!primaryResult) {
+            const textUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-text`;
+            const textRes = await fetch(textUrl, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({ phone: targetPhone, message: textWithLinks }),
+              signal: AbortSignal.timeout(25000)
+            });
+            const textData = await textRes.json().catch(() => ({}));
+
+            if (textRes.ok && (textData.zaapId || textData.id)) {
+              primaryResult = {
+                success: true,
+                method: "fallback_text",
+                warning: "Mensagem entregue via texto com links diretos após recusa de botões pela Z-API.",
+                buttonError: data.message || data.error || `Erro HTTP ${res.status}`,
+                messageId: textData.zaapId || textData.id,
+                phone: targetPhone,
+                originalPhone: cleanPhone,
+                redirected: Boolean(policy.redirected),
+                channelId: policy.channelId,
+                data: textData
+              };
+              recordBotSentMessage({ messageId: primaryResult.messageId, phone: targetPhone, text: finalMessage });
+            } else {
+              primaryResult = {
+                success: false,
+                error: data.message || data.error || `Erro HTTP ${res.status} na Z-API`
+              };
+            }
           }
         } else {
           primaryResult = {
@@ -9481,7 +10031,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       db.zapiConfig[`${targetSlot}PreviewImageBase64`] = String(rawInput);
       db.zapiConfig[`${targetSlot}PreviewImageMime`] = mimeType;
 
-      const publicUrl = `https://corpflats.com.br/api/whatsapp/preview-image/${targetSlot}.jpg?v=${Date.now()}`;
+      const publicUrl = `https://corpflats.com.br/api/whatsapp/preview-image/${targetSlot}-${Date.now()}.jpg`;
       db.zapiConfig[`${targetSlot}PreviewImage`] = publicUrl;
 
       saveDatabase();
@@ -9665,7 +10215,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     const reqProto = req.headers["x-forwarded-proto"]
       ? String(req.headers["x-forwarded-proto"]).split(",")[0].trim()
       : (req.protocol || "https");
-    const baseUrl = `${reqProto}://${req.get("host")}`;
+    const rawHost = String(req.get("host") || "");
+    const isLocalHost = /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(rawHost);
+    const baseUrl = isLocalHost
+      ? String(process.env?.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/+$/, "")
+      : `${reqProto}://${rawHost}`;
 
     // Se vinculou uma reserva para o teste, resolve as tags reais; senão preenche com dados simulados realistas
     const lookupKey = (reservationId && reservationId !== "none") ? reservationId : (req.body?.reservationCode || null);
@@ -9728,7 +10282,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       documentCaption: hasDocTest ? documentCaption : undefined,
       channelId: "transactional_chat",
       recipientRole: "operator",
-      triggerEvent: "manual_test_send"
+      triggerEvent: req.body?.triggerEvent || "manual_test_send"
     });
 
     const resolvedTrigger = req.body?.triggerEvent || "manual_button_dispatch";
@@ -9847,7 +10401,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     const reqProto = req.headers["x-forwarded-proto"]
       ? String(req.headers["x-forwarded-proto"]).split(",")[0].trim()
       : (req.protocol || "https");
-    const baseUrl = `${reqProto}://${req.get("host")}`;
+    const rawHost = String(req.get("host") || "");
+    const isLocalHost = /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(rawHost);
+    const baseUrl = isLocalHost
+      ? String(process.env?.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/+$/, "")
+      : `${reqProto}://${rawHost}`;
     const recipients = getReservationRecipients(reservation, db);
     const isPureBilling = isPureBillingTemplateOrEvent(template);
     let targetMode = req.body.recipientTarget || template.recipientTarget || "guest"; // "guest" | "requester" | "both" | "all_guests" | "all" | "guest_2" | "guest_3" | "custom"
@@ -11041,7 +11599,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     const reqProto = req.headers["x-forwarded-proto"]
       ? String(req.headers["x-forwarded-proto"]).split(",")[0].trim()
       : (req.protocol || "https");
-    const baseUrl = `${reqProto}://${req.get("host")}`;
+    const rawHost = String(req.get("host") || "");
+    const isLocalHost = /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(rawHost);
+    const baseUrl = isLocalHost
+      ? String(process.env?.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/+$/, "")
+      : `${reqProto}://${rawHost}`;
     let finalMessage = message || text;
     if (targetRes && finalMessage) {
       finalMessage = resolveWhatsAppTags(finalMessage, targetRes, db, baseUrl);
@@ -11779,7 +12341,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         const reqProto = req.headers["x-forwarded-proto"]
       ? String(req.headers["x-forwarded-proto"]).split(",")[0].trim()
       : (req.protocol || "https");
-    const baseUrl = `${reqProto}://${req.get("host")}`;
+    const rawHost = String(req.get("host") || "");
+    const isLocalHost = /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(rawHost);
+    const baseUrl = isLocalHost
+      ? String(process.env?.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/+$/, "")
+      : `${reqProto}://${rawHost}`;
         const resolvedReply = targetRes ? resolveWhatsAppTags(replyToSend, targetRes, db, baseUrl) : replyToSend;
         sentReplyResult = await sendZapiMessage(db.zapiConfig, {
           phone: cleanPhone,

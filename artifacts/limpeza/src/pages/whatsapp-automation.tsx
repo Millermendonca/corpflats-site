@@ -2468,11 +2468,14 @@ export default function WhatsappAutomation() {
         title: editingTitle,
         footer: editingFooter,
         reservationId: testReservationId || null,
-        sendMode: testSendMode
+        sendMode: testSendMode,
+        triggerEvent: currentTemplate?.triggerEvent || "manual_test_send"
       }
 
-      const isGoogleRevTest = /writereview\?placeid=|g\.page\/r\/|link_avaliacao_google/i.test(String(payload.message || ""))
-      if (isGoogleRevTest) {
+      const isNpsHumanizedReview =
+        currentTemplate?.triggerEvent === "nps_approved" ||
+        (/writereview\?placeid=|g\.page\/r\/|link_avaliacao_google/i.test(String(payload.message || "")) && editingButtons.length === 0)
+      if (isNpsHumanizedReview) {
         payload.sendMode = "text"
         payload.footer = ""
         payload.buttons = []
@@ -6608,84 +6611,167 @@ export default function WhatsappAutomation() {
                         <div className="relative self-end max-w-[92%] bg-[#D9FDD3] dark:bg-[#005C4B] rounded-2xl rounded-tr-xs shadow-xs p-2.5 pb-1 text-xs border border-emerald-300/30">
                           
                           {(() => {
-                            const combinedCtx = [
-                              editingMessage || "",
-                              ...(editingButtons || []).map(b => b?.url || "")
-                            ].join(" ")
+                            const tplTrigger = String(currentTemplate?.triggerEvent || "").toLowerCase()
+                            if (
+                              tplTrigger === "nps_approved" ||
+                              tplTrigger === "reservation_cancelled" ||
+                              tplTrigger === "lost_item_registered" ||
+                              tplTrigger === "nps_satisfaction_check" ||
+                              tplTrigger.startsWith("nps_score_") ||
+                              tplTrigger === "nps_feedback_thanks" ||
+                              /confirmamos o cancelamento da sua reserva/i.test(editingMessage || "")
+                            ) {
+                              return null
+                            }
 
-                            let previewCard: { img: string; fallback: string; title: string; desc: string } | null = null
-                            if (/link_credenciamento_agencia|\/credenciamento\/|\/identificar-reserva\//i.test(combinedCtx)) {
-                              previewCard = {
-                                img: config.credentialPreviewImage || "/previews/credenciamento-preview.jpg",
-                                fallback: "/previews/credenciamento-preview.jpg",
-                                title: "🪪 Preencher Dados do Hóspede • CorpFlats",
-                                desc: "Informe nome completo, documento e WhatsApp do hóspede para liberação na recepção 24h."
+                            const classifyCtxItem = (raw: string): { slot: string; img: string; fallback: string; title: string; desc: string } | null => {
+                              const s = String(raw || "")
+                              if (!s || /maps\.google|maps\.app\.goo\.gl|goo\.gl\/maps|share\.google|wa\.me|whatsapp\.com\/otp/i.test(s)) {
+                                return null
                               }
-                            } else if (/link_copiar_pix|\/copiar-pix|\/pix\//i.test(combinedCtx)) {
+                              if (/link_copiar_boleto|\/copiar-boleto|\/boleto\//i.test(s)) {
+                                return {
+                                  slot: "boleto",
+                                  img: config.boletoPreviewImage || "/previews/boleto-preview.jpg",
+                                  fallback: "/previews/boleto-preview.jpg",
+                                  title: "🏦 Boleto Bancário & PIX • CorpFlats",
+                                  desc: "Toque para copiar a Linha Digitável, pagar via PIX imediato ou baixar o PDF oficial."
+                                }
+                              }
+                              if (/link_copiar_pix|\/copiar-pix|\/pix\//i.test(s)) {
+                                return {
+                                  slot: "pix",
+                                  img: config.pixPreviewImage || "/previews/pix-preview.jpg",
+                                  fallback: "/previews/pix-preview.jpg",
+                                  title: "💠 PIX Copia e Cola • CorpFlats",
+                                  desc: "Toque aqui para copiar o código PIX da reserva com confirmação automática imediata."
+                                }
+                              }
+                              if (/link_credenciamento_agencia|\/credenciamento\/|\/identificar-reserva\//i.test(s)) {
+                                return {
+                                  slot: "credential",
+                                  img: config.credentialPreviewImage || "/previews/credenciamento-preview.jpg",
+                                  fallback: "/previews/credenciamento-preview.jpg",
+                                  title: "🪪 Preencher Dados do Hóspede • CorpFlats",
+                                  desc: "Informe nome completo, documento e WhatsApp do hóspede para liberação na recepção 24h."
+                                }
+                              }
+                              if (/link_cafe_manha|\/cafe\//i.test(s)) {
+                                return {
+                                  slot: "breakfast",
+                                  img: config.breakfastPreviewImage || "/previews/breakfast-preview.jpg",
+                                  fallback: "/previews/breakfast-preview.jpg",
+                                  title: "☕ Cardápio de Café da Manhã • CorpFlats",
+                                  desc: "Escolha seus itens favoritos e agende o horário para receber na porta do flat."
+                                }
+                              }
+                              if (/link_frigobar|\/frigobar\/|\/minibar\//i.test(s)) {
+                                return {
+                                  slot: "minibar",
+                                  img: config.minibarPreviewImage || "/previews/frigobar-preview.jpg",
+                                  fallback: "/previews/frigobar-preview.jpg",
+                                  title: "🍫 Frigobar & Conveniência • CorpFlats",
+                                  desc: "Consulte a tabela de bebidas e snacks do flat e registre seu consumo pelo celular."
+                                }
+                              }
+                              if (/link_checkout|\/checkout\/|\/check-out\//i.test(s)) {
+                                return {
+                                  slot: "checkout",
+                                  img: config.checkoutPreviewImage || "/previews/checkout-preview.jpg",
+                                  fallback: "/previews/checkout-preview.jpg",
+                                  title: "🚪 Check-out Expresso • CorpFlats",
+                                  desc: "Confirme sua saída com 1 toque pelo celular e entregue o cartão NFC na recepção 24h."
+                                }
+                              }
+                              if (/link_precheckin|link_checkin_digital|\/pre-checkin\//i.test(s)) {
+                                return {
+                                  slot: "preCheckin",
+                                  img: config.preCheckinPreviewImage || "/previews/precheckin-preview.jpg",
+                                  fallback: "/previews/precheckin-preview.jpg",
+                                  title: "📝 Check-in Digital Online • CorpFlats",
+                                  desc: "Confirme seus dados na Ficha FNRH antes da chegada para retirar seu cartão na portaria 24h."
+                                }
+                              }
+                              if (/writereview\?placeid=|link_avaliacao_google|\/avaliar|g\.page\/r\//i.test(s)) {
+                                return {
+                                  slot: "review",
+                                  img: config.reviewPreviewImage || "/previews/review-preview.jpg",
+                                  fallback: "/previews/review-preview.jpg",
+                                  title: config.reviewPreviewTitle || "⭐ Avalie sua Estadia • CorpFlats Soho Residence",
+                                  desc: config.reviewPreviewDescription || "Sua experiência foi 5 estrelas? Toque aqui para avaliar a CorpFlats no Google!"
+                                }
+                              }
+                              if (/link_portal_reserva|link_portal_hospede|\/minha-reserva\//i.test(s)) {
+                                return {
+                                  slot: "portal",
+                                  img: config.portalPreviewImage || "/previews/portal-preview.jpg",
+                                  fallback: "/previews/portal-preview.jpg",
+                                  title: "🏨 Minha Reserva • CorpFlats Soho Residence",
+                                  desc: "Acesse senha do Wi-Fi, instruções da recepção 24h e garagem, guia do flat e NFS-e."
+                                }
+                              }
+                              return null
+                            }
+
+                            const btnCards = (editingButtons || [])
+                              .map(b => classifyCtxItem(b?.url || ""))
+                              .filter(Boolean) as { slot: string; img: string; fallback: string; title: string; desc: string }[]
+                            const msgCard = classifyCtxItem(editingMessage || "")
+
+                            const isPixTrigger = [
+                              "payment_pending",
+                              "pre_reservation_created",
+                              "pre_reservation_expiring_soon",
+                              "additional_daily_pending",
+                              "additional_daily_expiring_soon",
+                              "sunday_upsell_offer"
+                            ].includes(tplTrigger)
+                            const hasPixLabel = (editingButtons || []).some(b => /pix/i.test(String(b?.label || "")) || b?.id === "btn_pix")
+
+                            let previewCard =
+                              btnCards.find(c => c.slot === "boleto") ||
+                              (msgCard?.slot === "boleto" ? msgCard : null) ||
+                              btnCards.find(c => c.slot === "pix") ||
+                              (msgCard?.slot === "pix" ? msgCard : null) ||
+                              btnCards[0] ||
+                              msgCard ||
+                              null
+
+                            if (previewCard && previewCard.slot === "portal" && (isPixTrigger || hasPixLabel)) {
                               previewCard = {
+                                slot: "pix",
                                 img: config.pixPreviewImage || "/previews/pix-preview.jpg",
                                 fallback: "/previews/pix-preview.jpg",
-                                title: "💠 PIX Copia e Cola • CorpFlats",
-                                desc: "Toque aqui para copiar o código PIX da reserva com confirmação automática imediata."
-                              }
-                            } else if (/link_copiar_boleto|\/copiar-boleto|\/boleto\//i.test(combinedCtx)) {
-                              previewCard = {
-                                img: config.boletoPreviewImage || "/previews/boleto-preview.jpg",
-                                fallback: "/previews/boleto-preview.jpg",
-                                title: "🏦 Boleto Bancário & PIX • CorpFlats",
-                                desc: "Toque para copiar a Linha Digitável, pagar via PIX imediato ou baixar o PDF oficial."
-                              }
-                            } else if (/link_cafe_manha|\/cafe\//i.test(combinedCtx)) {
-                              previewCard = {
-                                img: config.breakfastPreviewImage || "/previews/breakfast-preview.jpg",
-                                fallback: "/previews/breakfast-preview.jpg",
-                                title: "☕ Cardápio de Café da Manhã • CorpFlats",
-                                desc: "Escolha seus itens favoritos e agende o horário para receber na porta do flat."
-                              }
-                            } else if (/link_frigobar|\/frigobar\/|\/minibar\//i.test(combinedCtx)) {
-                              previewCard = {
-                                img: config.minibarPreviewImage || "/previews/frigobar-preview.jpg",
-                                fallback: "/previews/frigobar-preview.jpg",
-                                title: "🍫 Frigobar & Conveniência • CorpFlats",
-                                desc: "Consulte a tabela de bebidas e snacks do flat e registre seu consumo pelo celular."
-                              }
-                            } else if (/link_checkout|\/checkout\/|\/check-out\//i.test(combinedCtx)) {
-                              previewCard = {
-                                img: config.checkoutPreviewImage || "/previews/checkout-preview.jpg",
-                                fallback: "/previews/checkout-preview.jpg",
-                                title: "🚪 Check-out Expresso • CorpFlats",
-                                desc: "Confirme sua saída com 1 toque pelo celular e entregue o cartão NFC na recepção 24h."
-                              }
-                            } else if (/link_precheckin|link_checkin_digital|\/pre-checkin\//i.test(combinedCtx)) {
-                              previewCard = {
-                                img: config.preCheckinPreviewImage || "/previews/precheckin-preview.jpg",
-                                fallback: "/previews/precheckin-preview.jpg",
-                                title: "📝 Check-in Digital Online • CorpFlats",
-                                desc: "Confirme seus dados na Ficha FNRH antes da chegada para retirar seu cartão na portaria 24h."
-                              }
-                            } else if (/writereview\?placeid=|link_avaliacao_google|\/avaliar|g\.page\/r\//i.test(combinedCtx)) {
-                              previewCard = {
-                                img: config.reviewPreviewImage || "/previews/review-preview.jpg",
-                                fallback: "/previews/review-preview.jpg",
-                                title: config.reviewPreviewTitle || "⭐ Avalie sua Estadia • CorpFlats Soho Residence",
-                                desc: config.reviewPreviewDescription || "Sua experiência foi 5 estrelas? Toque aqui para avaliar a CorpFlats no Google!"
-                              }
-                            } else if (/link_portal_reserva|link_portal_hospede|\/minha-reserva\//i.test(combinedCtx)) {
-                              previewCard = {
-                                img: config.portalPreviewImage || "/previews/portal-preview.jpg",
-                                fallback: "/previews/portal-preview.jpg",
-                                title: "🏨 Minha Reserva • CorpFlats Soho Residence",
-                                desc: "Acesse senha do Wi-Fi, instruções da recepção 24h e garagem, guia do flat e NFS-e."
+                                title: "💠 Pagamento PIX Imediato • CorpFlats",
+                                desc: "Finalize seu pagamento via PIX Copia e Cola com confirmação automática imediata."
                               }
                             }
 
                             if (!previewCard) return null
+
+                            const hasInteractiveButtons = (editingButtons?.length || 0) > 0 && config.deliveryMode !== "text_links"
+
+                            // Quando há botões interativos (/send-button-actions), o WhatsApp exibe o banner 1200x630 no topo do balão (Header Image)
+                            if (hasInteractiveButtons) {
+                              return (
+                                <div className="mb-2 -mx-1 -mt-1 rounded-xl overflow-hidden border border-emerald-500/20">
+                                  <img
+                                    src={previewCard.img}
+                                    alt={previewCard.title}
+                                    className="w-full aspect-[1200/630] object-cover block"
+                                    onError={(e) => { (e.target as HTMLImageElement).src = previewCard!.fallback }}
+                                  />
+                                </div>
+                              )
+                            }
+
+                            // Quando não há botões (/send-link LARGE), o WhatsApp exibe o Card de Link Preview completo
                             return (
                               <div className="mb-2 rounded-xl overflow-hidden bg-black/5 dark:bg-white/10 border border-emerald-500/20">
                                 <img
                                   src={previewCard.img}
                                   alt={previewCard.title}
-                                  className="w-full h-28 object-cover"
+                                  className="w-full aspect-[1200/630] object-cover block"
                                   onError={(e) => { (e.target as HTMLImageElement).src = previewCard!.fallback }}
                                 />
                                 <div className="p-2 space-y-0.5">
