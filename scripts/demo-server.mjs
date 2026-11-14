@@ -5460,14 +5460,62 @@ export function reconcileUniversalIntegrity(incomingState = null) {
     }
 
     // 1.5 Pedidos de Café da Manhã & Tarefas Preventivas
-    if (Array.isArray(incomingState.breakfastOrders)) {
-      incomingState.breakfastOrders.forEach(incOrder => {
-        const existing = (db.breakfastOrders || []).find(o => o.id === incOrder.id);
-        if (!existing) {
-          if (!db.breakfastOrders) db.breakfastOrders = [];
-          db.breakfastOrders.push({ ...incOrder });
+    if (Array.isArray(incomingState.deletedBreakfastOrderIds)) {
+      if (!Array.isArray(db.deletedBreakfastOrderIds)) db.deletedBreakfastOrderIds = [];
+      for (const delId of incomingState.deletedBreakfastOrderIds) {
+        const nId = Number(delId);
+        if (nId && !db.deletedBreakfastOrderIds.includes(nId)) {
+          db.deletedBreakfastOrderIds.push(nId);
           changed = true;
         }
+      }
+    }
+    if (Array.isArray(incomingState.deletedBreakfastOrderSignatures)) {
+      if (!Array.isArray(db.deletedBreakfastOrderSignatures)) db.deletedBreakfastOrderSignatures = [];
+      for (const sig of incomingState.deletedBreakfastOrderSignatures) {
+        if (sig && !db.deletedBreakfastOrderSignatures.includes(sig)) {
+          db.deletedBreakfastOrderSignatures.push(sig);
+          changed = true;
+        }
+      }
+    }
+    const deletedBfIds = new Set((db.deletedBreakfastOrderIds || []).map(Number).filter(Boolean));
+    if (deletedBfIds.size > 0 && Array.isArray(db.breakfastOrders)) {
+      const beforeLen = db.breakfastOrders.length;
+      db.breakfastOrders = db.breakfastOrders.filter(o => !deletedBfIds.has(Number(o?.id)));
+      if (db.breakfastOrders.length !== beforeLen) changed = true;
+    }
+    if (Array.isArray(incomingState.breakfastOrders)) {
+      if (!db.breakfastOrders) db.breakfastOrders = [];
+      incomingState.breakfastOrders.forEach(incOrder => {
+        if (!incOrder || deletedBfIds.has(Number(incOrder.id))) return;
+        const existing = db.breakfastOrders.find(o => Number(o.id) === Number(incOrder.id));
+        if (existing) {
+          const incTs = incOrder.updatedAt || incOrder.createdAt || "";
+          const curTs = existing.updatedAt || existing.createdAt || "";
+          if (incTs && incTs > curTs) {
+            Object.assign(existing, incOrder);
+            changed = true;
+          }
+          return;
+        }
+        // Evita reintroduzir pedido duplicado antigo quando já existe pedido ativo mais recente para o mesmo quarto e data
+        const sameSlotActive = db.breakfastOrders.find(o =>
+          o.date === incOrder.date &&
+          String(o.roomNumber).trim() === String(incOrder.roomNumber).trim() &&
+          o.status !== "cancelled"
+        );
+        if (sameSlotActive && incOrder.status !== "cancelled") {
+          const incTs = incOrder.updatedAt || incOrder.createdAt || "";
+          const curTs = sameSlotActive.updatedAt || sameSlotActive.createdAt || "";
+          if (incTs && (!curTs || incTs > curTs)) {
+            Object.assign(sameSlotActive, incOrder, { id: sameSlotActive.id });
+            changed = true;
+          }
+          return;
+        }
+        db.breakfastOrders.push({ ...incOrder });
+        changed = true;
       });
     }
 
@@ -8272,9 +8320,19 @@ export async function reconcileFromAuditLogs(db, pgPool) {
         const dt = String(rawDt || "").trim();
         if (!dt) continue;
 
+        const createdTsCandidate = l.timestamp instanceof Date ? l.timestamp.toISOString() : (String(l.timestamp || "") || "");
+        const explicitIdCandidate = Number(meta.orderId || meta.id);
+        if (explicitIdCandidate && Array.isArray(db.deletedBreakfastOrderIds) && db.deletedBreakfastOrderIds.includes(explicitIdCandidate)) {
+          continue;
+        }
+        const sigCandidate = `${room}|${dt}|${createdTsCandidate.substring(0, 19)}`;
+        if (Array.isArray(db.deletedBreakfastOrderSignatures) && db.deletedBreakfastOrderSignatures.includes(sigCandidate)) {
+          continue;
+        }
+
         let existing = db.breakfastOrders.find(o => String(o.roomNumber) === room && o.date === dt);
         if (existing) {
-          if (existing.status === "cancelled") {
+          if (existing.status === "cancelled" && !existing.cancelledManually && !existing.cancelledByCheckout) {
             existing.status = "pending";
             existing.cancelReason = null;
             changed = true;
@@ -40689,13 +40747,32 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const checkinTimeStr = db.settings.checkinTime || "14:00";
   const checkoutTimeStr = db.settings.checkoutTime || "12:00";
 
-  // Pedido de café da manhã existente
+  // Pedido de café da manhã existente (próxima entrega ativa vinculada à reserva)
   if (!db.breakfastOrders) db.breakfastOrders = [];
   const tomorrowStr = addDaysToDateStr(todayStr, 1);
-  const existingBreakfastOrder = db.breakfastOrders.find(o =>
-    (String(o.roomNumber) === String(r.flatNumber) || o.phone === r.guestPhone) &&
-    (o.deliveryDate === todayStr || o.deliveryDate === tomorrowStr)
-  );
+  const matchingPortalBfOrders = (db.breakfastOrders || [])
+    .filter(o => {
+      if (!o || o.status === "cancelled") return false;
+      const oDate = o.date || o.deliveryDate || "";
+      if (!oDate) return false;
+      if (o.reservationId && r.id && Number(o.reservationId) === Number(r.id)) return true;
+      if (o.reservationCode && r.code && String(o.reservationCode).trim().toUpperCase() === String(r.code).trim().toUpperCase()) return true;
+      if (!o.reservationId && !o.reservationCode) {
+        return String(o.roomNumber).trim() === String(r.flatNumber).trim() &&
+          (!r.checkinDate || oDate >= r.checkinDate) &&
+          (!r.checkoutDate || oDate <= r.checkoutDate);
+      }
+      return false;
+    })
+    .sort((a, b) => String(a.date || a.deliveryDate || "").localeCompare(String(b.date || b.deliveryDate || "")));
+
+  const existingBreakfastOrder =
+    matchingPortalBfOrders.find(o => {
+      const oDate = o.date || o.deliveryDate;
+      return (oDate === todayStr && bNow.hour < 10) || oDate === tomorrowStr;
+    }) ||
+    matchingPortalBfOrders.find(o => (o.date || o.deliveryDate) >= todayStr) ||
+    null;
 
   // Status de Pré-check-in / FNHR
   const totalGuests = r.guests?.length || r.guestCount || 1;
@@ -62696,13 +62773,25 @@ app.get("/api/breakfast/reservation-context", (req, res) => {
     }
   }
 
-  // Fetch all orders matching this reservation (isolando por código/ID para evitar vazamento entre hóspedes diferentes do mesmo quarto)
+  const flatObj = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+  const resolvedFlatNum = r.flatNumber || flatObj?.number || "";
+  const resolvedCode = r.code || r.reservationCode || `RES-${resolvedFlatNum || "000"}-${String(r.id || "0").padStart(4, "0")}`;
+  const normResCodeSet = new Set(
+    [r.code, r.reservationCode, resolvedCode]
+      .filter(Boolean)
+      .map(c => String(c).trim().toUpperCase())
+  );
+
+  // Fetch all orders matching this reservation (isolando por código/ID, com fallback seguro para o mesmo quarto no período da estadia)
   const reservationOrders = (db.breakfastOrders || []).filter(o => {
-    if (o.reservationCode || o.reservationId) {
-      return (o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) ||
-             (o.reservationId && o.reservationId === r.id);
+    if (!o) return false;
+    const oCode = o.reservationCode ? String(o.reservationCode).trim().toUpperCase() : "";
+    if (oCode && normResCodeSet.has(oCode)) return true;
+    if (o.reservationId && r.id && Number(o.reservationId) === Number(r.id)) return true;
+    if (!o.reservationCode && !o.reservationId) {
+      return (String(o.roomNumber).trim() === String(resolvedFlatNum).trim() && o.date >= r.checkinDate && o.date <= r.checkoutDate);
     }
-    return (String(o.roomNumber) === String(r.flatNumber) && o.date >= r.checkinDate && o.date <= r.checkoutDate);
+    return false;
   });
 
   // Map each breakfast date with its live status and cutoff
@@ -62714,7 +62803,9 @@ app.get("/api/breakfast/reservation-context", (req, res) => {
     const isClosedTomorrowAfter22h = false;
     const isOpen = !isCancelled && !isPreReservation && !isPast && (!isToday || nowBrl.hour < 5);
 
-    const existing = reservationOrders.find(o => o.date === dateStr);
+    const existing =
+      reservationOrders.find(o => o.date === dateStr && o.status !== "cancelled") ||
+      reservationOrders.find(o => o.date === dateStr);
 
     let status = "pending";
     let cancelReason = null;
@@ -62749,10 +62840,6 @@ app.get("/api/breakfast/reservation-context", (req, res) => {
       existingOrder: existing || null
     };
   });
-
-  const flatObj = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
-  const resolvedFlatNum = r.flatNumber || flatObj?.number || "";
-  const resolvedCode = r.code || r.reservationCode || `RES-${resolvedFlatNum || "000"}-${String(r.id || "0").padStart(4, "0")}`;
 
   res.json({
     reservation: {
@@ -64369,10 +64456,22 @@ function minutesToTime(mins) {
 app.get("/api/breakfast/available-slots", (req, res) => {
   initBreakfastData();
   const date = req.query.date || getTodayStr();
-  const dayOrders = (db.breakfastOrders || []).filter(o => o.date === date);
+  let excludeRoom = String(req.query.roomNumber || req.query.room || "").trim();
+  if (!excludeRoom && req.query.res) {
+    const matchedRes = findReservationByLocatorOrContact(String(req.query.res).trim());
+    if (matchedRes?.flatNumber) {
+      excludeRoom = String(matchedRes.flatNumber).trim();
+    }
+  }
 
-  // Lista dos horários já ocupados em minutos
-  const occupiedMinutes = dayOrders.map(o => timeToMinutes(o.deliveryTime));
+  // Ignora pedidos cancelados e permite que o próprio quarto mantenha/edite seu horário já reservado na data
+  const dayOrders = (db.breakfastOrders || []).filter(o => o.date === date && o.status !== "cancelled");
+  const otherRoomOrders = excludeRoom
+    ? dayOrders.filter(o => String(o.roomNumber).trim() !== excludeRoom)
+    : dayOrders;
+
+  // Lista dos horários já ocupados por outros quartos em minutos
+  const occupiedMinutes = otherRoomOrders.map(o => timeToMinutes(o.deliveryTime));
 
   const startMin = 5 * 60;     // 05:00
   const endMin = 9 * 60 + 30;  // 09:30
@@ -64383,14 +64482,14 @@ app.get("/api/breakfast/available-slots", (req, res) => {
 
   for (let m = startMin; m <= endMin; m += 7) {
     const timeStr = minutesToTime(m);
-    // Verifica se algum pedido existente está a menos de 7 minutos desse horário
+    // Verifica se algum pedido ativo de outro quarto está a menos de 7 minutos desse horário
     const isConflict = occupiedMinutes.some(occ => Math.abs(occ - m) < 7);
     const isAvailable = !isConflict;
 
     slots.push({
       time: timeStr,
       isAvailable,
-      occupiedBy: isConflict ? dayOrders.find(o => Math.abs(timeToMinutes(o.deliveryTime) - m) < 7)?.roomNumber : null
+      occupiedBy: isConflict ? otherRoomOrders.find(o => Math.abs(timeToMinutes(o.deliveryTime) - m) < 7)?.roomNumber : null
     });
 
     if (isAvailable) {
@@ -64811,19 +64910,35 @@ app.post("/api/breakfast/orders", (req, res) => {
   }
 
   const savedOrders = [];
+  const normTargetCodes = new Set(
+    [activeRes?.code, activeRes?.reservationCode, reservationCode]
+      .filter(Boolean)
+      .map(c => String(c).trim().toUpperCase())
+  );
+  const cleanRoomStr = String(roomNumber).trim();
 
   for (const tDate of targetDates) {
-    const existingIndex = (db.breakfastOrders || []).findIndex(o =>
-      o.date === tDate && (
-        (activeRes && (o.reservationCode === activeRes.code || o.reservationId === activeRes.id)) ||
-        (!activeRes && !o.reservationCode && !o.reservationId && (String(o.roomNumber) === String(roomNumber)))
-      )
-    );
+    // 1º: tenta casar pelo vínculo de reserva; 2º: casa pedido ativo do mesmo flat na mesma manhã (evita duplicidade entre pedido manual x link ou renovação no mesmo quarto)
+    let existingIndex = (db.breakfastOrders || []).findIndex(o => {
+      if (!o || o.date !== tDate) return false;
+      const oCode = o.reservationCode ? String(o.reservationCode).trim().toUpperCase() : "";
+      if (oCode && normTargetCodes.has(oCode)) return true;
+      if (activeRes?.id && o.reservationId && Number(o.reservationId) === Number(activeRes.id)) return true;
+      return false;
+    });
+    if (existingIndex < 0) {
+      existingIndex = (db.breakfastOrders || []).findIndex(o =>
+        o &&
+        o.date === tDate &&
+        String(o.roomNumber).trim() === cleanRoomStr &&
+        o.status !== "cancelled"
+      );
+    }
 
     if (existingIndex >= 0) {
       const existing = db.breakfastOrders[existingIndex];
       existing.deliveryTime = deliveryTime || guestOrders?.[0]?.deliveryTime || "08:00";
-      existing.roomNumber = String(roomNumber);
+      existing.roomNumber = cleanRoomStr;
       existing.clientName = clientName.trim();
       existing.guestCount = gCount;
       existing.isStandard = Boolean(isStandard);
@@ -64836,18 +64951,34 @@ app.post("/api/breakfast/orders", (req, res) => {
       existing.phone = phone ? phone.trim() : "";
       existing.status = "pending";
       existing.cancelReason = null;
+      existing.cancelledManually = false;
+      existing.cancelledByCheckout = false;
+      existing.checkoutWarningInfo = null;
       existing.reservationCode = activeRes?.code || reservationCode || existing.reservationCode || null;
       existing.reservationId = activeRes?.id || existing.reservationId || null;
       if (activeRes?.checkinDate) existing.originalCheckin = activeRes.checkinDate;
       if (activeRes?.checkoutDate) existing.originalCheckout = activeRes.checkoutDate;
       existing.updatedAt = new Date().toISOString();
       savedOrders.push(existing);
+
+      // Higieniza eventuais pedidos ativos duplicados remanescentes do mesmo quarto e data
+      db.breakfastOrders = (db.breakfastOrders || []).filter((o, idx) => {
+        if (idx === existingIndex) return true;
+        if (o && o.date === tDate && String(o.roomNumber).trim() === cleanRoomStr && o.status !== "cancelled") {
+          if (!Array.isArray(db.deletedBreakfastOrderIds)) db.deletedBreakfastOrderIds = [];
+          if (o.id && !db.deletedBreakfastOrderIds.includes(Number(o.id))) {
+            db.deletedBreakfastOrderIds.push(Number(o.id));
+          }
+          return false;
+        }
+        return true;
+      });
     } else {
       const newOrder = {
-        id: db.breakfastOrders.length > 0 ? Math.max(...db.breakfastOrders.map(o => o.id)) + 1 : 1,
+        id: db.breakfastOrders.length > 0 ? Math.max(...db.breakfastOrders.map(o => Number(o.id) || 0)) + 1 : 1,
         date: tDate,
         deliveryTime: deliveryTime || guestOrders?.[0]?.deliveryTime || "08:00",
-        roomNumber: String(roomNumber),
+        roomNumber: cleanRoomStr,
         clientName: clientName.trim(),
         guestCount: gCount,
         isStandard: Boolean(isStandard),
@@ -64957,7 +65088,7 @@ app.post("/api/breakfast/orders/:id/favorite", (req, res) => {
   res.json({ success: true, isFavorite: order.isFavorite, order });
 });
 
-// POST /api/breakfast/orders/repeat (Repetir Pedido Anterior Rapidamente)
+// POST /api/breakfast/orders/repeat (Repetir Pedido Anterior Rapidamente - sem duplicar pedido na mesma data)
 app.post("/api/breakfast/orders/repeat", (req, res) => {
   initBreakfastData();
   const { orderId, targetDate, deliveryTime } = req.body;
@@ -64983,48 +65114,132 @@ app.post("/api/breakfast/orders/repeat", (req, res) => {
     }
   }
 
+  const nowBrl = getBrasiliaNow();
+  const todayStr = nowBrl.date;
   const dateToUse = targetDate || getTodayStr();
-  const timeToUse = deliveryTime || original.deliveryTime;
+  const timeToUse = deliveryTime || original.deliveryTime || "08:00";
 
-  const newOrder = {
-    ...original,
-    id: db.breakfastOrders.length > 0 ? Math.max(...db.breakfastOrders.map(o => o.id)) + 1 : 1,
-    date: dateToUse,
-    deliveryTime: timeToUse,
-    status: "pending",
-    isFavorite: Boolean(original.isFavorite),
-    createdAt: new Date().toISOString()
-  };
+  if (dateToUse < todayStr) {
+    return res.status(400).json({ error: `A data ${dateToUse} já passou. Não é possível repetir pedidos para datas retroativas.` });
+  }
+  if (dateToUse === todayStr && nowBrl.hour >= 5) {
+    return res.status(400).json({
+      error: `O horário limite para pedidos de hoje (${todayStr}) foi encerrado às 05:00. O próximo café da manhã disponível é para amanhã.`
+    });
+  }
+  if (repeatRes && dateToUse > repeatRes.checkoutDate) {
+    return res.status(400).json({
+      error: `A data ${dateToUse} é posterior ao check-out da reserva (${repeatRes.checkoutDate}).`
+    });
+  }
 
-  db.breakfastOrders.unshift(newOrder);
+  const cleanRoomStr = String(repeatRes?.flatNumber || original.roomNumber || "").trim();
+  const proposedMinutes = timeToMinutes(timeToUse);
+  const dayOrders = (db.breakfastOrders || []).filter(o => o.date === dateToUse && o.status !== "cancelled");
+  const conflict = dayOrders.find(o => Math.abs(timeToMinutes(o.deliveryTime) - proposedMinutes) < 7 && String(o.roomNumber).trim() !== cleanRoomStr);
+  if (conflict) {
+    return res.status(400).json({
+      error: `O horário ${timeToUse} no dia ${dateToUse} não está disponível (conflito de 7 min com outro quarto). Por favor, selecione outro horário.`
+    });
+  }
+
+  const normRepeatCodes = new Set(
+    [repeatRes?.code, repeatRes?.reservationCode, original.reservationCode]
+      .filter(Boolean)
+      .map(c => String(c).trim().toUpperCase())
+  );
+
+  let existingIdx = (db.breakfastOrders || []).findIndex(o => {
+    if (!o || o.date !== dateToUse) return false;
+    const oCode = o.reservationCode ? String(o.reservationCode).trim().toUpperCase() : "";
+    if (oCode && normRepeatCodes.has(oCode)) return true;
+    const targetResId = repeatRes?.id || original.reservationId;
+    if (targetResId && o.reservationId && Number(o.reservationId) === Number(targetResId)) return true;
+    return false;
+  });
+  if (existingIdx < 0 && cleanRoomStr) {
+    existingIdx = (db.breakfastOrders || []).findIndex(o =>
+      o &&
+      o.date === dateToUse &&
+      String(o.roomNumber).trim() === cleanRoomStr &&
+      o.status !== "cancelled"
+    );
+  }
+
+  let savedOrder;
+  if (existingIdx >= 0) {
+    const existing = db.breakfastOrders[existingIdx];
+    existing.roomNumber = cleanRoomStr || existing.roomNumber;
+    existing.deliveryTime = timeToUse;
+    existing.clientName = original.clientName || existing.clientName;
+    existing.guestCount = original.guestCount || existing.guestCount;
+    existing.isStandard = Boolean(original.isStandard);
+    existing.orderMode = original.orderMode || "unified";
+    existing.guestOrders = original.guestOrders ? JSON.parse(JSON.stringify(original.guestOrders)) : null;
+    existing.guestChoices = original.guestChoices ? JSON.parse(JSON.stringify(original.guestChoices)) : null;
+    existing.preferences = original.preferences ? JSON.parse(JSON.stringify(original.preferences)) : null;
+    existing.items = original.items ? JSON.parse(JSON.stringify(original.items)) : existing.items;
+    existing.notes = original.notes || "";
+    existing.phone = original.phone || existing.phone || "";
+    existing.status = "pending";
+    existing.cancelReason = null;
+    existing.cancelledManually = false;
+    existing.cancelledByCheckout = false;
+    existing.checkoutWarningInfo = null;
+    existing.isFavorite = Boolean(original.isFavorite);
+    existing.reservationCode = repeatRes?.code || original.reservationCode || existing.reservationCode || null;
+    existing.reservationId = repeatRes?.id || original.reservationId || existing.reservationId || null;
+    existing.updatedAt = new Date().toISOString();
+    savedOrder = existing;
+  } else {
+    savedOrder = {
+      ...original,
+      id: db.breakfastOrders.length > 0 ? Math.max(...db.breakfastOrders.map(o => Number(o.id) || 0)) + 1 : 1,
+      roomNumber: cleanRoomStr || original.roomNumber,
+      date: dateToUse,
+      deliveryTime: timeToUse,
+      status: "pending",
+      cancelReason: null,
+      cancelledManually: false,
+      cancelledByCheckout: false,
+      checkoutWarningInfo: null,
+      isFavorite: Boolean(original.isFavorite),
+      reservationCode: repeatRes?.code || original.reservationCode || null,
+      reservationId: repeatRes?.id || original.reservationId || null,
+      createdAt: new Date().toISOString()
+    };
+    delete savedOrder.updatedAt;
+    db.breakfastOrders.unshift(savedOrder);
+  }
+
   saveDatabase();
 
   createNotification({
     category: "breakfast",
-    title: `☕ Pedido Repetido - Apt ${newOrder.roomNumber}`,
-    message: `${newOrder.clientName} repetiu o pedido de café para entrega às ${newOrder.deliveryTime}`,
+    title: `☕ Pedido Repetido - Apt ${savedOrder.roomNumber}`,
+    message: `${savedOrder.clientName} repetiu o pedido de café para ${dateToUse} às ${savedOrder.deliveryTime}`,
     severity: "info",
     metadata: {
-      orderId: newOrder.id,
-      roomNumber: String(newOrder.roomNumber),
-      deliveryTime: newOrder.deliveryTime,
-      guestCount: newOrder.guestCount,
-      dates: [newOrder.date],
-      clientName: newOrder.clientName,
-      items: newOrder.items,
-      preferences: newOrder.preferences,
-      guestChoices: newOrder.guestChoices,
-      orderMode: newOrder.orderMode,
-      isStandard: Boolean(newOrder.isStandard),
-      notes: newOrder.notes,
-      phone: newOrder.phone,
-      reservationCode: newOrder.reservationCode,
-      reservationId: newOrder.reservationId
+      orderId: savedOrder.id,
+      roomNumber: String(savedOrder.roomNumber),
+      deliveryTime: savedOrder.deliveryTime,
+      guestCount: savedOrder.guestCount,
+      dates: [savedOrder.date],
+      clientName: savedOrder.clientName,
+      items: savedOrder.items,
+      preferences: savedOrder.preferences,
+      guestChoices: savedOrder.guestChoices,
+      orderMode: savedOrder.orderMode,
+      isStandard: Boolean(savedOrder.isStandard),
+      notes: savedOrder.notes,
+      phone: savedOrder.phone,
+      reservationCode: savedOrder.reservationCode,
+      reservationId: savedOrder.reservationId
     },
     targetUrl: "/pedidos-cafe"
   });
 
-  res.status(201).json(newOrder);
+  res.status(201).json(savedOrder);
 });
 
 // PATCH /api/breakfast/orders/:id/status
@@ -65060,6 +65275,25 @@ app.delete("/api/breakfast/orders/:id", (req, res) => {
   const id = Number(req.params.id);
   const idx = db.breakfastOrders.findIndex(o => o.id === id);
   if (idx === -1) return res.status(404).json({ error: "Pedido não encontrado" });
+
+  const removed = db.breakfastOrders[idx];
+  if (!Array.isArray(db.deletedBreakfastOrderIds)) db.deletedBreakfastOrderIds = [];
+  if (removed?.id && !db.deletedBreakfastOrderIds.includes(Number(removed.id))) {
+    db.deletedBreakfastOrderIds.push(Number(removed.id));
+    if (db.deletedBreakfastOrderIds.length > 500) {
+      db.deletedBreakfastOrderIds = db.deletedBreakfastOrderIds.slice(-500);
+    }
+  }
+  if (!Array.isArray(db.deletedBreakfastOrderSignatures)) db.deletedBreakfastOrderSignatures = [];
+  if (removed?.roomNumber && removed?.date) {
+    const sig = `${String(removed.roomNumber).trim().replace(/\D/g, "")}|${removed.date}|${String(removed.createdAt || "").substring(0, 19)}`;
+    if (!db.deletedBreakfastOrderSignatures.includes(sig)) {
+      db.deletedBreakfastOrderSignatures.push(sig);
+      if (db.deletedBreakfastOrderSignatures.length > 500) {
+        db.deletedBreakfastOrderSignatures = db.deletedBreakfastOrderSignatures.slice(-500);
+      }
+    }
+  }
 
   db.breakfastOrders.splice(idx, 1);
   saveDatabase();

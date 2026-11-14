@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { 
   Coffee, Clock, Home as HomeIcon, CheckCircle2, 
   Sparkles, ChevronRight, ChevronLeft, Utensils, Copy, Apple, Cookie, Milk, User, Users,
-  AlertTriangle, Layers, MessageCircle, ArrowLeft, Check, Calendar, ArrowRight, RotateCcw
+  AlertTriangle, Layers, MessageCircle, ArrowLeft, Check, Calendar, ArrowRight, RotateCcw, Pencil
 } from "lucide-react"
 import { format, addDays, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -164,7 +164,137 @@ export default function GuestBreakfast() {
     }
   }
 
-  const loadReservationContext = async (code: string) => {
+  const normalizeSavedPref = (raw?: any, fallbackItems?: any[]): GuestPreference => {
+    if (raw && typeof raw === "object" && (raw.coffee || raw.otherBeverage || Array.isArray(raw.breads) || raw.fruit)) {
+      const mappedCoffee =
+        raw.coffee === "Café, Leite"
+          ? "Café com leite"
+          : ["Café", "Café com leite", "Não quero café"].includes(raw.coffee)
+            ? raw.coffee
+            : defaultGuestPref.coffee
+
+      return {
+        coffee: mappedCoffee,
+        otherBeverage: raw.otherBeverage || defaultGuestPref.otherBeverage,
+        breads: Array.isArray(raw.breads) ? raw.breads : [...defaultGuestPref.breads],
+        accompaniments: Array.isArray(raw.accompaniments) ? raw.accompaniments : [...defaultGuestPref.accompaniments],
+        complements: Array.isArray(raw.complements) ? raw.complements : [...defaultGuestPref.complements],
+        sweets: Array.isArray(raw.sweets) ? raw.sweets : [...defaultGuestPref.sweets],
+        fruit: raw.fruit && raw.fruit !== "Fruta do dia" ? raw.fruit : defaultGuestPref.fruit,
+        fruitHoney: Boolean(raw.fruitHoney),
+        fruitSaladOption: raw.fruitSaladOption || "Salada pura",
+        sweetener: raw.sweetener || defaultGuestPref.sweetener
+      }
+    }
+
+    if (Array.isArray(fallbackItems) && fallbackItems.length > 0) {
+      const names = new Set(fallbackItems.map((i: any) => (typeof i === "string" ? i : i?.name)).filter(Boolean))
+      const hasCoffee = names.has("Café") || names.has("Café duplo")
+      const hasMilk = names.has("Leite") || names.has("Leite duplo")
+      const coffee = hasCoffee && hasMilk ? "Café com leite" : hasCoffee ? "Café" : "Não quero café"
+      const otherBeverage =
+        ["Achocolatado gelado", "Água", "Suco de laranja", "Vitamina de banana com iogurte de morango"].find(b => names.has(b)) ||
+        "Nenhuma outra bebida"
+      const breads = ["Pão francês", "Pão de queijo"].filter(b => names.has(b))
+      const accompaniments = [
+        "Queijo prato",
+        "Queijo mussarela",
+        "Queijo Minas frescal",
+        "Peito de Peru",
+        "Presunto",
+        "Ovos mexidos"
+      ].filter(a => names.has(a))
+      const complements = ["Manteiga", "Requeijão"].filter(c => names.has(c))
+      const matchedSweets = ["Bolo do dia", "Torradas amanteigadas", "Casadinho (biscoito com goiabada)"].filter(s => names.has(s))
+      const sweets = matchedSweets.length > 0 ? matchedSweets : ["Não quero nenhum desses"]
+      const fruit = ["Maçã", "Banana", "Mamão", "Salada de frutas"].find(f => names.has(f)) || "Nenhuma fruta"
+      const fruitHoney = fruit === "Mamão" && names.has("Mel")
+      const fruitSaladOption = names.has("Leite condensado") ? "Leite condensado" : names.has("Mel") ? "Mel" : "Salada pura"
+      const sweetener =
+        names.has("Açúcar") && names.has("Adoçante")
+          ? "Ambos"
+          : names.has("Adoçante")
+            ? "Adoçante"
+            : names.has("Açúcar")
+              ? "Açúcar"
+              : "Nenhum"
+
+      return {
+        coffee,
+        otherBeverage,
+        breads,
+        accompaniments,
+        complements,
+        sweets,
+        fruit,
+        fruitHoney,
+        fruitSaladOption,
+        sweetener
+      }
+    }
+
+    return { ...defaultGuestPref }
+  }
+
+  const applyExistingOrderToForm = (order: any) => {
+    if (!order || order.status === "cancelled") return
+
+    if (order.deliveryTime) {
+      setDeliveryTime(order.deliveryTime)
+    }
+    setNotes(order.notes || "")
+
+    if (order.guestCount) {
+      const count = Math.min(3, Math.max(1, Number(order.guestCount || 1))) as 1 | 2 | 3
+      setGuestCount(count)
+    }
+
+    const isInd = order.orderMode === "individual"
+    setOrderDistribution(isInd ? "individual" : "same_for_all")
+
+    const isStdOrder = Boolean(order.isStandard || order.orderType === "standard")
+    setBreakfastType(isStdOrder ? "standard" : "custom")
+
+    const choices = Array.isArray(order.guestChoices) && order.guestChoices.length > 0 ? order.guestChoices : null
+    if (choices) {
+      const c1 = choices[0]
+      if (c1) {
+        if (c1.guestName) setGuest1Name(c1.guestName)
+        const c1Std = isInd ? Boolean(c1.isStandard) : isStdOrder
+        setGuest1Type(c1Std ? "standard" : "custom")
+        if (!c1Std) setGuest1Pref(normalizeSavedPref(c1, order.items))
+      }
+      const c2 = choices[1]
+      if (c2) {
+        if (c2.guestName) setGuest2Name(c2.guestName)
+        const c2Std = isInd ? Boolean(c2.isStandard) : isStdOrder
+        setGuest2Type(c2Std ? "standard" : "custom")
+        if (!c2Std) setGuest2Pref(normalizeSavedPref(c2, order.items))
+      }
+      const c3 = choices[2]
+      if (c3) {
+        if (c3.guestName) setGuest3Name(c3.guestName)
+        const c3Std = isInd ? Boolean(c3.isStandard) : isStdOrder
+        setGuest3Type(c3Std ? "standard" : "custom")
+        if (!c3Std) setGuest3Pref(normalizeSavedPref(c3, order.items))
+      }
+    } else {
+      if (order.clientName) setGuest1Name(order.clientName)
+      setGuest1Type(isStdOrder ? "standard" : "custom")
+      setGuest2Type(isStdOrder ? "standard" : "custom")
+      setGuest3Type(isStdOrder ? "standard" : "custom")
+      if (!isStdOrder) {
+        const reconstructed = normalizeSavedPref(order.preferences, order.items)
+        setGuest1Pref(reconstructed)
+        setGuest2Pref({ ...reconstructed })
+        setGuest3Pref({ ...reconstructed })
+      }
+    }
+
+    setActiveGuestTab(1)
+  }
+
+  const loadReservationContext = async (code: string, preferredDate?: string) => {
     setLoadingContext(true)
     try {
       const res = await fetch(`/api/breakfast/reservation-context?res=${encodeURIComponent(code)}`)
@@ -190,11 +320,17 @@ export default function GuestBreakfast() {
         }
 
         const dates: any[] = data.breakfastDates || []
+        const urlDateParam = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("date") : null
+        const requestedDate = preferredDate || (urlDateParam ? urlDateParam.trim() : "")
+        const matchedRequested = requestedDate ? dates.find(d => d.date === requestedDate) : null
         const pendingOpen = dates.find(d => d.status === "pending" && d.isOpen)
         const firstOpen = dates.find(d => d.isOpen)
-        const chosen = pendingOpen?.date || firstOpen?.date || dates[0]?.date
-        if (chosen) {
-          setDeliveryDate(chosen)
+        const chosenDay = matchedRequested || pendingOpen || firstOpen || dates[0]
+        if (chosenDay?.date) {
+          setDeliveryDate(chosenDay.date)
+          if (chosenDay.status === "scheduled" && chosenDay.existingOrder) {
+            applyExistingOrderToForm(chosenDay.existingOrder)
+          }
         }
       } else if (data?.error) {
         setContextError(data.error)
@@ -253,10 +389,15 @@ export default function GuestBreakfast() {
     return arr
   }
 
-  // Fetch slots livres e configuração padrão na data
+  // Fetch slots livres e configuração padrão na data (mantendo o horário atual do próprio quarto liberado ao editar)
   useEffect(() => {
     setLoadingSlots(true)
-    fetch(`/api/breakfast/available-slots?date=${deliveryDate}`)
+    const slotParams = new URLSearchParams({ date: deliveryDate })
+    if (roomNumber.trim()) slotParams.set("roomNumber", roomNumber.trim())
+    const activeCode = reservationData?.code || resolveCurrentResCode()
+    if (activeCode) slotParams.set("res", activeCode)
+
+    fetch(`/api/breakfast/available-slots?${slotParams.toString()}`)
       .then(res => res.json())
       .then(data => {
         let slotsList: string[] = []
@@ -269,9 +410,7 @@ export default function GuestBreakfast() {
         }
 
         setAvailableSlots(slotsList)
-        if (slotsList.length > 0 && !slotsList.includes(deliveryTime)) {
-          setDeliveryTime(slotsList[0])
-        }
+        setDeliveryTime(prev => (slotsList.length > 0 && !slotsList.includes(prev) ? slotsList[0] : prev))
       })
       .catch(() => {
         const fallback = generateDefaultSlots()
@@ -288,7 +427,7 @@ export default function GuestBreakfast() {
         }
       })
       .catch(() => {})
-  }, [deliveryDate])
+  }, [deliveryDate, roomNumber, reservationData?.code])
 
   const g1Label = guest1Name.trim() ? guest1Name.trim().split(" ")[0] : "1º Hóspede"
   const g2Label = guest2Name.trim() ? guest2Name.trim().split(" ")[0] : "2º Hóspede"
@@ -429,8 +568,9 @@ export default function GuestBreakfast() {
       })
       const json = await res.json()
       if (res.ok) {
+        const wasEditingCurrent = Boolean(breakfastDays.find(d => d.date === deliveryDate)?.status === "scheduled")
         if (reservationData?.code) {
-          loadReservationContext(reservationData.code)
+          loadReservationContext(reservationData.code, deliveryDate)
         }
         setOrderSuccess({
           roomNumber,
@@ -439,7 +579,8 @@ export default function GuestBreakfast() {
           deliveryDates: allDatesToSubmit,
           deliveryDate,
           deliveryTime,
-          isStandard: isStd
+          isStandard: isStd,
+          wasEditing: wasEditingCurrent
         })
       } else {
         alert(json.error || "Erro ao registrar o pedido de café.")
@@ -641,10 +782,10 @@ export default function GuestBreakfast() {
 
           <div className="space-y-1.5">
             <h1 className="text-2xl font-black text-slate-900 tracking-tight">
-              Café da Manhã Agendado!
+              {orderSuccess.wasEditing ? "Pedido de Café Atualizado!" : "Café da Manhã Agendado!"}
             </h1>
             <p className="text-xs sm:text-sm text-slate-500 max-w-sm mx-auto leading-relaxed">
-              Pedido {orderSuccess.isStandard ? 'Padrão CorpFlats' : 'Personalizado'} registrado para {orderSuccess.guestCount} {orderSuccess.guestCount === 1 ? 'hóspede' : 'hóspedes'}.
+              Pedido {orderSuccess.isStandard ? 'Padrão CorpFlats' : 'Personalizado'} {orderSuccess.wasEditing ? 'atualizado' : 'registrado'} para {orderSuccess.guestCount} {orderSuccess.guestCount === 1 ? 'hóspede' : 'hóspedes'}.
             </p>
           </div>
 
@@ -875,6 +1016,9 @@ export default function GuestBreakfast() {
                       onClick={() => {
                         setDeliveryDate(d.date)
                         setSelectedRepeatDates(selectedRepeatDates.filter(x => x !== d.date))
+                        if (d.status === "scheduled" && d.existingOrder) {
+                          applyExistingOrderToForm(d.existingOrder)
+                        }
                       }}
                       className={`p-3.5 rounded-2xl border text-left transition-all relative flex flex-col justify-between gap-1.5 ${
                         isSelected
@@ -910,11 +1054,13 @@ export default function GuestBreakfast() {
                       </div>
 
                       <span className="text-[10px] text-slate-500 font-medium">
-                        {d.isToday 
-                          ? (d.isClosedTodayAfter5am ? "Pedidos encerrados às 05:00" : "Hoje (pedir até 05:00)")
-                          : d.isTomorrow
-                            ? "Amanhã (pedir até 22:00)"
-                            : d.isPast ? "Finalizado" : "Disponível"}
+                        {isScheduled && d.isOpen
+                          ? (isSelected ? "Editando pedido agendado" : "Agendado • Toque p/ editar")
+                          : d.isToday 
+                            ? (d.isClosedTodayAfter5am ? "Pedidos encerrados às 05:00" : "Hoje (pedir até 05:00)")
+                            : d.isTomorrow
+                              ? "Amanhã (alterar até 05:00)"
+                              : d.isPast ? "Finalizado" : "Disponível"}
                       </span>
                     </button>
                   )
@@ -928,10 +1074,12 @@ export default function GuestBreakfast() {
                 </div>
               )}
 
-              {currentDayInfo?.status === "scheduled" && (
+              {currentDayInfo?.status === "scheduled" && currentDayInfo?.isOpen && (
                 <div className="p-3 bg-[#0F3D4C]/[0.05] border border-[#C5A059]/40 rounded-xl text-xs text-slate-800 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-[#0F3D4C] shrink-0" />
-                  <span>Café já agendado para <strong>{formatDateDisplay(currentDayInfo.date)}</strong> às <strong>{currentDayInfo.existingOrder?.deliveryTime}</strong>. Você pode alterar e salvar novamente abaixo.</span>
+                  <Pencil className="w-4 h-4 text-[#0F3D4C] shrink-0" />
+                  <span>
+                    Você está visualizando o pedido de <strong>{formatDateDisplay(currentDayInfo.date)}</strong> (agendado às <strong>{currentDayInfo.existingOrder?.deliveryTime}</strong>). Seus itens já foram carregados abaixo — altere o que desejar e toque em <strong>Salvar Alterações</strong> no final.
+                  </span>
                 </div>
               )}
 
@@ -1694,11 +1842,16 @@ export default function GuestBreakfast() {
           <Button 
             type="button" 
             onClick={handleSubmitOrder}
-            disabled={submitting}
+            disabled={submitting || Boolean(loadedFromReservation && currentDayInfo && !currentDayInfo.isOpen)}
             className="w-full bg-gradient-to-r from-[#091E26] via-[#0F3D4C] to-[#091E26] hover:brightness-110 text-white border border-[#C5A059]/50 font-black text-xs sm:text-sm h-13 px-4 rounded-2xl shadow-lg shadow-[#091E26]/20 gap-2 tracking-wide uppercase transition-all"
           >
             {submitting ? (
-              <span>Agendando pedido...</span>
+              <span>{currentDayInfo?.status === "scheduled" ? "Salvando alterações..." : "Agendando pedido..."}</span>
+            ) : currentDayInfo?.status === "scheduled" ? (
+              <>
+                <CheckCircle2 className="w-4 h-4 text-[#E5C98B] shrink-0" />
+                <span>Salvar Alterações do Pedido</span>
+              </>
             ) : (
               <>
                 <Coffee className="w-4 h-4 text-[#E5C98B] shrink-0" />

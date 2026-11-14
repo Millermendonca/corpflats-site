@@ -4519,7 +4519,9 @@ export default function GuestPortal() {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="flex items-center gap-1.5 font-bold text-amber-900 text-xs sm:text-sm">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span>Pedido Agendado ({breakfastOrder.deliveryDate === format(new Date(), "yyyy-MM-dd") ? "Hoje" : "Próxima Entrega"})</span>
+                    <span>
+                      Pedido Agendado ({(breakfastOrder.date || breakfastOrder.deliveryDate) === format(new Date(), "yyyy-MM-dd") ? "Hoje" : format(parseISO(breakfastOrder.date || breakfastOrder.deliveryDate), "dd/MM", { locale: ptBR })})
+                    </span>
                   </span>
                   <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-200 text-[10px] font-bold">
                     ⏰ Entrega às {breakfastOrder.deliveryTime || "08:00"}
@@ -4541,12 +4543,27 @@ export default function GuestPortal() {
                     type="button"
                     variant="outline"
                     size="sm"
+                    onClick={() => {
+                      const targetDt = breakfastOrder.date || breakfastOrder.deliveryDate || ""
+                      const dtQuery = targetDt ? `?date=${encodeURIComponent(targetDt)}` : ""
+                      setLocation(`/minha-reserva/${reservation.code || code}/cafe${dtQuery}`)
+                    }}
+                    className="flex-1 sm:flex-initial text-xs h-auto min-h-8 py-1.5 px-3 whitespace-normal leading-tight bg-amber-50 border-amber-300 text-amber-900 hover:bg-amber-100 flex items-center justify-center gap-1.5 rounded-xl font-bold"
+                  >
+                    <PenTool className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                    <span>Editar este Pedido</span>
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={() => handleToggleFavorite(breakfastOrder.id)}
                     disabled={favoriteTogglingId === breakfastOrder.id}
                     className="flex-1 sm:flex-initial text-xs h-auto min-h-8 py-1.5 px-3 whitespace-normal leading-tight bg-white border-amber-200 text-amber-800 hover:bg-amber-50 flex items-center justify-center gap-1.5 rounded-xl font-semibold"
                   >
                     <Star className={`w-3.5 h-3.5 shrink-0 ${breakfastOrder.isFavorite ? "fill-amber-500 text-amber-500" : ""}`} />
-                    <span>{breakfastOrder.isFavorite ? "Favoritado ⭐" : "Favoritar este Pedido"}</span>
+                    <span>{breakfastOrder.isFavorite ? "Favoritado ⭐" : "Favoritar"}</span>
                   </Button>
 
                   {(reservation.lastBreakfastOrder || breakfastOrder) && (
