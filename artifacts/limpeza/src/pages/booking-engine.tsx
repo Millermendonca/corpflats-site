@@ -156,6 +156,7 @@ export default function BookingEngine() {
   const [settings, setSettings] = useState<any>(null)
   const [siteConfig, setSiteConfig] = useState<any>(null)
   const [faqOpen, setFaqOpen] = useState<number | null>(null)
+  const [breakfastZoomOpen, setBreakfastZoomOpen] = useState(false)
 
   // Guest Account & Auth States
   const [guestAccount, setGuestAccount] = useState<any | null>(() => {
@@ -920,20 +921,67 @@ export default function BookingEngine() {
         { id: 2, title: "Visão Geral do Flat (Quarto, Estar & Cozinha)", category: "O Flat", imageUrl: "/photos/soho/02-flat-integrado.jpg" },
         { id: 3, title: "Mesa de Refeições & Apoio", category: "O Flat", imageUrl: "/photos/soho/03-mesa-jantar.jpg" },
         { id: 4, title: "Cozinha Compacta Equipada", category: "Cozinha", imageUrl: "/photos/soho/04-cozinha-equipada.jpg" },
-        { id: 5, title: "Banheiro Privativo com Secador de Parede", category: "Banheiro", imageUrl: "/photos/soho/05-banheiro.jpg" },
-        { id: 6, title: "Cobertura com Jacuzzi Aquecida & Deck", category: "Lazer & Cobertura", imageUrl: "/photos/soho/06-cobertura-jacuzzi.jpg" },
-        { id: 7, title: "Terraço Panorâmico no Topo do Soho", category: "Lazer & Cobertura", imageUrl: "/photos/soho/07-terraco-panoramico.jpg" },
-        { id: 8, title: "Spa com Saunas Seca e a Vapor", category: "Lazer & Cobertura", imageUrl: "/photos/soho/08-spa-saunas.jpg" },
-        { id: 9, title: "Academia Climatizada do Condomínio", category: "Lazer & Cobertura", imageUrl: "/photos/soho/09-academia.jpg" },
-        { id: 10, title: "Sala de Jogos Climatizada", category: "Lazer & Cobertura", imageUrl: "/photos/soho/10-sala-de-jogos.jpg" },
-        { id: 11, title: "Lobby & Elevadores do Edifício Soho", category: "Recepção & Acesso", imageUrl: "/photos/soho/11-lobby-elevadores.jpg" },
-        { id: 12, title: "Fachada & Entrada da Garagem Coberta (nº 209)", category: "Recepção & Acesso", imageUrl: "/photos/soho/12-fachada-garagem.jpg" }
+        { id: 5, title: "Café da manhã servido na mesa do flat", category: "Café no Flat", imageUrl: "/photos/soho/cafe-mesa-quarto.jpg" },
+        { id: 6, title: "Banheiro Privativo com Secador de Parede", category: "Banheiro", imageUrl: "/photos/soho/05-banheiro.jpg" },
+        { id: 7, title: "Cobertura com Jacuzzi Aquecida & Deck", category: "Lazer & Cobertura", imageUrl: "/photos/soho/06-cobertura-jacuzzi.jpg" },
+        { id: 8, title: "Terraço Panorâmico no Topo do Soho", category: "Lazer & Cobertura", imageUrl: "/photos/soho/07-terraco-panoramico.jpg" },
+        { id: 9, title: "Spa com Saunas Seca e a Vapor", category: "Lazer & Cobertura", imageUrl: "/photos/soho/08-spa-saunas.jpg" },
+        { id: 10, title: "Academia Climatizada do Condomínio", category: "Lazer & Cobertura", imageUrl: "/photos/soho/09-academia.jpg" },
+        { id: 11, title: "Sala de Jogos Climatizada", category: "Lazer & Cobertura", imageUrl: "/photos/soho/10-sala-de-jogos.jpg" },
+        { id: 12, title: "Lobby & Elevadores do Edifício Soho", category: "Recepção & Acesso", imageUrl: "/photos/soho/11-lobby-elevadores.jpg" },
+        { id: 13, title: "Fachada & Entrada da Garagem Coberta (nº 209)", category: "Recepção & Acesso", imageUrl: "/photos/soho/12-fachada-garagem.jpg" }
       ]
 
+  const DEFAULT_GOOGLE_TESTIMONIALS = [
+    {
+      id: 1,
+      name: "Giselia Correa",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Passamos 4 diárias no flat, fomos muito bem atendidos pelo sr Miller e sua esposa, eles são pessoas muito atenciosas, nos trataram com muito carinho. O café da manhã é bem servido e pontual, tudo fresquinho, o pão de queijo bem quentinho, tudo com excelência. Amamos super recomendo!!!!"
+    },
+    {
+      id: 2,
+      name: "Carlos Aprigio",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Hospedagem maravilhosa, com quarto limpinho, cheiroso, com um lugar super calmo e silencioso, tratamento super bacana, estacionamento seguro, as pessoas trabalhando com muito carinho e atenção!! Resumindo!! Muito bom 😊 Recomendo 💯"
+    },
+    {
+      id: 3,
+      name: "GG Cordeiro",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Tudo perfeito, clareza nas informações, ambiente muito agradável, acomodação impecável, parabéns a Corp Flats!"
+    },
+    {
+      id: 4,
+      name: "Paula Ladeira Vidal",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "O Flat estava limpo e bem equipado, também fica localizado perto de bares, restaurantes e farmácias, em área central de Campos. O estacionamento é gratuito. Recomendo!"
+    },
+    {
+      id: 5,
+      name: "Hugo Alves",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Quando vou a Campos sempre fico nesse Flat, muito limpo e organizado, tem tudo que preciso num lugar só."
+    },
+    {
+      id: 6,
+      name: "Jean Sant'Anna",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Foi uma experiência bem legal. Ótimo café da manhã. Quarto limpo e aconchegante. Boa localização. Nada a reclamar 🙌"
+    }
+  ]
+
   const FAKE_DEFAULT_NAMES = new Set(["Mariana Silveira", "Carlos Eduardo Mendes", "Patrícia & Rodrigo"])
-  const testimonialsList = Array.isArray(siteConfig?.testimonials)
+  const filteredSiteTestimonials = Array.isArray(siteConfig?.testimonials)
     ? siteConfig.testimonials.filter((t: any) => t?.comment && !FAKE_DEFAULT_NAMES.has(String(t?.name || "").trim()))
     : []
+  const testimonialsList = filteredSiteTestimonials.length > 0 ? filteredSiteTestimonials : DEFAULT_GOOGLE_TESTIMONIALS
 
   const aboutRoomItems: string[] = Array.isArray(siteConfig?.about?.roomItems) && siteConfig.about.roomItems.filter(Boolean).length > 0
     ? siteConfig.about.roomItems.filter(Boolean)
@@ -984,7 +1032,7 @@ export default function BookingEngine() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans selection:bg-sky-500 selection:text-white w-full max-w-full overflow-x-hidden">
+    <div className="min-h-dvh bg-slate-50/70 text-slate-900 flex flex-col font-sans selection:bg-sky-500 selection:text-white w-full max-w-full overflow-x-clip">
       {/* ── Barra Fixa Flutuante do Editor Visual Ao Vivo ── */}
       {isVisualEditMode && (
         <div className="sticky top-0 z-50 bg-amber-500 text-slate-950 px-4 py-2.5 shadow-xl flex flex-wrap items-center justify-between gap-3 border-b-2 border-amber-600 font-sans">
@@ -1070,12 +1118,12 @@ export default function BookingEngine() {
       </div>
 
       {/* ── Top Navigation Bar (Hotel Boutique: Limpo & Reduzido) ───────── */}
-      <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/70 px-4 sm:px-8 py-2.5 sm:py-3 w-full max-w-full">
+      <nav className={`${isVisualEditMode ? "relative" : "sticky top-0"} z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/70 px-4 sm:px-8 py-2.5 sm:py-3 w-full max-w-full`}>
         <div className="max-w-5xl mx-auto flex items-center justify-between gap-2 sm:gap-3">
           {/* Logo CorpFlats */}
           <div 
             onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-            className="flex items-center gap-2 sm:gap-2.5 cursor-pointer group min-w-0"
+            className="flex items-center gap-2 sm:gap-2.5 cursor-pointer group shrink-0"
           >
             {siteConfig?.branding?.logoImage ? (
               <img 
@@ -1113,7 +1161,7 @@ export default function BookingEngine() {
           </div>
 
           {/* Links desktop discretos */}
-          <div className="hidden md:flex items-center gap-6 text-xs font-medium text-slate-600">
+          <div className="hidden lg:flex items-center gap-4 xl:gap-6 whitespace-nowrap text-xs font-medium text-slate-600">
             <a href="#tarifas" className="hover:text-[#0F3D4C] transition-colors">Tarifas</a>
             <a href="#galeria" className="hover:text-[#0F3D4C] transition-colors">Fotos</a>
             <a href="#detalhes" className="hover:text-[#0F3D4C] transition-colors">O Flat</a>
@@ -1177,9 +1225,10 @@ export default function BookingEngine() {
         </div>
       </nav>
 
-      {/* ── Hero Section (Opção A: Cobertura com Jacuzzi Aquecida & Card de Reserva Integrado) ─ */}
-      <header className="relative min-h-[490px] sm:min-h-[530px] lg:min-h-[560px] flex flex-col items-center justify-start px-3 sm:px-6 pt-3 sm:pt-6 pb-8 text-center overflow-hidden">
-        <div className="absolute inset-0 z-0">
+      {/* ── Hero Section (CSS Grid Responsivo: Jacuzzi 100% visível no Mobile e no Desktop + Card à Direita) ─ */}
+      <header className="relative grid grid-cols-1 lg:grid-cols-12 lg:min-h-[540px] lg:max-h-[600px] lg:bg-[#091E26] overflow-clip">
+        {/* Linha 1 Mobile (banner dedicado) / Colunas 1-8 Desktop (jacuzzi livre à esquerda/centro-esquerda) */}
+        <div className="relative row-start-1 col-start-1 lg:col-start-1 lg:col-span-8 aspect-[16/10] sm:aspect-[16/9] lg:aspect-auto lg:h-full lg:min-h-[540px] lg:max-h-[600px] overflow-hidden z-0">
           <img
             src={heroBg}
             alt="Cobertura com jacuzzi aquecida e deck de madeira no Edifício Soho Residence Service"
@@ -1187,38 +1236,48 @@ export default function BookingEngine() {
             height={1280}
             fetchPriority="high"
             decoding="async"
-            className="w-full h-full object-cover object-center"
+            className="w-full h-full object-cover object-[center_68%] lg:object-[78%_68%] block"
           />
-          {/* Overlay sutil apenas para contraste da tipografia */}
-          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/40 to-slate-950/25" />
+          {/* Gradiente apenas na faixa superior para leitura do título, deixando toda a jacuzzi e o deck claros */}
+          <div className="absolute inset-x-0 top-0 h-[52%] sm:h-[46%] lg:h-[48%] bg-gradient-to-b from-slate-950/85 via-slate-950/30 to-transparent pointer-events-none" />
+          {/* Transição lateral suave no Desktop para o painel escuro à direita onde fica o seletor */}
+          <div className="hidden lg:block absolute inset-y-0 right-0 w-24 xl:w-44 bg-gradient-to-r from-transparent via-[#091E26]/65 to-[#091E26] pointer-events-none" />
+
+          {isVisualEditMode && (
+            <div className="absolute bottom-2.5 right-2.5 lg:bottom-4 lg:left-8 lg:right-auto z-30">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  const newUrl = prompt("Insira a nova URL da foto do Hero:", heroBg)
+                  if (newUrl && newUrl.trim()) {
+                    updateNestedConfig("hero.backgroundImage", newUrl.trim())
+                  }
+                }}
+                className="bg-black/65 hover:bg-black/85 text-white text-xs rounded-lg backdrop-blur-md border border-white/20 shadow-xs"
+              >
+                <ImageIcon className="w-3.5 h-3.5 mr-1" />
+                Trocar Foto
+              </Button>
+            </div>
+          )}
         </div>
 
-        {isVisualEditMode && (
-          <div className="absolute top-4 right-4 z-20">
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => {
-                const newUrl = prompt("Insira a nova URL da foto do Hero:", heroBg)
-                if (newUrl && newUrl.trim()) {
-                  updateNestedConfig("hero.backgroundImage", newUrl.trim())
-                }
-              }}
-              className="bg-black/60 hover:bg-black/80 text-white text-xs rounded-lg backdrop-blur-md border border-white/20 shadow-xs"
-            >
-              <ImageIcon className="w-3.5 h-3.5 mr-1" />
-              Trocar Foto
-            </Button>
-          </div>
-        )}
+        {/* Selo Google + Título & Subtítulo no Topo Esquerdo (sem cobrir jacuzzi nem espreguiçadeiras) */}
+        <div className="relative z-10 row-start-1 col-start-1 lg:col-start-1 lg:col-span-7 self-start p-3.5 sm:p-6 lg:pt-8 lg:pl-8 xl:pl-12 lg:pr-6 text-left pointer-events-none">
+          <a
+            href="#avaliacoes"
+            className="pointer-events-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-950/65 hover:bg-slate-950/85 backdrop-blur-xs border border-[#C5A059]/50 text-[10.5px] sm:text-xs font-semibold text-white shadow-xs transition-colors mb-1.5 sm:mb-2"
+          >
+            <Star className="w-3 h-3 sm:w-3.5 sm:h-3.5 fill-amber-400 text-amber-400 shrink-0" aria-hidden="true" />
+            <span>4,9 ★ no Google • 27 avaliações</span>
+          </a>
 
-        {/* Título & Subtítulo no Topo do Hero */}
-        <div className="relative z-10 max-w-xl mx-auto space-y-0.5 sm:space-y-1 text-white mb-2.5 sm:mb-3.5">
           <h1
             contentEditable={isVisualEditMode}
             suppressContentEditableWarning={true}
             onBlur={(e) => updateNestedConfig("hero.title", e.currentTarget.innerText)}
-            className={`text-lg sm:text-2xl lg:text-3xl font-extrabold tracking-tight leading-tight drop-shadow-md whitespace-pre-line ${
+            className={`pointer-events-auto max-w-xl text-base sm:text-2xl lg:text-3xl font-extrabold tracking-tight leading-snug text-white drop-shadow-md text-balance whitespace-pre-line ${
               isVisualEditMode ? "outline-dashed outline-1 outline-amber-400 cursor-text rounded p-1" : ""
             }`}
           >
@@ -1229,200 +1288,217 @@ export default function BookingEngine() {
             contentEditable={isVisualEditMode}
             suppressContentEditableWarning={true}
             onBlur={(e) => updateNestedConfig("hero.highlightText", e.currentTarget.innerText)}
-            className={`text-[11px] sm:text-xs md:text-sm font-medium text-slate-200 tracking-wide drop-shadow-xs ${
-              isVisualEditMode ? "outline-dashed outline-1 outline-amber-400 cursor-text rounded p-1" : ""
+            className={`pointer-events-auto max-w-lg text-xs md:text-sm font-medium text-slate-100/95 tracking-wide drop-shadow-xs text-pretty mt-1 sm:mt-1.5 ${
+              isVisualEditMode ? "block outline-dashed outline-1 outline-amber-400 cursor-text rounded p-1" : "hidden sm:block"
             }`}
           >
             {heroHighlight}
           </p>
         </div>
 
-        {/* ── Card de Reserva Flutuante e Centralizado (100% visível na 1ª dobra sem rolagem) ── */}
-        <div id="reserva-rapida" className="relative z-20 w-full max-w-md sm:max-w-lg mx-auto text-left">
-          <div className="bg-white/95 backdrop-blur-md rounded-2xl sm:rounded-3xl shadow-2xl shadow-slate-950/25 border border-white/60 p-3.5 sm:p-5 space-y-2.5 sm:space-y-3">
-            {/* Seletor Compacto de Datas */}
-            <div className="grid grid-cols-2 gap-2 pb-2.5 border-b border-slate-100">
-              <div className="space-y-1">
-                <label htmlFor="hero-checkin-input" className="text-[10.5px] font-semibold text-slate-500 flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-[#0F3D4C]" aria-hidden="true" />
-                  <span>Entrada (a partir das 14h)</span>
-                </label>
-                <Input 
-                  id="hero-checkin-input"
-                  type="date" 
-                  value={checkin} 
-                  min={format(new Date(), "yyyy-MM-dd")}
-                  onChange={e => setCheckin(e.target.value)} 
-                  className="bg-slate-50/80 border-slate-200 text-xs text-slate-900 h-8.5 font-bold rounded-xl"
-                />
+        {/* ── Card de Reserva: Abaixo da foto no Celular (row-2) e Ancorado à Direita no Desktop (col 8-12) ── */}
+        <div className="relative z-20 row-start-2 col-start-1 lg:row-start-1 lg:col-start-8 lg:col-span-5 lg:self-center bg-slate-50 lg:bg-transparent px-3 sm:px-6 py-4 lg:py-7 lg:pl-2 lg:pr-6 xl:pr-10">
+          <div id="reserva-rapida" className="w-full max-w-lg lg:max-w-[408px] xl:max-w-md mx-auto lg:ml-auto lg:mr-0 text-left">
+            <div className="bg-white lg:bg-white/97 lg:backdrop-blur-md rounded-2xl sm:rounded-3xl shadow-xl lg:shadow-2xl shadow-slate-900/10 lg:shadow-slate-950/35 border border-slate-200/80 lg:border-white/60 p-3.5 sm:p-5 space-y-2.5 sm:space-y-3">
+              {/* Seletor Compacto de Datas */}
+              <div className="grid grid-cols-2 gap-2 pb-2.5 border-b border-slate-100">
+                <div className="space-y-1">
+                  <label htmlFor="hero-checkin-input" className="text-[10.5px] font-semibold text-slate-500 flex items-center gap-1">
+                    <Calendar className="w-3 h-3 text-[#0F3D4C]" aria-hidden="true" />
+                    <span>Entrada (a partir das 14h)</span>
+                  </label>
+                  <Input 
+                    id="hero-checkin-input"
+                    type="date" 
+                    value={checkin} 
+                    min={format(new Date(), "yyyy-MM-dd")}
+                    onChange={e => setCheckin(e.target.value)} 
+                    className="bg-slate-50/80 border-slate-200 text-xs text-slate-900 h-8.5 font-bold rounded-xl"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label htmlFor="hero-checkout-input" className="text-[10.5px] font-semibold text-slate-500 flex items-center gap-1">
+                    <Calendar className="w-3 h-3 text-[#0F3D4C]" aria-hidden="true" />
+                    <span>Saída (até as 12h)</span>
+                  </label>
+                  <Input 
+                    id="hero-checkout-input"
+                    type="date" 
+                    value={checkout} 
+                    min={checkin || format(new Date(), "yyyy-MM-dd")}
+                    onChange={e => setCheckout(e.target.value)} 
+                    className="bg-slate-50/80 border-slate-200 text-xs text-slate-900 h-8.5 font-bold rounded-xl"
+                  />
+                </div>
               </div>
 
-              <div className="space-y-1">
-                <label htmlFor="hero-checkout-input" className="text-[10.5px] font-semibold text-slate-500 flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-[#0F3D4C]" aria-hidden="true" />
-                  <span>Saída (até as 12h)</span>
-                </label>
-                <Input 
-                  id="hero-checkout-input"
-                  type="date" 
-                  value={checkout} 
-                  min={checkin || format(new Date(), "yyyy-MM-dd")}
-                  onChange={e => setCheckout(e.target.value)} 
-                  className="bg-slate-50/80 border-slate-200 text-xs text-slate-900 h-8.5 font-bold rounded-xl"
-                />
-              </div>
-            </div>
-
-            {/* Seletor de Tarifas */}
-            <div id="tarifas" className="space-y-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="text-xs font-bold text-slate-900">
-                  Escolha sua tarifa
-                </h2>
-                <div className="flex items-center gap-1.5">
-                  <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5 border border-slate-200/80" role="group" aria-label="Quantidade de hóspedes">
-                    <button
-                      type="button"
-                      onClick={() => updateRoom(rooms[0]?.id ?? 1, "adults", 1)}
-                      className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-all ${
-                        (rooms[0]?.adults ?? 1) === 1
-                          ? "bg-white text-[#091E26] shadow-2xs"
-                          : "text-slate-500 hover:text-slate-800"
-                      }`}
-                    >
-                      1 hósp.
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => updateRoom(rooms[0]?.id ?? 1, "adults", 2)}
-                      className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-all ${
-                        (rooms[0]?.adults ?? 1) === 2
-                          ? "bg-white text-[#091E26] shadow-2xs"
-                          : "text-slate-500 hover:text-slate-800"
-                      }`}
-                    >
-                      2 hósp.
-                    </button>
-                    {isThirdGuestEnabled && (
+              {/* Seletor de Tarifas */}
+              <div id="tarifas" className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="text-xs font-bold text-slate-900">
+                    Escolha sua tarifa
+                  </h2>
+                  <div className="flex items-center gap-1.5">
+                    <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5 border border-slate-200/80" role="group" aria-label="Quantidade de hóspedes">
                       <button
                         type="button"
-                        onClick={() => updateRoom(rooms[0]?.id ?? 1, "adults", 3)}
+                        onClick={() => updateRoom(rooms[0]?.id ?? 1, "adults", 1)}
                         className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-all ${
-                          (rooms[0]?.adults ?? 1) === 3
+                          (rooms[0]?.adults ?? 1) === 1
                             ? "bg-white text-[#091E26] shadow-2xs"
                             : "text-slate-500 hover:text-slate-800"
                         }`}
                       >
-                        3 hósp.
+                        1 hósp.
                       </button>
-                    )}
+                      <button
+                        type="button"
+                        onClick={() => updateRoom(rooms[0]?.id ?? 1, "adults", 2)}
+                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-all ${
+                          (rooms[0]?.adults ?? 1) === 2
+                            ? "bg-white text-[#091E26] shadow-2xs"
+                            : "text-slate-500 hover:text-slate-800"
+                        }`}
+                      >
+                        2 hósp.
+                      </button>
+                      {isThirdGuestEnabled && (
+                        <button
+                          type="button"
+                          onClick={() => updateRoom(rooms[0]?.id ?? 1, "adults", 3)}
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-all ${
+                            (rooms[0]?.adults ?? 1) === 3
+                              ? "bg-white text-[#091E26] shadow-2xs"
+                              : "text-slate-500 hover:text-slate-800"
+                          }`}
+                        >
+                          3 hósp.
+                        </button>
+                      )}
+                    </div>
+                    <span className="text-[10.5px] text-slate-500 font-medium">
+                      • {nights} {nights === 1 ? "noite" : "noites"}
+                    </span>
                   </div>
-                  <span className="text-[10.5px] text-slate-500 font-medium">
-                    • {nights} {nights === 1 ? "noite" : "noites"}
-                  </span>
                 </div>
+
+                <div className="space-y-1.5">
+                  {/* Opção 1: COM CAFÉ (com miniatura clicável para zoom) */}
+                  <div
+                    onClick={() => setRatePlan("with_breakfast")}
+                    className={`cursor-pointer p-2.5 sm:p-3 rounded-xl border transition-all flex items-center justify-between ${
+                      ratePlan === "with_breakfast"
+                        ? "border-[#0F3D4C] bg-[#0F3D4C]/[0.05] text-slate-900 ring-2 ring-[#C5A059]/35 shadow-xs"
+                        : "border-slate-200 hover:border-slate-300 bg-white text-slate-700"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setRatePlan("with_breakfast")
+                          setBreakfastZoomOpen(true)
+                        }}
+                        aria-label="Ampliar foto do café da manhã servido no flat"
+                        title="Clique para ampliar a foto do café da manhã"
+                        className="rounded-lg overflow-hidden border border-[#C5A059]/40 shrink-0 group/bf focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0F3D4C]"
+                      >
+                        <img
+                          src="/photos/soho/cafe-mesa-close.jpg"
+                          alt="Café da manhã servido na mesa do flat"
+                          width={112}
+                          height={84}
+                          decoding="async"
+                          className="w-14 h-10.5 aspect-[4/3] object-cover block group-hover/bf:scale-105 transition-transform"
+                        />
+                      </button>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 leading-none">
+                          <span className="font-bold text-xs text-slate-900">COM CAFÉ</span>
+                          {ratePlan === "with_breakfast" && (
+                            <span className="text-[8.5px] font-bold text-[#091E26] bg-[#C5A059]/25 border border-[#C5A059]/50 px-1.5 py-0.5 rounded leading-none">Ativa</span>
+                          )}
+                        </div>
+                        <p className="text-[10.5px] text-slate-500 leading-tight mt-0.5">No flat das 05:00 às 09:30</p>
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0 pl-2">
+                      {otaWithBreakfastDailyRate > withBreakfastConfig.dailyRate && (
+                        <div className="text-[10px] text-slate-400 line-through leading-none mb-0.5" title="Valor no Booking e Airbnb">
+                          R$ {formatBrl(otaWithBreakfastDailyRate)}
+                        </div>
+                      )}
+                      <div className="font-extrabold text-xs sm:text-sm text-slate-900 leading-none">
+                        R$ {formatBrl(withBreakfastConfig.dailyRate)}
+                      </div>
+                      <span className="text-[9px] text-slate-400 block mt-0.5">/ noite no PIX</span>
+                    </div>
+                  </div>
+
+                  {/* Opção 2: SEM CAFÉ */}
+                  <div
+                    onClick={() => setRatePlan("room_only")}
+                    className={`cursor-pointer p-2.5 sm:p-3 rounded-xl border transition-all flex items-center justify-between ${
+                      ratePlan === "room_only"
+                        ? "border-[#0F3D4C] bg-[#0F3D4C]/[0.05] text-slate-900 ring-2 ring-[#C5A059]/35 shadow-xs"
+                        : "border-slate-200 hover:border-slate-300 bg-white text-slate-700"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                        ratePlan === "room_only" ? "bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40" : "bg-slate-100 text-slate-600"
+                      }`}>
+                        <Building2 className="w-3.5 h-3.5" aria-hidden="true" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 leading-none">
+                          <span className="font-bold text-xs text-slate-900">SEM CAFÉ</span>
+                          {ratePlan === "room_only" && (
+                            <span className="text-[8.5px] font-bold text-[#091E26] bg-[#C5A059]/25 border border-[#C5A059]/50 px-1.5 py-0.5 rounded leading-none">Ativa</span>
+                          )}
+                        </div>
+                        <p className="text-[10.5px] text-slate-500 truncate mt-0.5">Somente hospedagem</p>
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0 pl-2">
+                      {otaRoomOnlyDailyRate > roomOnlyConfig.dailyRate && (
+                        <div className="text-[10px] text-slate-400 line-through leading-none mb-0.5" title="Valor no Booking e Airbnb">
+                          R$ {formatBrl(otaRoomOnlyDailyRate)}
+                        </div>
+                      )}
+                      <div className="font-extrabold text-xs sm:text-sm text-slate-900 leading-none">
+                        R$ {formatBrl(roomOnlyConfig.dailyRate)}
+                      </div>
+                      <span className="text-[9px] text-slate-400 block mt-0.5">/ noite no PIX</span>
+                    </div>
+                  </div>
+                </div>
+
+                {otaSavingsAmount > 0 && (
+                  <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-emerald-50/90 border border-emerald-200/80 text-[10.5px] text-emerald-800 font-semibold">
+                    <span className="truncate">Reserva direta vs. Booking / Airbnb:</span>
+                    <span className="font-extrabold shrink-0">- R$ {formatBrl(otaSavingsAmount)}</span>
+                  </div>
+                )}
               </div>
 
-              <div className="space-y-1.5">
-                {/* Opção 1: COM CAFÉ */}
-                <div
-                  onClick={() => setRatePlan("with_breakfast")}
-                  className={`cursor-pointer p-2.5 sm:p-3 rounded-xl border transition-all flex items-center justify-between ${
-                    ratePlan === "with_breakfast"
-                      ? "border-[#0F3D4C] bg-[#0F3D4C]/[0.05] text-slate-900 ring-2 ring-[#C5A059]/35 shadow-xs"
-                      : "border-slate-200 hover:border-slate-300 bg-white text-slate-700"
-                  }`}
+              {/* Botão de Ação Principal (CTA) */}
+              <div className="pt-0.5 space-y-1.5">
+                <Button
+                  onClick={() => handleStartBooking()}
+                  disabled={availabilityData?.available === false}
+                  className="w-full bg-gradient-to-r from-[#091E26] via-[#0F3D4C] to-[#091E26] hover:brightness-110 text-white border border-[#C5A059]/50 font-bold text-xs sm:text-sm h-10.5 sm:h-11 rounded-xl shadow-md shadow-[#091E26]/20 transition-all flex items-center justify-center gap-2"
                 >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
-                      ratePlan === "with_breakfast" ? "bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40" : "bg-slate-100 text-slate-600"
-                    }`}>
-                      <Coffee className="w-3.5 h-3.5" aria-hidden="true" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 leading-none">
-                        <span className="font-bold text-xs text-slate-900">COM CAFÉ</span>
-                        {ratePlan === "with_breakfast" && (
-                          <span className="text-[8.5px] font-bold text-[#091E26] bg-[#C5A059]/25 border border-[#C5A059]/50 px-1.5 py-0.5 rounded leading-none">Ativa</span>
-                        )}
-                      </div>
-                      <p className="text-[10.5px] text-slate-500 truncate mt-0.5">Entregue no flat das 05:00 às 09:30</p>
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0 pl-2">
-                    {otaWithBreakfastDailyRate > withBreakfastConfig.dailyRate && (
-                      <div className="text-[10px] text-slate-400 line-through leading-none mb-0.5" title="Valor no Booking e Airbnb">
-                        R$ {formatBrl(otaWithBreakfastDailyRate)}
-                      </div>
-                    )}
-                    <div className="font-extrabold text-xs sm:text-sm text-slate-900 leading-none">
-                      R$ {formatBrl(withBreakfastConfig.dailyRate)}
-                    </div>
-                    <span className="text-[9px] text-slate-400 block mt-0.5">/ noite no PIX</span>
-                  </div>
+                  <span>Reservar agora</span>
+                  <ArrowRight className="w-4 h-4 text-[#E5C98B]" aria-hidden="true" />
+                </Button>
+
+                <div className="flex items-center justify-center gap-1.5 text-[10.5px] text-slate-500 font-medium">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" aria-hidden="true" />
+                  <span>Cancelamento grátis até 24h antes do check-in</span>
                 </div>
-
-                {/* Opção 2: SEM CAFÉ */}
-                <div
-                  onClick={() => setRatePlan("room_only")}
-                  className={`cursor-pointer p-2.5 sm:p-3 rounded-xl border transition-all flex items-center justify-between ${
-                    ratePlan === "room_only"
-                      ? "border-[#0F3D4C] bg-[#0F3D4C]/[0.05] text-slate-900 ring-2 ring-[#C5A059]/35 shadow-xs"
-                      : "border-slate-200 hover:border-slate-300 bg-white text-slate-700"
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
-                      ratePlan === "room_only" ? "bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40" : "bg-slate-100 text-slate-600"
-                    }`}>
-                      <Building2 className="w-3.5 h-3.5" aria-hidden="true" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 leading-none">
-                        <span className="font-bold text-xs text-slate-900">SEM CAFÉ</span>
-                        {ratePlan === "room_only" && (
-                          <span className="text-[8.5px] font-bold text-[#091E26] bg-[#C5A059]/25 border border-[#C5A059]/50 px-1.5 py-0.5 rounded leading-none">Ativa</span>
-                        )}
-                      </div>
-                      <p className="text-[10.5px] text-slate-500 truncate mt-0.5">Somente hospedagem</p>
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0 pl-2">
-                    {otaRoomOnlyDailyRate > roomOnlyConfig.dailyRate && (
-                      <div className="text-[10px] text-slate-400 line-through leading-none mb-0.5" title="Valor no Booking e Airbnb">
-                        R$ {formatBrl(otaRoomOnlyDailyRate)}
-                      </div>
-                    )}
-                    <div className="font-extrabold text-xs sm:text-sm text-slate-900 leading-none">
-                      R$ {formatBrl(roomOnlyConfig.dailyRate)}
-                    </div>
-                    <span className="text-[9px] text-slate-400 block mt-0.5">/ noite no PIX</span>
-                  </div>
-                </div>
-              </div>
-
-              {otaSavingsAmount > 0 && (
-                <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-emerald-50/90 border border-emerald-200/80 text-[10.5px] text-emerald-800 font-semibold">
-                  <span className="truncate">Reserva direta vs. Booking / Airbnb:</span>
-                  <span className="font-extrabold shrink-0">- R$ {formatBrl(otaSavingsAmount)}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Botão de Ação Principal (CTA) */}
-            <div className="pt-0.5 space-y-1.5">
-              <Button
-                onClick={() => handleStartBooking()}
-                disabled={availabilityData?.available === false}
-                className="w-full bg-gradient-to-r from-[#091E26] via-[#0F3D4C] to-[#091E26] hover:brightness-110 text-white border border-[#C5A059]/50 font-bold text-xs sm:text-sm h-10.5 sm:h-11 rounded-xl shadow-md shadow-[#091E26]/20 transition-all flex items-center justify-center gap-2"
-              >
-                <span>Reservar agora</span>
-                <ArrowRight className="w-4 h-4 text-[#E5C98B]" aria-hidden="true" />
-              </Button>
-
-              <div className="flex items-center justify-center gap-1.5 text-[10.5px] text-slate-500 font-medium">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" aria-hidden="true" />
-                <span>Cancelamento grátis até 24h antes do check-in</span>
               </div>
             </div>
           </div>
@@ -1452,13 +1528,13 @@ export default function BookingEngine() {
         </div>
       </section>
 
-      {/* ── Galeria de Fotos Reais (12 fotos horizontais do Soho Residence) ── */}
+      {/* ── Galeria de Fotos Reais (13 fotos horizontais do Soho Residence) ── */}
       <section id="galeria" className="w-full min-w-0 max-w-4xl mx-auto px-4 sm:px-8 py-10 space-y-6">
         <div className="text-center space-y-1">
-          <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+          <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight text-balance">
             Fotos Reais do Flat & Área de Lazer
           </h2>
-          <p className="text-xs sm:text-sm text-slate-500 max-w-lg mx-auto">
+          <p className="text-xs sm:text-sm text-slate-500 max-w-lg mx-auto text-pretty">
             Conheça por dentro o padrão dos apartamentos e a cobertura completa do Edifício Soho Residence Service.
           </p>
         </div>
@@ -1471,7 +1547,7 @@ export default function BookingEngine() {
               width={1600}
               height={1067}
               decoding="async"
-              className="w-full h-full object-cover transition-all duration-300"
+              className="w-full h-full object-cover transition-all duration-300 block"
             />
             {galleryList.length > 1 && (
               <>
@@ -1508,14 +1584,14 @@ export default function BookingEngine() {
             </div>
           </div>
 
-          <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-12 gap-1.5 sm:gap-2">
+          <div className="grid grid-cols-4 sm:grid-cols-7 md:grid-cols-13 gap-1.5 sm:gap-2">
             {galleryList.map((photo: any, idx: number) => (
               <button
                 key={photo.id || idx}
                 type="button"
                 aria-label={`Ver foto ${idx + 1}: ${photo.title}`}
                 onClick={() => setActivePhotoIdx(idx)}
-                className={`h-12 sm:h-14 rounded-xl overflow-hidden border-2 transition-all ${
+                className={`aspect-[3/2] rounded-xl overflow-hidden border-2 transition-all ${
                   activePhotoIdx === idx ? "border-[#C5A059] ring-2 ring-[#C5A059]/30 opacity-100" : "border-transparent opacity-65 hover:opacity-100"
                 }`}
               >
@@ -1526,7 +1602,7 @@ export default function BookingEngine() {
                   height={213}
                   loading="lazy"
                   decoding="async"
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-cover block"
                 />
               </button>
             ))}
@@ -1537,12 +1613,12 @@ export default function BookingEngine() {
       {/* ── O Flat: Padrão Único & Itens Reais ───────────────────────────── */}
       <section id="detalhes" className="w-full min-w-0 max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
         <div className="space-y-1.5">
-          <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+          <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight text-balance">
             {siteConfig?.about?.title && !siteConfig.about.title.includes("Boutique")
               ? siteConfig.about.title
               : "O Flat: padrão único, equipado para morar ou trabalhar"}
           </h2>
-          <p className="text-xs sm:text-sm text-slate-600 max-w-2xl leading-relaxed">
+          <p className="text-xs sm:text-sm text-slate-600 max-w-2xl leading-relaxed text-pretty">
             {siteConfig?.about?.description && !siteConfig.about.description.includes("Macaé") && !siteConfig.about.description.includes("hóspedes exigentes")
               ? siteConfig.about.description
               : "Operamos 19 flats de mesmo padrão no Edifício Soho Residence Service, dimensionados para até 2 pessoas. Todos entregam enxoval de cama e banho higienizado, ar-condicionado, mesa de trabalho, Wi-Fi individual e cozinha equipada para preparar refeições rápidas."}
@@ -1557,7 +1633,7 @@ export default function BookingEngine() {
             </h3>
             <ul className="text-xs text-slate-600 space-y-1.5 font-normal leading-relaxed">
               {aboutRoomItems.map((item, i) => (
-                <li key={i}>• {item}</li>
+                <li key={i} className="text-pretty">• {item}</li>
               ))}
             </ul>
           </div>
@@ -1569,7 +1645,7 @@ export default function BookingEngine() {
             </h3>
             <ul className="text-xs text-slate-600 space-y-1.5 font-normal leading-relaxed">
               {aboutKitchenItems.map((item, i) => (
-                <li key={i}>• {item}</li>
+                <li key={i} className="text-pretty">• {item}</li>
               ))}
             </ul>
           </div>
@@ -1579,10 +1655,10 @@ export default function BookingEngine() {
       {/* ── Estrutura do Edifício Soho Residence ─────────────────────────── */}
       <section id="comodidades" className="w-full min-w-0 max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
         <div className="space-y-1">
-          <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+          <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight text-balance">
             Estrutura do Soho Residence
           </h2>
-          <p className="text-xs sm:text-sm text-slate-500">
+          <p className="text-xs sm:text-sm text-slate-500 text-pretty">
             Todas as áreas comuns do edifício estão liberadas para uso durante sua hospedagem.
           </p>
         </div>
@@ -1605,7 +1681,7 @@ export default function BookingEngine() {
               </div>
               <div>
                 <h3 className="font-bold text-xs sm:text-sm text-slate-900">{amenity.title}</h3>
-                <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">{amenity.description}</p>
+                <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed text-pretty">{amenity.description}</p>
               </div>
             </div>
           ))}
@@ -1615,10 +1691,10 @@ export default function BookingEngine() {
       {/* ── Localização no Centro de Campos ──────────────────────────────── */}
       <section id="localizacao" className="w-full min-w-0 max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-4">
         <div className="space-y-1">
-          <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+          <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight text-balance">
             Localização Central
           </h2>
-          <p className="text-xs sm:text-sm text-slate-500">
+          <p className="text-xs sm:text-sm text-slate-500 text-pretty">
             Fácil acesso a fóruns, bancos, clínicas, restaurantes e vias de saída da cidade.
           </p>
         </div>
@@ -1632,7 +1708,7 @@ export default function BookingEngine() {
               <p className="font-bold text-xs sm:text-sm text-slate-900">
                 Edifício Soho Residence Service
               </p>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-500 text-pretty">
                 {siteConfig?.branding?.address || "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ"}
               </p>
             </div>
@@ -1650,22 +1726,35 @@ export default function BookingEngine() {
         </div>
       </section>
 
-      {/* ── Avaliações Reais dos Hóspedes (Exibida apenas quando houver avaliações reais cadastradas) ── */}
+      {/* ── Avaliações Reais dos Hóspedes no Google ───────────────────────── */}
       {testimonialsList.length > 0 && (
         <section id="avaliacoes" className="w-full min-w-0 max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-1">
+              <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight text-balance">
                 Avaliações de Hóspedes
               </h2>
-              <p className="text-xs sm:text-sm text-slate-500">
+              <p className="text-xs sm:text-sm text-slate-500 text-pretty">
                 Relatos reais de quem já se hospedou conosco no Soho Residence.
               </p>
             </div>
-            <div className="flex items-center gap-1 text-amber-400 shrink-0" aria-label="Avaliação 5 estrelas">
-              {[...Array(5)].map((_, i) => (
-                <Star key={i} className="w-4 h-4 fill-amber-400" aria-hidden="true" />
-              ))}
+            <div className="flex flex-wrap items-center gap-3 shrink-0">
+              <div
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-50 border border-amber-200/80 text-xs font-bold text-slate-900"
+                aria-label="Nota 4,9 de 5 estrelas no Google com 27 avaliações"
+              >
+                <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400 shrink-0" aria-hidden="true" />
+                <span>4,9 ★ no Google (27 avaliações)</span>
+              </div>
+              <a
+                href={siteConfig?.branding?.googleMapsUrl || "https://share.google/LHu3541d5lhkdvbL2"}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-xs font-semibold text-[#0F3D4C] hover:text-[#091E26] hover:underline transition-colors"
+              >
+                <span>Ver todas no Google</span>
+                <ExternalLink className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+              </a>
             </div>
           </div>
 
@@ -1675,9 +1764,16 @@ export default function BookingEngine() {
                 key={t.id || idx}
                 className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/70 space-y-3 flex flex-col justify-between"
               >
-                <p className="text-xs text-slate-600 leading-relaxed">
-                  &ldquo;{t.comment}&rdquo;
-                </p>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-0.5 text-amber-400" aria-label={`Nota ${t.rating || 5} de 5 estrelas`}>
+                    {[...Array(Math.min(5, Math.max(1, Number(t.rating) || 5)))].map((_, i) => (
+                      <Star key={i} className="w-3.5 h-3.5 fill-amber-400" aria-hidden="true" />
+                    ))}
+                  </div>
+                  <blockquote className="text-xs text-slate-600 leading-relaxed text-pretty">
+                    &ldquo;{t.comment}&rdquo;
+                  </blockquote>
+                </div>
                 <div className="flex items-center gap-2.5 pt-2 border-t border-slate-100">
                   {t.avatar && !String(t.avatar).includes("images.unsplash.com") ? (
                     <img
@@ -1687,7 +1783,7 @@ export default function BookingEngine() {
                       height={32}
                       loading="lazy"
                       decoding="async"
-                      className="w-8 h-8 rounded-full object-cover border border-slate-200 shrink-0"
+                      className="w-8 h-8 aspect-square rounded-full object-cover border border-slate-200 shrink-0 block"
                     />
                   ) : (
                     <div className="w-8 h-8 rounded-full bg-[#0F3D4C] text-[#E5C98B] flex items-center justify-center font-bold text-xs shrink-0" aria-hidden="true">
@@ -1708,10 +1804,10 @@ export default function BookingEngine() {
       {/* ── Perguntas Frequentes (FAQ) ───────────────────────────────────── */}
       <section id="faq" className="w-full min-w-0 max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
         <div className="space-y-1">
-          <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+          <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight text-balance">
             Dúvidas Frequentes
           </h2>
-          <p className="text-xs sm:text-sm text-slate-500">
+          <p className="text-xs sm:text-sm text-slate-500 text-pretty">
             Informações diretas sobre horários, acesso, pets, garagem e cancelamento.
           </p>
         </div>
@@ -1734,7 +1830,7 @@ export default function BookingEngine() {
                   <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${isOpen ? "rotate-180 text-[#0F3D4C]" : ""}`} aria-hidden="true" />
                 </button>
                 {isOpen && (
-                  <div className="px-4 pb-4 text-xs text-slate-600 leading-relaxed font-normal border-t border-slate-50 pt-3">
+                  <div className="px-4 pb-4 text-xs text-slate-600 leading-relaxed font-normal border-t border-slate-50 pt-3 text-pretty">
                     {item.a}
                   </div>
                 )}
@@ -1820,6 +1916,45 @@ export default function BookingEngine() {
           Reservar agora
         </Button>
       </div>
+
+      {/* ── Modal de Zoom da Foto do Café da Manhã (sem sair do seletor) ────── */}
+      <Dialog open={breakfastZoomOpen} onOpenChange={setBreakfastZoomOpen}>
+        <DialogContent className="sm:max-w-xl p-4 sm:p-5 rounded-3xl bg-white border border-slate-200 space-y-3">
+          <DialogHeader>
+            <DialogTitle className="text-base sm:text-lg font-extrabold text-slate-900 flex items-center gap-2 text-balance">
+              <Coffee className="w-4 h-4 text-[#0F3D4C] shrink-0" aria-hidden="true" />
+              <span>Café da manhã servido no seu flat</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500 text-pretty">
+              Entregue diretamente no apartamento entre 05:00 e 09:30, no horário escolhido por você no Portal do Hóspede.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="rounded-2xl overflow-hidden border border-slate-200 bg-slate-100">
+            <img
+              src="/photos/soho/cafe-mesa-close.jpg"
+              alt="Mesa posta de café da manhã no flat da CorpFlats Soho Residence"
+              width={1200}
+              height={670}
+              decoding="async"
+              className="w-full h-auto aspect-[1200/670] object-cover block"
+            />
+          </div>
+
+          <DialogFooter className="sm:justify-between items-center gap-2">
+            <span className="text-[11px] text-slate-500 font-medium">
+              Pães, pão de queijo quentinho, frios, frutas frescas, ovos mexidos, bolo, suco e café.
+            </span>
+            <Button
+              type="button"
+              onClick={() => setBreakfastZoomOpen(false)}
+              className="bg-[#0F3D4C] hover:bg-[#091E26] text-white font-bold text-xs h-9 px-4 rounded-xl shrink-0"
+            >
+              Continuar na reserva
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Funil de Vendas Interativo do Motor de Reservas (5 Etapas) ─────── */}
       <BookingFunnelModal

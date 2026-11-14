@@ -4933,7 +4933,7 @@ export const enviarMidiaUnidadeTool = {
     properties: {
       categoria_fotos: {
         type: 'STRING',
-        description: 'Categoria opcional solicitada pelo cliente: PACOTE_COMPLETO, QUARTO, COZINHA, BANHEIRO ou LAZER.',
+        description: 'Categoria opcional solicitada pelo cliente: PACOTE_COMPLETO, QUARTO, COZINHA, CAFE, BANHEIRO ou LAZER.',
       },
     },
     required: [],
@@ -4952,7 +4952,7 @@ export const enviarMidiaUnidadeTool = {
           : [
               {
                 id: 1,
-                title: 'Quarto climatizado e bancada de trabalho - CorpFlats Soho Residence',
+                title: 'Quarto climatizado e bancada de trabalho',
                 category: 'O Flat',
                 imageUrl: `${baseUrl}/photos/soho/01-quarto-bancada.jpg`,
               },
@@ -4964,19 +4964,115 @@ export const enviarMidiaUnidadeTool = {
               },
               {
                 id: 3,
+                title: 'Mesa posta para refeições no apartamento',
+                category: 'O Flat',
+                imageUrl: `${baseUrl}/photos/soho/03-mesa-jantar.jpg`,
+              },
+              {
+                id: 4,
                 title: 'Cozinha com cooktop 2 bocas, frigobar e cafeteira',
                 category: 'Cozinha',
                 imageUrl: `${baseUrl}/photos/soho/04-cozinha-equipada.jpg`,
               },
               {
-                id: 4,
-                title: 'Cobertura com jacuzzi aquecida, saunas e academia no Soho Residence',
+                id: 5,
+                title: 'Café da manhã servido na mesa do flat',
+                category: 'Café no Flat',
+                imageUrl: `${baseUrl}/photos/soho/cafe-mesa-quarto.jpg`,
+              },
+              {
+                id: 6,
+                title: 'Banheiro com bancada em granito e secador de parede',
+                category: 'Banheiro',
+                imageUrl: `${baseUrl}/photos/soho/05-banheiro.jpg`,
+              },
+              {
+                id: 7,
+                title: 'Jacuzzi aquecida e deck de madeira na cobertura',
                 category: 'Cobertura & Lazer',
                 imageUrl: `${baseUrl}/photos/soho/06-cobertura-jacuzzi.jpg`,
               },
+              {
+                id: 8,
+                title: 'Terraço aberto com vista panorâmica da cidade',
+                category: 'Cobertura & Lazer',
+                imageUrl: `${baseUrl}/photos/soho/07-terraco-panoramico.jpg`,
+              },
+              {
+                id: 9,
+                title: 'Área de descanso integrada às saunas seca e a vapor',
+                category: 'Cobertura & Lazer',
+                imageUrl: `${baseUrl}/photos/soho/08-spa-saunas.jpg`,
+              },
+              {
+                id: 10,
+                title: 'Academia climatizada com vista alta',
+                category: 'Cobertura & Lazer',
+                imageUrl: `${baseUrl}/photos/soho/09-academia.jpg`,
+              },
+              {
+                id: 11,
+                title: 'Sala de jogos climatizada com sinuca e totó',
+                category: 'Cobertura & Lazer',
+                imageUrl: `${baseUrl}/photos/soho/10-sala-de-jogos.jpg`,
+              },
+              {
+                id: 12,
+                title: 'Recepção 24 horas e hall social',
+                category: 'Edifício & Garagem',
+                imageUrl: `${baseUrl}/photos/soho/11-lobby-elevadores.jpg`,
+              },
+              {
+                id: 13,
+                title: 'Fachada nº 209 e acesso à garagem coberta',
+                category: 'Edifício & Garagem',
+                imageUrl: `${baseUrl}/photos/soho/12-fachada-garagem.jpg`,
+              },
             ];
 
-      const selectedPhotos = defaultGallery.slice(0, 4).map((item) => {
+      const catFilter = String(args?.categoria_fotos || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+        .toUpperCase();
+      const textOf = (item) =>
+        `${item?.category || ''} ${item?.title || ''} ${item?.imageUrl || ''}`
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase();
+
+      let sourceItems = defaultGallery;
+      if (catFilter.includes('CAFE')) {
+        const matches = defaultGallery.filter((item) => /\bcafe\b/.test(textOf(item)));
+        if (matches.length > 0) sourceItems = matches;
+      } else if (catFilter.includes('COZINHA')) {
+        const matches = defaultGallery.filter((item) => textOf(item).includes('cozinha') || textOf(item).includes('integrado'));
+        if (matches.length > 0) sourceItems = matches;
+      } else if (catFilter.includes('BANHEIRO')) {
+        const matches = defaultGallery.filter((item) => textOf(item).includes('banheiro'));
+        if (matches.length > 0) sourceItems = matches;
+      } else if (/LAZER|COBERTURA|JACUZZI|ACADEMIA|SAUNA/.test(catFilter)) {
+        const matches = defaultGallery.filter((item) => /lazer|cobertura|jacuzzi|terraco|sauna|academia|jogos/.test(textOf(item)));
+        if (matches.length > 0) sourceItems = matches;
+      } else if (catFilter.includes('QUARTO')) {
+        const matches = defaultGallery.filter((item) => /o flat|quarto|integrado|mesa/.test(textOf(item)));
+        if (matches.length > 0) sourceItems = matches;
+      } else {
+        // Pacote completo curado: Quarto + Integrado + Cozinha + Café no Flat + Cobertura com Jacuzzi
+        const highlightMatchers = [
+          (i) => /01-quarto-bancada/.test(String(i?.imageUrl || '')),
+          (i) => /02-flat-integrado/.test(String(i?.imageUrl || '')),
+          (i) => /04-cozinha-equipada/.test(String(i?.imageUrl || '')),
+          (i) => /cafe-mesa-quarto/.test(String(i?.imageUrl || '')),
+          (i) => /06-cobertura-jacuzzi/.test(String(i?.imageUrl || '')),
+        ];
+        const curated = highlightMatchers.map((fn) => defaultGallery.find(fn)).filter(Boolean);
+        if (curated.length >= 4) {
+          sourceItems = curated;
+        }
+      }
+
+      const selectedPhotos = sourceItems.slice(0, 5).map((item) => {
         const rawUrl = String(item.imageUrl || '/photos/soho/01-quarto-bancada.jpg');
         return {
           titulo: item.title || 'Flat CorpFlats - Soho Residence',

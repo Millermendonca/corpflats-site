@@ -264,6 +264,8 @@ const FunnelStaySummaryCard = memo(function FunnelStaySummaryCard({
   otaSelectedDailyRate?: number
   onToggleRatePlan: () => void
 }) {
+  const [breakfastZoomOpen, setBreakfastZoomOpen] = useState(false)
+
   return (
     <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 p-3.5 sm:p-4 space-y-3 shadow-2xs">
       <div className="flex items-center justify-between pb-2 border-b border-slate-200/80 dark:border-slate-700/80">
@@ -308,9 +310,28 @@ const FunnelStaySummaryCard = memo(function FunnelStaySummaryCard({
 
       <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-2xs">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-9 h-9 rounded-xl bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40 flex items-center justify-center shrink-0 font-bold">
-            {ratePlan === "with_breakfast" ? <Coffee className="w-4 h-4" /> : <Building2 className="w-4 h-4" />}
-          </div>
+          {ratePlan === "with_breakfast" ? (
+            <button
+              type="button"
+              onClick={() => setBreakfastZoomOpen(true)}
+              aria-label="Ampliar foto do café da manhã servido no flat"
+              title="Ver foto ampliada do café da manhã"
+              className="rounded-lg overflow-hidden border border-[#C5A059]/40 shrink-0 group/bf focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0F3D4C]"
+            >
+              <img
+                src="/photos/soho/cafe-mesa-close.jpg"
+                alt="Café da manhã servido na mesa do flat"
+                width={112}
+                height={84}
+                decoding="async"
+                className="w-14 h-10.5 aspect-[4/3] object-cover block group-hover/bf:scale-105 transition-transform"
+              />
+            </button>
+          ) : (
+            <div className="w-9 h-9 rounded-xl bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40 flex items-center justify-center shrink-0 font-bold">
+              <Building2 className="w-4 h-4" />
+            </div>
+          )}
           <div className="min-w-0">
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
               Tarifa Selecionada
@@ -345,6 +366,45 @@ const FunnelStaySummaryCard = memo(function FunnelStaySummaryCard({
           <span>Trocar para {ratePlan === "with_breakfast" ? "Sem Café" : "Com Café"}</span>
         </Button>
       </div>
+
+      <Dialog open={breakfastZoomOpen} onOpenChange={setBreakfastZoomOpen}>
+        <DialogContent
+          overlayClassName="z-[105]"
+          className="sm:max-w-lg p-4 sm:p-5 rounded-3xl bg-white border border-slate-200 z-[110] space-y-3"
+        >
+          <DialogHeader>
+            <DialogTitle className="text-sm sm:text-base font-extrabold text-slate-900 flex items-center gap-2 text-balance">
+              <Coffee className="w-4 h-4 text-[#0F3D4C] shrink-0" aria-hidden="true" />
+              <span>Café da manhã servido no seu flat</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500 text-pretty">
+              Entregue diretamente no apartamento entre 05:00 e 09:30, no horário agendado por você.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-2xl overflow-hidden border border-slate-200 bg-slate-100">
+            <img
+              src="/photos/soho/cafe-mesa-close.jpg"
+              alt="Mesa posta de café da manhã no flat da CorpFlats Soho Residence"
+              width={1200}
+              height={670}
+              decoding="async"
+              className="w-full h-auto aspect-[1200/670] object-cover block"
+            />
+          </div>
+          <div className="flex items-center justify-between gap-2 pt-0.5">
+            <span className="text-[11px] text-slate-500 font-medium text-pretty">
+              Pães, pão de queijo quentinho, frios, frutas frescas, ovos mexidos, bolo, suco e café.
+            </span>
+            <Button
+              type="button"
+              onClick={() => setBreakfastZoomOpen(false)}
+              className="bg-[#0F3D4C] hover:bg-[#091E26] text-white font-bold text-xs h-8.5 px-3.5 rounded-xl shrink-0"
+            >
+              Voltar à reserva
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 })

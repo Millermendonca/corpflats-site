@@ -31,6 +31,10 @@ const CURATED_AIRY_PHOTOS = [
     url: "/photos/soho/02-flat-integrado.jpg"
   },
   {
+    title: "Café da manhã servido na mesa do flat",
+    url: "/photos/soho/cafe-mesa-quarto.jpg"
+  },
+  {
     title: "Terraço Panorâmico na Cobertura do Soho",
     url: "/photos/soho/07-terraco-panoramico.jpg"
   },

@@ -11814,6 +11814,9 @@ async function _loadDatabaseImpl() {
 
           const memCampaignsBeforePg = Array.isArray(db.broadcastCampaigns) ? [...db.broadcastCampaigns] : [];
           Object.assign(db, pgLoaded);
+          if (!pgLoaded.tariffSettings) {
+            db.tariffSettings = null;
+          }
           db.broadcastCampaigns = mergeBroadcastCampaignsPreservingActive(memCampaignsBeforePg, pgLoaded.broadcastCampaigns);
           if (!Array.isArray(db.flats) || db.flats.length === 0) {
             db.flats = DEFAULT_FLATS.map(f => ({ ...f }));
@@ -55499,7 +55502,7 @@ export function getTariffSettings() {
   }
 
   // Migração oficial Soho Residence V1: fotos reais, textos humanos, máx 2 hóspedes padrão, política de cancelamento 24h unificada e regra pet (cães <=10kg, máx 2, R$ 40/estadia)
-  if (!isNodeTestRunner && !db.tariffSettings.sohoOfficialSiteRevampV1Migrated) {
+  if (!isNodeTestRunner && (!pgPool || pgHydratedSuccessfully) && !db.tariffSettings.sohoOfficialSiteRevampV1Migrated) {
     if (!db.siteConfig) db.siteConfig = JSON.parse(JSON.stringify(DEFAULT_SITE_CONFIG));
     const prevBedCfg = db.siteConfig.bedConfig || {};
     const prevExtraCfg = db.siteConfig.extraBedConfig || {};
@@ -55621,7 +55624,7 @@ export function getTariffSettings() {
   }
 
   // Migração oficial Soho Residence V2: foto do café da manhã na mesa (#5 da galeria, 13 fotos) + 6 avaliações reais 5★ do Google
-  if (!isNodeTestRunner && !db.tariffSettings.sohoOfficialSiteRevampV2Migrated) {
+  if (!isNodeTestRunner && (!pgPool || pgHydratedSuccessfully) && !db.tariffSettings.sohoOfficialSiteRevampV2Migrated) {
     if (!db.siteConfig) db.siteConfig = JSON.parse(JSON.stringify(DEFAULT_SITE_CONFIG));
 
     const curGallery = Array.isArray(db.siteConfig.gallery) ? db.siteConfig.gallery : [];
@@ -55647,7 +55650,7 @@ export function getTariffSettings() {
     db.siteConfig.updatedAt = new Date().toISOString();
     db.tariffSettings.sohoOfficialSiteRevampV2Migrated = true;
     try {
-      saveDatabase("soho_official_site_revamp_v2_migration");
+      saveDatabase("settings_soho_official_site_revamp_v2");
     } catch (_) {}
   }
 
