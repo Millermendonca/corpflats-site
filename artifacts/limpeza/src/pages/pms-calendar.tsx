@@ -21,7 +21,7 @@ import {
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
   Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy,
   LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight, CreditCard, ExternalLink, QrCode, Link2, DoorOpen, Car,
-  Download, Upload, FileSpreadsheet, Wrench, Camera, Refrigerator, Bell, Gift
+  Download, Upload, FileSpreadsheet, Wrench, Camera, Refrigerator, Bell, Gift, ListOrdered
 } from "lucide-react"
 import { compressImage } from "@/lib/image-compression"
 import { useToast } from "@/hooks/use-toast"
@@ -435,9 +435,21 @@ export function safeParseDate(dateStr: string | null | undefined): Date | null {
   return d;
 }
 
-export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRes?: boolean; [key: string]: any }) {
+export default function PmsCalendar(props?: {
+  modalOnly?: boolean;
+  autoOpenNewRes?: boolean;
+  editReservationCode?: string | null;
+  reactivateReservationCode?: string | null;
+  onModalClosed?: () => void;
+  [key: string]: any;
+}) {
   const modalOnly = Boolean(props?.modalOnly)
   const autoOpenNewRes = Boolean(props?.autoOpenNewRes)
+  const editReservationCode = props?.editReservationCode || null
+  const reactivateReservationCode = props?.reactivateReservationCode || null
+  const onModalClosedRef = useRef(props?.onModalClosed)
+  onModalClosedRef.current = props?.onModalClosed
+  const [highlightedFlatNumber, setHighlightedFlatNumber] = useState<string | null>(null)
   const [, setLocation] = useLocation()
   const { toast } = useToast()
   const { data: user, isLoading: loadingUser } = useGetMe()
@@ -3179,13 +3191,15 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
       if (autoOpenNewRes) {
         handleOpenNewResRef.current();
         fetchData(false);
+      } else if (editReservationCode || reactivateReservationCode) {
+        fetchData(true);
       } else if (resModalOpen) {
         fetchData(false);
       }
       return;
     }
     fetchData(true);
-  }, [modalOnly, autoOpenNewRes]);
+  }, [modalOnly, autoOpenNewRes, editReservationCode, reactivateReservationCode]);
 
   useEffect(() => {
     if (modalOnly || loading) return;
@@ -4140,8 +4154,13 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     return () => window.removeEventListener("open-new-reservation-modal", handleGlobalOpenNewRes)
   }, [modalOnly])
 
+  const wasResModalOpenRef = useRef(false)
   useEffect(() => {
     window.dispatchEvent(new CustomEvent("gfm-res-modal-state", { detail: { open: resModalOpen } }))
+    if (wasResModalOpenRef.current && !resModalOpen) {
+      onModalClosedRef.current?.()
+    }
+    wasResModalOpenRef.current = resModalOpen
   }, [resModalOpen])
 
   useEffect(() => {
@@ -4762,10 +4781,74 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     }
   }
 
+  const handledModalEditCodeRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!modalOnly) return
+    const target = reactivateReservationCode || editReservationCode
+    if (!target) {
+      handledModalEditCodeRef.current = null
+      return
+    }
+    const key = `${reactivateReservationCode ? "R:" : "E:"}${target}`
+    if (handledModalEditCodeRef.current === key) return
+    if (loading && data.reservations.length === 0 && (data.expiredPreReservations || []).length === 0) return
+
+    const norm = target.trim().toUpperCase()
+    const matchInExpired = (data.expiredPreReservations || []).find(
+      (r: any) => String(r.code || "").toUpperCase() === norm || String(r.id) === target.trim()
+    )
+    const matchInActive = (data.reservations || []).find(
+      (r: any) => String(r.code || "").toUpperCase() === norm || String(r.id) === target.trim()
+    )
+    const found = matchInExpired || matchInActive
+    if (found) {
+      handledModalEditCodeRef.current = key
+      if (reactivateReservationCode || found.status === "expirada") {
+        handleReactivateExpiredRes(found)
+      } else {
+        handleOpenEditRes(found)
+      }
+    }
+  }, [modalOnly, loading, editReservationCode, reactivateReservationCode, data.reservations, data.expiredPreReservations])
+
   const handledUrlCodeRef = useRef<string | null>(null)
+  const handledFocusParamsRef = useRef<string | null>(null)
   useEffect(() => {
     if (modalOnly || typeof window === "undefined") return
     const sp = new URLSearchParams(window.location.search)
+    const focusDate = sp.get("focusDate")
+    const focusFlat = sp.get("focusFlat")
+    if ((focusDate || focusFlat) && !loading) {
+      const focusKey = `${focusDate || ""}|${focusFlat || ""}`
+      if (handledFocusParamsRef.current !== focusKey) {
+        handledFocusParamsRef.current = focusKey
+        if (focusDate) {
+          const parsedFocus = safeParseDate(focusDate)
+          if (parsedFocus) {
+            setCurrentDate(parsedFocus)
+            setPickerYear(parsedFocus.getFullYear())
+            setTimeout(() => scrollToDate(subDays(parsedFocus, 1), "smooth"), 120)
+          }
+        }
+        if (focusFlat) {
+          setHighlightedFlatNumber(String(focusFlat))
+          setTimeout(() => {
+            const matchedFlat = data.flats.find((f: any) => String(f.number) === String(focusFlat) || String(f.id) === String(focusFlat))
+            if (matchedFlat) {
+              const rowEl = document.querySelector(`[data-flat-row-id="${matchedFlat.id}"]`)
+              rowEl?.scrollIntoView({ behavior: "smooth", block: "center" })
+            }
+          }, 220)
+          setTimeout(() => setHighlightedFlatNumber(null), 4200)
+        }
+        try {
+          if (!sp.get("code") && !sp.get("reservation") && !sp.get("reactivateCode") && !sp.get("reactivate")) {
+            window.history.replaceState({}, "", window.location.pathname)
+          }
+        } catch {}
+      }
+    }
+
     const reactivateCode = sp.get("reactivateCode") || sp.get("reactivate")
     const targetCode = reactivateCode || sp.get("code") || sp.get("reservation")
     if (!targetCode) return
@@ -7277,7 +7360,28 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Alternador Rápido Mapa | Lista (Padrão Cloudbeds / Stays.net) */}
+            <div className="inline-flex items-center rounded-lg border border-slate-200 dark:border-slate-800 bg-muted/50 p-0.5 h-8 shadow-2xs">
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 px-2.5 h-7 rounded-md text-xs font-bold bg-background text-primary shadow-xs"
+                title="Visão atual: Mapa de Ocupação (Calendário)"
+              >
+                <CalendarDays className="w-3.5 h-3.5" />
+                <span>Mapa</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setLocation("/lista-reservas")}
+                className="inline-flex items-center gap-1.5 px-2.5 h-7 rounded-md text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-background/60 transition-colors cursor-pointer"
+                title="Alternar para Lista Geral de Reservas (ordem de chegada)"
+              >
+                <ListOrdered className="w-3.5 h-3.5" />
+                <span>Lista</span>
+              </button>
+            </div>
+
             <Button 
               onClick={() => fetchData(false)} 
               variant="outline" 
@@ -7859,7 +7963,11 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                         gridTemplateColumns,
                         gridTemplateRows: "48px"
                       }}
-                      className="grid border-b hover:bg-muted/10 transition-colors h-12 items-center relative"
+                      className={`grid border-b hover:bg-muted/10 transition-all h-12 items-center relative ${
+                        highlightedFlatNumber && String(flat.number) === String(highlightedFlatNumber)
+                          ? "ring-2 ring-primary bg-primary/10 z-20"
+                          : ""
+                      }`}
                     >
                       {/* Flat Number Header with 100% Solid Opaque Background */}
                       <div 

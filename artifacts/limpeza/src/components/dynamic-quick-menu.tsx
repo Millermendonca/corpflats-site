@@ -40,9 +40,10 @@ export interface QuickMenuState {
 }
 
 const SHORT_LABELS: Record<string, string> = {
-  "/reservas": "Reservas",
+  "/reservas": "Mapa PMS",
+  "/lista-reservas": "Lista Res.",
   "/painel-aovivo": "Ao Vivo",
-  "/caixa-entrada-ota": "OTA Inbox",
+  "/caixa-entrada-ota": "Lista Res.",
   "/relatorios-reservas": "Ocupação",
   "/crm": "Hóspedes",
   "/portaria": "Portaria",
@@ -91,6 +92,7 @@ const SHORT_LABELS: Record<string, string> = {
 // Ordem inicial inteligente para quando o usuário ainda não acumulou cliques
 const INITIAL_PRIORITY_ORDER: string[] = [
   "/reservas",
+  "/lista-reservas",
   "/crm",
   "/dashboard",
   "/reports",

@@ -114,6 +114,7 @@ const ServerMonitorPage = lazyWithRetry(() => import('@/pages/server-monitor'));
 const SmartFlatPreview = lazyWithRetry(() => import('@/pages/smart-flat-preview'));
 const PricingSebraePage = lazyWithRetry(() => import('@/pages/precificacao-sebrae'));
 const OtaInboxPage = lazyWithRetry(() => import('@/pages/ota-inbox'));
+const ReservationsListPage = lazyWithRetry(() => import('@/pages/reservations-list'));
 const AjudaWbpPage = lazyWithRetry(() => import('@/pages/ajuda-wbp'));
 const EquipePage = lazyWithRetry(() => import('@/pages/equipe'));
 const FlatXrayHub = lazyWithRetry(() => import('@/pages/flat-xray-hub'));
@@ -672,10 +673,13 @@ function Router() {
         <AdminRoute path="/precificacao-sebrae" component={PricingSebraePage} moduleName="a Precificação SEBRAE" />
         <AdminRoute path="/pricing-sebrae" component={PricingSebraePage} moduleName="a Precificação SEBRAE" />
 
-        {/* Feature 29: Caixa de Entrada OTA & Quarentena (Recepção e Admin) */}
-        <ReceptionRoute path="/caixa-entrada-ota" component={OtaInboxPage} moduleName="a Caixa de Entrada OTA" />
-        <ReceptionRoute path="/ota-inbox" component={OtaInboxPage} moduleName="a Caixa de Entrada OTA" />
-        <ReceptionRoute path="/quarentena" component={OtaInboxPage} moduleName="a Quarentena de Reservas" />
+        {/* Feature 29: Central / Lista Geral de Reservas & Quarentena OTA Unificada (Recepção e Admin) */}
+        <ReceptionRoute path="/lista-reservas" component={ReservationsListPage} moduleName="a Lista de Reservas (Central)" />
+        <ReceptionRoute path="/central-reservas" component={ReservationsListPage} moduleName="a Lista de Reservas (Central)" />
+        <ReceptionRoute path="/todas-reservas" component={ReservationsListPage} moduleName="a Lista de Reservas (Central)" />
+        <ReceptionRoute path="/caixa-entrada-ota" component={ReservationsListPage} moduleName="a Central de Reservas & OTAs" />
+        <ReceptionRoute path="/ota-inbox" component={ReservationsListPage} moduleName="a Central de Reservas & OTAs" />
+        <ReceptionRoute path="/quarentena" component={ReservationsListPage} moduleName="a Quarentena de Reservas" />
         <ReceptionRoute path="/ajuda-wbp" component={AjudaWbpPage} moduleName="o Manual de Integração Channex.io" />
         <ReceptionRoute path="/ajuda-channex" component={AjudaWbpPage} moduleName="o Manual de Integração Channex.io" />
 

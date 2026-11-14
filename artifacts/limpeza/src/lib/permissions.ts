@@ -23,8 +23,8 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     title: "📅 Reservas & Hospedagem",
     items: [
       { href: "/reservas", label: "Mapa de Reservas (PMS)", description: "Calendário de ocupação e reservas" },
+      { href: "/lista-reservas", label: "Lista de Reservas (Central)", description: "Feed ao vivo de todas as reservas por ordem de chegada, filtros, quarentena OTA e ações rápidas" },
       { href: "/painel-aovivo", label: "Painel Ao Vivo (Monitor 32\")", description: "Painel de TV da operação ao vivo com chegadas, saídas e governança" },
-      { href: "/caixa-entrada-ota", label: "Caixa de Entrada OTA", description: "Reservas Booking/Airbnb, quarentena e conciliação" },
       { href: "/relatorios-reservas", label: "Relatórios & Ocupação (PMS)", description: "Taxa de ocupação, diária média, RevPAR e ranking" },
       { href: "/crm", label: "Hóspedes & Empresas (CRM 360)", description: "LTV, fidelidade, preferências e faturamento PJ" },
       { href: "/portaria", label: "Terminal da Portaria (Tablet)", description: "Check-in presencial e liberação" },
@@ -389,11 +389,14 @@ export const ROUTE_ALIASES: Record<string, string> = {
   "/site-editor": "/editor-site",
   "/cms": "/editor-site",
 
-  // Caixa de Entrada OTA & Manual Channex
-  "/ota-inbox": "/caixa-entrada-ota",
-  "/quarentena": "/caixa-entrada-ota",
-  "/ajuda-wbp": "/caixa-entrada-ota",
-  "/ajuda-channex": "/caixa-entrada-ota",
+  // Lista / Central de Reservas & Caixa de Entrada OTA Unificada
+  "/central-reservas": "/lista-reservas",
+  "/todas-reservas": "/lista-reservas",
+  "/caixa-entrada-ota": "/lista-reservas",
+  "/ota-inbox": "/lista-reservas",
+  "/quarentena": "/lista-reservas",
+  "/ajuda-wbp": "/lista-reservas",
+  "/ajuda-channex": "/lista-reservas",
 
   // Reservar
   "/booking": "/reservar",
@@ -538,6 +541,13 @@ export function hasModuleAccess(
     if (canonical === "/disparo-inteligente") {
       const waEquivalents = ["/whatsapp", "/whatsapp-chat", "/crm", "/reservas"];
       return allowed.some((m) => waEquivalents.includes(canonicalizeRoute(m)));
+    }
+
+    if (canonical === "/lista-reservas") {
+      const resEquivalents = ["/reservas", "/caixa-entrada-ota"];
+      if (allowed.some((m) => resEquivalents.includes(canonicalizeRoute(m)) || resEquivalents.includes(m))) {
+        return true;
+      }
     }
 
     if (canonical === "/raio-x-flats") {
