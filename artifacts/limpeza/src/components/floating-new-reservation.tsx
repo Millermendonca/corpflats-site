@@ -148,6 +148,7 @@ export function FloatingNewReservationButton() {
 
   const isOnReservationsPage =
     location === '/reservas' ||
+    location === '/pms-calendar' ||
     location === '/lista-reservas' ||
     location === '/central-reservas' ||
     location === '/todas-reservas' ||

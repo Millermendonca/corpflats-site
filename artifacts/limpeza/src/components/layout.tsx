@@ -457,9 +457,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
     }
   }, [isLoading, error, effectiveUser, location, isAnservePinRoute, setLocation])
 
-  // Fecha o drawer ao navegar
+  // Fecha gavetas/dropdowns flutuantes ao navegar
   useEffect(() => {
     setMobileMenuOpen(false)
+    setNotifDropdownOpen(false)
+    setIsDesktopOpen(false)
   }, [location])
 
   // Auto-expande categoria ativa na navegação (SEMPRE antes de early returns para respeitar Rules of Hooks)
@@ -653,8 +655,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
                         <div 
                           key={n.id}
                           onClick={() => {
-                            setNotifDropdownOpen(false)
-                            if (n.targetUrl) setLocation(n.targetUrl)
+                            if (n.targetUrl) {
+                              navigateFromOverlay(setLocation, n.targetUrl, () =>
+                                setNotifDropdownOpen(false)
+                              )
+                            } else {
+                              setNotifDropdownOpen(false)
+                            }
                           }}
                           className={`p-3 rounded-2xl border transition-all cursor-pointer ${
                             !n.read 
@@ -688,11 +695,17 @@ export function Shell({ children }: { children: React.ReactNode }) {
                       Marcar todas como lidas
                     </Button>
 
-                    <Link href="/notificacoes" onClick={() => setNotifDropdownOpen(false)}>
-                      <Button size="sm" className="text-[11px] h-7 px-3 font-bold rounded-xl bg-primary text-primary-foreground">
-                        Ver todas
-                      </Button>
-                    </Link>
+                    <Button
+                      size="sm"
+                      onClick={() =>
+                        navigateFromOverlay(setLocation, "/notificacoes", () =>
+                          setNotifDropdownOpen(false)
+                        )
+                      }
+                      className="text-[11px] h-7 px-3 font-bold rounded-xl bg-primary text-primary-foreground"
+                    >
+                      Ver todas
+                    </Button>
                   </div>
                 </div>
               )}

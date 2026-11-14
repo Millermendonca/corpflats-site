@@ -3117,6 +3117,9 @@ export default function PmsCalendar(props?: {
   const isFetchingRef = useRef(false);
   const pendingFetchRef = useRef(false);
   const lastAuxFetchRef = useRef(0);
+  const focusTargetCodeRef = useRef<string>("");
+  focusTargetCodeRef.current = String(reactivateReservationCode || editReservationCode || "").trim();
+  const modalFetchDoneForKeyRef = useRef<string | null>(null);
 
   const fetchData = async (showLoading = false) => {
     if (isFetchingRef.current) {
@@ -3132,10 +3135,29 @@ export default function PmsCalendar(props?: {
       const activeEnd = timelineBoundsRef.current.end;
       const startStr = format(subDays(activeStart, 5), "yyyy-MM-dd");
       const endStr = format(addDays(activeEnd, 5), "yyyy-MM-dd");
-      const res = await fetch(`/api/pms/calendar?startDate=${startStr}&endDate=${endStr}&_t=${Date.now()}`, { cache: "no-store", credentials: "include" });
+      let focusCodeParam = focusTargetCodeRef.current;
+      if (!focusCodeParam && !modalOnly && typeof window !== "undefined") {
+        const sp = new URLSearchParams(window.location.search);
+        focusCodeParam = (
+          sp.get("reactivateCode") ||
+          sp.get("reactivate") ||
+          sp.get("code") ||
+          sp.get("reservation") ||
+          ""
+        ).trim();
+      }
+      const focusQs = focusCodeParam ? `&focusCode=${encodeURIComponent(focusCodeParam)}` : "";
+      const activeTargetKey =
+        modalOnly && focusTargetCodeRef.current
+          ? `${reactivateReservationCode ? "R:" : "E:"}${focusTargetCodeRef.current}`
+          : null;
+      const res = await fetch(`/api/pms/calendar?startDate=${startStr}&endDate=${endStr}${focusQs}&_t=${Date.now()}`, { cache: "no-store", credentials: "include" });
       if (res.ok) {
         const json = await res.json();
         setData(json);
+        if (activeTargetKey) {
+          modalFetchDoneForKeyRef.current = activeTargetKey;
+        }
         if (Array.isArray(json.agencies)) setAgencies(json.agencies);
         if (Array.isArray(json.companies)) setCompanies(json.companies);
         if (json.settings?.checkinTime) setDefaultCheckinTime(json.settings.checkinTime);
@@ -4789,7 +4811,7 @@ export default function PmsCalendar(props?: {
       handledModalEditCodeRef.current = null
       return
     }
-    const key = `${reactivateReservationCode ? "R:" : "E:"}${target}`
+    const key = `${reactivateReservationCode ? "R:" : "E:"}${target.trim()}`
     if (handledModalEditCodeRef.current === key) return
     if (loading && data.reservations.length === 0 && (data.expiredPreReservations || []).length === 0) return
 
@@ -4808,6 +4830,14 @@ export default function PmsCalendar(props?: {
       } else {
         handleOpenEditRes(found)
       }
+    } else if (!loading && modalFetchDoneForKeyRef.current === key) {
+      handledModalEditCodeRef.current = key
+      toast({
+        title: "Reserva não localizada",
+        description: `Não foi possível encontrar a reserva ${target} para edição.`,
+        variant: "destructive",
+      })
+      onModalClosedRef.current?.()
     }
   }, [modalOnly, loading, editReservationCode, reactivateReservationCode, data.reservations, data.expiredPreReservations])
 

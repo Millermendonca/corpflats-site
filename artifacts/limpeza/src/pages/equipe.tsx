@@ -1267,6 +1267,7 @@ export function TeamPage() {
                   >
                     <option value="">Padrão automático do perfil</option>
                     <option value="/reservas">📅 Mapa de Reservas (/reservas)</option>
+                    <option value="/lista-reservas">📋 Lista Geral de Reservas (/lista-reservas)</option>
                     <option value="/dashboard">🧹 Painel de Limpeza (/dashboard)</option>
                     <option value="/whatsapp-chat">💬 WhatsApp Chat (/whatsapp-chat)</option>
                     <option value="/notas">🧾 Notas Fiscais NFS-e (/notas)</option>
@@ -1414,6 +1415,7 @@ export function TeamPage() {
                   >
                     <option value="">Padrão automático do perfil</option>
                     <option value="/reservas">📅 Mapa de Reservas (/reservas)</option>
+                    <option value="/lista-reservas">📋 Lista Geral de Reservas (/lista-reservas)</option>
                     <option value="/dashboard">🧹 Painel de Limpeza (/dashboard)</option>
                     <option value="/whatsapp-chat">💬 WhatsApp Chat (/whatsapp-chat)</option>
                     <option value="/notas">🧾 Notas Fiscais NFS-e (/notas)</option>

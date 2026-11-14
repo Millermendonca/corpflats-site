@@ -36,6 +36,7 @@ export function createBackNavigationController(env: BackHistoryEnv) {
   let ledger: BackLedgerStep[] = [];
   let isRestoringFromBack = false;
   let pendingRewindTargetDepth: number | null = null;
+  let staleSkipDirection: "back" | "forward" | null = null;
   let scheduledHandle: any = null;
 
   function isKioskLocked(): boolean {
@@ -74,6 +75,7 @@ export function createBackNavigationController(env: BackHistoryEnv) {
     currentPageId = `gfm_page_${++pageSeq}`;
     ledger = [];
     pendingRewindTargetDepth = null;
+    staleSkipDirection = null;
     cleanHrefForPage = null;
     lastObservedState = env.getState();
     if (scheduledHandle !== null) {
@@ -210,6 +212,7 @@ export function createBackNavigationController(env: BackHistoryEnv) {
   }
 
   function handleExternalHistoryWrite(kind?: "push" | "replace") {
+    staleSkipDirection = null;
     if (env.getPathname() !== currentPathname) {
       resetForNewRoute();
       return;
@@ -225,17 +228,27 @@ export function createBackNavigationController(env: BackHistoryEnv) {
     if (isKioskLocked()) return { shouldReplace: false };
     const actualDepth = getActualBrowserDepth();
     const hasOverlayHistory = actualDepth > 0 || ledger.length > 0;
+    const currentFullHref = env.getPathname() + env.getSearch();
+    const targetPath = String(targetHref || "").split("?")[0] || "/";
 
     // Clear active ledger without scheduling a rewind so the upcoming route navigation isn't undone
     ledger = [];
     pendingRewindTargetDepth = null;
+    staleSkipDirection = null;
     if (scheduledHandle !== null) {
       env.cancelSchedule(scheduledHandle);
       scheduledHandle = null;
     }
 
+    // When navigating to a new query on the same pathname from an overlay, advance currentPageId
+    // so any earlier synthetic steps beneath the replaced entry are treated as stale if reached via Back.
+    if (hasOverlayHistory && targetPath === env.getPathname() && targetHref !== currentFullHref) {
+      currentPageId = `gfm_page_${++pageSeq}`;
+      cleanHrefForPage = null;
+    }
+
     // If we pushed at least 1 in-page step, replacing the current top entry keeps the base page right underneath targetHref
-    return { shouldReplace: hasOverlayHistory && targetHref !== env.getPathname() };
+    return { shouldReplace: hasOverlayHistory && targetHref !== currentFullHref };
   }
 
   function handlePopState(eventState?: any) {
@@ -261,6 +274,7 @@ export function createBackNavigationController(env: BackHistoryEnv) {
 
     // Handle completion of our own programmatic history.go(delta) rewind
     if (pendingRewindTargetDepth !== null) {
+      staleSkipDirection = null;
       const expectedDepth = pendingRewindTargetDepth;
       pendingRewindTargetDepth = null;
 
@@ -282,8 +296,12 @@ export function createBackNavigationController(env: BackHistoryEnv) {
         }
       }
 
-      // If new steps were queued while rewind was in flight, synchronize now
-      if (ledger.length !== getActualBrowserDepth()) {
+      // If new steps were queued while rewind was in flight (or top step ID changed during swap), synchronize now
+      const topStep = ledger.length > 0 ? ledger[ledger.length - 1] : null;
+      if (
+        ledger.length !== getActualBrowserDepth() ||
+        (topStep && (!curState || curState.__gfmStepId !== topStep.id))
+      ) {
         scheduleSync();
       }
       return;
@@ -291,6 +309,7 @@ export function createBackNavigationController(env: BackHistoryEnv) {
 
     // Normal user Back press on the current page: pop and undo in LIFO order down to actualDepth
     if (ledger.length > actualDepth) {
+      staleSkipDirection = null;
       if (cleanHrefForPage && env.getHref() !== cleanHrefForPage) {
         env.replaceState(curState, cleanHrefForPage);
         currentSearch = env.getSearch();
@@ -309,15 +328,31 @@ export function createBackNavigationController(env: BackHistoryEnv) {
 
     // Stale orphan entry from an earlier visit to this same URL (e.g. tabs visited before navigating away via a link):
     // Skip past ghost entries cleanly in BOTH Back and Forward directions so the user never gets stuck on the same URL.
-    if (
-      ledger.length === 0 &&
-      nowPath === prevPath &&
-      nowSearch === prevSearch
-    ) {
+    if (ledger.length === 0 && nowPath === prevPath) {
       const prevHasStalePage =
         Boolean(prevState && typeof prevState === "object" && typeof prevState.__gfmPageId === "string" && prevState.__gfmPageId !== currentPageId);
       const curHasStalePage =
         Boolean(curState && typeof curState === "object" && typeof curState.__gfmPageId === "string" && curState.__gfmPageId !== currentPageId);
+
+      if (staleSkipDirection === "forward") {
+        if (curHasStalePage) {
+          env.forward();
+        } else {
+          staleSkipDirection = null;
+        }
+        return;
+      }
+
+      if (staleSkipDirection === "back") {
+        if (curHasStalePage) {
+          env.back();
+        } else {
+          // Reached the depth-0 base entry of the stale visit; step back once more to exit onto the prior page/entry
+          staleSkipDirection = null;
+          env.back();
+        }
+        return;
+      }
 
       if (prevHasStalePage) {
         const stalePageId = prevState.__gfmPageId;
@@ -327,14 +362,21 @@ export function createBackNavigationController(env: BackHistoryEnv) {
         const currDepth = currIsSameStale && typeof curState.__gfmDepth === "number" ? curState.__gfmDepth : 0;
 
         if (!currIsSameStale || currDepth < prevDepth) {
+          if (curHasStalePage) {
+            staleSkipDirection = "back";
+          }
           env.back();
         } else if (currDepth > prevDepth) {
+          staleSkipDirection = "forward";
           env.forward();
         }
-      } else if (curHasStalePage) {
+      } else if (curHasStalePage && nowSearch === prevSearch) {
         // Stepped Forward from a base (non-step) page entry onto a stale ghost entry
+        staleSkipDirection = "forward";
         env.forward();
       }
+    } else {
+      staleSkipDirection = null;
     }
   }
 
@@ -373,7 +415,11 @@ function getBrowserController(): ControllerInstance | null {
     // Preserve active in-page back-ledger metadata when external callers (e.g., query-param cleanup
     // `window.history.replaceState({}, "", cleanUrl)`) update the URL on the same pathname.
     window.history.replaceState = function (data: any, unused: string, url?: string | URL | null) {
-      if (!internalHistoryMutation) {
+      if (
+        !internalHistoryMutation &&
+        singletonController &&
+        singletonController.getLedger().length > 0
+      ) {
         const cur = window.history.state;
         if (cur && typeof cur === "object" && typeof cur.__gfmPageId === "string") {
           let targetPath = window.location.pathname;

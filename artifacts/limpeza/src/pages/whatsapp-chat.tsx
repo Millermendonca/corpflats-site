@@ -963,6 +963,11 @@ export default function WhatsappChat() {
     },
     'wa-active-conversation'
   )
+  useEffect(() => {
+    if (isMobileListOpen || !activePhone) {
+      clearBackStepsBySource('wa-conv-switch')
+    }
+  }, [isMobileListOpen, activePhone])
   useBackLayer(
     Boolean(activeConversation && showDossier && isOverlayDossierViewport),
     () => setShowDossier(false),

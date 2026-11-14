@@ -610,6 +610,12 @@ export default function ReservationsListPage() {
   const activeDrawerRow =
     activeDrawerIndex >= 0 ? filteredAndSortedRows[activeDrawerIndex] : null;
 
+  useEffect(() => {
+    if (drawerUid && !activeDrawerRow && !loading) {
+      closeQuickDrawer();
+    }
+  }, [drawerUid, activeDrawerRow, loading, closeQuickDrawer]);
+
   const handleSelectRowDrawer = (row: UnifiedReservationRow) => {
     if (row.sourceType === "quarantine" && row.rawQuarantineItem) {
       setQuarantineItem(row.rawQuarantineItem);

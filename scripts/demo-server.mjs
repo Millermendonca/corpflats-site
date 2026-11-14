@@ -1595,6 +1595,7 @@ export function ensureSystemUsers(database) {
       defaultRoute: "/reservas",
       hideCopilot: true,
       allowedModules: [...THAMIRIS_CLEAN_MODULES],
+      listaReservasSynced: true,
       passwordHash: hashPassword(THAMIRIS_INITIAL_PASSWORD),
       active: true,
       whatsapp: "5521997142513",
@@ -35578,9 +35579,11 @@ app.get("/api/pms/calendar", (req, res) => {
     }
   }
 
-  const { startDate, endDate } = req.query;
+  const { startDate, endDate, focusCode } = req.query;
   const start = startDate || getOffsetDateStr(-3);
   const end = endDate || getOffsetDateStr(30);
+  const rawFocusCode = typeof focusCode === "string" ? focusCode.trim() : "";
+  const normFocusCode = rawFocusCode.toUpperCase();
 
   const todayStr = getTodayStr();
   // Expira e sanea pré-reservas ANTES de gerar os cards de governança do dia (evitando contaminação de check-out em pré-reservas expiradas)
@@ -35633,6 +35636,14 @@ app.get("/api/pms/calendar", (req, res) => {
   sweepExpiredPreReservations(db, saveDatabase);
 
   const rawReservations = (db.reservations || []).filter(r => {
+    if (!r || r.status === "expirada") return false;
+    if (
+      normFocusCode &&
+      (String(r.code || r.reservationCode || "").toUpperCase() === normFocusCode ||
+        String(r.id) === rawFocusCode)
+    ) {
+      return true;
+    }
     const effectiveCheckout = (r.earlyCheckout && r.originalCheckoutDate && r.originalCheckoutDate > r.checkoutDate)
       ? r.originalCheckoutDate
       : r.checkoutDate;
@@ -35640,8 +35651,7 @@ app.get("/api/pms/calendar", (req, res) => {
       r.checkinDate <= end &&
       effectiveCheckout >= start &&
       r.status !== "cancelada" &&
-      r.status !== "cancelled" &&
-      r.status !== "expirada"
+      r.status !== "cancelled"
     );
   });
 
@@ -35817,7 +35827,17 @@ app.get("/api/pms/calendar", (req, res) => {
   const isLiteMode = req.query.lite === "1";
 
   const fullExpiredItems = (db.reservations || [])
-    .filter(r => r && r.status === "expirada" && r.checkinDate && r.checkinDate >= todayStr)
+    .filter(r => {
+      if (!r || r.status !== "expirada" || !r.checkinDate) return false;
+      if (
+        normFocusCode &&
+        (String(r.code || r.reservationCode || "").toUpperCase() === normFocusCode ||
+          String(r.id) === rawFocusCode)
+      ) {
+        return true;
+      }
+      return r.checkinDate >= todayStr;
+    })
     .map(r => {
       const conflicts = findActiveOverbookingConflicts(db, {
         flatId: r.flatId,

@@ -4,7 +4,8 @@ import { FrozenSlot, useStableCallback } from "@/lib/render-freeze"
 import {
   useBackLayer,
   useBackTabState,
-  recordBackSelectionStep
+  recordBackSelectionStep,
+  clearBackStepsBySource
 } from "@/lib/back-navigation"
 import { Shell } from "@/components/layout"
 import { Card } from "@/components/ui/card"
@@ -1151,6 +1152,18 @@ export default function EmailHub() {
   })
 
   // Smart Back Navigation: Webmail folders, mobile reading pane, drawers, compose & fullscreen modes
+  const [isMobileWebmailViewport, setIsMobileWebmailViewport] = useState<boolean>(() =>
+    typeof window !== "undefined" ? window.innerWidth < 768 : false
+  )
+  useEffect(() => {
+    const syncViewport = () => setIsMobileWebmailViewport(window.innerWidth < 768)
+    window.addEventListener("resize", syncViewport)
+    return () => window.removeEventListener("resize", syncViewport)
+  }, [])
+  useEffect(() => {
+    clearBackStepsBySource("webmail-msg-switch")
+  }, [selectedFolder, selectedLabelId])
+
   useBackTabState(
     selectedFolder,
     (folder) => {
@@ -1160,7 +1173,14 @@ export default function EmailHub() {
     },
     { id: "webmail-folder-tabs" }
   )
-  useBackLayer(mobileView === "detail", () => setMobileView("list"), "webmail-mobile-detail")
+  useBackLayer(
+    isMobileWebmailViewport && mobileView === "detail",
+    () => {
+      clearBackStepsBySource("webmail-msg-switch")
+      setMobileView("list")
+    },
+    "webmail-mobile-detail"
+  )
   useBackLayer(mobileDrawerOpen, () => setMobileDrawerOpen(false), "webmail-mobile-drawer")
   useBackLayer(composeOpen && !composeMinimized, () => setComposeOpen(false), "webmail-compose")
   useBackLayer(readingMaximized, () => setReadingMaximized(false), "webmail-reading-maximized")
@@ -1171,8 +1191,7 @@ export default function EmailHub() {
       switchToMobileDetail &&
       activeMessageId &&
       activeMessageId !== id &&
-      typeof window !== "undefined" &&
-      window.innerWidth >= 1024
+      (!isMobileWebmailViewport || mobileView === "detail")
     ) {
       const prevId = activeMessageId
       recordBackSelectionStep(
