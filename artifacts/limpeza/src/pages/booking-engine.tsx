@@ -890,6 +890,7 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
         guestPhone,
         guestEmail,
         guestDocument,
+        deferDocToPreCheckin: true,
         checkinDate: checkin,
         checkoutDate: checkout,
         numGuests: rooms.reduce((acc, r) => acc + (Number(r.adults) || 2), 0),

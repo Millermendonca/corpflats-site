@@ -32877,9 +32877,8 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       if (!cleanPhone || cleanPhone.length < (isIntlDirectPhone ? 8 : 10)) {
         return res.status(400).json({ error: "Telefone / WhatsApp válido com DDD (ou DDI internacional com +) é obrigatório para finalizar a reserva." });
       }
-      if (!hasDocFile && !req.body?.deferDocToPreCheckin) {
-        return res.status(400).json({ error: "O anexo do documento oficial com foto (RG, CNH ou Passaporte em PDF ou Imagem) é obrigatório para finalizar a reserva." });
-      }
+      // O documento oficial com foto não é exigido no checkout da reserva direta;
+      // se ausente, reservation.pendingDocumentUpload = true para coleta no /pre-checkin.
     } else if (rawDocStr && !isDocValid) {
       return res.status(400).json({ error: "O CPF ou Passaporte do hóspede informado é inválido (você também pode deixar em branco para preencher depois pelo link)." });
     }
@@ -55368,7 +55367,10 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
       }
     }
     if (selfieUrl) r.selfieUrl = selfieUrl;
-    if (docPhotoUrl) r.docPhotoUrl = docPhotoUrl;
+    if (docPhotoUrl) {
+      r.docPhotoUrl = docPhotoUrl;
+      r.pendingDocumentUpload = false;
+    }
     if (signatureUrl) r.signatureUrl = signatureUrl;
     r.isCamposResident = Boolean(isCamposFromDocOrInput || r.isCamposResident);
     if (isCamposFromDocOrInput) {

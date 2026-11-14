@@ -104,169 +104,6 @@ const FunnelDialogHeader = memo(function FunnelDialogHeader({ currentStep }: { c
   )
 })
 
-const FunnelDocumentUploadCard = memo(function FunnelDocumentUploadCard({
-  docFileBase64,
-  docFileType,
-  docFileName,
-  aiInspectionResult,
-  isInspectingDoc,
-  docInspectionError,
-  isOptional = false,
-  onOpenFilePicker,
-  onClearDocFile,
-}: {
-  docFileBase64: string
-  docFileType: string
-  docFileName: string
-  aiInspectionResult: any
-  isInspectingDoc: boolean
-  docInspectionError: string | null
-  isOptional?: boolean
-  onOpenFilePicker: () => void
-  onClearDocFile: () => void
-}) {
-  return (
-    <>
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <Label className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-            <ShieldCheck className="w-4 h-4 text-[#0F3D4C] shrink-0" />
-            <span>
-              Documento Oficial com Foto (RG, CNH ou Passaporte)
-              {!isOptional && <span aria-hidden="true"> *</span>}
-            </span>
-          </Label>
-          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-            {isOptional
-              ? "Opcional agora — poderá ser enviado depois pelo link seguro após a confirmação."
-              : "Aceitamos PDF ou foto legível para liberação de portaria."}
-          </p>
-        </div>
-        <Badge
-          variant="outline"
-          className={`text-[9px] font-bold shrink-0 ${
-            isOptional
-              ? "border-amber-400/70 text-amber-800 dark:text-amber-300 bg-amber-50/70 dark:bg-amber-950/40"
-              : "border-[#C5A059]/60 text-[#0F3D4C] dark:text-[#E5C98B]"
-          }`}
-        >
-          {isOptional ? "Opcional agora" : "Obrigatório"}
-        </Badge>
-      </div>
-
-      {!docFileBase64 ? (
-        <div 
-          onClick={onOpenFilePicker}
-          className="p-4 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-[#0F3D4C] cursor-pointer flex flex-col items-center justify-center gap-2 text-center transition-all group"
-        >
-          <div className="w-10 h-10 rounded-xl bg-[#0F3D4C]/8 text-[#0F3D4C] border border-[#C5A059]/30 flex items-center justify-center group-hover:scale-105 transition-transform">
-            <Camera className="w-5 h-5" />
-          </div>
-          <div>
-            <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
-              Fotografar ou Selecionar Documento
-            </span>
-            <span className="text-[11px] text-slate-500">
-              CNH Digital, RG ou Passaporte (PDF ou Imagem)
-            </span>
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
-            <div className="flex items-center gap-3 min-w-0 flex-1">
-              {docFileType === "pdf" ? (
-                <div className="w-10 h-10 rounded-lg bg-[#0F3D4C]/10 flex items-center justify-center text-[#0F3D4C] font-bold shrink-0">
-                  <FileText className="w-5 h-5" />
-                </div>
-              ) : (
-                <div className="w-10 h-10 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0 bg-slate-100">
-                  <img src={docFileBase64} alt="Prévia" className="w-full h-full object-cover" />
-                </div>
-              )}
-              <div className="min-w-0">
-                <span className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate block">
-                  {docFileName || "documento_oficial"}
-                </span>
-                <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-                  <Badge className="bg-[#0F3D4C] text-white text-[9px] py-0 px-1.5 font-bold">
-                    ✓ Anexado ({docFileType.toUpperCase()})
-                  </Badge>
-                  {aiInspectionResult?.isLegible && (
-                    <Badge variant="outline" className="border-[#C5A059]/50 text-[#0F3D4C] text-[9px] py-0 px-1.5 font-bold">
-                      ✓ Validado
-                    </Badge>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-1.5 shrink-0">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={onOpenFilePicker}
-                className="text-xs h-8 px-2.5 rounded-lg"
-              >
-                Trocar
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={onClearDocFile}
-                className="text-xs h-8 px-2 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-lg"
-              >
-                <X className="w-4 h-4" />
-              </Button>
-            </div>
-          </div>
-
-          {isInspectingDoc && (
-            <div className="p-2.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center gap-2 text-xs text-slate-700 dark:text-slate-200 animate-pulse">
-              <RefreshCw className="w-4 h-4 animate-spin text-[#0F3D4C] shrink-0" />
-              <span>Verificando legibilidade do documento...</span>
-            </div>
-          )}
-
-          {docInspectionError && (
-            <div className="p-3 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 rounded-xl flex items-start gap-2.5 text-xs text-rose-800 dark:text-rose-200">
-              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <span className="font-bold block">Documento Não Aceito</span>
-                <p>{docInspectionError}</p>
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={onOpenFilePicker}
-                  className="bg-rose-600 hover:bg-rose-700 text-white text-[11px] h-7 px-2.5 mt-1 rounded-lg"
-                >
-                  Enviar Outra Foto Mais Nítida
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {!isInspectingDoc && !docInspectionError && aiInspectionResult && (aiInspectionResult.nameMatches === false || aiInspectionResult.cpfMatches === false) && (
-            <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl flex items-start gap-2 text-xs text-amber-800 dark:text-amber-200">
-              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-bold block">Atenção: Conferência de Titularidade</span>
-                <p className="text-[11px] text-amber-700 dark:text-amber-300">
-                  {aiInspectionResult.nameMatches === false 
-                    ? "O nome extraído do documento parece divergir do titular informado." 
-                    : "O CPF constante no documento parece divergir do informado."}
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </>
-  )
-})
-
 function formatBrl(val: number): string {
   const num = Math.round(Number(val || 0) * 100) / 100
   return num.toLocaleString("pt-BR", {
@@ -1033,87 +870,6 @@ export function BookingFunnelModal({
   const [docInspectionError, setDocInspectionError] = useState<string | null>(null)
   const [showMinorNoticeModal, setShowMinorNoticeModal] = useState(false)
   const [minorNoticeAcknowledged, setMinorNoticeAcknowledged] = useState(false)
-  const docFileInputRef = useRef<HTMLInputElement>(null)
-
-  const handleDocFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    setDocFileName(file.name)
-    setDocInspectionError(null)
-
-    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
-    setDocFileType(isPdf ? "pdf" : "image")
-
-    try {
-      let base64String = ""
-      if (isPdf) {
-        base64String = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = () => resolve(reader.result as string)
-          reader.onerror = reject
-          reader.readAsDataURL(file)
-        })
-      } else {
-        const compressed = await compressImage(file, {
-          maxWidth: 1400,
-          maxHeight: 1400,
-          quality: 0.82,
-          preferredFormat: "image/webp"
-        })
-        base64String = compressed.base64
-      }
-
-      setDocFileBase64(base64String)
-
-      // Dispara imediatamente inspeção preliminar de IA
-      setIsInspectingDoc(true)
-      try {
-        const res = await fetch("/api/ai/inspect-document", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fileBase64: base64String,
-            fileName: file.name,
-            providedName: guestName,
-            providedCpf: guestDocument,
-            reservationName: guestName,
-            reservationCpf: guestDocument,
-            providedCity: guestCity,
-            providedAddress: guestAddress
-          })
-        })
-        if (res.ok) {
-          const data = await res.json()
-          setAiInspectionResult(data)
-          const officialDocName = (data.canonicalGuestName || data.extractedName || "").trim()
-          if (officialDocName && data.identityMatches !== false && data.nameMatches !== false && data.reservationNameMatches !== false) {
-            if (data.nameAutoCorrected || !guestName.trim() || guestName.trim().split(/\s+/).length < officialDocName.split(/\s+/).length) {
-              setGuestName(officialDocName)
-            }
-          }
-          if (data.isOfficialDocument === false) {
-            setDocInspectionError("O arquivo enviado não foi identificado como um documento oficial de identificação com foto (RG, CNH, Passaporte). Por favor, anexe seu documento oficial.")
-          } else if (data.isLegible === false) {
-            setDocInspectionError(data.legibilityReason || "Documento ilegível. Por favor, tire outra foto mais nítida ou anexe o PDF oficial.")
-          } else if (data.isMinor) {
-            setShowMinorNoticeModal(true)
-          }
-        }
-      } catch (err: any) {
-        console.warn("Falha na chamada da IA de documentos:", err)
-      } finally {
-        setIsInspectingDoc(false)
-      }
-    } catch (err: any) {
-      toast({
-        variant: "destructive",
-        title: "Erro ao processar arquivo",
-        description: err?.message || "Não foi possível ler o documento anexado.",
-      })
-    }
-  }
-
   // PJ Corporate Billing
   const [isWorkTrip, setIsWorkTrip] = useState(() => Boolean(initialIsWorkTrip || readSavedFunnelDraft()?.isWorkTrip))
   const [companyCnpj, setCompanyCnpj] = useState("")
@@ -1126,10 +882,8 @@ export function BookingFunnelModal({
   const [vehiclePlate, setVehiclePlate] = useState("")
   const [vehicleModel, setVehicleModel] = useState("")
 
-  // Opção de enviar foto do documento depois no Pré-Check-in Digital (redução de atrito mobile)
-  const [deferDocToPreCheckin, setDeferDocToPreCheckin] = useState(() =>
-    Boolean(readSavedFunnelDraft()?.deferDocToPreCheckin)
-  )
+  // Documento oficial enviado apenas na etapa de Check-in Digital (/pre-checkin) antes da chegada
+  const deferDocToPreCheckin = true
   const purchaseTrackedRef = useRef<string | null>(null)
 
   // Upsells & Extras
@@ -1674,17 +1428,6 @@ export function BookingFunnelModal({
     setShowMinorNoticeModal(false)
   })
 
-  const handleOpenDocPicker = useStableCallback(() => {
-    docFileInputRef.current?.click()
-  })
-
-  const handleClearDocFile = useStableCallback(() => {
-    setDocFileBase64("")
-    setDocFileName("")
-    setAiInspectionResult(null)
-    setDocInspectionError(null)
-  })
-
   // Telemetria do Funil
   const sendFunnelTelemetry = async (stepNum: number, stepNameStr: string, customStatus?: string) => {
     try {
@@ -1810,37 +1553,6 @@ export function BookingFunnelModal({
           )
           return
         }
-        if (docFileBase64) {
-          if (isInspectingDoc) {
-            toast({
-              title: "Analisando documento",
-              description: "Aguarde alguns segundos até a conclusão da leitura do documento oficial.",
-            })
-            return
-          }
-          if (aiInspectionResult && aiInspectionResult.isOfficialDocument === false) {
-            reportValidationFailure(
-              "docFile",
-              null,
-              "Documento não reconhecido",
-              "O arquivo anexado não foi reconhecido como documento oficial com foto. Remova o anexo para enviar depois via link ou anexe RG, CNH ou Passaporte."
-            )
-            return
-          }
-          if (aiInspectionResult && aiInspectionResult.isLegible === false) {
-            reportValidationFailure(
-              "docFile",
-              null,
-              "Documento ilegível",
-              `O documento anexado não pôde ser aceito: ${aiInspectionResult.legibilityReason || "Documento ilegível"}. Remova o anexo para enviar depois via link ou envie uma foto nítida.`
-            )
-            return
-          }
-          if (aiInspectionResult?.isMinor && !minorNoticeAcknowledged) {
-            setShowMinorNoticeModal(true)
-            return
-          }
-        }
         setInvalidField(null)
         setStepValidationError(null)
         sendFunnelTelemetry(3, "identificacao_lead", "em_andamento")
@@ -1894,63 +1606,6 @@ export function BookingFunnelModal({
           "Por favor, informe um CPF válido (11 dígitos) ou número de Passaporte válido para registro da reserva."
         )
         return
-      }
-      if (!docFileBase64 && !deferDocToPreCheckin) {
-        reportValidationFailure(
-          "docFile",
-          null,
-          "Documento com foto ou Pré-Check-in Digital",
-          "Anexe seu documento com foto (RG, CNH ou Passaporte) ou selecione acima 'Enviar depois no Pré-Check-in Digital' para concluir sua reserva agora."
-        )
-        return
-      }
-      if (docFileBase64) {
-        if (isInspectingDoc) {
-          toast({
-            title: "Analisando documento",
-            description: "Aguarde alguns segundos até a conclusão da leitura do documento oficial.",
-          })
-          return
-        }
-        if (aiInspectionResult && aiInspectionResult.isOfficialDocument === false) {
-          reportValidationFailure(
-            "docFile",
-            null,
-            "Documento não reconhecido",
-            "O arquivo anexado não foi reconhecido como documento oficial de identificação com foto. Envie RG, CNH ou Passaporte."
-          )
-          return
-        }
-        if (aiInspectionResult && aiInspectionResult.isLegible === false) {
-          reportValidationFailure(
-            "docFile",
-            null,
-            "Documento ilegível",
-            `O documento anexado não pôde ser aceito: ${aiInspectionResult.legibilityReason || "Documento ilegível"}. Envie uma foto mais nítida ou o PDF original.`
-          )
-          return
-        }
-        if (
-          aiInspectionResult &&
-          (aiInspectionResult.identityMatches === false ||
-            aiInspectionResult.nameMatches === false ||
-            aiInspectionResult.cpfMatches === false)
-        ) {
-          const reasons = Array.isArray(aiInspectionResult.mismatchReasons) && aiInspectionResult.mismatchReasons.length > 0
-            ? aiInspectionResult.mismatchReasons.join(" • ")
-            : "Os dados do documento anexado (Nome ou CPF) não conferem com o titular da reserva."
-          reportValidationFailure(
-            "docFile",
-            "funnel-guest-name",
-            "Divergência de titularidade no documento",
-            `${reasons} Anexe o documento pertencente ao titular da reserva ou corrija os dados informados.`
-          )
-          return
-        }
-        if (aiInspectionResult?.isMinor && !minorNoticeAcknowledged) {
-          setShowMinorNoticeModal(true)
-          return
-        }
       }
 
       const resolvedFunnelDocType = /[a-zA-Z]/.test(rawFunnelDoc) ? "Passaporte" : "CPF"
@@ -2036,7 +1691,7 @@ export function BookingFunnelModal({
       const payload = {
         sessionId,
         requesterType: resolvedRequesterType,
-        deferDocToPreCheckin: Boolean((deferDocToPreCheckin || isSeparateRequester) && !docFileBase64),
+        deferDocToPreCheckin: !docFileBase64,
         attribution: getStoredAttribution(),
         ...(isSeparateRequester
           ? {
@@ -2979,65 +2634,10 @@ export function BookingFunnelModal({
               </div>
             </div>
 
-            {/* Anexo de Documento Oficial com Foto (Check-in Express agora OU Pré-Check-in Digital depois) */}
-            <div className="p-3.5 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/40 space-y-3">
-              {!isSeparateRequester && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-200/60 dark:bg-slate-900/70">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDeferDocToPreCheckin(false)
-                      clearFieldValidation("docFile")
-                    }}
-                    className={`min-h-[40px] px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all text-center ${
-                      !deferDocToPreCheckin
-                        ? "bg-[#0F3D4C] text-white shadow-xs"
-                        : "text-slate-600 dark:text-slate-300 hover:text-slate-900"
-                    }`}
-                  >
-                    📸 Enviar foto agora (Check-in Express)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDeferDocToPreCheckin(true)
-                      clearFieldValidation("docFile")
-                    }}
-                    className={`min-h-[40px] px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all text-center ${
-                      deferDocToPreCheckin
-                        ? "bg-[#0F3D4C] text-white shadow-xs"
-                        : "text-slate-600 dark:text-slate-300 hover:text-slate-900"
-                    }`}
-                  >
-                    🔗 Enviar depois no Pré-Check-in Digital
-                  </button>
-                </div>
-              )}
-
-              {!isSeparateRequester && deferDocToPreCheckin && !docFileBase64 && (
-                <div className="p-2.5 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/60 text-[11px] text-emerald-900 dark:text-emerald-200 leading-relaxed">
-                  <strong>Reserva imediata liberada:</strong> você garante sua tarifa agora via <span translate="no">PIX</span> ou Cartão e recebe no WhatsApp/E-mail o link seguro do Pré-Check-in Digital para anexar o RG, CNH ou Passaporte antes de retirar o cartão da porta na recepção 24h.
-                </div>
-              )}
-
-              <input
-                ref={docFileInputRef}
-                type="file"
-                accept="application/pdf,image/png,image/jpeg,image/webp,image/jpg"
-                onChange={handleDocFileSelect}
-                className="hidden"
-              />
-              <FunnelDocumentUploadCard
-                docFileBase64={docFileBase64}
-                docFileType={docFileType}
-                docFileName={docFileName}
-                aiInspectionResult={aiInspectionResult}
-                isInspectingDoc={isInspectingDoc}
-                docInspectionError={docInspectionError}
-                isOptional={isSeparateRequester || deferDocToPreCheckin}
-                onOpenFilePicker={handleOpenDocPicker}
-                onClearDocFile={handleClearDocFile}
-              />
+            {/* Nota tranquila de 1 linha: documento oficial apenas no Check-in Digital antes da chegada */}
+            <div className="px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-700/70 flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span>Não é necessário anexar foto de documento agora — o envio será feito depois no <strong>Check-in Digital</strong> antes da chegada.</span>
             </div>
 
             {/* Veículo & Portaria */}
@@ -3351,20 +2951,14 @@ export function BookingFunnelModal({
 
             {((isSeparateRequester && (!guestName.trim() || !docFileBase64 || confirmedReservation.guestPending)) ||
               (!isSeparateRequester && !docFileBase64)) && (
-              <div className="p-3.5 rounded-2xl border border-[#C5A059]/50 bg-[#0F3D4C]/[0.05] dark:bg-slate-800/60 text-left text-xs text-slate-700 dark:text-slate-200 space-y-1">
-                <span className="font-bold text-[#0F3D4C] dark:text-[#E5C98B] block">
+              <p className="px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-300 flex items-center justify-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>
                   {isSeparateRequester
-                    ? "📋 Cadastro Posterior do Hóspede"
-                    : "📸 Envio do Documento no Pré-Check-in Digital"}
+                    ? "Após o pagamento, enviaremos no WhatsApp e e-mail o link do Check-in Digital do hóspede antes da chegada."
+                    : "O envio do documento será feito depois no Check-in Digital (/pre-checkin) antes da chegada."}
                 </span>
-                <p className="text-[11px] leading-relaxed">
-                  {isSeparateRequester ? (
-                    <>Assim que o pagamento for confirmado, enviaremos automaticamente para seu <strong>WhatsApp</strong> e <strong>E-mail</strong> o link seguro de credenciamento para preencher (ou encaminhar ao hóspede) os dados e o documento oficial antes do check-in.</>
-                  ) : (
-                    <>Assim que o pagamento for confirmado, você poderá anexar a foto do seu documento oficial (RG, CNH ou Passaporte) diretamente no portal <strong>Minha Reserva / Pré-Check-in Digital</strong> antes de retirar o cartão da porta na recepção 24h.</>
-                  )}
-                </p>
-              </div>
+              </p>
             )}
 
             {/* Se Pagamento foi PIX */}
