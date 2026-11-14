@@ -17,12 +17,14 @@ import {
 } from "lucide-react"
 
 import { AccessDenied } from "@/components/access-denied"
+import { useBackTabState } from "@/lib/back-navigation"
 
 export default function MarketingTraffic() {
   const [, setLocation] = useLocation()
   const { data: user, isLoading: loadingUser } = useGetMe()
 
   const [activeTab, setActiveTab] = useState<"funnel" | "carts" | "campaigns" | "studio" | "settings">("funnel")
+  useBackTabState(activeTab, setActiveTab, { id: "marketing-tabs" })
   const [funnelData, setFunnelData] = useState<any>(null)
   const [cartsData, setCartsData] = useState<any>(null)
   const [campaignsData, setCampaignsData] = useState<any>(null)

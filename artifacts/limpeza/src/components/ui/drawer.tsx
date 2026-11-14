@@ -1,16 +1,45 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { Drawer as DrawerPrimitive } from 'vaul';
+import { useBackLayer } from '@/lib/back-navigation';
 
 const Drawer = ({
   shouldScaleBackground = true,
+  open: controlledOpen,
+  defaultOpen,
+  onOpenChange,
+  disableBackClose,
   ...props
-}: React.ComponentProps<typeof DrawerPrimitive.Root>) => (
-  <DrawerPrimitive.Root
-    shouldScaleBackground={shouldScaleBackground}
-    {...props}
-  />
-);
+}: React.ComponentProps<typeof DrawerPrimitive.Root> & {
+  disableBackClose?: boolean;
+}) => {
+  const isControlled = controlledOpen !== undefined;
+  const [uncontrolledOpen, setUncontrolledOpen] = React.useState<boolean>(Boolean(defaultOpen));
+  const isOpen = Boolean(isControlled ? controlledOpen : uncontrolledOpen);
+
+  const handleOpenChange = React.useCallback(
+    (nextOpen: boolean) => {
+      if (!isControlled) {
+        setUncontrolledOpen(nextOpen);
+      }
+      onOpenChange?.(nextOpen);
+    },
+    [isControlled, onOpenChange],
+  );
+
+  useBackLayer(isOpen, () => handleOpenChange(false), {
+    disabled: Boolean(disableBackClose) || (isControlled && !onOpenChange),
+  });
+
+  return (
+    <DrawerPrimitive.Root
+      shouldScaleBackground={shouldScaleBackground}
+      open={isOpen}
+      onOpenChange={handleOpenChange}
+      {...props}
+    />
+  );
+};
 Drawer.displayName = 'Drawer';
 
 const DrawerTrigger = DrawerPrimitive.Trigger;

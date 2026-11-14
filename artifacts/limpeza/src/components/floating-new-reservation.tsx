@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 
 import { useLocation } from 'wouter';
 import { useGetMe } from '@workspace/api-client-react';
 import { Plus, GripVertical, CalendarPlus, Minimize2, Maximize2 } from 'lucide-react';
+import { hasModuleAccess } from '@/lib/permissions';
 
 const PmsCalendarLazy = lazy(() => import('@/pages/pms-calendar'));
 
@@ -125,8 +126,12 @@ export function FloatingNewReservationButton() {
     };
   }, []);
 
-  // Exclusivo para login de Administrador / Dev em telas administrativas (oculto nos terminais públicos da portaria/recepção)
-  const isAdminUser = !isLoading && user && (user.role === 'admin' || user.role === 'dev');
+  // Exclusivo para login de Administrador / Dev com permissão de Reservas em telas administrativas
+  const isAdminUser =
+    !isLoading &&
+    user &&
+    (user.role === 'admin' || user.role === 'dev') &&
+    hasModuleAccess(user as any, '/reservas');
   const isHiddenRoute =
     location === '/login' ||
     location.startsWith('/login') ||

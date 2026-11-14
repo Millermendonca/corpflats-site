@@ -1,8 +1,42 @@
 import * as React from 'react';
 import * as TabsPrimitive from '@radix-ui/react-tabs';
 import { cn } from '@/lib/utils';
+import { useBackTabState } from '@/lib/back-navigation';
 
-const Tabs = TabsPrimitive.Root;
+const Tabs = React.forwardRef<
+  React.ElementRef<typeof TabsPrimitive.Root>,
+  React.ComponentPropsWithoutRef<typeof TabsPrimitive.Root> & {
+    disableBackHistory?: boolean;
+  }
+>(({ value: controlledValue, defaultValue, onValueChange, disableBackHistory, ...props }, ref) => {
+  const isControlled = controlledValue !== undefined;
+  const [uncontrolledValue, setUncontrolledValue] = React.useState<string | undefined>(defaultValue);
+  const currentValue = isControlled ? controlledValue : uncontrolledValue;
+
+  const handleValueChange = React.useCallback(
+    (nextValue: string) => {
+      if (!isControlled) {
+        setUncontrolledValue(nextValue);
+      }
+      onValueChange?.(nextValue);
+    },
+    [isControlled, onValueChange],
+  );
+
+  useBackTabState(currentValue, handleValueChange, {
+    disabled: Boolean(disableBackHistory),
+  });
+
+  return (
+    <TabsPrimitive.Root
+      ref={ref}
+      value={currentValue}
+      onValueChange={handleValueChange}
+      {...props}
+    />
+  );
+});
+Tabs.displayName = TabsPrimitive.Root.displayName;
 
 const TabsList = React.forwardRef<
   React.ElementRef<typeof TabsPrimitive.List>,

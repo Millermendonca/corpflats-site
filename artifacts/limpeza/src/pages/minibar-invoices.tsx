@@ -3,6 +3,7 @@ import { Shell } from "@/components/layout";
 import { MinibarEcosystemNav } from "@/components/minibar-ecosystem-nav";
 import { useGetMe } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
+import { useBackTabState } from "@/lib/back-navigation";
 import {
   FileText,
   Upload,
@@ -204,6 +205,7 @@ export default function MinibarInvoicesPage() {
 
   // Filtros
   const [activeTab, setActiveTab] = useState<"pending" | "issued" | "failed">("pending");
+  useBackTabState(activeTab, setActiveTab, { id: "minibar-invoices-tabs" });
   const [flatFilter, setFlatFilter] = useState<string>("todos");
   const [splitFilter, setSplitFilter] = useState<"todos" | "separate" | "single">("todos");
   const [searchQuery, setSearchQuery] = useState<string>("");

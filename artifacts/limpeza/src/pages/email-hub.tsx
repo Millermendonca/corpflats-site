@@ -1,6 +1,11 @@
 import React, { memo, useState, useEffect, useRef, useMemo } from "react"
 import { useLocation } from "wouter"
 import { FrozenSlot, useStableCallback } from "@/lib/render-freeze"
+import {
+  useBackLayer,
+  useBackTabState,
+  recordBackSelectionStep
+} from "@/lib/back-navigation"
 import { Shell } from "@/components/layout"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -1145,7 +1150,39 @@ export default function EmailHub() {
     }
   })
 
+  // Smart Back Navigation: Webmail folders, mobile reading pane, drawers, compose & fullscreen modes
+  useBackTabState(
+    selectedFolder,
+    (folder) => {
+      setSelectedLabelId("")
+      setSelectedFolder(folder)
+      setQuickFilter("all")
+    },
+    { id: "webmail-folder-tabs" }
+  )
+  useBackLayer(mobileView === "detail", () => setMobileView("list"), "webmail-mobile-detail")
+  useBackLayer(mobileDrawerOpen, () => setMobileDrawerOpen(false), "webmail-mobile-drawer")
+  useBackLayer(composeOpen && !composeMinimized, () => setComposeOpen(false), "webmail-compose")
+  useBackLayer(readingMaximized, () => setReadingMaximized(false), "webmail-reading-maximized")
+  useBackLayer(isFullscreenApp, () => setIsFullscreenApp(false), "webmail-fullscreen")
+
   const openMessageDetail = useStableCallback(async (id: string, markReadOptimistic = true, switchToMobileDetail = false) => {
+    if (
+      switchToMobileDetail &&
+      activeMessageId &&
+      activeMessageId !== id &&
+      typeof window !== "undefined" &&
+      window.innerWidth >= 1024
+    ) {
+      const prevId = activeMessageId
+      recordBackSelectionStep(
+        "webmail-msg-switch",
+        () => {
+          openMessageDetail(prevId, false, false)
+        },
+        10
+      )
+    }
     const detSeq = ++detailSeqRef.current
     setActiveMessageId(id)
     webmailClientStore.activeMessageId = id

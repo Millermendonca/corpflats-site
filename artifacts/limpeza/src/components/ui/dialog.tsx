@@ -2,8 +2,44 @@ import * as React from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { X } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useBackLayer } from "@/lib/back-navigation"
 
-const Dialog = DialogPrimitive.Root
+const Dialog = ({
+  open: controlledOpen,
+  defaultOpen,
+  onOpenChange,
+  disableBackClose,
+  ...props
+}: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Root> & {
+  disableBackClose?: boolean
+}) => {
+  const isControlled = controlledOpen !== undefined
+  const [uncontrolledOpen, setUncontrolledOpen] = React.useState<boolean>(Boolean(defaultOpen))
+  const isOpen = Boolean(isControlled ? controlledOpen : uncontrolledOpen)
+
+  const handleOpenChange = React.useCallback(
+    (nextOpen: boolean) => {
+      if (!isControlled) {
+        setUncontrolledOpen(nextOpen)
+      }
+      onOpenChange?.(nextOpen)
+    },
+    [isControlled, onOpenChange]
+  )
+
+  useBackLayer(isOpen, () => handleOpenChange(false), {
+    disabled: Boolean(disableBackClose) || (isControlled && !onOpenChange),
+  })
+
+  return (
+    <DialogPrimitive.Root
+      open={isOpen}
+      onOpenChange={handleOpenChange}
+      {...props}
+    />
+  )
+}
+Dialog.displayName = "Dialog"
 const DialogTrigger = DialogPrimitive.Trigger
 const DialogPortal = DialogPrimitive.Portal
 const DialogClose = DialogPrimitive.Close

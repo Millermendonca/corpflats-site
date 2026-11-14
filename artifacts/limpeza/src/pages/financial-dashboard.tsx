@@ -16,6 +16,7 @@ import {
 } from "lucide-react"
 
 import { AccessDenied } from "@/components/access-denied"
+import { useBackTabState } from "@/lib/back-navigation"
 
 export default function FinancialDashboard() {
   const [, setLocation] = useLocation()
@@ -23,6 +24,7 @@ export default function FinancialDashboard() {
 
   // Tabs do ERP Financeiro
   const [activeTab, setActiveTab] = useState<"dre" | "payables" | "receivables" | "cashflow" | "contracts">("dre")
+  useBackTabState(activeTab, setActiveTab, { id: "finance-erp-tabs" })
   const [data, setData] = useState<any | null>(null)
   const [payablesData, setPayablesData] = useState<any | null>(null)
   const [receivablesData, setReceivablesData] = useState<any | null>(null)

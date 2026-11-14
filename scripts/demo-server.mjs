@@ -1081,6 +1081,7 @@ export const DEV_ONLY_MODULES = [
 export const ALL_CANONICAL_MODULES = [
   // 1. 📅 Reservas & Hospedagem
   "/reservas",
+  "/painel-aovivo",
   "/caixa-entrada-ota",
   "/relatorios-reservas",
   "/crm",
@@ -1090,6 +1091,7 @@ export const ALL_CANONICAL_MODULES = [
   "/reservar",
   // 2. 💬 Comunicação & Atendimento
   "/whatsapp-chat",
+  "/disparo-inteligente",
   "/whatsapp",
   "/emails",
   "/notificacoes",
@@ -1112,6 +1114,7 @@ export const ALL_CANONICAL_MODULES = [
   "/funil-vendas",
   // 5. 🏨 Propriedade & Equipe
   "/equipe",
+  "/rh",
   "/propriedade",
   "/garagem",
   "/avaliacoes-ia",
@@ -1120,6 +1123,7 @@ export const ALL_CANONICAL_MODULES = [
   "/anserve",
   "/frigobar-notas",
   "/frigobar-reposicao",
+  "/frigobar-gestao",
   // 6. 🛠️ Engenharia & Dev
   "/configuracoes",
   "/zapi-conexao",
@@ -1130,6 +1134,29 @@ export const ALL_CANONICAL_MODULES = [
 ];
 
 export const OPERATIONAL_MODULES = ALL_CANONICAL_MODULES.filter(m => !DEV_ONLY_MODULES.includes(m));
+
+export const THAMIRIS_CLEAN_MODULES = [
+  "/reservas",
+  "/crm",
+  "/dashboard",
+  "/reports",
+  "/notas",
+  "/financeiro",
+  "/pagamentos",
+  "/observations",
+  "/tasks",
+  "/lista-compras",
+  "/whatsapp-chat",
+  "/caixa-entrada-ota",
+  "/tarifas",
+  "/pedidos-cafe",
+  "/portaria",
+  "/garagem",
+  "/automacoes-camareiras",
+  "/achados-perdidos"
+];
+
+export const THAMIRIS_INITIAL_PASSWORD = process.env.THAMIRIS_INITIAL_PASSWORD || "thamiris123";
 
 export const CAMAREIRA_DEFAULT_MODULES = [
   "/dashboard",
@@ -1142,6 +1169,7 @@ export const CAMAREIRA_DEFAULT_MODULES = [
 
 export const RECEPCAO_DEFAULT_MODULES = [
   "/reservas",
+  "/painel-aovivo",
   "/caixa-entrada-ota",
   "/relatorios-reservas",
   "/crm",
@@ -1165,7 +1193,7 @@ export function getDefaultModulesForRole(role) {
     case "admin":
       return [...OPERATIONAL_MODULES];
     case "anserve_gestor":
-      return ["/anserve", "/frigobar-notas", "/frigobar-reposicao"];
+      return ["/anserve", "/frigobar-notas", "/frigobar-reposicao", "/frigobar-gestao"];
     case "anserve_faturamento":
       return ["/frigobar-notas"];
     case "anserve_repositora":
@@ -1185,6 +1213,9 @@ export const ROUTE_ALIASES = {
   "/anserve/reposicao": "/frigobar-reposicao",
   "/anserve/notas": "/frigobar-notas",
   "/notas-frigobar": "/frigobar-notas",
+  "/admin/frigobar": "/frigobar",
+  "/minibar-admin": "/frigobar",
+  "/frigobar-admin": "/frigobar",
 
   // Equipe / Usuários
   "/usuarios": "/equipe",
@@ -1244,9 +1275,8 @@ export const ROUTE_ALIASES = {
   "/reception": "/portaria",
 
   // Painel Ao Vivo
-  "/painel-aovivo": "/reservas",
-  "/live-ops": "/reservas",
-  "/aovivo": "/reservas",
+  "/live-ops": "/painel-aovivo",
+  "/aovivo": "/painel-aovivo",
 
   // Avaliações
   "/reviews-ia": "/avaliacoes-ia",
@@ -1277,11 +1307,14 @@ export const ROUTE_ALIASES = {
   "/whatsapp-web": "/whatsapp-chat",
   "/chat-whatsapp": "/whatsapp-chat",
 
-  // Automações WhatsApp
+  // Automações WhatsApp & Disparo Inteligente
   "/camareiras-whatsapp": "/automacoes-camareiras",
   "/governanca-whatsapp": "/automacoes-camareiras",
   "/whatsapp-automation": "/whatsapp",
   "/automacao-whatsapp": "/whatsapp",
+  "/whatsapp-broadcast": "/disparo-inteligente",
+  "/broadcast": "/disparo-inteligente",
+  "/campanhas-whatsapp": "/disparo-inteligente",
 
   // Notificações
   "/notifications": "/notificacoes",
@@ -1345,9 +1378,24 @@ export const ROUTE_ALIASES = {
   // Caixa de Entrada OTA
   "/ota-inbox": "/caixa-entrada-ota",
   "/quarentena": "/caixa-entrada-ota",
+  "/ajuda-wbp": "/caixa-entrada-ota",
+  "/ajuda-channex": "/caixa-entrada-ota",
 
   // Reservar
-  "/booking": "/reservar"
+  "/booking": "/reservar",
+
+  // Gestão de RH & Ponto CLT
+  "/colaboradores": "/rh",
+  "/funcionarios": "/rh",
+  "/recursos-humanos": "/rh",
+  "/admin/rh": "/rh",
+  "/gestao-rh": "/rh",
+  "/rh-dashboard": "/rh",
+  "/rh/ponto": "/ponto",
+  "/bater-ponto": "/ponto",
+  "/terminal-ponto": "/ponto",
+  "/ponto-mobile": "/ponto",
+  "/registro-ponto": "/ponto"
 };
 
 export function canonicalizeRoute(path) {
@@ -1362,11 +1410,43 @@ export function hasModuleAccess(user, path) {
   if (DEV_ONLY_MODULES.includes(canonical) && user.role !== "dev") {
     return false;
   }
-  const frigobarModules = ["/frigobar", "/anserve", "/frigobar-reposicao", "/frigobar-gestao"];
-  if ((user.role === "admin" || user.role === "dev") && frigobarModules.includes(canonical)) {
+
+  const userName = String(user.username || "").toLowerCase().trim();
+  const isCrisOrGrazi =
+    user.id === 2 ||
+    user.id === 3 ||
+    user.id === "2" ||
+    user.id === "3" ||
+    userName === "cris" ||
+    userName === "grazi";
+  if (isCrisOrGrazi && canonical === "/rh") {
+    return false;
+  }
+
+  const isCustomRestricted =
+    user.customPermissions === true ||
+    (user.customPermissions === undefined && userName === "thamiris");
+
+  if (!isCustomRestricted) {
+    const frigobarAndOpsModules = [
+      "/frigobar",
+      "/anserve",
+      "/frigobar-notas",
+      "/frigobar-reposicao",
+      "/frigobar-gestao",
+      "/painel-aovivo",
+      "/rh",
+      "/disparo-inteligente"
+    ];
+    if ((user.role === "admin" || user.role === "dev") && frigobarAndOpsModules.includes(canonical)) {
+      return true;
+    }
+  }
+
+  if (user.role === "anserve_gestor" && ["/anserve", "/frigobar-notas", "/frigobar-reposicao", "/frigobar-gestao"].includes(canonical)) {
     return true;
   }
-  if (user.role === "anserve_gestor" && ["/anserve", "/frigobar-reposicao", "/frigobar-gestao"].includes(canonical)) {
+  if (user.role === "anserve_faturamento" && canonical === "/frigobar-notas") {
     return true;
   }
   if (user.role === "anserve_repositora" && canonical === "/frigobar-reposicao") {
@@ -1375,12 +1455,24 @@ export function hasModuleAccess(user, path) {
   const allowed = Array.isArray(user.allowedModules)
     ? user.allowedModules
     : getDefaultModulesForRole(user.role);
-  if (canonical === "/raio-x-flats") {
-    if (user.role === "admin" || user.role === "dev") return true;
-    const hubEquivalents = ["/raio-x-flats", "/servicos", "/tasks", "/observations", "/surveys"];
-    return allowed.some(m => hubEquivalents.includes(canonicalizeRoute(m)));
+
+  if (allowed.some(m => canonicalizeRoute(m) === canonical)) {
+    return true;
   }
-  return allowed.some(m => canonicalizeRoute(m) === canonical);
+
+  if (!isCustomRestricted) {
+    if (canonical === "/disparo-inteligente") {
+      const waEquivalents = ["/whatsapp", "/whatsapp-chat", "/crm", "/reservas"];
+      return allowed.some(m => waEquivalents.includes(canonicalizeRoute(m)));
+    }
+    if (canonical === "/raio-x-flats") {
+      if (user.role === "admin" || user.role === "dev") return true;
+      const hubEquivalents = ["/raio-x-flats", "/servicos", "/tasks", "/observations", "/surveys"];
+      return allowed.some(m => hubEquivalents.includes(canonicalizeRoute(m)));
+    }
+  }
+
+  return false;
 }
 
 export function isDefaultPermissionsForRole(role, allowedModules) {
@@ -1400,12 +1492,16 @@ const defaultUsers = [
   { id: 2, username: "Cris", name: "Cris", role: "camareira", contractType: "prestador", allowedModules: getDefaultModulesForRole("camareira"), phone: "22988486446", whatsapp: "5522988486446", pixKey: "22988486446", active: true, passwordHash: hashPassword("1234") },
   { id: 3, username: "Grazi", name: "Grazi", role: "camareira", contractType: "prestador", allowedModules: getDefaultModulesForRole("camareira"), phone: "22999106204", whatsapp: "5522999106204", pixKey: "12977795766", active: true, passwordHash: hashPassword("1234") },
   { id: 5, username: "gestor", name: "Administração CorpFlats", role: "admin", allowedModules: getDefaultModulesForRole("admin"), phone: "5522997124021", whatsapp: "5522997124021", active: true, passwordHash: hashPassword("admin123"), password_updated_at: new Date().toISOString() },
+  { id: 6, username: "thamiris", name: "Thamiris", role: "admin", customPermissions: true, defaultRoute: "/reservas", hideCopilot: true, allowedModules: [...THAMIRIS_CLEAN_MODULES], phone: "5521997142513", whatsapp: "5521997142513", active: true, passwordHash: hashPassword(THAMIRIS_INITIAL_PASSWORD), password_updated_at: new Date().toISOString() },
 ];
 
 export function ensureSystemUsers(database) {
   if (!database) return false;
   if (!database.users || !Array.isArray(database.users)) {
-    database.users = [...defaultUsers];
+    database.users = defaultUsers.map(u => ({
+      ...u,
+      allowedModules: Array.isArray(u.allowedModules) ? [...u.allowedModules] : getDefaultModulesForRole(u.role)
+    }));
     return true;
   }
 
@@ -1453,6 +1549,57 @@ export function ensureSystemUsers(database) {
     }
     if (!gestorUser.name) {
       gestorUser.name = "Administração CorpFlats";
+      changed = true;
+    }
+  }
+
+  // 2b. Criação/Garantia do perfil limpo 'thamiris' (Gestão, Reservas, Governança & Notas)
+  const thamirisUser = database.users.find(u => u.username && u.username.toLowerCase().trim() === "thamiris");
+  if (!thamirisUser) {
+    const maxId = database.users.length > 0 ? Math.max(...database.users.map(u => Number(u.id) || 0)) : 0;
+    database.users.push({
+      id: Math.max(6, maxId + 1),
+      username: "thamiris",
+      name: "Thamiris",
+      role: "admin",
+      customPermissions: true,
+      defaultRoute: "/reservas",
+      hideCopilot: true,
+      allowedModules: [...THAMIRIS_CLEAN_MODULES],
+      passwordHash: hashPassword(THAMIRIS_INITIAL_PASSWORD),
+      active: true,
+      whatsapp: "5521997142513",
+      phone: "5521997142513",
+      password_updated_at: new Date().toISOString()
+    });
+    changed = true;
+  } else {
+    if (!thamirisUser.customPermissions) {
+      thamirisUser.customPermissions = true;
+      changed = true;
+    }
+    if (!thamirisUser.name) {
+      thamirisUser.name = "Thamiris";
+      changed = true;
+    }
+    if (thamirisUser.defaultRoute === undefined) {
+      thamirisUser.defaultRoute = "/reservas";
+      changed = true;
+    }
+    if (thamirisUser.hideCopilot === undefined) {
+      thamirisUser.hideCopilot = true;
+      changed = true;
+    }
+    if (!thamirisUser.whatsapp) {
+      thamirisUser.whatsapp = "5521997142513";
+      changed = true;
+    }
+    if (!thamirisUser.phone) {
+      thamirisUser.phone = "5521997142513";
+      changed = true;
+    }
+    if (!Array.isArray(thamirisUser.allowedModules) || thamirisUser.allowedModules.length === 0) {
+      thamirisUser.allowedModules = [...THAMIRIS_CLEAN_MODULES];
       changed = true;
     }
   }
@@ -1510,12 +1657,15 @@ export function ensureSystemUsers(database) {
     changed = true;
   }
 
-  // 5. Garantia de allowedModules para todos os usuários da base + migração automática dos módulos de Frigobar/Anserve
+  // 5. Garantia de allowedModules para todos os usuários da base + migração automática dos módulos de Frigobar/Anserve (exceto perfis personalizados)
   for (const u of database.users) {
+    const uIsCustom =
+      u.customPermissions === true ||
+      (u.customPermissions === undefined && String(u.username || "").toLowerCase().trim() === "thamiris");
     if (!Array.isArray(u.allowedModules)) {
-      u.allowedModules = getDefaultModulesForRole(u.role);
+      u.allowedModules = uIsCustom ? [...THAMIRIS_CLEAN_MODULES] : getDefaultModulesForRole(u.role);
       changed = true;
-    } else if (u.role === "dev" || u.role === "admin") {
+    } else if ((u.role === "dev" || u.role === "admin") && !uIsCustom) {
       for (const reqMod of ["/frigobar", "/anserve", "/frigobar-reposicao", "/frigobar-gestao"]) {
         if (!u.allowedModules.includes(reqMod)) {
           u.allowedModules.push(reqMod);
@@ -18691,17 +18841,75 @@ function verifyAuthToken(token) {
   }
 }
 
+export function sanitizeUserMenuPreferences(raw, existing = null) {
+  const base = existing && typeof existing === "object" ? { ...existing } : {};
+  if (!raw || typeof raw !== "object") return base;
+
+  if (raw.visibleCount !== undefined) {
+    const n = Math.round(Number(raw.visibleCount));
+    if (Number.isFinite(n)) {
+      base.visibleCount = Math.max(1, Math.min(30, n));
+    }
+  }
+
+  if (Array.isArray(raw.pinnedModules)) {
+    base.pinnedModules = Array.from(
+      new Set(
+        raw.pinnedModules
+          .map(m => (typeof m === "string" ? canonicalizeRoute(m.trim()) : ""))
+          .filter(Boolean)
+      )
+    ).slice(0, 40);
+  }
+
+  if (raw.usageCounts && typeof raw.usageCounts === "object") {
+    const cleanCounts = {};
+    for (const [k, v] of Object.entries(raw.usageCounts).slice(0, 60)) {
+      const key = canonicalizeRoute(k);
+      const val = Math.max(0, Math.floor(Number(v) || 0));
+      if (key && val > 0) cleanCounts[key] = val;
+    }
+    base.usageCounts = cleanCounts;
+  }
+
+  if (raw.lastUsedAt && typeof raw.lastUsedAt === "object") {
+    const cleanTs = {};
+    for (const [k, v] of Object.entries(raw.lastUsedAt).slice(0, 60)) {
+      const key = canonicalizeRoute(k);
+      const val = Math.max(0, Math.floor(Number(v) || 0));
+      if (key && val > 0) cleanTs[key] = val;
+    }
+    base.lastUsedAt = cleanTs;
+  }
+
+  if (["expanded", "single_line", "pill"].includes(raw.desktopMode)) {
+    base.desktopMode = raw.desktopMode;
+  }
+
+  if (["single_line", "grid", "pill"].includes(raw.mobileMode)) {
+    base.mobileMode = raw.mobileMode;
+  }
+
+  return base;
+}
+
 export function resolveEffectiveAllowedModules(userObj) {
   if (!userObj) return [];
+  const uName = String(userObj.username || "").toLowerCase().trim();
+  const isCustomRestricted =
+    userObj.customPermissions === true ||
+    (userObj.customPermissions === undefined && uName === "thamiris");
   const base = Array.isArray(userObj.allowedModules)
     ? [...userObj.allowedModules]
-    : [...getDefaultModulesForRole(userObj.role)];
-  if (userObj.role === "dev" || userObj.role === "admin") {
-    for (const m of ["/frigobar", "/anserve", "/frigobar-reposicao", "/frigobar-gestao"]) {
+    : isCustomRestricted
+      ? [...THAMIRIS_CLEAN_MODULES]
+      : [...getDefaultModulesForRole(userObj.role)];
+  if ((userObj.role === "dev" || userObj.role === "admin") && !isCustomRestricted) {
+    for (const m of ["/frigobar", "/anserve", "/frigobar-reposicao", "/frigobar-gestao", "/painel-aovivo", "/rh", "/disparo-inteligente"]) {
       if (!base.includes(m)) base.push(m);
     }
   } else if (userObj.role === "anserve_gestor") {
-    for (const m of ["/anserve", "/frigobar-reposicao", "/frigobar-gestao"]) {
+    for (const m of ["/anserve", "/frigobar-notas", "/frigobar-reposicao", "/frigobar-gestao"]) {
       if (!base.includes(m)) base.push(m);
     }
   } else if (userObj.role === "anserve_repositora") {
@@ -18724,12 +18932,21 @@ export function getAuthUser(req) {
         return null; // Turno do dia anterior encerrado — exige novo login da operadora no início do turno de hoje
       }
     }
+    const uName = String(found.username || "").toLowerCase().trim();
+    const isCustomRestricted =
+      found.customPermissions === true ||
+      (found.customPermissions === undefined && uName === "thamiris");
     return {
       id: found.id,
       username: found.username,
       name: found.name || found.username,
       role: found.role,
       shiftDate: data.shiftDate || null,
+      customPermissions: isCustomRestricted,
+      defaultRoute: found.defaultRoute || null,
+      hideCopilot: Boolean(found.hideCopilot),
+      menuPreferences: found.menuPreferences || null,
+      welcomeCredentialsSentAt: found.welcomeCredentialsSentAt || null,
       allowedModules: resolveEffectiveAllowedModules(found)
     };
   } catch {
@@ -18777,6 +18994,46 @@ if (ensureSystemUsers(db)) {
 }
 initWhatsAppEngine(app, () => db, saveDatabase, createNotification, (text, ctx) => analyzeTextSentimentWithAI(text, ctx));
 initMaidAutomationEngine(app, () => db, saveDatabase);
+
+if (process.env.NODE_ENV !== "test") {
+  const attemptThamirisWelcomeDispatch = async (attempt = 1) => {
+    try {
+      const zapiCfg = db.settings?.zapiConfig || db.zapiConfig || {};
+      const hasRealZapi = Boolean(
+        zapiCfg?.instanceId?.trim() &&
+        zapiCfg?.token?.trim() &&
+        zapiCfg.instanceId !== "test-instance"
+      );
+      if (!hasRealZapi) return;
+      const thamirisAcc = (db.users || []).find(
+        u => u.username && u.username.toLowerCase().trim() === "thamiris"
+      );
+      if (!thamirisAcc || thamirisAcc.welcomeCredentialsSentAt) return;
+      const dispatchRes = await sendNewUserWelcomeCredentialsWhatsApp(
+        thamirisAcc,
+        THAMIRIS_INITIAL_PASSWORD
+      );
+      if (
+        dispatchRes?.sent &&
+        !dispatchRes?.simulated &&
+        dispatchRes?.result?.success !== false
+      ) {
+        thamirisAcc.welcomeCredentialsSentAt = new Date().toISOString();
+        thamirisAcc.welcomeCredentialsMessageId =
+          dispatchRes.result?.messageId || dispatchRes.result?.zapiMessageId || null;
+        saveDatabase("thamiris_welcome_credentials_sent");
+        console.log(`[System Users] Credenciais iniciais enviadas via WhatsApp para Thamiris (${thamirisAcc.whatsapp}).`);
+      } else if (attempt < 2) {
+        setTimeout(() => attemptThamirisWelcomeDispatch(attempt + 1), 15000);
+      } else {
+        console.warn("[System Users] Envio inicial de credenciais para Thamiris pendente/não confirmado:", dispatchRes);
+      }
+    } catch (err) {
+      console.warn("[System Users] Erro ao disparar credenciais iniciais da Thamiris:", err?.message || err);
+    }
+  };
+  setTimeout(() => attemptThamirisWelcomeDispatch(1), 4000);
+}
 
 let checkinsList = [];
 let existingManualRequests = [];
@@ -19977,12 +20234,22 @@ app.post("/api/auth/login", (req, res) => {
     });
   }
 
+  const foundUname = String(found.username || "").toLowerCase().trim();
+  const isCustomRestricted =
+    found.customPermissions === true ||
+    (found.customPermissions === undefined && foundUname === "thamiris");
+
   res.json({
     id: found.id,
     username: found.username,
     role: found.role,
     name: found.name || found.username,
     ...(shiftDate ? { shiftDate } : {}),
+    customPermissions: isCustomRestricted,
+    defaultRoute: found.defaultRoute || null,
+    hideCopilot: Boolean(found.hideCopilot),
+    menuPreferences: found.menuPreferences || null,
+    welcomeCredentialsSentAt: found.welcomeCredentialsSentAt || null,
     allowedModules: resolveEffectiveAllowedModules(found),
     mustChangePassword: mustChange,
     passwordExpired: expired
@@ -19998,6 +20265,35 @@ app.post("/api/auth/logout", (req, res) => {
   res.clearCookie("auth_session", { path: "/" });
   res.clearCookie(AUTH_COOKIE_NAME, { path: "/" });
   res.json({ success: true });
+});
+
+app.patch("/api/auth/preferences", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
+  const user = (db.users || []).find(u => u.id === userAuth.id);
+  if (!user) return res.status(404).json({ error: "Usuário não encontrado." });
+
+  const { menuPreferences, defaultRoute, hideCopilot } = req.body || {};
+  if (menuPreferences && typeof menuPreferences === "object") {
+    user.menuPreferences = sanitizeUserMenuPreferences(menuPreferences, user.menuPreferences);
+  }
+  if (defaultRoute !== undefined) {
+    user.defaultRoute =
+      typeof defaultRoute === "string" && defaultRoute.trim().startsWith("/")
+        ? defaultRoute.trim()
+        : null;
+  }
+  if (hideCopilot !== undefined) {
+    user.hideCopilot = Boolean(hideCopilot);
+  }
+
+  saveDatabase("user_preferences_updated");
+  res.json({
+    success: true,
+    menuPreferences: user.menuPreferences || null,
+    defaultRoute: user.defaultRoute || null,
+    hideCopilot: Boolean(user.hideCopilot)
+  });
 });
 
 // Self Change Password
@@ -20043,19 +20339,29 @@ app.get("/api/staff", (req, res) => {
 app.get("/api/admin/users", (req, res) => {
   const userAuth = getAuthUser(req);
   if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) return res.status(403).json({ error: "Acesso negado." });
-  const list = (db.users || []).map(u => ({
-    id: u.id,
-    username: u.username,
-    name: u.name || u.username,
-    role: u.role,
-    whatsapp: u.whatsapp || u.phone || "",
-    phone: u.phone || u.whatsapp || "",
-    pixKey: u.pixKey || "",
-    pin: u.pin || "",
-    active: u.active !== false,
-    lastLoginAt: u.lastLoginAt || null,
-    allowedModules: resolveEffectiveAllowedModules(u)
-  }));
+  const list = (db.users || []).map(u => {
+    const uName = String(u.username || "").toLowerCase().trim();
+    const isCustom =
+      u.customPermissions === true ||
+      (u.customPermissions === undefined && uName === "thamiris");
+    return {
+      id: u.id,
+      username: u.username,
+      name: u.name || u.username,
+      role: u.role,
+      whatsapp: u.whatsapp || u.phone || "",
+      phone: u.phone || u.whatsapp || "",
+      pixKey: u.pixKey || "",
+      pin: u.pin || "",
+      active: u.active !== false,
+      lastLoginAt: u.lastLoginAt || null,
+      customPermissions: isCustom,
+      defaultRoute: u.defaultRoute || null,
+      hideCopilot: Boolean(u.hideCopilot),
+      welcomeCredentialsSentAt: u.welcomeCredentialsSentAt || null,
+      allowedModules: resolveEffectiveAllowedModules(u)
+    };
+  });
   res.json(list);
 });
 
@@ -20097,9 +20403,22 @@ async function sendNewUserWelcomeCredentialsWhatsApp(userObj, plainPassword) {
       }
     };
 
-    const roleInfo = roleMap[userObj.role] || {
+    const baseRoleInfo = roleMap[userObj.role] || {
       label: userObj.role || "Colaborador",
       url: `${serverBaseUrl}/login`
+    };
+
+    const isCleanAdminProfile = Boolean(userObj.customPermissions) && userObj.role === "admin";
+    const directUrl =
+      typeof userObj.defaultRoute === "string" && userObj.defaultRoute.trim().startsWith("/")
+        ? `${serverBaseUrl}${userObj.defaultRoute.trim()}`
+        : baseRoleInfo.url;
+
+    const roleInfo = {
+      label: isCleanAdminProfile
+        ? "Gestão, Reservas, Governança & Notas (Perfil Personalizado)"
+        : baseRoleInfo.label,
+      url: directUrl
     };
 
     const pinLine =
@@ -20127,7 +20446,13 @@ async function sendNewUserWelcomeCredentialsWhatsApp(userObj, plainPassword) {
       db
     });
 
-    return { sent: true, phone: targetPhone, result: sendRes };
+    const actuallySent = Boolean(sendRes && sendRes.success !== false && !sendRes.error);
+    return {
+      sent: actuallySent,
+      simulated: Boolean(sendRes?.simulated),
+      phone: targetPhone,
+      result: sendRes
+    };
   } catch (err) {
     console.warn("[sendNewUserWelcomeCredentialsWhatsApp Error]:", err?.message || err);
     return { sent: false, error: err?.message };
@@ -20137,7 +20462,20 @@ async function sendNewUserWelcomeCredentialsWhatsApp(userObj, plainPassword) {
 app.post("/api/admin/users", async (req, res) => {
   const userAuth = getAuthUser(req);
   if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) return res.status(403).json({ error: "Acesso negado." });
-  const { username, password, role = "camareira", name, whatsapp, phone, pixKey, pin, allowedModules } = req.body || {};
+  const {
+    username,
+    password,
+    role = "camareira",
+    name,
+    whatsapp,
+    phone,
+    pixKey,
+    pin,
+    allowedModules,
+    customPermissions,
+    defaultRoute,
+    hideCopilot
+  } = req.body || {};
 
   if (!username || !password) {
     return res.status(400).json({ error: "Nome de usuário e senha são obrigatórios." });
@@ -20171,6 +20509,15 @@ app.post("/api/admin/users", async (req, res) => {
     finalAllowedModules = getDefaultModulesForRole(targetRole);
   }
 
+  const isCustom =
+    customPermissions !== undefined
+      ? Boolean(customPermissions)
+      : !isDefaultPermissionsForRole(targetRole, finalAllowedModules);
+  const cleanDefaultRoute =
+    typeof defaultRoute === "string" && defaultRoute.trim().startsWith("/")
+      ? defaultRoute.trim()
+      : null;
+
   const cleanPh = cleanWhatsAppPhone(whatsapp || phone || "");
   const newUser = {
     id: db.users.length > 0 ? Math.max(...db.users.map(u => u.id)) + 1 : 1,
@@ -20182,6 +20529,9 @@ app.post("/api/admin/users", async (req, res) => {
     pixKey: (pixKey || "").trim(),
     pin: pin ? String(pin).trim() : "",
     active: true,
+    customPermissions: isCustom,
+    defaultRoute: cleanDefaultRoute,
+    hideCopilot: Boolean(hideCopilot),
     allowedModules: finalAllowedModules,
     passwordHash: hashPassword(password),
     password_updated_at: new Date().toISOString()
@@ -20195,6 +20545,10 @@ app.post("/api/admin/users", async (req, res) => {
   if (cleanPh) {
     const wRes = await sendNewUserWelcomeCredentialsWhatsApp(newUser, String(password).trim());
     whatsappWelcomeSent = Boolean(wRes?.sent);
+    if (whatsappWelcomeSent && !wRes?.simulated) {
+      newUser.welcomeCredentialsSentAt = new Date().toISOString();
+      saveDatabase("new_user_welcome_sent");
+    }
   }
 
   res.status(201).json({
@@ -20206,7 +20560,10 @@ app.post("/api/admin/users", async (req, res) => {
     pixKey: newUser.pixKey,
     pin: newUser.pin,
     active: newUser.active,
-    allowedModules: newUser.allowedModules,
+    customPermissions: newUser.customPermissions,
+    defaultRoute: newUser.defaultRoute,
+    hideCopilot: newUser.hideCopilot,
+    allowedModules: resolveEffectiveAllowedModules(newUser),
     whatsappWelcomeSent
   });
 });
@@ -20223,7 +20580,20 @@ app.patch("/api/admin/users/:id", (req, res) => {
     return res.status(403).json({ error: "Apenas desenvolvedores podem alterar contas de desenvolvedor." });
   }
 
-  const { name, username, role, whatsapp, phone, pixKey, pin, active, allowedModules } = req.body || {};
+  const {
+    name,
+    username,
+    role,
+    whatsapp,
+    phone,
+    pixKey,
+    pin,
+    active,
+    allowedModules,
+    customPermissions,
+    defaultRoute,
+    hideCopilot
+  } = req.body || {};
 
   if (username !== undefined && username.trim()) {
     const existing = db.users.find(u => u.id !== id && u.username.toLowerCase() === username.trim().toLowerCase());
@@ -20257,11 +20627,28 @@ app.patch("/api/admin/users/:id", (req, res) => {
       sanitized = sanitized.filter(m => !DEV_ONLY_MODULES.includes(m));
     }
     user.allowedModules = sanitized;
+    user.customPermissions =
+      customPermissions !== undefined
+        ? Boolean(customPermissions)
+        : !isDefaultPermissionsForRole(user.role, sanitized);
   } else if (roleChanged) {
     user.allowedModules = getDefaultModulesForRole(user.role);
+    user.customPermissions = false;
+  } else if (customPermissions !== undefined) {
+    user.customPermissions = Boolean(customPermissions);
   } else if (userAuth.role !== "dev" && Array.isArray(user.allowedModules)) {
     // Se não-dev está atualizando o usuário e o usuário já tinha módulos salvos, remove devOnly
     user.allowedModules = user.allowedModules.filter(m => !DEV_ONLY_MODULES.includes(m));
+  }
+
+  if (defaultRoute !== undefined) {
+    user.defaultRoute =
+      typeof defaultRoute === "string" && defaultRoute.trim().startsWith("/")
+        ? defaultRoute.trim()
+        : null;
+  }
+  if (hideCopilot !== undefined) {
+    user.hideCopilot = Boolean(hideCopilot);
   }
 
   if (whatsapp !== undefined || phone !== undefined) {
@@ -20286,7 +20673,10 @@ app.patch("/api/admin/users/:id", (req, res) => {
       pixKey: user.pixKey || "",
       pin: user.pin || "",
       active: user.active !== false,
-      allowedModules: Array.isArray(user.allowedModules) ? user.allowedModules : getDefaultModulesForRole(user.role)
+      customPermissions: Boolean(user.customPermissions),
+      defaultRoute: user.defaultRoute || null,
+      hideCopilot: Boolean(user.hideCopilot),
+      allowedModules: resolveEffectiveAllowedModules(user)
     }
   });
 });
@@ -20317,6 +20707,40 @@ const handleResetPassword = (req, res) => {
 
 app.patch("/api/admin/users/:id/reset-password", handleResetPassword);
 app.post("/api/admin/users/:id/reset-password", handleResetPassword);
+
+app.post("/api/admin/users/:id/send-credentials", async (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
+    return res.status(403).json({ error: "Acesso negado." });
+  }
+  const id = Number(req.params.id);
+  const user = (db.users || []).find(u => u.id === id);
+  if (!user) return res.status(404).json({ error: "Usuário não encontrado." });
+  if (user.role === "dev" && userAuth.role !== "dev") {
+    return res.status(403).json({ error: "Apenas desenvolvedores podem reenviar credenciais de desenvolvedor." });
+  }
+  const { plainPassword } = req.body || {};
+  if (!plainPassword || String(plainPassword).trim().length < 4) {
+    return res.status(400).json({ error: "Informe a senha para envio (mínimo 4 caracteres)." });
+  }
+  const cleanPass = String(plainPassword).trim();
+  if (!verifyPassword(cleanPass, user.passwordHash)) {
+    user.passwordHash = hashPassword(cleanPass);
+    user.password_updated_at = new Date().toISOString();
+  }
+  const wRes = await sendNewUserWelcomeCredentialsWhatsApp(user, cleanPass);
+  if (wRes?.sent && !wRes?.simulated) {
+    user.welcomeCredentialsSentAt = new Date().toISOString();
+    user.welcomeCredentialsMessageId = wRes.result?.messageId || wRes.result?.zapiMessageId || null;
+  }
+  saveDatabase("admin_send_credentials_whatsapp");
+  res.json({
+    success: Boolean(wRes?.sent),
+    simulated: Boolean(wRes?.simulated),
+    phone: wRes?.phone || user.whatsapp || "",
+    welcomeCredentialsSentAt: user.welcomeCredentialsSentAt || null
+  });
+});
 
 app.delete("/api/admin/users/:id", (req, res) => {
   const userAuth = getAuthUser(req);

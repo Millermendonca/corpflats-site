@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { AlertCircle } from "lucide-react"
 import { CorpFlatsLogo } from "@/components/brand-logo"
+import { resolveInitialRouteForUser } from "@/lib/permissions"
 
 export default function Login() {
   const [username, setUsername] = useState("")
@@ -33,7 +34,7 @@ export default function Login() {
     mutation: {
       onSuccess: (data) => {
         queryClient.setQueryData(getGetMeQueryKey(), data)
-        setLocation(`/dashboard?date=${getRedirectDateStr()}`)
+        setLocation(resolveInitialRouteForUser(data as any, getRedirectDateStr()))
       },
       onError: (err: any) => {
         setErrorMsg(err.message || "Usuário ou senha incorretos.")
@@ -43,7 +44,7 @@ export default function Login() {
 
   if (user) {
     setTimeout(() => {
-      setLocation(`/dashboard?date=${getRedirectDateStr()}`)
+      setLocation(resolveInitialRouteForUser(user as any, getRedirectDateStr()))
     }, 0)
     return null
   }

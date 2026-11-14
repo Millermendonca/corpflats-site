@@ -2,6 +2,12 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useLocation } from 'wouter'
 import { useGetMe } from '@workspace/api-client-react'
 import { FrozenSlot, useStableCallback } from '@/lib/render-freeze'
+import {
+  useBackLayer,
+  useBackTabState,
+  recordBackSelectionStep,
+  clearBackStepsBySource
+} from '@/lib/back-navigation'
 import { Shell } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -928,12 +934,45 @@ export default function WhatsappChat() {
   // Scroll down whenever messages change
   useEffect(() => {
     if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' })
+      const prefersSmooth =
+        typeof window !== 'undefined' &&
+        window.matchMedia?.('(prefers-reduced-motion: no-preference)').matches
+      messagesEndRef.current.scrollIntoView({ behavior: prefersSmooth ? 'smooth' : 'auto' })
     }
   }, [messages.length])
 
+  // Smart Back Navigation: filter tabs, expanded editor, and active conversation
+  useBackTabState(filterTab, setFilterTab, { id: 'wa-filter-tabs' })
+  useBackLayer(isExpandedEditor, () => setIsExpandedEditor(false), 'wa-expanded-editor')
+  useBackLayer(
+    !isMobileListOpen && Boolean(activePhone),
+    () => {
+      clearBackStepsBySource('wa-conv-switch')
+      setIsMobileListOpen(true)
+      setActivePhone(null)
+      setActiveConversation(null)
+    },
+    'wa-active-conversation'
+  )
+
   // Select conversation
   const handleSelectConversation = useStableCallback((conv: ChatConversation) => {
+    if (activePhone && activePhone !== conv.phone && !isMobileListOpen) {
+      const prevPhone = activePhone
+      const prevConv = activeConversation
+      recordBackSelectionStep(
+        'wa-conv-switch',
+        () => {
+          setSelectedResCode(null)
+          setActivePhone(prevPhone)
+          setActiveConversation(prevConv)
+          setSofiaAssist(null)
+          lastSofiaGuestMsgKeyRef.current = ''
+          setIsMobileListOpen(false)
+        },
+        10
+      )
+    }
     setSelectedResCode(null)
     setActivePhone(conv.phone)
     setActiveConversation(conv)

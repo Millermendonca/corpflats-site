@@ -2,8 +2,44 @@ import * as React from 'react';
 import * as AlertDialogPrimitive from '@radix-ui/react-alert-dialog';
 import { buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useBackLayer } from '@/lib/back-navigation';
 
-const AlertDialog = AlertDialogPrimitive.Root;
+const AlertDialog = ({
+  open: controlledOpen,
+  defaultOpen,
+  onOpenChange,
+  disableBackClose,
+  ...props
+}: React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Root> & {
+  disableBackClose?: boolean;
+}) => {
+  const isControlled = controlledOpen !== undefined;
+  const [uncontrolledOpen, setUncontrolledOpen] = React.useState<boolean>(Boolean(defaultOpen));
+  const isOpen = Boolean(isControlled ? controlledOpen : uncontrolledOpen);
+
+  const handleOpenChange = React.useCallback(
+    (nextOpen: boolean) => {
+      if (!isControlled) {
+        setUncontrolledOpen(nextOpen);
+      }
+      onOpenChange?.(nextOpen);
+    },
+    [isControlled, onOpenChange],
+  );
+
+  useBackLayer(isOpen, () => handleOpenChange(false), {
+    disabled: Boolean(disableBackClose) || (isControlled && !onOpenChange),
+  });
+
+  return (
+    <AlertDialogPrimitive.Root
+      open={isOpen}
+      onOpenChange={handleOpenChange}
+      {...props}
+    />
+  );
+};
+AlertDialog.displayName = 'AlertDialog';
 
 const AlertDialogTrigger = AlertDialogPrimitive.Trigger;
 

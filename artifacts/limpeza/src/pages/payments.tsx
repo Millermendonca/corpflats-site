@@ -22,6 +22,7 @@ import { ptBR } from "date-fns/locale"
 import { AccessDenied } from "@/components/access-denied"
 import { PaymentMethodsModal } from "@/components/payment-methods-modal"
 import { useToast } from "@/hooks/use-toast"
+import { useBackTabState } from "@/lib/back-navigation"
 
 function formatBrDateStr(iso?: string | null) {
   if (!iso) return "—"
@@ -83,9 +84,11 @@ export default function Payments() {
       const url = new URL(window.location.href)
       if (tab === "history") url.searchParams.delete("tab")
       else url.searchParams.set("tab", tab)
-      window.history.replaceState({}, "", url.pathname + url.search)
+      window.history.replaceState(window.history.state, "", url.pathname + url.search)
     } catch {}
   }
+
+  useBackTabState(activeTab, handleTabChange, { id: "payments-main-tabs" })
 
   // ── Dados Principais ────────────────────────────────────────────────────────
   const [paymentsData, setPaymentsData] = useState<any | null>(null)

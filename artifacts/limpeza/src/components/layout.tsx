@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { Link, useLocation } from "wouter"
 import { useGetMe, useLogout, getGetMeQueryKey, useGetAlerts } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
@@ -29,6 +29,12 @@ import { Label } from "./ui/label"
 import { QuickShoppingModal } from "./quick-shopping-modal"
 import { CorpFlatsIcon, CorpFlatsWordmark } from "./brand-logo"
 import { hasModuleAccess } from "@/lib/permissions"
+import { useBackLayer, navigateFromOverlay } from "@/lib/back-navigation"
+import {
+  useDynamicQuickMenu,
+  DesktopQuickMenuBar,
+  MobileQuickMenuBar,
+} from "./dynamic-quick-menu"
 
 interface NavItem {
   href: string
@@ -342,7 +348,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
     if (href === "/monitor-servidor" && (location === "/servidor" || location === "/server-monitor")) return true
     if (href === "/ia-status" && (location === "/ai-status" || location === "/status-ia")) return true
     if (href === "/logs" && (location === "/auditoria" || location === "/system-logs" || location === "/audit")) return true
-    if (href === "/raio-x-flats" && (location === "/raio-x-flats" || location === "/diario-flats" || location === "/hub-manutencao" || location === "/servicos" || location === "/tasks" || location === "/observations" || location === "/surveys")) return true
+    if (href === "/raio-x-flats" && (location === "/raio-x-flats" || location === "/diario-flats" || location === "/hub-manutencao" || location === "/servicos" || location === "/surveys")) return true
+    if (href === "/observations" && (location === "/observations" || location === "/ocorrencias" || location === "/avarias")) return true
+    if (href === "/tasks" && (location === "/tasks" || location === "/tarefas")) return true
     if (href === "/disparo-inteligente" && (location === "/disparo-inteligente" || location === "/whatsapp-broadcast" || location === "/broadcast" || location === "/campanhas-whatsapp")) return true
     return false
   }
@@ -385,10 +393,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
       title: "🧹 Governança & Manutenção",
       items: [
         { href: "/dashboard", label: "Painel de Limpeza", icon: LayoutDashboard, description: "Quartos sujos, limpos e em andamento" },
+        ...(!isCamareira ? [{ href: "/raio-x-flats", label: "Raio-X & Hub dos Flats", icon: Wrench, description: "Diário do flat, campanhas (AC/dedetização/cortinas), ficha técnica, 76 tags, preventivas e vistorias" }] : []),
         { href: "/reports", label: isAdminOrDev ? "Fechamento & Diárias das Camareiras" : "Meu Fechamento & Extrato", icon: Wallet, description: "Fechamento quinzenal, extrato em tempo real, vales e PIX" },
         { href: "/lista-compras", label: "Lista de Compras", icon: ShoppingCart, badge: pendingShoppingCount > 0 ? pendingShoppingCount : null, description: "Itens para reposição, compras e governança" },
-        ...(isCamareira ? [{ href: "/observations", label: "Ocorrências & Avarias", icon: MessageSquareWarning, description: "Defeitos e manutenções relatadas" }] : [{ href: "/raio-x-flats", label: "Raio-X & Hub dos Flats", icon: Wrench, description: "Diário do flat, campanhas (AC/dedetização/cortinas), ficha técnica, 76 tags, preventivas e vistorias" }]),
-        ...(isCamareira ? [{ href: "/tasks", label: "Tarefas Preventivas", icon: ClipboardList, description: "Trocas de filtro, dedetizações e rotinas" }] : []),
+        { href: "/observations", label: "Ocorrências & Avarias", icon: MessageSquareWarning, description: "Defeitos e manutenções relatadas" },
+        { href: "/tasks", label: "Tarefas Preventivas", icon: ClipboardList, description: "Trocas de filtro, dedetizações e rotinas" },
         { href: "/achados-perdidos", label: "Achados & Perdidos", icon: Package, description: "Objetos esquecidos, custódia e devoluções" },
         { href: "/automacoes-camareiras", label: "Automação WhatsApp Camareiras", icon: MessageSquare, description: "Gatilhos automáticos, alertas de quarto e fechamentos" },
       ]
@@ -430,6 +439,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         { href: "/anserve", label: "Painel do Gestor Anserve", icon: Building2, description: "Vendas, repasse líquido, equipe e histórico de lançamentos" },
         { href: "/frigobar-notas", label: "Central de Notas Fiscais", icon: FileText, description: "Emissão e anexo de Notas Fiscais do frigobar por flat" },
         { href: "/frigobar-reposicao", label: "App da Repositora", icon: Package, description: "Fila diária de check-outs, lançamento de consumo e reposição" },
+        { href: "/frigobar-gestao", label: "Relatórios & Estoque Anserve", icon: BarChart3, description: "Métricas de saída, consumo de cortesias e auditoria" },
       ]
     },
 
@@ -480,6 +490,25 @@ export function Shell({ children }: { children: React.ReactNode }) {
       }
     })
   }, [location])
+
+  const allAccessibleQuickItems = useMemo(
+    () => navCategories.flatMap(cat => cat.items),
+    [navCategories]
+  )
+  const quickMenu = useDynamicQuickMenu(effectiveUser, allAccessibleQuickItems, location)
+
+  // Smart Back Navigation para gavetas e dropdowns do Shell
+  useBackLayer(mobileMenuOpen, () => setMobileMenuOpen(false), "shell-mobile-drawer")
+  useBackLayer(!isPinned && isDesktopOpen, () => setIsDesktopOpen(false), "shell-desktop-drawer")
+  useBackLayer(notifDropdownOpen, () => setNotifDropdownOpen(false), "shell-notif-dropdown")
+
+  const canAccessNotifications = Boolean(
+    effectiveUser && hasModuleAccess(effectiveUser as any, "/notificacoes")
+  )
+  const canAccessEquipe = Boolean(
+    effectiveUser && hasModuleAccess(effectiveUser as any, "/equipe")
+  )
+  const canShowCopilot = Boolean(isAdminOrDev && !(effectiveUser as any)?.hideCopilot)
 
   const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -593,7 +622,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </div>
 
         <div className="flex items-center gap-1.5">
-          {isAdminOrDev && (
+          {canAccessNotifications && (
             <div className="relative">
               <Button 
                 variant="ghost" 
@@ -679,7 +708,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               )}
             </div>
           )}
-          {isAdminOrDev && (
+          {canShowCopilot && (
             <Button
               variant="outline"
               size="sm"
@@ -715,22 +744,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <div className="w-1.5 h-16 rounded-r-full bg-primary/40 group-hover:bg-primary group-hover:h-24 group-hover:w-2 transition-all duration-300 shadow-md flex items-center justify-center">
             <ChevronRight className="w-3 h-3 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200 -ml-0.5" />
           </div>
-        </div>
-      )}
-
-      {/* Gatilho visual no topo esquerdo (Desktop Menu Trigger) */}
-      {!isPinned && !isDesktopOpen && (
-        <div className={`fixed left-3 z-30 hidden md:block ${alertCount > 0 ? "top-12" : "top-3"}`}>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setIsDesktopOpen(true)}
-            className="h-8 px-2.5 gap-1.5 font-bold text-xs rounded-xl bg-card/90 backdrop-blur-sm shadow-md border-border/80 hover:bg-card hover:border-primary/50 text-foreground transition-all"
-            title="Abrir menu lateral flutuante"
-          >
-            <Menu className="w-4 h-4 text-primary" />
-            <span className="text-[11px]">Menu</span>
-          </Button>
         </div>
       )}
 
@@ -772,7 +785,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-1">
-            {isAdminOrDev && unreadNotifications > 0 && (
+            {canAccessNotifications && unreadNotifications > 0 && (
               <Link href="/notificacoes">
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-600 text-white animate-pulse">
                   {unreadNotifications}
@@ -794,7 +807,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </div>
 
         {/* Botão Fixo da Sofia Copiloto na Sidebar */}
-        {isAdminOrDev && (
+        {canShowCopilot && (
           <div className="px-3 pt-2.5 pb-1">
             <button
               type="button"
@@ -938,7 +951,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   <Settings className="w-4 h-4" />
                 </Button>
               </Link>
-            ) : isAdmin ? (
+            ) : canAccessEquipe ? (
               <Link href="/equipe">
                 <Button 
                   variant="ghost" 
@@ -977,199 +990,33 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
       
-      {/* Conteúdo Principal */}
-      <main className="flex-1 flex flex-col w-full min-w-0 max-w-full md:max-h-[100dvh] overflow-x-hidden overflow-y-auto pb-24 md:pb-0 print:max-h-none print:h-auto print:overflow-visible print:pb-0 print:m-0 print:p-0">
-        {children}
-      </main>
+      {/* Coluna Principal: Barra Dinâmica Rápida no Topo (PC) + Conteúdo */}
+      <div className="flex-1 flex flex-col w-full min-w-0 max-w-full md:max-h-[100dvh] md:overflow-hidden print:max-h-none print:h-auto print:overflow-visible">
+        <DesktopQuickMenuBar
+          menu={quickMenu}
+          isItemActive={isItemActive}
+          isSidebarPinned={isPinned}
+          onOpenFullMenu={() => setIsDesktopOpen(true)}
+          alertBannerVisible={alertCount > 0}
+        />
 
-      {/* Barra de Navegação Inferior Móvel (Menus Permanentes no Rodapé) */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-card border-t border-border px-1 py-1.5 flex items-center justify-around shadow-2xl print:hidden">
-        {isAnserveRepositora ? (
-          <>
-            {/* 1. Portal Reposição */}
-            <Link href="/frigobar-reposicao" className="flex-1">
-              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
-                location === "/frigobar-reposicao" || location === "/anserve/reposicao" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
-              }`}>
-                <Package className="w-5 h-5" />
-                <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Reposição</span>
-              </div>
-            </Link>
-
-            {/* 2. Mais */}
-            <button 
-              type="button"
-              onClick={() => setMobileMenuOpen(true)}
-              className={`flex-1 flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
-                mobileMenuOpen ? "text-primary font-black" : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Menu className="w-5 h-5" />
-              <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Mais</span>
-            </button>
-          </>
-        ) : isAnserveGestor ? (
-          <>
-            {/* 1. Painel Supervisão */}
-            <Link href="/anserve" className="flex-1">
-              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
-                location === "/anserve" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
-              }`}>
-                <FileText className="w-5 h-5" />
-                <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Supervisão</span>
-              </div>
-            </Link>
-
-            {/* 2. Reposição */}
-            <Link href="/frigobar-reposicao" className="flex-1">
-              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
-                location === "/frigobar-reposicao" || location === "/anserve/reposicao" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
-              }`}>
-                <Package className="w-5 h-5" />
-                <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Reposição</span>
-              </div>
-            </Link>
-
-            {/* 3. Gestão / Extrato */}
-            <Link href="/frigobar-gestao" className="flex-1">
-              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
-                location === "/frigobar-gestao" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
-              }`}>
-                <BarChart3 className="w-5 h-5" />
-                <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Estoque & NF</span>
-              </div>
-            </Link>
-
-            {/* 4. Mais */}
-            <button 
-              type="button"
-              onClick={() => setMobileMenuOpen(true)}
-              className={`flex-1 flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
-                mobileMenuOpen ? "text-primary font-black" : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Menu className="w-5 h-5" />
-              <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Mais</span>
-            </button>
-          </>
-        ) : isAdminOrDev ? (
-          <>
-            {/* 1. Mapa de Reservas */}
-            <Link href="/reservas" className="flex-1">
-              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
-                location === "/reservas" || location === "/relatorios-reservas" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
-              }`}>
-                <CalendarDays className="w-5 h-5" />
-                <span className="text-[9.5px] sm:text-[10.5px] mt-0.5 font-bold text-center leading-tight">Mapa Reservas</span>
-              </div>
-            </Link>
-
-            {/* 2. Painel de Limpeza */}
-            <Link href="/dashboard" className="flex-1">
-              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
-                location === "/dashboard" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
-              }`}>
-                <LayoutDashboard className="w-5 h-5" />
-                <span className="text-[9.5px] sm:text-[10.5px] mt-0.5 font-bold text-center leading-tight">Painel Limpeza</span>
-              </div>
-            </Link>
-
-            {/* 3. Café da Manhã */}
-            <Link href="/pedidos-cafe" className="flex-1">
-              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
-                location === "/pedidos-cafe" || location === "/cafe-dashboard" || location === "/historico-cafe" || location === "/relatorios-cafe" || location === "/insights-cafe"
-                  ? "text-primary font-black scale-105" 
-                  : "text-muted-foreground hover:text-foreground"
-              }`}>
-                <Coffee className="w-5 h-5" />
-                <span className="text-[9.5px] sm:text-[10.5px] mt-0.5 font-bold text-center leading-tight">Café da Manhã</span>
-              </div>
-            </Link>
-
-            {/* 4. Lista de Compras */}
-            <Link href="/lista-compras" className="flex-1 flex flex-col items-center py-1 px-1 rounded-xl transition-all relative text-muted-foreground hover:text-foreground active:scale-95 cursor-pointer" title="Ver Lista de Compras">
-              <div className="relative">
-                <ShoppingCart className="w-5 h-5" />
-                {pendingShoppingCount > 0 && (
-                  <span className="absolute -top-1.5 -right-2.5 bg-amber-500 text-white font-black text-[9px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center shadow-xs">
-                    {pendingShoppingCount > 9 ? "9+" : pendingShoppingCount}
-                  </span>
-                )}
-              </div>
-              <span className="text-[9.5px] sm:text-[10.5px] mt-0.5 font-bold text-center leading-tight">Lista Compras</span>
-            </Link>
-
-            {/* 5. Mais */}
-            <button 
-              type="button"
-              onClick={() => setMobileMenuOpen(true)}
-              className={`flex-1 flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
-                mobileMenuOpen ? "text-primary font-black" : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Menu className="w-5 h-5" />
-              <span className="text-[9.5px] sm:text-[10.5px] mt-0.5 font-bold text-center leading-tight">Mais</span>
-            </button>
-          </>
-        ) : (
-          <>
-            {/* 1. Limpeza */}
-            <Link href="/dashboard" className="flex-1">
-              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
-                location === "/dashboard" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
-              }`}>
-                <LayoutDashboard className="w-5 h-5" />
-                <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Limpeza</span>
-              </div>
-            </Link>
-
-            {/* 2. Atalho Rápido para Lista de Compras */}
-            <Link href="/lista-compras" className="flex-1 flex flex-col items-center py-1 px-1 rounded-xl transition-all relative text-muted-foreground hover:text-foreground active:scale-95 cursor-pointer" title="Ver Lista de Compras">
-              <div className="relative">
-                <ShoppingCart className="w-5 h-5" />
-                {pendingShoppingCount > 0 && (
-                  <span className="absolute -top-1.5 -right-2.5 bg-amber-500 text-white font-black text-[9px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center shadow-xs">
-                    {pendingShoppingCount > 9 ? "9+" : pendingShoppingCount}
-                  </span>
-                )}
-              </div>
-              <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Compras</span>
-            </Link>
-
-            {/* 3. Extrato */}
-            <Link href="/extrato" className="flex-1">
-              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
-                location === "/extrato" || location === "/meu-extrato" || location === "/extrato-camareiras" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
-              }`}>
-                <Wallet className="w-5 h-5" />
-                <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Extrato</span>
-              </div>
-            </Link>
-
-            {/* 4. Manutenções */}
-            <Link href="/observations" className="flex-1">
-              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
-                location === "/observations" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
-              }`}>
-                <MessageSquareWarning className="w-5 h-5" />
-                <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Manutenções</span>
-              </div>
-            </Link>
-
-            {/* 5. Mais */}
-            <button 
-              type="button"
-              onClick={() => setMobileMenuOpen(true)}
-              className={`flex-1 flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
-                mobileMenuOpen ? "text-primary font-black" : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Menu className="w-5 h-5" />
-              <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Mais</span>
-            </button>
-          </>
-        )}
+        {/* Conteúdo Principal */}
+        <main
+          className={`flex-1 flex flex-col w-full min-w-0 min-h-0 max-w-full overflow-x-hidden overflow-y-auto ${
+            quickMenu.state.mobileMode === "pill" ? "pb-14" : "pb-24"
+          } md:pb-0 print:max-h-none print:h-auto print:overflow-visible print:pb-0 print:m-0 print:p-0`}
+        >
+          {children}
+        </main>
       </div>
+
+      {/* Barra de Navegação Inferior Dinâmica (1 linha / Grade expansível / Pílula no Celular) */}
+      <MobileQuickMenuBar
+        menu={quickMenu}
+        isItemActive={isItemActive}
+        mobileMenuOpen={mobileMenuOpen}
+        onOpenFullMenu={() => setMobileMenuOpen(true)}
+      />
 
       {/* Drawer / Gaveta Lateral Completa Mobile */}
       {mobileMenuOpen && (
@@ -1258,7 +1105,16 @@ export function Shell({ children }: { children: React.ReactNode }) {
                         {cat.items.map(item => {
                           const isActive = isItemActive(item.href)
                           return (
-                            <Link key={item.href} href={item.href}>
+                            <a
+                              key={item.href}
+                              href={item.href}
+                              onClick={(e) => {
+                                e.preventDefault()
+                                navigateFromOverlay(setLocation, item.href, () =>
+                                  setMobileMenuOpen(false)
+                                )
+                              }}
+                            >
                               <div className={`p-2 rounded-xl transition-all flex items-center justify-between ${
                                 isActive
                                   ? "bg-primary text-primary-foreground font-bold shadow-xs"
@@ -1290,7 +1146,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                                   <ChevronRight className={`w-3.5 h-3.5 ${isActive ? "text-white" : "text-muted-foreground"}`} />
                                 </div>
                               </div>
-                            </Link>
+                            </a>
                           )
                         })}
                       </div>
@@ -1328,27 +1184,33 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
               <div className="flex items-center gap-1">
                 {isDev ? (
-                  <Link href="/configuracoes">
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="h-8 w-8 text-muted-foreground hover:text-primary" 
-                      title="Configurações Técnicas & Nuvem"
-                    >
-                      <Settings className="w-4 h-4" />
-                    </Button>
-                  </Link>
-                ) : isAdmin ? (
-                  <Link href="/equipe">
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="h-8 w-8 text-muted-foreground hover:text-primary" 
-                      title="Gestão da Equipe & Níveis de Acesso"
-                    >
-                      <Users className="w-4 h-4" />
-                    </Button>
-                  </Link>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-muted-foreground hover:text-primary"
+                    title="Configurações Técnicas & Nuvem"
+                    onClick={() =>
+                      navigateFromOverlay(setLocation, "/configuracoes", () =>
+                        setMobileMenuOpen(false)
+                      )
+                    }
+                  >
+                    <Settings className="w-4 h-4" />
+                  </Button>
+                ) : canAccessEquipe ? (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-muted-foreground hover:text-primary"
+                    title="Gestão da Equipe & Níveis de Acesso"
+                    onClick={() =>
+                      navigateFromOverlay(setLocation, "/equipe", () =>
+                        setMobileMenuOpen(false)
+                      )
+                    }
+                  >
+                    <Users className="w-4 h-4" />
+                  </Button>
                 ) : null}
                 <Button 
                   variant="ghost" 

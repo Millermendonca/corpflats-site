@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'wouter';
 import { useGetMe } from '@workspace/api-client-react';
+import { useBackLayer } from '@/lib/back-navigation';
 import {
   Bot,
   Sparkles,
@@ -227,8 +228,9 @@ export function AdminAiCopilot() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Somente renderiza para administradores e recepção em rotas internas do PMS
-  const isAuthorizedRole = user && (user.role === 'admin' || user.role === 'recepcao');
+  // Somente renderiza para administradores e recepção em rotas internas do PMS (e quando não oculto no perfil do usuário)
+  const isCopilotHiddenForUser = Boolean((user as any)?.hideCopilot);
+  const isAuthorizedRole = Boolean(user && (user.role === 'admin' || user.role === 'recepcao') && !isCopilotHiddenForUser);
   const isPublicRoute =
     location === '/' ||
     location === '/login' ||
@@ -330,6 +332,12 @@ export function AdminAiCopilot() {
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
   };
+
+  useBackLayer(
+    Boolean(isOpen && isAuthorizedRole && !isPublicRoute),
+    () => setIsOpen(false),
+    'sofia-ai-copilot-drawer'
+  );
 
   if (!isAuthorizedRole || isPublicRoute) {
     return null;

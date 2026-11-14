@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
+import { useBackTabState } from "@/lib/back-navigation"
 import { sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildDirectWaWebUrl } from "@/hooks/use-quick-messages"
 import { 
   Coffee, Clock, Home as HomeIcon, Users, CheckCircle2, 
@@ -45,6 +46,8 @@ export default function BreakfastProduction() {
     return "orders"
   })
   const [activeDateTab, setActiveDateTab] = useState<"today" | "tomorrow">("today")
+  useBackTabState(mainTab, setMainTab, { id: "breakfast-main-tabs" })
+  useBackTabState(activeDateTab, setActiveDateTab, { id: "breakfast-date-tabs" })
   const currentDate = activeDateTab === "today" ? todayISO() : tomorrowISO()
 
   const [data, setData] = useState<any>(null)

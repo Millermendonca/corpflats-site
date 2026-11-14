@@ -23,6 +23,7 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     title: "📅 Reservas & Hospedagem",
     items: [
       { href: "/reservas", label: "Mapa de Reservas (PMS)", description: "Calendário de ocupação e reservas" },
+      { href: "/painel-aovivo", label: "Painel Ao Vivo (Monitor 32\")", description: "Painel de TV da operação ao vivo com chegadas, saídas e governança" },
       { href: "/caixa-entrada-ota", label: "Caixa de Entrada OTA", description: "Reservas Booking/Airbnb, quarentena e conciliação" },
       { href: "/relatorios-reservas", label: "Relatórios & Ocupação (PMS)", description: "Taxa de ocupação, diária média, RevPAR e ranking" },
       { href: "/crm", label: "Hóspedes & Empresas (CRM 360)", description: "LTV, fidelidade, preferências e faturamento PJ" },
@@ -172,6 +173,36 @@ export const ADMIN_MODULES: string[] = [...OPERATIONAL_MODULES];
 export const DEV_MODULES: string[] = [...ALL_CANONICAL_MODULES];
 
 /**
+ * Pacote enxuto de 18 módulos operacionais/financeiros configurado para o perfil limpo (ex: Thamiris).
+ */
+export const THAMIRIS_CLEAN_MODULES: string[] = [
+  // Pacote Principal
+  "/reservas",
+  "/crm",
+  "/dashboard",
+  "/reports",
+  "/notas",
+  "/financeiro",
+  "/pagamentos",
+  // Apoio Governança
+  "/observations",
+  "/tasks",
+  "/lista-compras",
+  // WhatsApp Chat
+  "/whatsapp-chat",
+  // OTA & Tarifas
+  "/caixa-entrada-ota",
+  "/tarifas",
+  // Operação Diária
+  "/pedidos-cafe",
+  "/portaria",
+  "/garagem",
+  // Automações de Camareiras & Achados e Perdidos
+  "/automacoes-camareiras",
+  "/achados-perdidos",
+];
+
+/**
  * Retorna os módulos padrão canônicos liberados para um determinado perfil base.
  */
 export function getDefaultModulesForRole(role?: string | null): string[] {
@@ -258,9 +289,8 @@ export const ROUTE_ALIASES: Record<string, string> = {
   "/reception": "/portaria",
 
   // Painel Ao Vivo
-  "/painel-aovivo": "/reservas",
-  "/live-ops": "/reservas",
-  "/aovivo": "/reservas",
+  "/live-ops": "/painel-aovivo",
+  "/aovivo": "/painel-aovivo",
 
   // Avaliações
   "/reviews-ia": "/avaliacoes-ia",
@@ -400,11 +430,24 @@ export function canonicalizeRoute(path: string): string {
   return ROUTE_ALIASES[clean] || clean;
 }
 
+export interface UserMenuPreferences {
+  visibleCount?: number;
+  pinnedModules?: string[];
+  usageCounts?: Record<string, number>;
+  lastUsedAt?: Record<string, number>;
+  desktopMode?: "expanded" | "single_line" | "pill";
+  mobileMode?: "single_line" | "grid" | "pill";
+}
+
 export interface UserWithPermissions {
   id?: number | string;
   role?: string;
   username?: string;
   allowedModules?: string[];
+  customPermissions?: boolean;
+  defaultRoute?: string | null;
+  hideCopilot?: boolean;
+  menuPreferences?: UserMenuPreferences | null;
 }
 
 /**
@@ -422,12 +465,57 @@ export function hasModuleAccess(
     return false;
   }
 
-  // Garante que perfis Admin/Dev sempre enxerguem os módulos de Frigobar & Anserve mesmo se allowedModules foi salvo antes da criação do módulo
-  const frigobarModules = ["/frigobar", "/anserve", "/frigobar-notas", "/frigobar-reposicao", "/frigobar-gestao"];
-  if ((user.role === "dev" || user.role === "admin") && frigobarModules.includes(canonical)) {
-    return true;
+  const userName = (user.username || "").toLowerCase().trim();
+  const isCrisOrGrazi =
+    user.id === 2 ||
+    user.id === 3 ||
+    user.id === "2" ||
+    user.id === "3" ||
+    userName === "cris" ||
+    userName === "grazi";
+
+  // Blindagem absoluta de Cris e Grazi (Prestadoras Autônomas de Governança): NUNCA têm acesso a /rh
+  if (isCrisOrGrazi && canonical === "/rh") {
+    return false;
   }
-  if (user.role === "anserve_gestor" && ["/anserve", "/frigobar-notas", "/frigobar-reposicao", "/frigobar-gestao"].includes(canonical)) {
+
+  // Quando o perfil tem permissões personalizadas (ex: Perfil Limpo da Thamiris ou ajuste manual em Equipe),
+  // respeitamos estritamente os módulos selecionados em allowedModules sem injetar extras ocultos.
+  const isCustomRestricted =
+    user.customPermissions === true ||
+    (user.customPermissions === undefined && userName === "thamiris");
+
+  if (!isCustomRestricted) {
+    // Garante que perfis Admin/Dev padrão enxerguem Frigobar, Anserve e Painel Ao Vivo mesmo se allowedModules foi salvo antes da criação
+    const frigobarAndOpsModules = [
+      "/frigobar",
+      "/anserve",
+      "/frigobar-notas",
+      "/frigobar-reposicao",
+      "/frigobar-gestao",
+      "/painel-aovivo",
+    ];
+    if (
+      (user.role === "dev" || user.role === "admin") &&
+      frigobarAndOpsModules.includes(canonical)
+    ) {
+      return true;
+    }
+
+    // Garante que perfis Admin/Dev padrão enxerguem RH e Disparo Inteligente
+    const rhAndBroadcastModules = ["/rh", "/disparo-inteligente"];
+    if (
+      (user.role === "dev" || user.role === "admin") &&
+      rhAndBroadcastModules.includes(canonical)
+    ) {
+      return true;
+    }
+  }
+
+  if (
+    user.role === "anserve_gestor" &&
+    ["/anserve", "/frigobar-notas", "/frigobar-reposicao", "/frigobar-gestao"].includes(canonical)
+  ) {
     return true;
   }
   if (user.role === "anserve_faturamento" && canonical === "/frigobar-notas") {
@@ -437,40 +525,69 @@ export function hasModuleAccess(
     return true;
   }
 
-  // Garante que perfis Admin/Dev sempre enxerguem o módulo de RH e de Disparo Inteligente mesmo se allowedModules foi salvo antes da criação do módulo
-  const rhAndBroadcastModules = ["/rh", "/disparo-inteligente"];
-  if ((user.role === "dev" || user.role === "admin") && rhAndBroadcastModules.includes(canonical)) {
-    return true;
-  }
-
-  // Blindagem absoluta de Cris e Grazi (Prestadoras Autônomas de Governança): NUNCA têm acesso a /rh
-  const userName = (user.username || "").toLowerCase();
-  const isCrisOrGrazi = user.id === 2 || user.id === 3 || user.id === "2" || user.id === "3" || userName === "cris" || userName === "grazi";
-  if (isCrisOrGrazi && canonical === "/rh") {
-    return false;
-  }
-
   // Lista efetiva de módulos permitidos
   const allowed = Array.isArray(user.allowedModules)
     ? user.allowedModules
     : getDefaultModulesForRole(user.role);
 
-  if (allowed.some(m => canonicalizeRoute(m) === canonical)) {
+  if (allowed.some((m) => canonicalizeRoute(m) === canonical)) {
     return true;
   }
 
-  if (canonical === "/disparo-inteligente") {
-    const waEquivalents = ["/whatsapp", "/whatsapp-chat", "/crm", "/reservas"];
-    return allowed.some(m => waEquivalents.includes(canonicalizeRoute(m)));
-  }
+  if (!isCustomRestricted) {
+    if (canonical === "/disparo-inteligente") {
+      const waEquivalents = ["/whatsapp", "/whatsapp-chat", "/crm", "/reservas"];
+      return allowed.some((m) => waEquivalents.includes(canonicalizeRoute(m)));
+    }
 
-  if (canonical === "/raio-x-flats") {
-    if (user.role === "admin" || user.role === "dev") return true;
-    const hubEquivalents = ["/servicos", "/tasks", "/observations", "/surveys"];
-    return allowed.some(m => hubEquivalents.includes(canonicalizeRoute(m)));
+    if (canonical === "/raio-x-flats") {
+      if (user.role === "admin" || user.role === "dev") return true;
+      const hubEquivalents = ["/servicos", "/tasks", "/observations", "/surveys"];
+      return allowed.some((m) => hubEquivalents.includes(canonicalizeRoute(m)));
+    }
   }
 
   return false;
+}
+
+/**
+ * Resolve a rota inicial ideal após o login conforme o perfil e preferência configurada do usuário.
+ */
+export function resolveInitialRouteForUser(
+  user: UserWithPermissions | null | undefined,
+  fallbackDateStr?: string
+): string {
+  const dateQuery = fallbackDateStr ? `?date=${fallbackDateStr}` : "";
+  if (!user) return `/dashboard${dateQuery}`;
+
+  if (user.defaultRoute && typeof user.defaultRoute === "string") {
+    const cleanDefault = user.defaultRoute.trim();
+    if (cleanDefault && hasModuleAccess(user, cleanDefault)) {
+      if (canonicalizeRoute(cleanDefault) === "/dashboard" && !cleanDefault.includes("?")) {
+        return `/dashboard${dateQuery}`;
+      }
+      return cleanDefault;
+    }
+  }
+
+  if (hasModuleAccess(user, "/dashboard")) {
+    return `/dashboard${dateQuery}`;
+  }
+
+  if (hasModuleAccess(user, "/reservas")) {
+    return "/reservas";
+  }
+
+  const allowed = Array.isArray(user.allowedModules)
+    ? user.allowedModules
+    : getDefaultModulesForRole(user.role);
+  for (const mod of allowed) {
+    if (mod && hasModuleAccess(user, mod)) {
+      return canonicalizeRoute(mod);
+    }
+  }
+
+  return "/minha-conta";
 }
 
 /**

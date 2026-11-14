@@ -5,8 +5,44 @@ import * as SheetPrimitive from '@radix-ui/react-dialog';
 import { cn } from '@/lib/utils';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { X } from 'lucide-react';
+import { useBackLayer } from '@/lib/back-navigation';
 
-const Sheet = SheetPrimitive.Root;
+const Sheet = ({
+  open: controlledOpen,
+  defaultOpen,
+  onOpenChange,
+  disableBackClose,
+  ...props
+}: React.ComponentPropsWithoutRef<typeof SheetPrimitive.Root> & {
+  disableBackClose?: boolean;
+}) => {
+  const isControlled = controlledOpen !== undefined;
+  const [uncontrolledOpen, setUncontrolledOpen] = React.useState<boolean>(Boolean(defaultOpen));
+  const isOpen = Boolean(isControlled ? controlledOpen : uncontrolledOpen);
+
+  const handleOpenChange = React.useCallback(
+    (nextOpen: boolean) => {
+      if (!isControlled) {
+        setUncontrolledOpen(nextOpen);
+      }
+      onOpenChange?.(nextOpen);
+    },
+    [isControlled, onOpenChange],
+  );
+
+  useBackLayer(isOpen, () => handleOpenChange(false), {
+    disabled: Boolean(disableBackClose) || (isControlled && !onOpenChange),
+  });
+
+  return (
+    <SheetPrimitive.Root
+      open={isOpen}
+      onOpenChange={handleOpenChange}
+      {...props}
+    />
+  );
+};
+Sheet.displayName = 'Sheet';
 
 const SheetTrigger = SheetPrimitive.Trigger;
 

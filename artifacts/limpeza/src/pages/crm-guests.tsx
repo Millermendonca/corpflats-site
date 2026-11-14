@@ -26,6 +26,7 @@ import {
 import { AccessDenied } from "@/components/access-denied"
 import { PdfViewerDialog } from "@/components/pdf-preview"
 import { useToast } from "@/hooks/use-toast"
+import { useBackLayer, useBackTabState } from "@/lib/back-navigation"
 import { sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildDirectWaWebUrl } from "@/hooks/use-quick-messages"
 import { formatSmartPhone } from "@/lib/phone-mask"
 
@@ -53,6 +54,8 @@ export default function CrmGuests() {
 
   // Lightbox de Mídias (Selfie, Documento, Assinatura)
   const [lightboxMedia, setLightboxMedia] = useState<{ url: string; title: string; subtitle?: string } | null>(null)
+  useBackTabState(activeTab, setActiveTab, { id: "crm-main-tabs" })
+  useBackLayer(Boolean(lightboxMedia), () => setLightboxMedia(null), "crm-lightbox")
   // Visualizador de PDF (PDF.js) — funciona também no celular
   const [pdfViewer, setPdfViewer] = useState<{ url: string; title: string } | null>(null)
 

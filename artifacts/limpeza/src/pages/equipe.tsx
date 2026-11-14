@@ -54,7 +54,8 @@ import {
   PERMISSION_CATEGORIES,
   getDefaultModulesForRole,
   isDefaultPermissionsForRole,
-  DEV_ONLY_MODULES
+  DEV_ONLY_MODULES,
+  THAMIRIS_CLEAN_MODULES
 } from "@/lib/permissions";
 
 export interface UserItem {
@@ -68,6 +69,9 @@ export interface UserItem {
   active?: boolean;
   lastLoginAt?: string | null;
   allowedModules?: string[];
+  customPermissions?: boolean;
+  defaultRoute?: string | null;
+  hideCopilot?: boolean;
   createdAt?: string | null;
 }
 
@@ -147,6 +151,17 @@ export function PermissionsSelector({
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => onChange([...THAMIRIS_CLEAN_MODULES])}
+            className="h-7 px-2 text-[11px] font-bold rounded-lg border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10"
+            title="Aplicar pacote enxuto e intuitivo de Reservas, Camareiras, Notas Fiscais e Operação"
+          >
+            <Sparkles className="w-3 h-3 mr-1" />
+            <span>Perfil Limpo (Operação & Notas)</span>
+          </Button>
           <Button
             type="button"
             size="sm"
@@ -286,6 +301,8 @@ export function TeamPage() {
   const [newUserAllowedModules, setNewUserAllowedModules] = useState<string[]>(() => getDefaultModulesForRole("camareira"));
   const [newWhatsapp, setNewWhatsapp] = useState("");
   const [newPixKey, setNewPixKey] = useState("");
+  const [newDefaultRoute, setNewDefaultRoute] = useState<string>("");
+  const [newHideCopilot, setNewHideCopilot] = useState<boolean>(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [savingNewUser, setSavingNewUser] = useState(false);
   const [newUserError, setNewUserError] = useState("");
@@ -299,6 +316,8 @@ export function TeamPage() {
   const [editWhatsapp, setEditWhatsapp] = useState("");
   const [editPixKey, setEditPixKey] = useState("");
   const [editActive, setEditActive] = useState(true);
+  const [editDefaultRoute, setEditDefaultRoute] = useState<string>("");
+  const [editHideCopilot, setEditHideCopilot] = useState<boolean>(false);
   const [savingEditUser, setSavingEditUser] = useState(false);
   const [editUserError, setEditUserError] = useState("");
 
@@ -458,6 +477,8 @@ export function TeamPage() {
     setEditWhatsapp(user.whatsapp || user.phone || "");
     setEditPixKey(user.pixKey || "");
     setEditActive(user.active !== false);
+    setEditDefaultRoute(user.defaultRoute || "");
+    setEditHideCopilot(Boolean(user.hideCopilot));
     setEditAllowedModules(
       Array.isArray(user.allowedModules)
         ? [...user.allowedModules]
@@ -485,6 +506,8 @@ export function TeamPage() {
           phone: editWhatsapp.trim(),
           pixKey: editPixKey.trim(),
           active: editActive,
+          defaultRoute: editDefaultRoute || null,
+          hideCopilot: editHideCopilot,
           allowedModules: editAllowedModules
         })
       });
@@ -517,6 +540,8 @@ export function TeamPage() {
     setNewUserAllowedModules(getDefaultModulesForRole("camareira"));
     setNewWhatsapp("");
     setNewPixKey("");
+    setNewDefaultRoute("");
+    setNewHideCopilot(false);
     setShowNewPassword(false);
     setNewUserError("");
     setNewUserModalOpen(true);
@@ -551,6 +576,8 @@ export function TeamPage() {
           whatsapp: newWhatsapp.trim(),
           phone: newWhatsapp.trim(),
           pixKey: newPixKey.trim(),
+          defaultRoute: newDefaultRoute || null,
+          hideCopilot: newHideCopilot,
           allowedModules: newUserAllowedModules
         })
       });
@@ -1229,6 +1256,34 @@ export function TeamPage() {
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-2xl bg-muted/30 border border-border">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold">Tela Inicial ao Entrar</Label>
+                  <select
+                    value={newDefaultRoute}
+                    onChange={(e) => setNewDefaultRoute(e.target.value)}
+                    className="w-full h-9 rounded-xl border border-input bg-background px-3 py-1 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring font-medium"
+                  >
+                    <option value="">Padrão automático do perfil</option>
+                    <option value="/reservas">📅 Mapa de Reservas (/reservas)</option>
+                    <option value="/dashboard">🧹 Painel de Limpeza (/dashboard)</option>
+                    <option value="/whatsapp-chat">💬 WhatsApp Chat (/whatsapp-chat)</option>
+                    <option value="/notas">🧾 Notas Fiscais NFS-e (/notas)</option>
+                    <option value="/financeiro">💰 Financeiro (/financeiro)</option>
+                    <option value="/portaria">🛎️ Portaria / Recepção (/portaria)</option>
+                  </select>
+                </div>
+                <div className="flex items-center justify-between gap-2 pt-1 sm:pt-4">
+                  <div className="space-y-0.5">
+                    <Label className="text-xs font-bold">Ocultar Sofia IA</Label>
+                    <p className="text-[10.5px] text-muted-foreground leading-tight">
+                      Esconde a aba lateral da Sofia para deixar a tela mais limpa
+                    </p>
+                  </div>
+                  <Switch checked={newHideCopilot} onCheckedChange={setNewHideCopilot} />
+                </div>
+              </div>
+
               <div className="space-y-1.5 pt-2 border-t border-border">
                 <Label className="text-xs font-bold">Permissões de Telas & Categorias</Label>
                 <PermissionsSelector
@@ -1346,6 +1401,34 @@ export function TeamPage() {
                   checked={editActive}
                   onCheckedChange={setEditActive}
                 />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-2xl bg-muted/30 border border-border">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold">Tela Inicial ao Entrar</Label>
+                  <select
+                    value={editDefaultRoute}
+                    onChange={(e) => setEditDefaultRoute(e.target.value)}
+                    className="w-full h-9 rounded-xl border border-input bg-background px-3 py-1 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring font-medium"
+                  >
+                    <option value="">Padrão automático do perfil</option>
+                    <option value="/reservas">📅 Mapa de Reservas (/reservas)</option>
+                    <option value="/dashboard">🧹 Painel de Limpeza (/dashboard)</option>
+                    <option value="/whatsapp-chat">💬 WhatsApp Chat (/whatsapp-chat)</option>
+                    <option value="/notas">🧾 Notas Fiscais NFS-e (/notas)</option>
+                    <option value="/financeiro">💰 Financeiro (/financeiro)</option>
+                    <option value="/portaria">🛎️ Portaria / Recepção (/portaria)</option>
+                  </select>
+                </div>
+                <div className="flex items-center justify-between gap-2 pt-1 sm:pt-4">
+                  <div className="space-y-0.5">
+                    <Label className="text-xs font-bold">Ocultar Sofia IA</Label>
+                    <p className="text-[10.5px] text-muted-foreground leading-tight">
+                      Esconde a aba lateral da Sofia para deixar a tela mais limpa
+                    </p>
+                  </div>
+                  <Switch checked={editHideCopilot} onCheckedChange={setEditHideCopilot} />
+                </div>
               </div>
 
               <div className="space-y-1.5 pt-2 border-t border-border">
