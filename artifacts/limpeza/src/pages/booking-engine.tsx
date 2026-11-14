@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
+import { useToast } from "@/hooks/use-toast"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -60,10 +61,41 @@ function formatPhoneNumber(phone: string): string {
   return phone
 }
 
+function readSavedBookingDraft(): any | null {
+  if (typeof window === "undefined") return null
+  try {
+    const raw = localStorage.getItem("corpflats_funnel_draft_v1")
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed?.savedAt || Date.now() - Number(parsed.savedAt) > 24 * 60 * 60 * 1000) {
+      localStorage.removeItem("corpflats_funnel_draft_v1")
+      return null
+    }
+    return parsed
+  } catch {
+    return null
+  }
+}
+
 export default function BookingEngine() {
   const [, setLocation] = useLocation()
-  const [checkin, setCheckin] = useState(format(addDays(new Date(), 1), "yyyy-MM-dd"))
-  const [checkout, setCheckout] = useState(format(addDays(new Date(), 3), "yyyy-MM-dd"))
+  const { toast } = useToast()
+  const returnToAccountRef = useRef(false)
+
+  const [checkin, setCheckin] = useState(() => {
+    const todayIso = format(new Date(), "yyyy-MM-dd")
+    const draft = readSavedBookingDraft()
+    if (draft?.checkin && draft.checkin >= todayIso) return draft.checkin
+    return format(addDays(new Date(), 1), "yyyy-MM-dd")
+  })
+  const [checkout, setCheckout] = useState(() => {
+    const todayIso = format(new Date(), "yyyy-MM-dd")
+    const draft = readSavedBookingDraft()
+    if (draft?.checkin && draft?.checkout && draft.checkin >= todayIso && draft.checkout > draft.checkin) {
+      return draft.checkout
+    }
+    return format(addDays(new Date(), 3), "yyyy-MM-dd")
+  })
   
   // Carrinho de Flats / Multi-Quartos (1 a N flats)
   const [rooms, setRooms] = useState<RoomConfig[]>([
@@ -126,12 +158,23 @@ export default function BookingEngine() {
         body: JSON.stringify(siteConfig)
       })
       if (res.ok) {
-        alert("✅ Alterações salvas com sucesso no site público!")
+        toast({
+          title: "Alterações salvas",
+          description: "As alterações visuais foram publicadas com sucesso no site.",
+        })
       } else {
-        alert("Erro ao salvar alterações no servidor.")
+        toast({
+          variant: "destructive",
+          title: "Falha ao salvar",
+          description: "Não foi possível salvar as alterações no servidor.",
+        })
       }
     } catch {
-      alert("Erro de conexão ao salvar.")
+      toast({
+        variant: "destructive",
+        title: "Erro de conexão",
+        description: "Verifique sua conexão e tente salvar novamente.",
+      })
     } finally {
       setIsSavingSite(false)
     }
@@ -143,7 +186,10 @@ export default function BookingEngine() {
   const [petRulesAccepted, setPetRulesAccepted] = useState(false)
   
   // Regime de Hospedagem: "with_breakfast" (Tarifa com Café Incluso) | "room_only" (Tarifa sem Café)
-  const [ratePlan, setRatePlan] = useState<"with_breakfast" | "room_only">("with_breakfast")
+  const [ratePlan, setRatePlan] = useState<"with_breakfast" | "room_only">(() => {
+    const draft = readSavedBookingDraft()
+    return draft?.ratePlan === "room_only" ? "room_only" : "with_breakfast"
+  })
 
   // Booking Flow States
   const [checkoutModalOpen, setCheckoutModalOpen] = useState(false)
@@ -548,6 +594,28 @@ export default function BookingEngine() {
   }, [])
 
   useEffect(() => {
+    const seoTitle = siteConfig?.seo?.title?.trim()
+    document.title = seoTitle || "CorpFlats • Soho Residence — Reserva Direta"
+  }, [siteConfig?.seo?.title])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const params = new URLSearchParams(window.location.search)
+    if (params.get("login") === "1") {
+      returnToAccountRef.current = true
+      setAuthModalOpen(true)
+      toast({
+        title: "Faça login para acessar Minha Conta",
+        description: "Entre com seu e-mail, Google ou chave de acesso para ver suas reservas e dados cadastrais.",
+      })
+      params.delete("login")
+      const nextQuery = params.toString()
+      const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash || ""}`
+      window.history.replaceState({}, "", nextUrl)
+    }
+  }, [toast])
+
+  useEffect(() => {
     searchAvailability()
   }, [checkin, checkout, ratePlan])
 
@@ -616,7 +684,10 @@ export default function BookingEngine() {
   const addRoom = () => {
     const maxAvailable = availabilityData?.totalAvailableFlats || 5
     if (rooms.length >= maxAvailable) {
-      alert(`No momento há ${maxAvailable} flats disponíveis para as datas selecionadas.`)
+      toast({
+        title: "Limite de disponibilidade atingido",
+        description: `No momento há ${maxAvailable} flats disponíveis para as datas selecionadas.`,
+      })
       return
     }
     const newId = rooms.length > 0 ? Math.max(...rooms.map(r => r.id)) + 1 : 1
@@ -631,14 +702,20 @@ export default function BookingEngine() {
   const updateRoom = (id: number, field: "bedType" | "adults", value: any) => {
     if (field === "adults" && Number(value) > 2 && !isThirdGuestEnabled) {
       if (siteConfig?.extraBedConfig?.enabled === true && isCheckinToday) {
-        alert("Para reservas com check-in hoje após as 12:00, a lotação é limitada a até 2 hóspedes por flat.")
+        toast({
+          title: "Lotação limitada para hoje",
+          description: "Para reservas com check-in hoje após as 12:00, a lotação é limitada a até 2 hóspedes por flat.",
+        })
       }
       return
     }
     if (field === "bedType" && value === "twin") {
       if (siteConfig?.bedConfig?.allowTwinBeds === false) return
       if (isCutoffActive) {
-        alert(`Para reservas com check-in no mesmo dia, a montagem de 2 camas de solteiro só pode ser solicitada até as ${twinCutoffTimeStr}.`)
+        toast({
+          title: "Horário limite para camas de solteiro",
+          description: `Para reservas com check-in no mesmo dia, a montagem de 2 camas de solteiro só pode ser solicitada até as ${twinCutoffTimeStr}.`,
+        })
         return
       }
     }
@@ -804,12 +881,20 @@ export default function BookingEngine() {
 
   const handleConfirmBooking = async () => {
     if (!guestName.trim() || !guestPhone.trim() || !guestEmail.trim()) {
-      alert("Por favor, preencha nome, WhatsApp e e-mail para confirmar a sua reserva.")
+      toast({
+        variant: "destructive",
+        title: "Dados obrigatórios pendentes",
+        description: "Por favor, preencha nome, WhatsApp e e-mail para confirmar a sua reserva.",
+      })
       return
     }
 
     if (bringingPet && !petRulesAccepted) {
-      alert("Por favor, leia e aceite as regras de convivência para animais de estimação antes de prosseguir.")
+      toast({
+        variant: "destructive",
+        title: "Aceite do regulamento Pet necessário",
+        description: "Por favor, leia e aceite as regras de convivência para animais de estimação antes de prosseguir.",
+      })
       return
     }
 
@@ -872,13 +957,24 @@ export default function BookingEngine() {
           window.open(data.initPoint, "_blank")
         } else {
           setCurrentPendingRes(data.reservation)
-          alert("✓ Sua solicitação de reserva foi confirmada com sucesso!")
+          toast({
+            title: "Reserva confirmada!",
+            description: "Sua solicitação de reserva foi confirmada com sucesso.",
+          })
         }
       } else {
-        alert(data.error || "Erro ao processar reserva.")
+        toast({
+          variant: "destructive",
+          title: "Não foi possível concluir a reserva",
+          description: data.error || "Erro ao processar reserva.",
+        })
       }
     } catch {
-      alert("Erro ao conectar com o servidor.")
+      toast({
+        variant: "destructive",
+        title: "Falha de conexão",
+        description: "Erro ao conectar com o servidor. Tente novamente em instantes.",
+      })
     } finally {
       setIsProcessing(false)
     }
@@ -2154,10 +2250,17 @@ export default function BookingEngine() {
       {/* Modal de Autenticação (Login, Cadastro, Google One Tap, Passkeys) */}
       <AuthModal
         open={authModalOpen}
-        onOpenChange={setAuthModalOpen}
+        onOpenChange={(open) => {
+          setAuthModalOpen(open)
+          if (!open) returnToAccountRef.current = false
+        }}
         onSuccess={(user) => {
           applyGuestData(user, true)
           setAuthModalOpen(false)
+          if (returnToAccountRef.current) {
+            returnToAccountRef.current = false
+            setLocation("/minha-conta")
+          }
         }}
       />
 

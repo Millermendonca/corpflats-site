@@ -28279,6 +28279,9 @@ app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
   const isGuestInside = scenario === "stayover" || scenario === "checkout_pendente";
   dispatchServiceNotifications("start", order, flat, worker, { hasGuestInside: isGuestInside });
 
+  const cleanFlatMode = order?.cleanFlatMode || (Array.isArray(order?.allowedRoomStatuses) ? "always" : "priority");
+  const isDirty = scenario === "vago_sujo" || scenario === "checkin_hoje_sujo" || realtime?.cleaningStatus === "dirty";
+
   res.json({
     success: true,
     flat,
@@ -34828,18 +34831,49 @@ export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase
     }
   }
 
+  let backfilledCount = 0;
   for (const r of targetDb.reservations) {
     if (!r) continue;
     if (r.status !== "pre_reserva" && r.status !== "pendente") continue;
-    if (!r.expiresAt) continue;
-
-    const expMs = new Date(r.expiresAt).getTime();
-    if (isNaN(expMs)) continue;
 
     const isPaid = r.paymentStatus === "pago_total" ||
       r.paymentStatus === "pago" ||
       (typeof hasRealPaymentEvidence === "function" && hasRealPaymentEvidence(r));
     if (isPaid) continue;
+
+    const chanLowerSweep = String(r.channel || "").toLowerCase();
+    const isExemptChannel =
+      chanLowerSweep.includes("booking") ||
+      chanLowerSweep.includes("airbnb") ||
+      chanLowerSweep.includes("b2b") ||
+      Boolean(r.b2bReservationNumber) ||
+      (typeof isFaturadoBoletoReservation === "function" && isFaturadoBoletoReservation(r));
+
+    if (!r.expiresAt || isNaN(new Date(r.expiresAt).getTime())) {
+      if (isExemptChannel) continue;
+      const anchorIso = r.reactivatedAt || r.updatedAt || r.createdAt || null;
+      const anchorMs = anchorIso ? new Date(anchorIso).getTime() : NaN;
+      if (isNaN(anchorMs) || (nowMs - anchorMs) > 24 * 3600 * 1000) {
+        r.expiresAt = new Date(nowMs - 60 * 1000).toISOString();
+        r.holdDurationLabel = r.holdDurationLabel || "Prazo expirado (saneamento automático de pré-reserva sem validade)";
+        r.expiredWhatsappSentAt = nowIso;
+      } else {
+        const holdInfo = resolvePreReservationHold({}, r.checkinDate, { nowOverride: anchorIso });
+        r.expiresAt = holdInfo.expiresAt;
+        r.holdPreset = holdInfo.holdPreset;
+        r.holdDurationMinutes = holdInfo.holdDurationMinutes;
+        r.holdDurationLabel = holdInfo.holdDurationLabel;
+        r.sendExpirationReminder = holdInfo.sendExpirationReminder;
+        r.reminderAt = holdInfo.reminderAt;
+        r.reminderLeadMinutes = holdInfo.reminderLeadMinutes;
+        r.reminderLeadLabel = holdInfo.reminderLeadLabel;
+        r.updatedAt = nowIso;
+        backfilledCount++;
+      }
+    }
+
+    const expMs = new Date(r.expiresAt).getTime();
+    if (isNaN(expMs)) continue;
 
     // 1. Verifica se ainda está dentro do prazo, mas já atingiu o horário do Lembrete Antes de Expirar
     if (expMs > nowMs) {
@@ -34945,8 +34979,14 @@ export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase
     }
   }
 
-  if ((expiredCount > 0 || remindedCount > 0) && typeof saveFn === "function") {
-    saveFn(expiredCount > 0 ? "auto_expire_pre_reservations" : "pre_reservation_reminder_sent");
+  if ((expiredCount > 0 || remindedCount > 0 || backfilledCount > 0) && typeof saveFn === "function") {
+    saveFn(
+      expiredCount > 0
+        ? "auto_expire_pre_reservations"
+        : remindedCount > 0
+        ? "pre_reservation_reminder_sent"
+        : "backfill_orphan_pre_reservation_hold"
+    );
   }
   return expiredCount;
 }
@@ -38561,7 +38601,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       }
     }
 
-    if (r.status === "pre_reserva") {
+    if ((r.status === "pre_reserva" || r.status === "pendente") && !ruleIsOta && !ruleIsB2b && !isFaturadoPut) {
       const hasExplicitHoldInput = Boolean(
         req.body.expiresAt !== undefined ||
         req.body.holdPreset !== undefined ||
@@ -54310,7 +54350,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
       message: `Hóspede ${validName} possui documento/residência em Campos dos Goytacazes/RJ. Registro incluído no radar operacional da equipe.`,
       severity: "warning",
       metadata: { reservationId: r.id, flatNumber: r.flatNumber, guestName: validName, isCamposResident: true },
-      targetUrl: "/pms-calendar"
+      targetUrl: r.code ? `/reservas?code=${encodeURIComponent(r.code)}` : "/reservas"
     });
   } else if (riskAssessment.isTriggered) {
     createNotification({
@@ -57821,13 +57861,69 @@ function getMarketingData() {
   }
 }
 
+function normalizeCartLeadPhone(rawPhone) {
+  const digits = String(rawPhone || "").replace(/\D/g, "");
+  if (digits.length >= 12 && digits.startsWith("55")) {
+    return digits.slice(2);
+  }
+  return digits;
+}
+
+function findExistingActiveCart(carts, { sessionId, guestPhone, guestEmail, checkinDate, checkoutDate }) {
+  if (!Array.isArray(carts)) return null;
+  const bySession = sessionId ? carts.find(c => c && c.sessionId === sessionId) : null;
+  if (bySession) return bySession;
+
+  const normPhone = normalizeCartLeadPhone(guestPhone);
+  const normEmail = String(guestEmail || "").trim().toLowerCase();
+  if (normPhone.length < 10 && (!normEmail || !normEmail.includes("@"))) return null;
+
+  const cutoffMs = Date.now() - 24 * 3600 * 1000;
+  return carts.find(c => {
+    if (!c || (c.status !== "em_andamento" && c.status !== "pesquisando")) return false;
+    const cTime = new Date(c.updatedAt || c.createdAt || 0).getTime();
+    if (isNaN(cTime) || cTime < cutoffMs) return false;
+    if (checkinDate && c.checkinDate && c.checkinDate !== checkinDate) return false;
+    if (checkoutDate && c.checkoutDate && c.checkoutDate !== checkoutDate) return false;
+    const cPhone = normalizeCartLeadPhone(c.guestPhone);
+    const cEmail = String(c.guestEmail || "").trim().toLowerCase();
+    const phoneMatch = normPhone.length >= 10 && cPhone.length >= 10 && cPhone === normPhone;
+    const emailMatch = Boolean(normEmail && cEmail && cEmail === normEmail);
+    return phoneMatch || emailMatch;
+  }) || null;
+}
+
+function reconcileCompletedCartsForLead(carts, { sessionId, guestPhone, guestEmail, checkinDate, checkoutDate }) {
+  if (!Array.isArray(carts)) return;
+  const normPhone = normalizeCartLeadPhone(guestPhone);
+  const normEmail = String(guestEmail || "").trim().toLowerCase();
+  const cutoffMs = Date.now() - 24 * 3600 * 1000;
+  const nowIso = new Date().toISOString();
+  for (const c of carts) {
+    if (!c || c.sessionId === sessionId) continue;
+    if (c.status !== "em_andamento" && c.status !== "pesquisando" && c.status !== "abandonado") continue;
+    const cTime = new Date(c.updatedAt || c.createdAt || 0).getTime();
+    if (isNaN(cTime) || cTime < cutoffMs) continue;
+    if (checkinDate && c.checkinDate && c.checkinDate !== checkinDate) continue;
+    if (checkoutDate && c.checkoutDate && c.checkoutDate !== checkoutDate) continue;
+    const cPhone = normalizeCartLeadPhone(c.guestPhone);
+    const cEmail = String(c.guestEmail || "").trim().toLowerCase();
+    const phoneMatch = normPhone.length >= 10 && cPhone.length >= 10 && cPhone === normPhone;
+    const emailMatch = Boolean(normEmail && cEmail && cEmail === normEmail);
+    if (phoneMatch || emailMatch) {
+      c.status = "concluido";
+      c.updatedAt = nowIso;
+    }
+  }
+}
+
 // Telemetry from Booking Engine
 app.post("/api/telemetry/cart-session", (req, res) => {
   getMarketingData();
   const { sessionId, guestName, guestPhone, guestEmail, flatNumber, checkinDate, checkoutDate, totalAmount, status } = req.body;
   if (!sessionId) return res.status(400).json({ error: "SessionId é obrigatório" });
 
-  let cart = db.abandonedCarts.find(c => c.sessionId === sessionId);
+  let cart = findExistingActiveCart(db.abandonedCarts, { sessionId, guestPhone, guestEmail, checkinDate, checkoutDate });
   if (!cart) {
     cart = {
       id: db.abandonedCarts.length > 0 ? Math.max(...db.abandonedCarts.map(c => c.id)) + 1 : 1,
@@ -57841,11 +57937,13 @@ app.post("/api/telemetry/cart-session", (req, res) => {
       totalAmount: Number(totalAmount) || 0,
       status: status || "em_andamento",
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       recoveredAt: null,
       recoveryMessageSent: false
     };
     db.abandonedCarts.unshift(cart);
   } else {
+    cart.sessionId = sessionId;
     if (guestName) cart.guestName = guestName;
     if (guestPhone) cart.guestPhone = guestPhone;
     if (guestEmail) cart.guestEmail = guestEmail;
@@ -57854,6 +57952,17 @@ app.post("/api/telemetry/cart-session", (req, res) => {
     if (checkoutDate) cart.checkoutDate = checkoutDate;
     if (totalAmount) cart.totalAmount = Number(totalAmount);
     if (status) cart.status = status;
+    cart.updatedAt = new Date().toISOString();
+  }
+
+  if (cart.status === "concluido") {
+    reconcileCompletedCartsForLead(db.abandonedCarts, {
+      sessionId,
+      guestPhone: cart.guestPhone,
+      guestEmail: cart.guestEmail,
+      checkinDate: cart.checkinDate,
+      checkoutDate: cart.checkoutDate
+    });
   }
 
   saveDatabase();
@@ -57909,8 +58018,14 @@ app.post("/api/funnel/track", (req, res) => {
   });
   if (db.funnelEvents.length > 2000) db.funnelEvents = db.funnelEvents.slice(-2000);
 
-  // Atualiza ou cria o carrinho correspondente
-  let cart = db.abandonedCarts.find(c => c.sessionId === sessionId);
+  // Atualiza ou cria o carrinho correspondente (com deduplicação de lead ativo em 24h)
+  let cart = findExistingActiveCart(db.abandonedCarts, {
+    sessionId,
+    guestPhone,
+    guestEmail,
+    checkinDate,
+    checkoutDate
+  });
   if (!cart) {
     cart = {
       id: db.abandonedCarts.length > 0 ? Math.max(...db.abandonedCarts.map(c => c.id || 0)) + 1 : 1,
@@ -57939,7 +58054,8 @@ app.post("/api/funnel/track", (req, res) => {
     };
     db.abandonedCarts.unshift(cart);
   } else {
-    cart.currentStep = Number(step) || cart.currentStep;
+    cart.sessionId = sessionId;
+    cart.currentStep = Math.max(Number(step) || 0, Number(cart.currentStep) || 0) || 1;
     cart.currentStepName = stepName || cart.currentStepName;
     if (guestName) cart.guestName = guestName;
     if (guestPhone) cart.guestPhone = guestPhone;
@@ -57956,6 +58072,17 @@ app.post("/api/funnel/track", (req, res) => {
     if (discountAmount) cart.discountAmount = Number(discountAmount);
     if (status) cart.status = status;
     cart.updatedAt = new Date().toISOString();
+  }
+
+  if (cart.status === "concluido" || Number(step) === 5) {
+    cart.status = "concluido";
+    reconcileCompletedCartsForLead(db.abandonedCarts, {
+      sessionId,
+      guestPhone: cart.guestPhone,
+      guestEmail: cart.guestEmail,
+      checkinDate: cart.checkinDate,
+      checkoutDate: cart.checkoutDate
+    });
   }
 
   saveDatabase();
@@ -58095,6 +58222,157 @@ app.post("/api/marketing/abandoned-carts/:id/recover", (req, res) => {
 
   res.json({ success: true, cart, whatsappUrl });
 });
+
+let lastAbandonedCartSweepMs = 0;
+
+async function sweepAbandonedCartsAutoRecovery(targetDb = db, saveFn = saveDatabase) {
+  try {
+    const nowMs = Date.now();
+    if (nowMs - lastAbandonedCartSweepMs < 120 * 1000) return 0;
+    lastAbandonedCartSweepMs = nowMs;
+
+    if (!Array.isArray(targetDb?.abandonedCarts) || targetDb.abandonedCarts.length === 0) return 0;
+
+    // 1. Janela estrita de horário comercial/humano em America/Sao_Paulo: 08:30 às 20:30
+    const nowObj = new Date(nowMs);
+    const todayBrt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(nowObj);
+    const brtParts = new Intl.DateTimeFormat("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).formatToParts(nowObj);
+    const brtH = parseInt(brtParts.find(p => p.type === "hour")?.value || "0", 10) || 0;
+    const brtM = parseInt(brtParts.find(p => p.type === "minute")?.value || "0", 10) || 0;
+    const brtTotalMin = brtH * 60 + brtM;
+    if (brtTotalMin < (8 * 60 + 30) || brtTotalMin > (20 * 60 + 30)) {
+      return 0;
+    }
+
+    const nowIso = nowObj.toISOString();
+    const minIdleMs = 30 * 60 * 1000;
+    const maxIdleMs = 12 * 3600 * 1000;
+    const cooldown7dMs = 7 * 24 * 3600 * 1000;
+
+    let mutated = false;
+    let sentCount = 0;
+
+    for (const c of targetDb.abandonedCarts) {
+      if (!c) continue;
+      if (c.status !== "em_andamento" && c.status !== "abandonado") continue;
+      if ((Number(c.currentStep) || 0) < 3) continue;
+      if (c.recoveryMessageSent || c.recoveryAutoAttemptedAt) continue;
+      if (c.recoveryNextRetryAt && new Date(c.recoveryNextRetryAt).getTime() > nowMs) continue;
+      if (c.checkinDate && c.checkinDate < todayBrt) continue;
+
+      const updatedMs = new Date(c.updatedAt || c.createdAt || 0).getTime();
+      if (isNaN(updatedMs)) continue;
+      const idleMs = nowMs - updatedMs;
+      if (idleMs < minIdleMs || idleMs > maxIdleMs) continue;
+
+      const normPhone = normalizeCartLeadPhone(c.guestPhone);
+      const normEmail = String(c.guestEmail || "").trim().toLowerCase();
+      if (normPhone.length < 10) continue;
+
+      // 2. Garante que o lead ainda não fechou reserva por outro canal ou aba
+      const matchedRes = (targetDb.reservations || []).find(r => {
+        if (!r || r.status === "cancelada" || r.status === "cancelled" || r.status === "expirada") return false;
+        const rPhone = normalizeCartLeadPhone(r.guestPhone || r.requesterPhone || r.requesterInfo?.phone);
+        const rEmail = String(r.guestEmail || r.requesterEmail || r.requesterInfo?.email || "").trim().toLowerCase();
+        const samePerson =
+          (normPhone.length >= 10 && rPhone.length >= 10 && rPhone === normPhone) ||
+          Boolean(normEmail && rEmail && rEmail === normEmail);
+        if (!samePerson) return false;
+        const rCreatedMs = new Date(r.createdAt || 0).getTime();
+        const recentCreated = !isNaN(rCreatedMs) && (nowMs - rCreatedMs) <= 72 * 3600 * 1000;
+        const activeOrUpcoming = Boolean(r.checkoutDate && r.checkoutDate >= todayBrt);
+        return recentCreated || activeOrUpcoming;
+      });
+
+      if (matchedRes) {
+        c.status = "concluido";
+        c.autoReconciledWithReservation = matchedRes.code || matchedRes.id;
+        c.updatedAt = nowIso;
+        mutated = true;
+        continue;
+      }
+
+      // 3. Cooldown anti-spam de 7 dias por número de telefone
+      const recentlyMessaged = targetDb.abandonedCarts.some(other => {
+        if (!other || other.id === c.id || !other.recoveryMessageSent) return false;
+        if (normalizeCartLeadPhone(other.guestPhone) !== normPhone) return false;
+        const sentRefMs = new Date(other.recoveryAutoSentAt || other.recoveredAt || other.updatedAt || other.createdAt || 0).getTime();
+        return !isNaN(sentRefMs) && (nowMs - sentRefMs) < cooldown7dMs;
+      });
+
+      if (recentlyMessaged) {
+        c.recoveryAutoAttemptedAt = nowIso;
+        c.recoveryAutoSkippedReason = "cooldown_7d";
+        c.updatedAt = nowIso;
+        mutated = true;
+        continue;
+      }
+
+      const formatShortBr = (isoDate) => {
+        if (!isoDate || typeof isoDate !== "string") return "";
+        const m = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        return m ? `${m[3]}/${m[2]}` : isoDate;
+      };
+      const cinBr = formatShortBr(c.checkinDate);
+      const coutBr = formatShortBr(c.checkoutDate);
+      const periodLabel = (cinBr && coutBr) ? ` para *${cinBr} a ${coutBr}*` : "";
+      const rawFirstName = String(c.guestName || "").trim().split(/\s+/)[0] || "";
+      const greetingName = rawFirstName.length >= 2 ? `, ${rawFirstName}` : "";
+
+      const msgText =
+        `Olá${greetingName}! Tudo bem? 😊\n\n` +
+        `Vimos que você iniciou uma simulação de reserva no site da *CorpFlats*${periodLabel}, mas não chegou a concluir.\n\n` +
+        `Ficou alguma dúvida sobre o flat, estacionamento ou formas de pagamento? Se quiser retomar de onde parou (com *5% de desconto no PIX*), basta acessar https://corpflats.com.br/reservar ou me chamar por aqui mesmo!`;
+
+      const sendRes = await sendZapiMessage(targetDb.zapiConfig, {
+        phone: c.guestPhone,
+        message: msgText,
+        recipientRole: "guest",
+        triggerEvent: "abandoned_cart_recovery",
+        delayTyping: 2,
+        db: targetDb
+      });
+
+      if (sendRes && sendRes.success) {
+        c.recoveryMessageSent = true;
+        c.recoveryAutoSentAt = nowIso;
+        if (c.status === "em_andamento") c.status = "abandonado";
+        c.updatedAt = nowIso;
+        mutated = true;
+        sentCount++;
+        console.log(`[Abandoned Cart Recovery] Mensagem enviada com sucesso para ${c.guestName || normPhone} (carrinho #${c.id}).`);
+      } else if (sendRes?.blockedByBlacklist) {
+        c.recoveryAutoAttemptedAt = nowIso;
+        c.recoveryAutoSkippedReason = "blacklisted";
+        c.updatedAt = nowIso;
+        mutated = true;
+      } else {
+        c.recoveryNextRetryAt = new Date(nowMs + 30 * 60 * 1000).toISOString();
+        mutated = true;
+      }
+
+      break;
+    }
+
+    if (mutated && typeof saveFn === "function") {
+      saveFn(sentCount > 0 ? "auto_abandoned_cart_recovery" : "abandoned_cart_reconcile");
+    }
+    return sentCount;
+  } catch (err) {
+    console.warn("[Abandoned Cart Recovery] Falha na varredura automática:", err?.message || err);
+    return 0;
+  }
+}
 
 // Get Ad Campaigns & AI Auto-Pilot Status
 app.get("/api/marketing/ad-campaigns", (req, res) => {
@@ -79886,6 +80164,9 @@ setInterval(async () => {
 
     // 0) Varredura de pré-reservas expiradas (remove do calendário e avisa no WhatsApp)
     sweepExpiredPreReservations(db, saveDatabase);
+
+    // 0.1) Recuperação automática via WhatsApp de carrinhos abandonados qualificados (com travas anti-spam e horário comercial)
+    await sweepAbandonedCartsAutoRecovery(db, saveDatabase);
 
     const now = new Date();
     const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);

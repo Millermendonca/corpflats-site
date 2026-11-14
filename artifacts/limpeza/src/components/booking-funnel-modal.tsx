@@ -22,6 +22,27 @@ import { isPlausibleCpfOrPassport } from "@/lib/phone-mask"
 import { compressImage } from "@/lib/image-compression"
 import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo"
 import { useStableCallback } from "@/lib/render-freeze"
+import { useToast } from "@/hooks/use-toast"
+
+const FUNNEL_SESSION_STORAGE_KEY = "corpflats_funnel_session_v1"
+const FUNNEL_DRAFT_STORAGE_KEY = "corpflats_funnel_draft_v1"
+const FUNNEL_DRAFT_TTL_MS = 24 * 60 * 60 * 1000
+
+function readSavedFunnelDraft(): any | null {
+  if (typeof window === "undefined") return null
+  try {
+    const raw = localStorage.getItem(FUNNEL_DRAFT_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed?.savedAt || Date.now() - Number(parsed.savedAt) > FUNNEL_DRAFT_TTL_MS) {
+      localStorage.removeItem(FUNNEL_DRAFT_STORAGE_KEY)
+      return null
+    }
+    return parsed
+  } catch {
+    return null
+  }
+}
 
 const FUNNEL_STEPS = [
   { step: 1, label: "1. Extras & Camas" },
@@ -48,9 +69,14 @@ const FunnelDialogHeader = memo(function FunnelDialogHeader({ currentStep }: { c
 
       {currentStep < 4 && (
         <div className="pt-2.5">
-          <div className="grid grid-cols-3 gap-1.5 text-center">
+          <div role="list" aria-label="Etapas da reserva" className="grid grid-cols-3 gap-1.5 text-center">
             {FUNNEL_STEPS.map((s) => (
-              <div key={s.step} className="space-y-1">
+              <div
+                key={s.step}
+                role="listitem"
+                aria-current={currentStep === s.step ? "step" : undefined}
+                className="space-y-1"
+              >
                 <div className={`h-1.5 rounded-full transition-all duration-300 ${
                   currentStep === s.step 
                     ? "bg-[#0F3D4C]" 
@@ -829,16 +855,74 @@ export function BookingFunnelModal({
   availabilityData
 }: BookingFunnelModalProps) {
   const [, setLocation] = useLocation()
+  const { toast } = useToast()
   // Funnel Stepper (1 to 4: 1. Extras, 2. Seus Dados, 3. Pagamento, 4. Conclusão)
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1)
+  const [invalidField, setInvalidField] = useState<string | null>(null)
+  const [stepValidationError, setStepValidationError] = useState<string | null>(null)
+  const petRulesCheckboxRef = useRef<HTMLInputElement>(null)
 
-  // Session ID única para telemetria e recuperação de carrinho
+  const clearFieldValidation = (fieldKey?: string) => {
+    if (!fieldKey || invalidField === fieldKey) {
+      setInvalidField(null)
+    }
+    setStepValidationError(null)
+  }
+
+  const reportValidationFailure = (
+    fieldKey: string | null,
+    domId: string | null,
+    title: string,
+    message: string
+  ) => {
+    setInvalidField(fieldKey)
+    setStepValidationError(message)
+    toast({
+      variant: "destructive",
+      title,
+      description: message,
+    })
+    if (typeof window !== "undefined") {
+      requestAnimationFrame(() => {
+        if (fieldKey === "petRules" && petRulesCheckboxRef.current) {
+          petRulesCheckboxRef.current.focus()
+          return
+        }
+        if (domId) {
+          const el = document.getElementById(domId)
+          if (el && typeof (el as HTMLElement).focus === "function") {
+            ;(el as HTMLElement).focus()
+          }
+        }
+      })
+    }
+  }
+
+  // Session ID única para telemetria e recuperação de carrinho (persistida por 24h entre abas/sessões mobile)
   const [sessionId] = useState(() => {
     if (typeof window !== "undefined") {
+      try {
+        const persistedRaw = localStorage.getItem(FUNNEL_SESSION_STORAGE_KEY)
+        if (persistedRaw) {
+          const parsed = JSON.parse(persistedRaw)
+          if (parsed?.sessionId && parsed?.savedAt && Date.now() - Number(parsed.savedAt) < FUNNEL_DRAFT_TTL_MS) {
+            sessionStorage.setItem("corpflats_funnel_session", parsed.sessionId)
+            return String(parsed.sessionId)
+          }
+        }
+      } catch {}
       const existing = sessionStorage.getItem("corpflats_funnel_session")
-      if (existing) return existing
+      if (existing) {
+        try {
+          localStorage.setItem(FUNNEL_SESSION_STORAGE_KEY, JSON.stringify({ sessionId: existing, savedAt: Date.now() }))
+        } catch {}
+        return existing
+      }
       const newId = `funnel_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
       sessionStorage.setItem("corpflats_funnel_session", newId)
+      try {
+        localStorage.setItem(FUNNEL_SESSION_STORAGE_KEY, JSON.stringify({ sessionId: newId, savedAt: Date.now() }))
+      } catch {}
       return newId
     }
     return `funnel_${Date.now()}`
@@ -856,17 +940,20 @@ export function BookingFunnelModal({
   }
 
   // Solicitante vs Hóspede (quando quem reserva não é o próprio hóspede)
-  const [requesterType, setRequesterType] = useState<"guest" | "other_person">("guest")
-  const [requesterName, setRequesterName] = useState(() => guestAccount?.name || getCachedProfile()?.name || "")
-  const [requesterPhone, setRequesterPhone] = useState(() => maskPhone(guestAccount?.phone || getCachedProfile()?.phone || ""))
-  const [requesterEmail, setRequesterEmail] = useState(() => guestAccount?.email || getCachedProfile()?.email || (typeof window !== "undefined" ? localStorage.getItem("corpflats_guest_email") || "" : ""))
+  const [requesterType, setRequesterType] = useState<"guest" | "other_person">(() => {
+    const draft = readSavedFunnelDraft()
+    return draft?.requesterType === "other_person" ? "other_person" : "guest"
+  })
+  const [requesterName, setRequesterName] = useState(() => guestAccount?.name || getCachedProfile()?.name || readSavedFunnelDraft()?.requesterName || "")
+  const [requesterPhone, setRequesterPhone] = useState(() => maskPhone(guestAccount?.phone || getCachedProfile()?.phone || readSavedFunnelDraft()?.requesterPhone || ""))
+  const [requesterEmail, setRequesterEmail] = useState(() => guestAccount?.email || getCachedProfile()?.email || (typeof window !== "undefined" ? localStorage.getItem("corpflats_guest_email") || "" : "") || readSavedFunnelDraft()?.requesterEmail || "")
   const [requesterDocument, setRequesterDocument] = useState(() => maskCpf(guestAccount?.document || getCachedProfile()?.document || ""))
   const isSeparateRequester = requesterType !== "guest"
 
-  // Guest Details com inicialização a partir de guestAccount ou cache local
-  const [guestName, setGuestName] = useState(() => guestAccount?.name || getCachedProfile()?.name || "")
-  const [guestPhone, setGuestPhone] = useState(() => maskPhone(guestAccount?.phone || getCachedProfile()?.phone || ""))
-  const [guestEmail, setGuestEmail] = useState(() => guestAccount?.email || getCachedProfile()?.email || (typeof window !== "undefined" ? localStorage.getItem("corpflats_guest_email") || "" : ""))
+  // Guest Details com inicialização a partir de guestAccount, cache local ou rascunho de 24h
+  const [guestName, setGuestName] = useState(() => guestAccount?.name || getCachedProfile()?.name || readSavedFunnelDraft()?.guestName || "")
+  const [guestPhone, setGuestPhone] = useState(() => maskPhone(guestAccount?.phone || getCachedProfile()?.phone || readSavedFunnelDraft()?.guestPhone || ""))
+  const [guestEmail, setGuestEmail] = useState(() => guestAccount?.email || getCachedProfile()?.email || (typeof window !== "undefined" ? localStorage.getItem("corpflats_guest_email") || "" : "") || readSavedFunnelDraft()?.guestEmail || "")
   const [guestDocument, setGuestDocument] = useState(() => maskCpf(guestAccount?.document || getCachedProfile()?.document || ""))
   const [guestAddress, setGuestAddress] = useState(() => guestAccount?.address || getCachedProfile()?.address || "")
   const [guestCity, setGuestCity] = useState(() => guestAccount?.city || getCachedProfile()?.city || "")
@@ -1004,7 +1091,11 @@ export function BookingFunnelModal({
         setIsInspectingDoc(false)
       }
     } catch (err: any) {
-      alert("Erro ao processar arquivo: " + err.message)
+      toast({
+        variant: "destructive",
+        title: "Erro ao processar arquivo",
+        description: err?.message || "Não foi possível ler o documento anexado.",
+      })
     }
   }
 
@@ -1024,8 +1115,8 @@ export function BookingFunnelModal({
   const earlyCheckin = false // Early check-in nunca oferecido conforme regra de negócio
   const [lateCheckout, setLateCheckout] = useState(false)
   const [lateCheckoutTime, setLateCheckoutTime] = useState("18:00")
-  const [bringingPet, setBringingPet] = useState(false)
-  const [petCount, setPetCount] = useState(1)
+  const [bringingPet, setBringingPet] = useState(() => Boolean(readSavedFunnelDraft()?.bringingPet))
+  const [petCount, setPetCount] = useState(() => Number(readSavedFunnelDraft()?.petCount) || 1)
   const [petRulesAccepted, setPetRulesAccepted] = useState(false)
 
   // Valida se o check-out ocorre no Domingo (0 = Domingo)
@@ -1046,7 +1137,56 @@ export function BookingFunnelModal({
   }, [isSundayCheckout, lateCheckout])
 
   // Payment Selection
-  const [paymentMethod, setPaymentMethod] = useState<"pix" | "card">("pix")
+  const [paymentMethod, setPaymentMethod] = useState<"pix" | "card">(() =>
+    readSavedFunnelDraft()?.paymentMethod === "card" ? "card" : "pix"
+  )
+
+  // Persiste rascunho não sensível por 24h enquanto o hóspede preenche o funil
+  useEffect(() => {
+    if (typeof window === "undefined" || !open || currentStep >= 4) return
+    try {
+      localStorage.setItem(
+        FUNNEL_DRAFT_STORAGE_KEY,
+        JSON.stringify({
+          savedAt: Date.now(),
+          checkin,
+          checkout,
+          ratePlan,
+          requesterType,
+          requesterName: requesterName.trim(),
+          requesterPhone: requesterPhone.trim(),
+          requesterEmail: requesterEmail.trim(),
+          guestName: guestName.trim(),
+          guestPhone: guestPhone.trim(),
+          guestEmail: guestEmail.trim(),
+          bringingPet,
+          petCount: bringingPet ? petCount : 0,
+          paymentMethod,
+        })
+      )
+    } catch {}
+  }, [
+    open,
+    currentStep,
+    checkin,
+    checkout,
+    ratePlan,
+    requesterType,
+    requesterName,
+    requesterPhone,
+    requesterEmail,
+    guestName,
+    guestPhone,
+    guestEmail,
+    bringingPet,
+    petCount,
+    paymentMethod,
+  ])
+
+  useEffect(() => {
+    setInvalidField(null)
+    setStepValidationError(null)
+  }, [currentStep, requesterType])
   const [isProcessing, setIsProcessing] = useState(false)
   const [confirmedReservation, setConfirmedReservation] = useState<any | null>(null)
   const [pixData, setPixData] = useState<any | null>(null)
@@ -1478,7 +1618,7 @@ export function BookingFunnelModal({
             earlyCheckinFee: 0,
             lateCheckoutFee,
             hasPet: bringingPet,
-            petCount,
+            petCount: bringingPet ? petCount : 0,
             twinCount,
             extraBedCount
           },
@@ -1520,46 +1660,86 @@ export function BookingFunnelModal({
     return () => window.removeEventListener("mouseleave", handleMouseLeave)
   }, [open, currentStep])
 
-  // Avançar Etapa com Validações
+  // Avançar Etapa com Validações Acessíveis (sem window.alert bloqueante)
   const handleNextStep = () => {
     if (currentStep === 1) {
       if (bringingPet && !petRulesAccepted) {
-        alert("Por favor, aceite as regras para animais de estimação para prosseguir.")
+        reportValidationFailure(
+          "petRules",
+          "funnel-pet-rules-checkbox",
+          "Aceite do regulamento Pet necessário",
+          "Marque a confirmação de leitura das regras de convivência pet para avançar."
+        )
         return
       }
+      setInvalidField(null)
+      setStepValidationError(null)
       setCurrentStep(2)
     } else if (currentStep === 2) {
       if (isSeparateRequester) {
         if (!requesterName.trim()) {
-          alert("Por favor, informe o nome do solicitante ou responsável pela reserva.")
+          reportValidationFailure(
+            "requesterName",
+            "funnel-requester-name",
+            "Nome do solicitante obrigatório",
+            "Por favor, informe o nome do solicitante ou responsável pela reserva."
+          )
           return
         }
         const cleanReqPhone = requesterPhone.replace(/\D/g, "")
         const isIntlReqPhone = requesterPhone.trim().startsWith("+") && !cleanReqPhone.startsWith("55")
         if (!requesterPhone.trim() || cleanReqPhone.length < (isIntlReqPhone ? 8 : 10)) {
-          alert("Por favor, informe um WhatsApp/telefone válido do solicitante com DDD (ou DDI internacional com +).")
+          reportValidationFailure(
+            "requesterPhone",
+            "funnel-requester-phone",
+            "WhatsApp do solicitante inválido",
+            "Por favor, informe um WhatsApp/telefone válido do solicitante com DDD (ou DDI internacional com +)."
+          )
           return
         }
         if (!requesterEmail.trim() || !requesterEmail.includes("@") || !requesterEmail.includes(".")) {
-          alert("Por favor, informe um e-mail válido do solicitante para envio do voucher e do link de cadastro do hóspede.")
+          reportValidationFailure(
+            "requesterEmail",
+            "funnel-requester-email",
+            "E-mail do solicitante inválido",
+            "Por favor, informe um e-mail válido do solicitante para envio do voucher e do link de cadastro do hóspede."
+          )
           return
         }
         const rawOptionalGuestDoc = guestDocument.trim()
         if (rawOptionalGuestDoc && !isPlausibleCpfOrPassport(rawOptionalGuestDoc)) {
-          alert("O CPF ou Passaporte do hóspede informado parece inválido. Corrija-o ou deixe em branco para preencher posteriormente pelo link.")
+          reportValidationFailure(
+            "guestDocument",
+            "funnel-guest-doc",
+            "Documento do hóspede inválido",
+            "O CPF ou Passaporte do hóspede informado parece inválido. Corrija-o ou deixe em branco para preencher posteriormente pelo link."
+          )
           return
         }
         if (docFileBase64) {
           if (isInspectingDoc) {
-            alert("Aguarde a análise do documento oficial por Inteligência Artificial...")
+            toast({
+              title: "Analisando documento",
+              description: "Aguarde alguns segundos até a conclusão da leitura do documento oficial.",
+            })
             return
           }
           if (aiInspectionResult && aiInspectionResult.isOfficialDocument === false) {
-            alert("O arquivo anexado não foi reconhecido como documento oficial de identificação com foto. Remova o anexo para enviar depois via link ou anexe um RG, CNH ou Passaporte.")
+            reportValidationFailure(
+              "docFile",
+              null,
+              "Documento não reconhecido",
+              "O arquivo anexado não foi reconhecido como documento oficial com foto. Remova o anexo para enviar depois via link ou anexe RG, CNH ou Passaporte."
+            )
             return
           }
           if (aiInspectionResult && aiInspectionResult.isLegible === false) {
-            alert(`O documento anexado não pôde ser aceito: ${aiInspectionResult.legibilityReason || "Documento ilegível"}. Remova o anexo para enviar depois via link ou envie uma foto nítida.`)
+            reportValidationFailure(
+              "docFile",
+              null,
+              "Documento ilegível",
+              `O documento anexado não pôde ser aceito: ${aiInspectionResult.legibilityReason || "Documento ilegível"}. Remova o anexo para enviar depois via link ou envie uma foto nítida.`
+            )
             return
           }
           if (aiInspectionResult?.isMinor && !minorNoticeAcknowledged) {
@@ -1567,45 +1747,85 @@ export function BookingFunnelModal({
             return
           }
         }
+        setInvalidField(null)
+        setStepValidationError(null)
         sendFunnelTelemetry(3, "identificacao_lead", "em_andamento")
         setCurrentStep(3)
         return
       }
 
       if (!guestName.trim()) {
-        alert("Por favor, informe seu nome completo.")
+        reportValidationFailure(
+          "guestName",
+          "funnel-guest-name",
+          "Nome completo obrigatório",
+          "Por favor, informe seu nome completo."
+        )
         return
       }
       const cleanFunnelPhone = guestPhone.replace(/\D/g, "")
       const isIntlFunnelPhone = guestPhone.trim().startsWith("+") && !cleanFunnelPhone.startsWith("55")
       if (!guestPhone.trim() || cleanFunnelPhone.length < (isIntlFunnelPhone ? 8 : 10)) {
-        alert("Por favor, informe um WhatsApp válido com DDD (ou DDI internacional com +).")
+        reportValidationFailure(
+          "guestPhone",
+          "funnel-guest-phone",
+          "WhatsApp inválido",
+          "Por favor, informe um WhatsApp válido com DDD (ou DDI internacional com +)."
+        )
         return
       }
       if (!guestEmail.trim() || !guestEmail.includes("@") || !guestEmail.includes(".")) {
-        alert("Por favor, informe um e-mail válido para envio do voucher.")
+        reportValidationFailure(
+          "guestEmail",
+          "funnel-guest-email",
+          "E-mail inválido",
+          "Por favor, informe um e-mail válido para envio do voucher."
+        )
         return
       }
       const rawFunnelDoc = guestDocument.trim()
       const isFunnelDocValid = isPlausibleCpfOrPassport(rawFunnelDoc)
       if (!rawFunnelDoc || !isFunnelDocValid) {
-        alert("Por favor, informe um CPF válido (11 dígitos) ou número de Passaporte válido para registro da reserva.")
+        reportValidationFailure(
+          "guestDocument",
+          "funnel-guest-doc",
+          "CPF ou Passaporte inválido",
+          "Por favor, informe um CPF válido (11 dígitos) ou número de Passaporte válido para registro da reserva."
+        )
         return
       }
       if (!docFileBase64) {
-        alert("O anexo do documento oficial com foto (RG, CNH, Passaporte em PDF ou Imagem) é obrigatório para finalizar a reserva.")
+        reportValidationFailure(
+          "docFile",
+          null,
+          "Documento com foto obrigatório",
+          "Anexe seu documento oficial com foto (RG, CNH ou Passaporte em PDF ou imagem) para liberar a portaria."
+        )
         return
       }
       if (isInspectingDoc) {
-        alert("Aguarde a análise do documento oficial por Inteligência Artificial...")
+        toast({
+          title: "Analisando documento",
+          description: "Aguarde alguns segundos até a conclusão da leitura do documento oficial.",
+        })
         return
       }
       if (aiInspectionResult && aiInspectionResult.isOfficialDocument === false) {
-        alert("O arquivo anexado não foi reconhecido como documento oficial de identificação com foto. Por favor, envie foto ou PDF de um documento oficial (RG, CNH ou Passaporte).")
+        reportValidationFailure(
+          "docFile",
+          null,
+          "Documento não reconhecido",
+          "O arquivo anexado não foi reconhecido como documento oficial de identificação com foto. Envie RG, CNH ou Passaporte."
+        )
         return
       }
       if (aiInspectionResult && aiInspectionResult.isLegible === false) {
-        alert(`O documento anexado não pôde ser aceito: ${aiInspectionResult.legibilityReason || "Documento ilegível"}. Por favor, anexe uma foto mais nítida ou o PDF original.`)
+        reportValidationFailure(
+          "docFile",
+          null,
+          "Documento ilegível",
+          `O documento anexado não pôde ser aceito: ${aiInspectionResult.legibilityReason || "Documento ilegível"}. Envie uma foto mais nítida ou o PDF original.`
+        )
         return
       }
       if (
@@ -1615,9 +1835,14 @@ export function BookingFunnelModal({
           aiInspectionResult.cpfMatches === false)
       ) {
         const reasons = Array.isArray(aiInspectionResult.mismatchReasons) && aiInspectionResult.mismatchReasons.length > 0
-          ? aiInspectionResult.mismatchReasons.join("\n• ")
+          ? aiInspectionResult.mismatchReasons.join(" • ")
           : "Os dados do documento anexado (Nome ou CPF) não conferem com o titular da reserva."
-        alert(`⚠️ Divergência Pericial de Titularidade:\n\n• ${reasons}\n\nPor favor, anexe o documento pertencente à mesma pessoa titular da reserva ou corrija os dados informados.`)
+        reportValidationFailure(
+          "docFile",
+          "funnel-guest-name",
+          "Divergência de titularidade no documento",
+          `${reasons} Anexe o documento pertencente ao titular da reserva ou corrija os dados informados.`
+        )
         return
       }
       if (aiInspectionResult?.isMinor && !minorNoticeAcknowledged) {
@@ -1797,13 +2022,26 @@ export function BookingFunnelModal({
           setMpInitPoint(data.initPoint)
         }
         sendFunnelTelemetry(5, "reserva_confirmada", "concluido")
+        try {
+          localStorage.removeItem(FUNNEL_DRAFT_STORAGE_KEY)
+          localStorage.removeItem(FUNNEL_SESSION_STORAGE_KEY)
+          sessionStorage.removeItem("corpflats_funnel_session")
+        } catch {}
         setCurrentStep(4)
         if (onSuccessBooking) onSuccessBooking(data.reservation)
       } else {
-        alert(data.error || "Erro ao processar sua reserva.")
+        toast({
+          variant: "destructive",
+          title: "Não foi possível concluir a reserva",
+          description: data.error || "Erro ao processar sua reserva.",
+        })
       }
     } catch {
-      alert("Erro ao conectar ao servidor. Tente novamente.")
+      toast({
+        variant: "destructive",
+        title: "Falha de conexão",
+        description: "Erro ao conectar ao servidor. Tente novamente em instantes.",
+      })
     } finally {
       setIsProcessing(false)
     }
@@ -1812,7 +2050,11 @@ export function BookingFunnelModal({
   // Complementação cadastral pós-pagamento na Etapa 4
   const handleSavePostPaymentRegistration = async () => {
     if (!guestAddress.trim()) {
-      alert("Por favor, informe seu endereço residencial completo.")
+      toast({
+        variant: "destructive",
+        title: "Endereço obrigatório",
+        description: "Por favor, informe seu endereço residencial completo.",
+      })
       return
     }
     setIsSavingPostRegistration(true)
@@ -1853,7 +2095,11 @@ export function BookingFunnelModal({
         confirmedReservation.guestCep = guestCep.trim()
       }
     } catch {
-      alert("Erro ao salvar dados cadastrais no servidor. Seus dados básicos continuam válidos.")
+      toast({
+        variant: "destructive",
+        title: "Aviso ao salvar endereço",
+        description: "Erro ao salvar dados cadastrais no servidor. Seus dados básicos continuam válidos.",
+      })
     } finally {
       setIsSavingPostRegistration(false)
     }
@@ -2108,17 +2354,36 @@ export function BookingFunnelModal({
                     </div>
                   </div>
 
-                  <label className="flex items-start gap-2 text-[11px] font-semibold text-slate-700 dark:text-slate-300 cursor-pointer pt-0.5">
+                  <label
+                    htmlFor="funnel-pet-rules-checkbox"
+                    className={`flex items-start gap-2 text-[11px] font-semibold cursor-pointer p-2 rounded-xl transition-colors ${
+                      invalidField === "petRules"
+                        ? "bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 text-red-800 dark:text-red-200"
+                        : "text-slate-700 dark:text-slate-300 pt-0.5"
+                    }`}
+                  >
                     <input
+                      id="funnel-pet-rules-checkbox"
+                      ref={petRulesCheckboxRef}
                       type="checkbox"
                       checked={petRulesAccepted}
-                      onChange={e => setPetRulesAccepted(e.target.checked)}
+                      aria-invalid={invalidField === "petRules" ? "true" : undefined}
+                      aria-describedby={invalidField === "petRules" ? "funnel-pet-rules-error" : undefined}
+                      onChange={e => {
+                        setPetRulesAccepted(e.target.checked)
+                        if (e.target.checked) clearFieldValidation("petRules")
+                      }}
                       className="rounded text-[#0F3D4C] accent-[#0F3D4C] mt-0.5"
                     />
                     <span>
                       Li e concordo com as regras de convivência pet e taxa de higienização (+ R$ {formatBrl(petFee)}).
                     </span>
                   </label>
+                  {invalidField === "petRules" && stepValidationError && (
+                    <p id="funnel-pet-rules-error" role="alert" className="text-[11px] font-semibold text-red-600 dark:text-red-400">
+                      {stepValidationError}
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -2207,6 +2472,17 @@ export function BookingFunnelModal({
             )}
 
             {/* Seletor Semântico: Para quem é a hospedagem? */}
+            {stepValidationError && (
+              <div
+                role="alert"
+                aria-live="assertive"
+                className="p-3 rounded-2xl border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40 text-red-800 dark:text-red-200 text-xs font-semibold flex items-start gap-2"
+              >
+                <AlertTriangle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+                <span>{stepValidationError}</span>
+              </div>
+            )}
+
             <fieldset className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 space-y-2">
               <legend className="text-xs font-bold text-slate-900 dark:text-slate-100 px-1">
                 Para quem é a hospedagem?
@@ -2291,8 +2567,12 @@ export function BookingFunnelModal({
                       name="requesterName"
                       autoComplete="name"
                       required
+                      aria-invalid={invalidField === "requesterName" ? "true" : undefined}
                       value={requesterName}
-                      onChange={e => setRequesterName(e.target.value)}
+                      onChange={e => {
+                        setRequesterName(e.target.value)
+                        clearFieldValidation("requesterName")
+                      }}
                       placeholder="Ex: Maria Oliveira / RH Empresa"
                       className="text-xs h-9 rounded-xl bg-white dark:bg-slate-900"
                     />
@@ -2309,8 +2589,12 @@ export function BookingFunnelModal({
                       inputMode="tel"
                       autoComplete="tel"
                       required
+                      aria-invalid={invalidField === "requesterPhone" ? "true" : undefined}
                       value={requesterPhone}
-                      onChange={e => setRequesterPhone(maskPhone(e.target.value))}
+                      onChange={e => {
+                        setRequesterPhone(maskPhone(e.target.value))
+                        clearFieldValidation("requesterPhone")
+                      }}
                       placeholder="(22) 99999-9999"
                       className="text-xs h-9 rounded-xl bg-white dark:bg-slate-900 font-bold text-slate-900 dark:text-slate-100"
                     />
@@ -2329,8 +2613,12 @@ export function BookingFunnelModal({
                       autoCapitalize="none"
                       spellCheck={false}
                       required
+                      aria-invalid={invalidField === "requesterEmail" ? "true" : undefined}
                       value={requesterEmail}
-                      onChange={e => setRequesterEmail(e.target.value)}
+                      onChange={e => {
+                        setRequesterEmail(e.target.value)
+                        clearFieldValidation("requesterEmail")
+                      }}
                       placeholder="solicitante@empresa.com.br"
                       className="text-xs h-9 rounded-xl bg-white dark:bg-slate-900"
                     />
@@ -2384,8 +2672,12 @@ export function BookingFunnelModal({
                     name="guestName"
                     autoComplete={isSeparateRequester ? "off" : "name"}
                     required={!isSeparateRequester}
+                    aria-invalid={invalidField === "guestName" ? "true" : undefined}
                     value={guestName}
-                    onChange={e => setGuestName(e.target.value)}
+                    onChange={e => {
+                      setGuestName(e.target.value)
+                      clearFieldValidation("guestName")
+                    }}
                     placeholder={isSeparateRequester ? "Preencher agora ou deixar para o link" : "Ex: Carlos Eduardo Silveira"}
                     className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800"
                   />
@@ -2402,8 +2694,12 @@ export function BookingFunnelModal({
                     inputMode="tel"
                     autoComplete={isSeparateRequester ? "off" : "tel"}
                     required={!isSeparateRequester}
+                    aria-invalid={invalidField === "guestPhone" ? "true" : undefined}
                     value={guestPhone}
-                    onChange={e => setGuestPhone(maskPhone(e.target.value))}
+                    onChange={e => {
+                      setGuestPhone(maskPhone(e.target.value))
+                      clearFieldValidation("guestPhone")
+                    }}
                     placeholder="(22) 99999-9999"
                     className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold text-slate-900 dark:text-slate-100"
                   />
@@ -2422,8 +2718,12 @@ export function BookingFunnelModal({
                     autoCapitalize="none"
                     spellCheck={false}
                     required={!isSeparateRequester}
+                    aria-invalid={invalidField === "guestEmail" ? "true" : undefined}
                     value={guestEmail}
-                    onChange={e => setGuestEmail(e.target.value)}
+                    onChange={e => {
+                      setGuestEmail(e.target.value)
+                      clearFieldValidation("guestEmail")
+                    }}
                     placeholder="seu@email.com"
                     className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800"
                   />
@@ -2441,8 +2741,12 @@ export function BookingFunnelModal({
                     autoCapitalize="none"
                     spellCheck={false}
                     required={!isSeparateRequester}
+                    aria-invalid={invalidField === "guestDocument" ? "true" : undefined}
                     value={guestDocument}
-                    onChange={e => setGuestDocument(maskCpf(e.target.value))}
+                    onChange={e => {
+                      setGuestDocument(maskCpf(e.target.value))
+                      clearFieldValidation("guestDocument")
+                    }}
                     placeholder="000.000.000-00 ou Passaporte"
                     className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-mono"
                   />

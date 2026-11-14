@@ -161,6 +161,13 @@ const queryClient = new QueryClient({
     queries: {
       refetchOnWindowFocus: false,
       staleTime: 5000,
+      retry: (failureCount, error: any) => {
+        const status = error?.status ?? error?.response?.status;
+        if (status === 401 || status === 403 || /\b(401|403)\b/.test(String(error?.message || ""))) {
+          return false;
+        }
+        return failureCount < 2;
+      },
     }
   }
 });
@@ -534,6 +541,7 @@ function Router() {
         <AdminRoute path="/relatorios-cafe" component={BreakfastProduction} moduleName="os Relatórios do Café da Manhã" />
         <AdminRoute path="/insights-cafe" component={BreakfastProduction} moduleName="os Relatórios do Café da Manhã" />
         <AdminRoute path="/reservas" component={PmsCalendar} moduleName="o Livro de Reservas & Mapa de Ocupação" />
+        <AdminRoute path="/pms-calendar" component={PmsCalendar} moduleName="o Livro de Reservas & Mapa de Ocupação" />
         <AdminRoute path="/relatorios-reservas" component={PmsReportsPage} moduleName="os Relatórios de Reservas & Ocupação" />
         <AdminRoute path="/relatorio-reservas" component={PmsReportsPage} moduleName="os Relatórios de Reservas & Ocupação" />
         <AdminRoute path="/pms-reports" component={PmsReportsPage} moduleName="os Relatórios de Reservas & Ocupação" />
@@ -666,6 +674,46 @@ function VersionGuard({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+const PUBLIC_GUEST_PATH_PREFIXES = [
+  "/reservar",
+  "/booking",
+  "/pre-checkin",
+  "/minha-conta",
+  "/minha-reserva",
+  "/checkout",
+  "/cafe",
+  "/frigobar/",
+  "/credenciamento",
+  "/verificar-ficha",
+  "/servico/",
+];
+
+function StaffGlobalOverlays() {
+  const [location] = useLocation();
+  const cleanPath = (location || "/").split("?")[0];
+  const isPublicGuestRoute =
+    cleanPath === "/" ||
+    PUBLIC_GUEST_PATH_PREFIXES.some((prefix) =>
+      prefix.endsWith("/")
+        ? cleanPath.startsWith(prefix)
+        : cleanPath === prefix || cleanPath.startsWith(`${prefix}/`)
+    );
+
+  if (isPublicGuestRoute && !getCachedAuthUser()) {
+    return null;
+  }
+
+  return (
+    <>
+      <RestockerVoiceNotifier />
+      <FloatingNewReservationButton />
+      <Suspense fallback={null}>
+        <AdminAiCopilot />
+      </Suspense>
+    </>
+  );
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -673,11 +721,7 @@ function App() {
         <VersionGuard>
           <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
             <Router />
-            <RestockerVoiceNotifier />
-            <FloatingNewReservationButton />
-            <Suspense fallback={null}>
-              <AdminAiCopilot />
-            </Suspense>
+            <StaffGlobalOverlays />
           </WouterRouter>
           <Toaster />
         </VersionGuard>

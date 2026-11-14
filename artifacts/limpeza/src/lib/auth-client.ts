@@ -276,39 +276,51 @@ export async function loginWithGooglePopup(onSuccess: (user: UserProfile) => voi
   })
 }
 
+let inflightSessionPromise: Promise<UserProfile | null> | null = null
+
 /**
- * 4. Obter Sessão Ativa Atual (Consome Cookie HttpOnly / Token Assinado)
+ * 4. Obter Sessão Ativa Atual (Consome Cookie HttpOnly / Token Assinado, com deduplicação de chamadas concorrentes)
  */
 export async function getCurrentSession(): Promise<UserProfile | null> {
-  try {
-    const res = await fetch(`${API_BASE}/me`, {
-      credentials: "include",
-      headers: getAuthHeaders()
-    })
-    if (res.ok) {
-      const data = await res.json()
-      if (data.user) {
-        saveSessionLocally(data.user)
-        return data.user
-      }
-    } else if (res.status === 401) {
-      clearLocalSession()
-      return null
-    }
-  } catch {
-    // Fallback offline apenas se a rede falhar
-    try {
-      const raw = localStorage.getItem("corpflats_guest_profile")
-      if (raw) {
-        const parsed = JSON.parse(raw)
-        if (parsed && (parsed.email || parsed.name)) {
-          return parsed
-        }
-      }
-    } catch {}
+  if (inflightSessionPromise) {
+    return inflightSessionPromise
   }
 
-  return null
+  inflightSessionPromise = (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/me`, {
+        credentials: "include",
+        headers: getAuthHeaders()
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.user) {
+          saveSessionLocally(data.user)
+          return data.user
+        }
+      } else if (res.status === 401) {
+        clearLocalSession()
+        return null
+      }
+    } catch {
+      // Fallback offline apenas se a rede falhar
+      try {
+        const raw = localStorage.getItem("corpflats_guest_profile")
+        if (raw) {
+          const parsed = JSON.parse(raw)
+          if (parsed && (parsed.email || parsed.name)) {
+            return parsed
+          }
+        }
+      } catch {}
+    }
+
+    return null
+  })().finally(() => {
+    inflightSessionPromise = null
+  })
+
+  return inflightSessionPromise
 }
 
 /**

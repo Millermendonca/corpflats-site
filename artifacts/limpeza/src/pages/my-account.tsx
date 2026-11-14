@@ -93,7 +93,7 @@ export default function MyAccount() {
           setUser(parsed)
           populateFields(parsed)
         } else {
-          setLocation("/reservar")
+          setLocation("/reservar?login=1")
           return
         }
       } else {
