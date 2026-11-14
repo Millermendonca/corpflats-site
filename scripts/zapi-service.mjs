@@ -8162,6 +8162,23 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     if (!Array.isArray(db.faqItems)) {
       db.faqItems = [];
     }
+    const PREVIEW_ASSETS_VERSION = "20261113";
+    const DEFAULT_PREVIEW_IMAGES = {
+      credential: `https://corpflats.com.br/previews/credenciamento-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      preCheckin: `https://corpflats.com.br/previews/precheckin-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      portal: `https://corpflats.com.br/previews/portal-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      pix: `https://corpflats.com.br/previews/pix-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      boleto: `https://corpflats.com.br/previews/boleto-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      breakfast: `https://corpflats.com.br/previews/breakfast-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      minibar: `https://corpflats.com.br/previews/frigobar-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      checkout: `https://corpflats.com.br/previews/checkout-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      review: `https://corpflats.com.br/previews/review-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      flat: `https://corpflats.com.br/previews/reservar-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`
+    };
+    const isLegacyGenericPreviewUrl = (url) =>
+      !url ||
+      /\/(flat|breakfast)-preview\.jpg(\?.*)?$/i.test(String(url).trim());
+
     if (!db.zapiConfig) {
       db.zapiConfig = {
         instanceId: "",
@@ -8173,11 +8190,18 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         wifiNetwork: "apto {quarto}",
         wifiPassword: "1234567890123",
         googleReviewUrl: "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA",
-        reviewPreviewTitle: "⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)",
-        reviewPreviewDescription: "Toque aqui para avaliar no Google",
-        reviewPreviewImage: "https://corpflats.com.br/flat-preview.jpg",
-        breakfastPreviewImage: "https://corpflats.com.br/breakfast-preview.jpg",
-        flatPreviewImage: "https://corpflats.com.br/flat-preview.jpg",
+        reviewPreviewTitle: "⭐ Avalie sua Estadia • CorpFlats Soho Residence",
+        reviewPreviewDescription: "Sua experiência foi 5 estrelas? Toque aqui para avaliar a CorpFlats no Google em menos de 30 segundos!",
+        reviewPreviewImage: DEFAULT_PREVIEW_IMAGES.review,
+        breakfastPreviewImage: DEFAULT_PREVIEW_IMAGES.breakfast,
+        flatPreviewImage: DEFAULT_PREVIEW_IMAGES.flat,
+        credentialPreviewImage: DEFAULT_PREVIEW_IMAGES.credential,
+        preCheckinPreviewImage: DEFAULT_PREVIEW_IMAGES.preCheckin,
+        portalPreviewImage: DEFAULT_PREVIEW_IMAGES.portal,
+        pixPreviewImage: DEFAULT_PREVIEW_IMAGES.pix,
+        boletoPreviewImage: DEFAULT_PREVIEW_IMAGES.boleto,
+        minibarPreviewImage: DEFAULT_PREVIEW_IMAGES.minibar,
+        checkoutPreviewImage: DEFAULT_PREVIEW_IMAGES.checkout,
         guestGuidePdfUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
         guestGuidePdfName: "Manual_do_Hospede_CorpFlats.pdf",
         alertEmail: "millerpessanha@gmail.com",
@@ -8206,20 +8230,18 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       if (!db.zapiConfig.googleReviewUrl || db.zapiConfig.googleReviewUrl.includes("maps.google.com/?q=") || db.zapiConfig.googleReviewUrl.includes("g.page/r/corpflats") || db.zapiConfig.googleReviewUrl.includes("maps.app.goo.gl") || db.zapiConfig.googleReviewUrl.includes("share.google/LHu3541d5lhkdvbL2")) {
         db.zapiConfig.googleReviewUrl = "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA";
       }
-      if (!db.zapiConfig.reviewPreviewTitle) {
-        db.zapiConfig.reviewPreviewTitle = "⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)";
+      if (!db.zapiConfig.reviewPreviewTitle || db.zapiConfig.reviewPreviewTitle === "⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)") {
+        db.zapiConfig.reviewPreviewTitle = "⭐ Avalie sua Estadia • CorpFlats Soho Residence";
       }
-      if (!db.zapiConfig.reviewPreviewDescription || db.zapiConfig.reviewPreviewDescription === "Toque aqui para abrir direto a caixinha de 5 estrelas no Google. Leva apenas 30 segundos!") {
-        db.zapiConfig.reviewPreviewDescription = "Toque aqui para avaliar no Google";
+      if (!db.zapiConfig.reviewPreviewDescription || db.zapiConfig.reviewPreviewDescription === "Toque aqui para abrir direto a caixinha de 5 estrelas no Google. Leva apenas 30 segundos!" || db.zapiConfig.reviewPreviewDescription === "Toque aqui para avaliar no Google") {
+        db.zapiConfig.reviewPreviewDescription = "Sua experiência foi 5 estrelas? Toque aqui para avaliar a CorpFlats no Google em menos de 30 segundos!";
       }
-      if (!db.zapiConfig.reviewPreviewImage) {
-        db.zapiConfig.reviewPreviewImage = "https://corpflats.com.br/flat-preview.jpg";
-      }
-      if (!db.zapiConfig.breakfastPreviewImage) {
-        db.zapiConfig.breakfastPreviewImage = "https://corpflats.com.br/breakfast-preview.jpg";
-      }
-      if (!db.zapiConfig.flatPreviewImage) {
-        db.zapiConfig.flatPreviewImage = "https://corpflats.com.br/flat-preview.jpg";
+      for (const [slotKey, defaultUrl] of Object.entries(DEFAULT_PREVIEW_IMAGES)) {
+        const propImg = `${slotKey}PreviewImage`;
+        const propB64 = `${slotKey}PreviewImageBase64`;
+        if (!db.zapiConfig[propImg] || (!db.zapiConfig[propB64] && isLegacyGenericPreviewUrl(db.zapiConfig[propImg]))) {
+          db.zapiConfig[propImg] = defaultUrl;
+        }
       }
       if (!db.zapiConfig.deliveryMode || db.zapiConfig.deliveryMode === "text_links") {
         db.zapiConfig.deliveryMode = "buttons";
@@ -9405,22 +9427,49 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     }
   });
 
-  // 7.6. Upload e Servir Fotos de Pré-Visualização dos Links no WhatsApp (Link Preview: Avaliação Google, Café da Manhã e Flat)
+  // 7.6. Upload e Servir Fotos de Pré-Visualização dos Links no WhatsApp (Link Preview: Todos os Links)
+  const PREVIEW_SLOT_FILE_MAP = {
+    credential: "previews/credenciamento-preview.jpg",
+    preCheckin: "previews/precheckin-preview.jpg",
+    portal: "previews/portal-preview.jpg",
+    pix: "previews/pix-preview.jpg",
+    boleto: "previews/boleto-preview.jpg",
+    breakfast: "previews/breakfast-preview.jpg",
+    minibar: "previews/frigobar-preview.jpg",
+    checkout: "previews/checkout-preview.jpg",
+    review: "previews/review-preview.jpg",
+    flat: "previews/reservar-preview.jpg"
+  };
+
+  const normalizePreviewSlotKey = (raw) => {
+    const s = String(raw || "").trim().replace(/\.(jpg|jpeg|png|webp)$/i, "").toLowerCase();
+    if (s === "credential" || s.startsWith("credenciamento") || s.startsWith("cadastro")) return "credential";
+    if (s === "precheckin" || s === "pre-checkin" || s.startsWith("precheckin") || s.startsWith("checkin")) return "preCheckin";
+    if (s.startsWith("portal") || s.startsWith("minha-reserva")) return "portal";
+    if (s.startsWith("pix") || s.startsWith("copiar-pix")) return "pix";
+    if (s.startsWith("boleto") || s.startsWith("copiar-boleto")) return "boleto";
+    if (s.startsWith("breakfast") || s.startsWith("cafe")) return "breakfast";
+    if (s.startsWith("minibar") || s.startsWith("frigobar")) return "minibar";
+    if (s.startsWith("checkout") || s.startsWith("check-out") || s.startsWith("saida")) return "checkout";
+    if (s.startsWith("flat") || s.startsWith("reservar") || s.startsWith("site")) return "flat";
+    return "review";
+  };
+
   app.post("/api/whatsapp/upload-preview-image", async (req, res) => {
     try {
-      const { slot = "review", fileBase64, fileName = "preview.jpg" } = req.body || {};
-      if (!fileBase64) {
+      const { slot = "review", fileBase64, dataUrl, fileName = "preview.jpg" } = req.body || {};
+      const rawInput = fileBase64 || dataUrl;
+      if (!rawInput) {
         return res.status(400).json({ error: "Imagem em Base64 é obrigatória." });
       }
-      const validSlots = ["review", "breakfast", "flat"];
-      const targetSlot = validSlots.includes(String(slot)) ? String(slot) : "review";
+      const targetSlot = normalizePreviewSlotKey(slot);
 
       const db = getDb();
       ensureDbDefaults();
 
-      const matches = String(fileBase64).match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      const matches = String(rawInput).match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
       const mimeType = matches ? matches[1] : "image/jpeg";
-      const rawBase64 = matches ? matches[2] : String(fileBase64);
+      const rawBase64 = matches ? matches[2] : String(rawInput);
       const buffer = Buffer.from(rawBase64, "base64");
 
       const ext = mimeType.includes("png") ? ".png" : mimeType.includes("webp") ? ".webp" : ".jpg";
@@ -9429,7 +9478,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       fs.writeFileSync(filePath, buffer);
 
       // Persiste também em db.zapiConfig para sobreviver a reinicializações do container
-      db.zapiConfig[`${targetSlot}PreviewImageBase64`] = String(fileBase64);
+      db.zapiConfig[`${targetSlot}PreviewImageBase64`] = String(rawInput);
       db.zapiConfig[`${targetSlot}PreviewImageMime`] = mimeType;
 
       const publicUrl = `https://corpflats.com.br/api/whatsapp/preview-image/${targetSlot}.jpg?v=${Date.now()}`;
@@ -9441,6 +9490,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         success: true,
         slot: targetSlot,
         url: publicUrl,
+        imageUrl: publicUrl,
         fileName,
         config: db.zapiConfig
       });
@@ -9452,8 +9502,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
   app.get("/api/whatsapp/preview-image/:slotFile", (req, res) => {
     try {
-      const rawParam = String(req.params.slotFile || "review").toLowerCase();
-      const slot = rawParam.startsWith("breakfast") ? "breakfast" : rawParam.startsWith("flat") ? "flat" : "review";
+      const slot = normalizePreviewSlotKey(req.params.slotFile || "review");
       const db = getDb();
       const b64 = db?.zapiConfig?.[`${slot}PreviewImageBase64`];
       if (b64) {
@@ -9466,7 +9515,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         return res.send(buf);
       }
 
-      const defaultFile = slot === "breakfast" ? "breakfast-preview.jpg" : "flat-preview.jpg";
+      const defaultFile = PREVIEW_SLOT_FILE_MAP[slot] || "previews/reservar-preview.jpg";
       const candidates = [
         path.resolve(process.cwd(), "artifacts/limpeza/dist/public", defaultFile),
         path.resolve(process.cwd(), "artifacts/limpeza/public", defaultFile),

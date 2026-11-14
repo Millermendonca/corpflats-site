@@ -3990,54 +3990,109 @@ const DEFAULT_SITE_CONFIG = {
     },
     {
       id: 5,
+      title: "Café da manhã servido na mesa do flat",
+      category: "Café no Flat",
+      imageUrl: "/photos/soho/cafe-mesa-quarto.jpg"
+    },
+    {
+      id: 6,
       title: "Banheiro com bancada em granito e secador de parede",
       category: "Banheiro",
       imageUrl: "/photos/soho/05-banheiro.jpg"
     },
     {
-      id: 6,
+      id: 7,
       title: "Jacuzzi aquecida e deck de madeira na cobertura",
       category: "Cobertura & Lazer",
       imageUrl: "/photos/soho/06-cobertura-jacuzzi.jpg"
     },
     {
-      id: 7,
+      id: 8,
       title: "Terraço aberto com vista panorâmica da cidade",
       category: "Cobertura & Lazer",
       imageUrl: "/photos/soho/07-terraco-panoramico.jpg"
     },
     {
-      id: 8,
+      id: 9,
       title: "Área de descanso integrada às saunas seca e a vapor",
       category: "Cobertura & Lazer",
       imageUrl: "/photos/soho/08-spa-saunas.jpg"
     },
     {
-      id: 9,
+      id: 10,
       title: "Academia climatizada com vista alta",
       category: "Cobertura & Lazer",
       imageUrl: "/photos/soho/09-academia.jpg"
     },
     {
-      id: 10,
+      id: 11,
       title: "Sala de jogos climatizada com sinuca e totó",
       category: "Cobertura & Lazer",
       imageUrl: "/photos/soho/10-sala-de-jogos.jpg"
     },
     {
-      id: 11,
+      id: 12,
       title: "Recepção 24 horas e hall social",
       category: "Edifício & Garagem",
       imageUrl: "/photos/soho/11-lobby-elevadores.jpg"
     },
     {
-      id: 12,
+      id: 13,
       title: "Fachada nº 209 e acesso à garagem coberta",
       category: "Edifício & Garagem",
       imageUrl: "/photos/soho/12-fachada-garagem.jpg"
     }
   ],
-  testimonials: [],
+  testimonials: [
+    {
+      id: 1,
+      name: "Giselia Correa",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Passamos 4 diárias no flat, fomos muito bem atendidos pelo sr Miller e sua esposa, eles são pessoas muito atenciosas, nos trataram com muito carinho. O café da manhã é bem servido e pontual, tudo fresquinho, o pão de queijo bem quentinho, tudo com excelência. Amamos super recomendo!!!!",
+      avatar: ""
+    },
+    {
+      id: 2,
+      name: "Carlos Aprigio",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Hospedagem maravilhosa, com quarto limpinho, cheiroso, com um lugar super calmo e silencioso, tratamento super bacana, estacionamento seguro, as pessoas trabalhando com muito carinho e atenção!! Resumindo!! Muito bom 😊 Recomendo 💯",
+      avatar: ""
+    },
+    {
+      id: 3,
+      name: "GG Cordeiro",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Tudo perfeito, clareza nas informações, ambiente muito agradável, acomodação impecável, parabéns a Corp Flats!",
+      avatar: ""
+    },
+    {
+      id: 4,
+      name: "Paula Ladeira Vidal",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "O Flat estava limpo e bem equipado, também fica localizado perto de bares, restaurantes e farmácias, em área central de Campos. O estacionamento é gratuito. Recomendo!",
+      avatar: ""
+    },
+    {
+      id: 5,
+      name: "Hugo Alves",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Quando vou a Campos sempre fico nesse Flat, muito limpo e organizado, tem tudo que preciso num lugar só.",
+      avatar: ""
+    },
+    {
+      id: 6,
+      name: "Jean Sant'Anna",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Foi uma experiência bem legal. Ótimo café da manhã. Quarto limpo e aconchegante. Boa localização. Nada a reclamar 🙌",
+      avatar: ""
+    }
+  ],
   about: {
     title: "Padrão único em todas as 19 unidades",
     subtitle: "O Flat",
@@ -55565,6 +55620,37 @@ export function getTariffSettings() {
     } catch (_) {}
   }
 
+  // Migração oficial Soho Residence V2: foto do café da manhã na mesa (#5 da galeria, 13 fotos) + 6 avaliações reais 5★ do Google
+  if (!isNodeTestRunner && !db.tariffSettings.sohoOfficialSiteRevampV2Migrated) {
+    if (!db.siteConfig) db.siteConfig = JSON.parse(JSON.stringify(DEFAULT_SITE_CONFIG));
+
+    const curGallery = Array.isArray(db.siteConfig.gallery) ? db.siteConfig.gallery : [];
+    const hasCafePhoto = curGallery.some(g => String(g?.imageUrl || "").includes("cafe-mesa-quarto.jpg"));
+    if (!hasCafePhoto || curGallery.length < 13) {
+      db.siteConfig.gallery = JSON.parse(JSON.stringify(DEFAULT_SITE_CONFIG.gallery));
+    }
+
+    const fakeNamesV2 = new Set(["Mariana Silveira", "Carlos Eduardo Mendes", "Patrícia & Rodrigo"]);
+    const googleSeedComments = JSON.parse(JSON.stringify(DEFAULT_SITE_CONFIG.testimonials));
+    const googleNames = new Set(googleSeedComments.map(t => String(t.name || "").trim().toLowerCase()));
+    const extraCustomReviews = Array.isArray(db.siteConfig.testimonials)
+      ? db.siteConfig.testimonials.filter(t => {
+          const nm = String(t?.name || "").trim();
+          return nm && t?.comment && !fakeNamesV2.has(nm) && !googleNames.has(nm.toLowerCase());
+        })
+      : [];
+    db.siteConfig.testimonials = [...googleSeedComments, ...extraCustomReviews].map((item, idx) => ({
+      ...item,
+      id: idx + 1
+    }));
+
+    db.siteConfig.updatedAt = new Date().toISOString();
+    db.tariffSettings.sohoOfficialSiteRevampV2Migrated = true;
+    try {
+      saveDatabase("soho_official_site_revamp_v2_migration");
+    } catch (_) {}
+  }
+
   return db.tariffSettings;
 }
 
@@ -76961,6 +77047,514 @@ const fallbackDistPath = path.resolve(__dirname, "../limpeza/dist");
 
 let cachedIndexHtml = null;
 
+const PREVIEW_ASSETS_VERSION = "20261113";
+
+function escapeOgHtmlAttr(val) {
+  return String(val ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function extractValidPreviewFirstName(rawName) {
+  const clean = String(rawName || "").trim();
+  if (!clean) return "";
+  if (/^(a\s*definir|hospede|hóspede|pendente|cliente|bloqueio|sem\s*nome|aguardando|n\/a|nao\s*informado|não\s*informado|-+)$/i.test(clean)) {
+    return "";
+  }
+  if (/a\s*definir|pendente\s*de\s*credenciamento|hospede\s*\d+/i.test(clean)) {
+    return "";
+  }
+  const parts = clean.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "";
+  let candidate = parts[0].replace(/[^\p{L}\p{N}'’-]/gu, "");
+  if ((!candidate || candidate.length < 2 || /^(sr|sra|srta|dr|dra|prof)$/i.test(candidate)) && parts.length > 1) {
+    candidate = parts[1].replace(/[^\p{L}\p{N}'’-]/gu, "");
+  }
+  return candidate.length >= 2 ? candidate : "";
+}
+
+function formatPreviewShortPeriod(checkInRaw, checkOutRaw) {
+  const fmt = (s) => {
+    const m = String(s || "").slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    return m ? `${m[3]}/${m[2]}` : "";
+  };
+  const ci = fmt(checkInRaw);
+  const co = fmt(checkOutRaw);
+  if (ci && co) return `${ci} a ${co}`;
+  return ci || "";
+}
+
+function resolvePreviewImageUrl(configuredUrl, defaultPreviewFile) {
+  const fallback = `https://corpflats.com.br/previews/${defaultPreviewFile}?v=${PREVIEW_ASSETS_VERSION}`;
+  const v = String(configuredUrl || "").trim();
+  if (!v) return fallback;
+  if (/\/(flat|breakfast)-preview\.jpg(\?.*)?$/i.test(v)) return fallback;
+  return v;
+}
+
+export function resolveSpaOpenGraphMetadata(req, dbRef = db) {
+  const rawPath = String(req.path || "/").toLowerCase().replace(/\/+$/, "") || "/";
+  const query = req.query || {};
+  const zCfg = dbRef?.zapiConfig || {};
+
+  // 1. Extrair código de reserva da URL (query param ou segmento do path)
+  let resCode = String(query.res || query.code || query.r || query.reserva || "").trim();
+  if (!resCode) {
+    const match = String(req.path || "").match(
+      /(?:credenciamento-hospede|credenciamento|identificar-reserva|identificar|cadastro-hospede|pre-checkin|checkin|minha-reserva|portal-hospede|guest-portal|portal|cafe-da-manha|cafe|breakfast|checkout|check-out|saida|copiar-pix|pix)\/([a-zA-Z0-9_\-]+)/i
+    );
+    const reservedSegments = new Set([
+      "cafe", "cafe-da-manha", "breakfast", "room-service", "frigobar", "minibar",
+      "checkout", "check-out", "saida", "null", "undefined", "flat", "admin", "notas", "reposicao"
+    ]);
+    if (match && match[1] && !reservedSegments.has(match[1].toLowerCase())) {
+      resCode = match[1];
+    }
+  }
+
+  // 2. Buscar dados da reserva se houver código
+  let foundRes = null;
+  let guestFirstName = "";
+  let requesterFirstName = "";
+  let agencyName = "";
+  let flatNumber = "";
+  let periodLabel = "";
+  if (resCode) {
+    try {
+      foundRes = findReservationByLocatorOrContact(resCode);
+    } catch {}
+    if (foundRes) {
+      guestFirstName = extractValidPreviewFirstName(foundRes.guestName);
+      requesterFirstName = extractValidPreviewFirstName(foundRes.requesterName || foundRes.agencyName);
+      agencyName = String(foundRes.agencyName || "").trim();
+      flatNumber = String(foundRes.flatNumber || "").trim();
+      periodLabel = formatPreviewShortPeriod(foundRes.checkInDate || foundRes.checkIn, foundRes.checkOutDate || foundRes.checkOut);
+    } else if (resCode.toUpperCase() === "RES-113-0034") {
+      guestFirstName = "Miller";
+      flatNumber = "113";
+    }
+  }
+
+  // 2.1 Extrair número do flat em rotas de frigobar (/frigobar/113, /frigobar/flat/113, /minibar/113)
+  if (!flatNumber) {
+    const minibarFlatMatch = String(req.path || "").match(/^\/(?:frigobar\/flat|frigobar|minibar)\/([a-zA-Z0-9_\-]+)/i);
+    const excludedMinibarSegs = new Set(["admin", "notas", "reposicao", "gestao", "anserve"]);
+    if (minibarFlatMatch && minibarFlatMatch[1] && !excludedMinibarSegs.has(minibarFlatMatch[1].toLowerCase())) {
+      flatNumber = minibarFlatMatch[1];
+    }
+  }
+
+  const pageUrl = `https://corpflats.com.br${req.originalUrl || req.url || req.path || "/"}`;
+
+  // 3. Avaliação Google (Redirecionamento Imediato + Card 5 Estrelas)
+  if (rawPath.startsWith("/avaliar") || rawPath.startsWith("/google-review")) {
+    const targetGoogleReview = zCfg.googleReviewUrl || "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA";
+    const reviewTitle = zCfg.reviewPreviewTitle || "⭐ Avalie sua Estadia • CorpFlats Soho Residence";
+    const reviewDesc = zCfg.reviewPreviewDescription || "Sua experiência foi 5 estrelas? Toque aqui para avaliar a CorpFlats no Google em menos de 30 segundos!";
+    const reviewImg = resolvePreviewImageUrl(zCfg.reviewPreviewImage, "review-preview.jpg");
+    return {
+      isRedirect: true,
+      redirectUrl: targetGoogleReview,
+      title: reviewTitle,
+      desc: reviewDesc,
+      image: reviewImg,
+      imageAlt: "Avalie sua Estadia 5 Estrelas no Google • CorpFlats Soho Residence",
+      imageWidth: "1200",
+      imageHeight: "630",
+      pageUrl,
+      isRestockerKiosk: false
+    };
+  }
+
+  // 4. Classificação Contextual Completa de Rotas (Sub-rotas específicas ANTES de prefixos gerais)
+  const isCredenciamento =
+    rawPath.startsWith("/credenciamento") ||
+    rawPath.startsWith("/identificar") ||
+    rawPath.startsWith("/cadastro-hospede");
+
+  const isBreakfast =
+    rawPath.startsWith("/cafe") ||
+    rawPath.startsWith("/breakfast") ||
+    rawPath.endsWith("/cafe") ||
+    rawPath.includes("/cafe/") ||
+    rawPath.endsWith("/room-service") ||
+    rawPath.includes("/room-service/");
+
+  const isRestockerKiosk =
+    rawPath.startsWith("/frigobar-reposicao") ||
+    rawPath.startsWith("/anserve/reposicao");
+
+  const isMinibarAdmin =
+    !isRestockerKiosk && (
+      rawPath.startsWith("/frigobar-admin") ||
+      rawPath.startsWith("/frigobar-notas") ||
+      rawPath.startsWith("/notas-frigobar") ||
+      rawPath.startsWith("/anserve") ||
+      rawPath.startsWith("/frigobar-gestao") ||
+      rawPath.startsWith("/minibar-admin") ||
+      rawPath.startsWith("/admin/frigobar") ||
+      rawPath === "/frigobar"
+    );
+
+  const isGuestMinibar =
+    !isRestockerKiosk && !isMinibarAdmin && (
+      rawPath.startsWith("/frigobar/") ||
+      rawPath.startsWith("/minibar/") ||
+      rawPath.endsWith("/frigobar") ||
+      rawPath.includes("/frigobar/") ||
+      rawPath.endsWith("/minibar") ||
+      rawPath.includes("/minibar/")
+    );
+
+  const isCheckout =
+    rawPath.startsWith("/checkout") ||
+    rawPath.startsWith("/check-out") ||
+    rawPath.startsWith("/saida") ||
+    rawPath.endsWith("/checkout") ||
+    rawPath.endsWith("/saida");
+
+  const isPreCheckin =
+    rawPath.startsWith("/pre-checkin") ||
+    rawPath.startsWith("/checkin");
+
+  const isPortal =
+    rawPath.startsWith("/minha-reserva") ||
+    rawPath.startsWith("/portal-hospede") ||
+    rawPath.startsWith("/guest-portal") ||
+    rawPath.startsWith("/portal");
+
+  const isVerifyFnrh = rawPath.startsWith("/verificar-ficha");
+  const isMyAccount =
+    rawPath.startsWith("/minha-conta") ||
+    rawPath.startsWith("/minhaconta") ||
+    rawPath.startsWith("/perfil") ||
+    rawPath.startsWith("/my-account");
+
+  const isWorkerPortal =
+    rawPath.startsWith("/servico/") ||
+    rawPath.startsWith("/service/") ||
+    rawPath.startsWith("/manutencao/") ||
+    rawPath.startsWith("/faz-tudo/");
+
+  const isMaintenanceAdmin =
+    rawPath.startsWith("/servicos") ||
+    rawPath.startsWith("/service-orders") ||
+    rawPath.startsWith("/raio-x-flats") ||
+    rawPath.startsWith("/hub-manutencao");
+
+  const isTimeClock =
+    rawPath.startsWith("/ponto") ||
+    rawPath.startsWith("/bater-ponto") ||
+    rawPath.startsWith("/terminal-ponto") ||
+    rawPath.startsWith("/registro-ponto");
+
+  const isHousekeepingTasks =
+    rawPath.startsWith("/tarefas") ||
+    rawPath.startsWith("/tasks") ||
+    rawPath === "/dashboard" ||
+    rawPath.startsWith("/historico") ||
+    rawPath.startsWith("/history");
+
+  const isMaidStatement =
+    rawPath.startsWith("/meu-extrato") ||
+    rawPath.startsWith("/extrato") ||
+    (rawPath.startsWith("/relatorios") && !rawPath.startsWith("/relatorios-reservas")) ||
+    rawPath.startsWith("/fechamento");
+
+  const isInspections =
+    rawPath.startsWith("/ocorrencias") ||
+    rawPath.startsWith("/observations") ||
+    rawPath.startsWith("/avarias") ||
+    rawPath.startsWith("/vistorias") ||
+    rawPath.startsWith("/surveys");
+
+  const isLostAndFound =
+    rawPath.startsWith("/achados") ||
+    rawPath.startsWith("/lost-and-found");
+
+  const isShoppingList =
+    rawPath.startsWith("/lista-compras") ||
+    rawPath.startsWith("/compras");
+
+  const isReception =
+    rawPath.startsWith("/portaria") ||
+    rawPath.startsWith("/tablet") ||
+    rawPath.startsWith("/recepcao") ||
+    rawPath.startsWith("/reception") ||
+    rawPath.startsWith("/painel-aovivo");
+
+  const isWhatsAppChat =
+    rawPath.startsWith("/whatsapp-chat") ||
+    rawPath.startsWith("/chat-whatsapp") ||
+    rawPath.startsWith("/whatsapp-web") ||
+    rawPath === "/chat";
+
+  const isWhatsAppAdmin =
+    rawPath.startsWith("/whatsapp-automation") ||
+    rawPath.startsWith("/automacoes-camareiras") ||
+    rawPath.startsWith("/zapi") ||
+    rawPath.startsWith("/conexao-zapi");
+
+  const isReservationsPms =
+    rawPath.startsWith("/reservas") ||
+    rawPath.startsWith("/relatorios-reservas") ||
+    rawPath.startsWith("/jornada-reservas") ||
+    rawPath.startsWith("/caixa-entrada-ota") ||
+    rawPath.startsWith("/quarentena") ||
+    rawPath.startsWith("/crm") ||
+    rawPath.startsWith("/hospedes");
+
+  const isFinance =
+    rawPath.startsWith("/financeiro") ||
+    rawPath.startsWith("/pagamentos") ||
+    rawPath.startsWith("/notas") ||
+    rawPath.startsWith("/nfse") ||
+    rawPath.startsWith("/tarifas") ||
+    rawPath.startsWith("/precificacao-sebrae");
+
+  const isBreakfastKitchen = rawPath.startsWith("/pedidos-cafe");
+  const isGarage = rawPath.startsWith("/garagem") || rawPath.startsWith("/estacionamento");
+  const isHrTeam = rawPath.startsWith("/rh") || rawPath.startsWith("/equipe");
+  const isBookingSite = rawPath === "/" || rawPath.startsWith("/reservar") || rawPath.startsWith("/booking");
+  const isOtherAdminPanel =
+    rawPath.startsWith("/login") ||
+    rawPath.startsWith("/configuracoes") ||
+    rawPath.startsWith("/propriedade") ||
+    rawPath.startsWith("/editor-site") ||
+    rawPath.startsWith("/logs") ||
+    rawPath.startsWith("/monitor-servidor") ||
+    rawPath.startsWith("/ia-status") ||
+    rawPath.startsWith("/avaliacoes-ia") ||
+    rawPath.startsWith("/reviews-ia") ||
+    rawPath.startsWith("/emails") ||
+    rawPath.startsWith("/notificacoes") ||
+    rawPath.startsWith("/funil-vendas");
+
+  // Defaults (Reserva Direta / Site Oficial Soho Residence)
+  let title = "🏨 CorpFlats • Soho Residence Service — Reserve Direto em Campos/RJ";
+  let desc = "Flats climatizados completos no Centro com jacuzzi na cobertura, academia, sauna, 1 vaga de garagem coberta inclusa e 5% OFF no PIX.";
+  let image = resolvePreviewImageUrl(zCfg.flatPreviewImage, "reservar-preview.jpg");
+  let imageAlt = "CorpFlats • Flats Executivos no Edifício Soho Residence Service";
+
+  if (isCredenciamento) {
+    const flatPart = flatNumber ? ` • Flat ${flatNumber}` : "";
+    const periodPart = periodLabel ? ` (${periodLabel})` : "";
+    title = `🪪 Preencher Dados do Hóspede${flatPart}${periodPart} • CorpFlats`;
+    if (guestFirstName) {
+      desc = `Olá ${guestFirstName}! Preencha seus dados de identificação para liberar seu acesso na recepção 24h do Edifício Soho Residence.`;
+    } else if (agencyName) {
+      desc = `Reserva ${agencyName}: informe nome completo, documento e WhatsApp do hóspede para liberação na portaria 24h do Soho Residence.`;
+    } else {
+      desc = "Informe o nome completo, documento e WhatsApp do hóspede que ocupará o flat para liberação rápida na recepção 24h.";
+    }
+    image = resolvePreviewImageUrl(zCfg.credentialPreviewImage, "credenciamento-preview.jpg");
+    imageAlt = "Cadastro de Dados do Hóspede • CorpFlats";
+  } else if (isBreakfast) {
+    title = flatNumber
+      ? `☕ Cardápio de Café da Manhã • Flat ${flatNumber} • CorpFlats`
+      : "☕ Cardápio de Café da Manhã no Flat • CorpFlats";
+    desc = guestFirstName
+      ? `Olá ${guestFirstName}! Escolha seus itens favoritos e agende o horário para receber seu café fresquinho na porta do flat.`
+      : "Escolha seus itens favoritos e o horário de entrega do seu café da manhã servido diretamente no flat.";
+    image = resolvePreviewImageUrl(zCfg.breakfastPreviewImage, "breakfast-preview.jpg");
+    imageAlt = "Cardápio de Café da Manhã no Flat • CorpFlats";
+  } else if (isRestockerKiosk) {
+    title = "🧊 Repositora de Frigobar • Conferência & Abastecimento • CorpFlats";
+    desc = "Terminal operacional dedicado para conferência diária de consumo e reposição rápida dos frigobares.";
+    image = resolvePreviewImageUrl(zCfg.minibarPreviewImage, "frigobar-preview.jpg");
+    imageAlt = "Repositora de Frigobar • CorpFlats";
+  } else if (isMinibarAdmin) {
+    title = "🧊 Gestão de Frigobar & Consumo • Painel CorpFlats";
+    desc = "Controle de estoque, comanda digital, notas fiscais e conciliação de consumo dos frigobares CorpFlats.";
+    image = resolvePreviewImageUrl(zCfg.minibarPreviewImage, "frigobar-preview.jpg");
+    imageAlt = "Gestão de Frigobar • CorpFlats";
+  } else if (isGuestMinibar) {
+    title = flatNumber
+      ? `🍫 Frigobar & Conveniência • Flat ${flatNumber} • CorpFlats`
+      : "🍫 Frigobar & Conveniência do Flat • CorpFlats";
+    desc = guestFirstName
+      ? `Olá ${guestFirstName}! Consulte a tabela de bebidas e snacks do Flat ${flatNumber || ""} e registre seu consumo pelo celular.`
+      : "Consulte os itens e valores de bebidas e snacks disponíveis no frigobar do seu flat com pagamento rápido via PIX ou Cartão.";
+    image = resolvePreviewImageUrl(zCfg.minibarPreviewImage, "frigobar-preview.jpg");
+    imageAlt = "Frigobar & Conveniência do Flat • CorpFlats";
+  } else if (isCheckout) {
+    title = flatNumber
+      ? `🚪 Check-out Expresso • Flat ${flatNumber} • CorpFlats`
+      : "🚪 Check-out Expresso • Saída em 1 Toque • CorpFlats";
+    desc = guestFirstName
+      ? `Olá ${guestFirstName}! Confirme sua saída${flatNumber ? ` do Flat ${flatNumber}` : ""} com 1 toque pelo celular e entregue o cartão NFC na recepção 24h.`
+      : "Encerre sua estadia de forma rápida pelo Check-out Expresso e devolva o cartão de acesso na recepção 24h.";
+    image = resolvePreviewImageUrl(zCfg.checkoutPreviewImage, "checkout-preview.jpg");
+    imageAlt = "Check-out Expresso • CorpFlats";
+  } else if (isPreCheckin) {
+    const isResign = String(query.resign || "") === "1";
+    const companionSlot = Number(query.guest || 0);
+    const flatPart = flatNumber ? ` • Flat ${flatNumber}` : "";
+    const periodPart = periodLabel ? ` (${periodLabel})` : "";
+    if (isResign) {
+      title = `✍️ Assinatura Digital da Ficha FNRH${flatPart} • CorpFlats`;
+      desc = `${guestFirstName ? `Olá ${guestFirstName}! ` : ""}Confirme sua assinatura eletrônica na Ficha Nacional de Registro de Hóspedes em menos de 15 segundos.`;
+    } else if (companionSlot >= 2) {
+      title = `👥 Cadastro de Acompanhante${flatPart} • Check-in CorpFlats`;
+      desc = "Preencha os dados de identificação do acompanhante para autorização imediata na recepção 24h do Soho Residence.";
+    } else {
+      title = `📝 Check-in Digital Online${flatPart}${periodPart} • CorpFlats`;
+      desc = guestFirstName
+        ? `Olá ${guestFirstName}! Confirme seus dados na Ficha FNRH antes da chegada para retirar seu cartão na recepção 24h sem filas.`
+        : "Preencha sua Ficha FNRH digital em 1 minuto para liberação imediata na portaria 24h e garagem do Soho Residence.";
+    }
+    image = resolvePreviewImageUrl(zCfg.preCheckinPreviewImage, "precheckin-preview.jpg");
+    imageAlt = "Check-in Digital Online & Portaria 24h • CorpFlats";
+  } else if (isPortal) {
+    const isUnpaidPreRes = Boolean(
+      (foundRes && foundRes.status === "pre_reserva") ||
+      String(query.payment || "").toLowerCase() === "pending"
+    );
+    const isRequesterView = String(query.requester || "") === "1";
+    const flatPart = flatNumber ? ` • Flat ${flatNumber}` : "";
+    const periodPart = periodLabel ? ` (${periodLabel})` : "";
+
+    if (isUnpaidPreRes) {
+      title = `💳 Confirmar Pré-Reserva${flatPart}${periodPart} • CorpFlats`;
+      desc = guestFirstName
+        ? `Olá ${guestFirstName}! Garanta sua reserva via PIX Copia e Cola (5% OFF) ou Cartão de Crédito com confirmação automática.`
+        : "Garanta sua hospedagem agora via PIX Copia e Cola (5% OFF) ou Cartão de Crédito com confirmação imediata.";
+      image = resolvePreviewImageUrl(zCfg.pixPreviewImage, "pix-preview.jpg");
+      imageAlt = "Confirmar Pré-Reserva via PIX ou Cartão • CorpFlats";
+    } else if (isRequesterView) {
+      title = `🏢 Painel Corporativo da Reserva${flatPart} • CorpFlats`;
+      desc = requesterFirstName
+        ? `Olá ${requesterFirstName}! Acompanhe status de check-in, pagamentos, comprovantes e nota fiscal (NFS-e) desta reserva.`
+        : "Acompanhe em tempo real o status da hospedagem, credenciamento do hóspede, comprovantes e nota fiscal (NFS-e).";
+      image = resolvePreviewImageUrl(zCfg.portalPreviewImage, "portal-preview.jpg");
+      imageAlt = "Painel Corporativo da Reserva • CorpFlats";
+    } else {
+      title = `🏨 Minha Reserva${flatPart}${periodPart} • CorpFlats`;
+      desc = guestFirstName
+        ? `Olá ${guestFirstName}! Acesse senha do Wi-Fi, instruções da recepção 24h e garagem, guia do flat, café da manhã e NFS-e.`
+        : "Acesse os detalhes da sua acomodação, senha do Wi-Fi, orientações da recepção 24h e garagem, café da manhã e serviços.";
+      image = resolvePreviewImageUrl(zCfg.portalPreviewImage, "portal-preview.jpg");
+      imageAlt = "Portal da Minha Reserva • CorpFlats";
+    }
+  } else if (isVerifyFnrh) {
+    title = "🛡️ Verificação Oficial de Ficha FNRH • CorpFlats";
+    desc = "Consulta pública de autenticidade e assinatura eletrônica da Ficha Nacional de Registro de Hóspedes.";
+    image = resolvePreviewImageUrl("", "fnrh-preview.jpg");
+    imageAlt = "Verificação Oficial de Ficha FNRH • CorpFlats";
+  } else if (isMyAccount) {
+    title = "👤 Minha Conta & Histórico de Estadias • CorpFlats";
+    desc = "Consulte suas reservas, recibos, notas fiscais (NFS-e) e preferências de hospedagem na CorpFlats.";
+    image = resolvePreviewImageUrl(zCfg.portalPreviewImage, "portal-preview.jpg");
+    imageAlt = "Minha Conta • CorpFlats";
+  } else if (isWorkerPortal) {
+    const tokenSeg = String(req.path || "").split("/").filter(Boolean)[1] || "";
+    const osMatch = tokenSeg
+      ? (dbRef?.serviceOrders || []).find(o => o && (o.workerToken === tokenSeg || o.token === tokenSeg || String(o.id) === tokenSeg))
+      : null;
+    const osFlat = osMatch?.flatNumber ? ` • Flat ${osMatch.flatNumber}` : "";
+    title = `🔧 Ordem de Serviço Técnica${osFlat} • CorpFlats`;
+    desc = osMatch?.title
+      ? `Chamado: ${osMatch.title}. Abra para ver detalhes, fotos da ocorrência e registrar a conclusão do serviço.`
+      : "Acesse os detalhes técnicos do chamado, fotos da ocorrência e registre a conclusão do reparo pelo celular.";
+    image = resolvePreviewImageUrl("", "manutencao-preview.jpg");
+    imageAlt = "Ordem de Serviço & Manutenção • CorpFlats";
+  } else if (isMaintenanceAdmin) {
+    title = "🔧 Central de Manutenção & Raio-X dos Flats • CorpFlats";
+    desc = "Gestão de ordens de serviço, manutenções preventivas e histórico técnico das unidades CorpFlats.";
+    image = resolvePreviewImageUrl("", "manutencao-preview.jpg");
+    imageAlt = "Central de Manutenção • CorpFlats";
+  } else if (isTimeClock) {
+    title = "⏱️ Ponto Digital Mobile • Equipe CorpFlats";
+    desc = "Registre entrada, intervalo e saída da jornada de trabalho com validação rápida pelo celular.";
+    image = resolvePreviewImageUrl("", "equipe-preview.jpg");
+    imageAlt = "Ponto Digital Mobile • Equipe CorpFlats";
+  } else if (isHousekeepingTasks) {
+    title = "🧹 Painel de Governança & Limpeza • Equipe CorpFlats";
+    desc = "Cronograma diário de limpezas, prioridades de check-in, checklists de arrumação e liberação dos flats.";
+    image = resolvePreviewImageUrl("", "equipe-preview.jpg");
+    imageAlt = "Governança & Limpeza • Equipe CorpFlats";
+  } else if (isMaidStatement) {
+    title = "📋 Extrato de Produção & Diárias • Equipe CorpFlats";
+    desc = "Acompanhe seu resumo detalhado de limpezas concluídas, valores e fechamento do período.";
+    image = resolvePreviewImageUrl("", "equipe-preview.jpg");
+    imageAlt = "Extrato da Equipe • CorpFlats";
+  } else if (isInspections) {
+    title = "📸 Registro de Vistoria & Ocorrências • CorpFlats";
+    desc = "Comunique avarias, necessidades de manutenção e vistorias fotográficas dos flats em tempo real.";
+    image = resolvePreviewImageUrl("", "equipe-preview.jpg");
+    imageAlt = "Vistorias & Ocorrências • CorpFlats";
+  } else if (isLostAndFound) {
+    title = "🎒 Achados e Perdidos • Governança CorpFlats";
+    desc = "Registro fotográfico, guarda e devolução rastreada de itens esquecidos nas acomodações.";
+    image = resolvePreviewImageUrl("", "equipe-preview.jpg");
+    imageAlt = "Achados e Perdidos • CorpFlats";
+  } else if (isShoppingList) {
+    title = "🛒 Lista de Compras & Suprimentos • CorpFlats";
+    desc = "Controle de reposição de enxoval, amenidades, produtos de limpeza e suprimentos operacionais.";
+    image = resolvePreviewImageUrl("", "equipe-preview.jpg");
+    imageAlt = "Lista de Compras • CorpFlats";
+  } else if (isReception) {
+    title = "🛎️ Recepção & Portaria 24h • Controle de Acessos CorpFlats";
+    desc = "Painel ao vivo de chegadas, saídas, fichas FNRH, placas na garagem e entrega de cartões NFC.";
+    image = resolvePreviewImageUrl(zCfg.preCheckinPreviewImage, "precheckin-preview.jpg");
+    imageAlt = "Recepção & Portaria 24h • CorpFlats";
+  } else if (isWhatsAppChat) {
+    title = "💬 CF WhatsApp Corporativo & Sofia IA • CorpFlats";
+    desc = "Central de atendimento em tempo real integrada às reservas, governança e assistente inteligente Sofia.";
+    image = resolvePreviewImageUrl("", "sistema-preview.jpg");
+    imageAlt = "CF WhatsApp & Sofia IA • CorpFlats";
+  } else if (isWhatsAppAdmin) {
+    title = "🤖 Automação WhatsApp & Conexão Z-API • CorpFlats";
+    desc = "Gerenciamento de réguas automáticas de mensagens, templates da jornada do hóspede e canais WhatsApp.";
+    image = resolvePreviewImageUrl("", "sistema-preview.jpg");
+    imageAlt = "Automação WhatsApp • CorpFlats";
+  } else if (isReservationsPms) {
+    title = "📅 Mapa de Reservas & PMS • Sistema CorpFlats";
+    desc = "Gestão centralizada de ocupação, reservas diretas, agências B2B, OTAs e relacionamento com hóspedes.";
+    image = resolvePreviewImageUrl("", "sistema-preview.jpg");
+    imageAlt = "Mapa de Reservas • Sistema CorpFlats";
+  } else if (isFinance) {
+    title = "💼 Financeiro, PIX, Boletos & NFS-e • Sistema CorpFlats";
+    desc = "Conciliação bancária Banco Inter, emissão de NFS-e Nacional, faturamento corporativo e gestão tarifária.";
+    image = resolvePreviewImageUrl("", "sistema-preview.jpg");
+    imageAlt = "Painel Financeiro • Sistema CorpFlats";
+  } else if (isBreakfastKitchen) {
+    title = "🥐 Produção de Café da Manhã • Cozinha CorpFlats";
+    desc = "Mapa diário de preparo e entrega dos pedidos de café da manhã agendados por flat e horário.";
+    image = resolvePreviewImageUrl(zCfg.breakfastPreviewImage, "breakfast-preview.jpg");
+    imageAlt = "Produção de Café da Manhã • CorpFlats";
+  } else if (isGarage) {
+    title = "🚗 Controle de Garagem & Estacionamento • CorpFlats";
+    desc = "Monitoramento de vagas cobertas, placas de veículos autorizados e acessos no Edifício Soho Residence.";
+    image = resolvePreviewImageUrl("", "sistema-preview.jpg");
+    imageAlt = "Controle de Garagem • CorpFlats";
+  } else if (isHrTeam) {
+    title = "👥 Gestão de Equipe, Escalas & RH • CorpFlats";
+    desc = "Controle de colaboradores, escalas operacionais, ponto eletrônico CLT e conformidade trabalhista.";
+    image = resolvePreviewImageUrl("", "equipe-preview.jpg");
+    imageAlt = "Gestão de Equipe & RH • CorpFlats";
+  } else if (!isBookingSite && isOtherAdminPanel) {
+    title = "🔐 Painel de Gestão Hoteleira • Sistema CorpFlats";
+    desc = "Acesso restrito à plataforma integrada de operação, governança, reservas e financeiro CorpFlats.";
+    image = resolvePreviewImageUrl("", "sistema-preview.jpg");
+    imageAlt = "Painel de Gestão • CorpFlats";
+  }
+
+  return {
+    isRedirect: false,
+    title,
+    desc,
+    image,
+    imageAlt,
+    imageWidth: "1200",
+    imageHeight: "630",
+    pageUrl,
+    isRestockerKiosk
+  };
+}
+
 function serveSpaWithMetadata(distFolder, req, res) {
   const candidateIndexPaths = [
     path.join(distFolder, "index.html"),
@@ -76973,6 +77567,21 @@ function serveSpaWithMetadata(distFolder, req, res) {
   if (!indexPath && !cachedIndexHtml) return res.status(404).send("index.html not found");
 
   try {
+    const meta = resolveSpaOpenGraphMetadata(req, db);
+
+    if (meta.isRedirect) {
+      const safeTitle = escapeOgHtmlAttr(meta.title);
+      const safeDesc = escapeOgHtmlAttr(meta.desc);
+      const safeImg = escapeOgHtmlAttr(meta.image);
+      const safeUrl = escapeOgHtmlAttr(meta.pageUrl);
+      const safeAlt = escapeOgHtmlAttr(meta.imageAlt);
+      const safeTarget = escapeOgHtmlAttr(meta.redirectUrl);
+      const redirectHtml = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8" /><title>${safeTitle}</title><meta name="description" content="${safeDesc}" /><meta property="og:site_name" content="CorpFlats" /><meta property="og:type" content="website" /><meta property="og:title" content="${safeTitle}" /><meta property="og:description" content="${safeDesc}" /><meta property="og:url" content="${safeUrl}" /><meta property="og:image" content="${safeImg}" /><meta property="og:image:secure_url" content="${safeImg}" /><meta property="og:image:width" content="1200" /><meta property="og:image:height" content="630" /><meta property="og:image:type" content="image/jpeg" /><meta property="og:image:alt" content="${safeAlt}" /><meta name="twitter:card" content="summary_large_image" /><meta name="twitter:title" content="${safeTitle}" /><meta name="twitter:description" content="${safeDesc}" /><meta name="twitter:image" content="${safeImg}" /><meta http-equiv="refresh" content="0;url=${safeTarget}" /><script>window.location.replace(${JSON.stringify(meta.redirectUrl)});</script></head><body style="font-family:sans-serif;text-align:center;padding:40px;"><p>Redirecionando para Avaliação 5 Estrelas no Google...</p><p><a href="${safeTarget}">Clique aqui se não for redirecionado automaticamente</a></p></body></html>`;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      return res.send(redirectHtml);
+    }
+
     let html = cachedIndexHtml;
     if (!html && indexPath) {
       try {
@@ -76982,142 +77591,30 @@ function serveSpaWithMetadata(distFolder, req, res) {
         if (!html) throw readErr;
       }
     }
-    const rawPath = (req.path || "").toLowerCase();
 
-    // 1. Extrair código de reserva da URL (query param ou segmento do path)
-    let resCode = req.query.res || req.query.code || req.query.r || "";
-    if (!resCode) {
-      const match = req.path.match(/(?:minha-reserva|portal-hospede|guest-portal|pre-checkin|cafe|checkout|check-out|saida)\/([a-zA-Z0-9_\-]+)/i);
-      if (match && match[1] && !["cafe", "room-service", "checkout", "check-out", "saida", "null", "undefined"].includes(match[1].toLowerCase())) {
-        resCode = match[1];
-      }
-    }
-
-    // 2. Buscar dados da reserva no banco se houver código
-    let guestFirstName = "";
-    let flatNumber = "";
-    if (resCode) {
-      const found = findReservationByLocatorOrContact(resCode);
-      if (found) {
-        guestFirstName = (found.guestName || "").trim().split(" ")[0];
-        flatNumber = found.flatNumber || "";
-      } else if (String(resCode).trim().toUpperCase() === "RES-113-0034") {
-        guestFirstName = "Miller";
-        flatNumber = "113";
-      }
-    }
-
-    // 3. Identificar tipo de página
-    const isBreakfast =
-      rawPath.startsWith("/cafe") ||
-      rawPath.endsWith("/cafe") ||
-      rawPath.includes("/cafe/") ||
-      rawPath.endsWith("/room-service") ||
-      rawPath.includes("/room-service/");
-
-    const isPreCheckin = rawPath.startsWith("/pre-checkin");
-    const isPortal = rawPath.startsWith("/minha-reserva") || rawPath.startsWith("/portal-hospede") || rawPath.startsWith("/guest-portal");
-    const isCheckout = rawPath.startsWith("/checkout") || rawPath.startsWith("/check-out") || rawPath.startsWith("/saida") || rawPath.endsWith("/checkout");
-
-    const customFlatImg = db.zapiConfig?.flatPreviewImage || "https://corpflats.com.br/flat-preview.jpg";
-    const customBreakfastImg = db.zapiConfig?.breakfastPreviewImage || "https://corpflats.com.br/breakfast-preview.jpg";
-
-    let title = "CorpFlats • Hospedagem Executiva & Serviços Exclusivos";
-    let desc = "Flats mobiliados completos com estacionamento rotativo gratuito, portaria 24h e café da manhã servido no flat.";
-    let image = customFlatImg;
-    let imageAlt = "CorpFlats • Hospedagem Executiva";
-    let imageWidth = "1200";
-    let imageHeight = "630";
-
-    if (isCheckout) {
-      title = flatNumber
-        ? `🚪 Check-out Expresso • Flat ${flatNumber} • CorpFlats`
-        : "🚪 Check-out Expresso • CorpFlats";
-      desc = guestFirstName
-        ? `Olá ${guestFirstName}! Confirme sua saída do Flat ${flatNumber} com 1 clique e lembre-se de devolver o cartão na recepção.`
-        : "Confirme sua saída de forma rápida e prática pelo Check-out Expresso CorpFlats.";
-      image = customFlatImg;
-      imageAlt = "CorpFlats • Check-out Expresso";
-    } else if (isBreakfast) {
-      title = flatNumber
-        ? `☕ Café da Manhã • Flat ${flatNumber} • CorpFlats`
-        : "☕ Pedido de Café da Manhã • CorpFlats";
-      desc = guestFirstName
-        ? `Olá ${guestFirstName}! Personalize o seu café da manhã e escolha o horário de entrega no seu flat.`
-        : "Personalize o seu cardápio de café da manhã servido com todo o carinho diretamente no seu flat.";
-      image = customBreakfastImg;
-      imageAlt = "Café da Manhã CorpFlats";
-      imageWidth = "800";
-      imageHeight = "533";
-    } else if (isPreCheckin) {
-      title = flatNumber
-        ? `📝 Pré-Check-in • Flat ${flatNumber} • CorpFlats`
-        : "📝 Pré-Check-in Digital • CorpFlats";
-      desc = guestFirstName
-        ? `Olá ${guestFirstName}! Agilize sua chegada preenchendo os dados do pré-check-in para liberação na portaria 24h.`
-        : "Agilize sua chegada confirmando os dados de identificação para liberação rápida na portaria 24h.";
-      image = customFlatImg;
-      imageAlt = "CorpFlats • Pré-Check-in Digital";
-      imageWidth = "1200";
-      imageHeight = "630";
-    } else if (isPortal) {
-      title = flatNumber
-        ? `🏨 Área do Hóspede • Flat ${flatNumber} • CorpFlats`
-        : "🏨 Área do Hóspede • CorpFlats";
-      desc = guestFirstName
-        ? `Olá ${guestFirstName}! Acesse os detalhes da sua acomodação, instruções de recepção 24h (cartão NFC), Wi-Fi e horários do flat.`
-        : "Acesse os detalhes da sua acomodação, instruções de recepção 24h (cartão NFC), conexão Wi-Fi, regras do flat e serviços.";
-      image = customFlatImg;
-      imageAlt = "CorpFlats • Área do Hóspede";
-      imageWidth = "1200";
-      imageHeight = "630";
-    } else if (req.path.includes("/copiar-pix") || req.path.includes("/pix")) {
-      title = "📋 Pagamento PIX • CorpFlats";
-      desc = guestFirstName
-        ? `Olá ${guestFirstName}! Copie o código PIX da sua acomodação no CorpFlats para pagamento com confirmação automática.`
-        : "Copie o código PIX da sua acomodação no CorpFlats para pagamento com confirmação automática.";
-      image = customFlatImg;
-      imageAlt = "CorpFlats • Pagamento PIX";
-      imageWidth = "1200";
-      imageHeight = "630";
-    } else if (rawPath.startsWith("/avaliar") || rawPath.startsWith("/google-review")) {
-      const targetGoogleReview = db.zapiConfig?.googleReviewUrl || "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA";
-      const reviewTitle = db.zapiConfig?.reviewPreviewTitle || "⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)";
-      const reviewDesc = db.zapiConfig?.reviewPreviewDescription || "Toque aqui para avaliar no Google";
-      const reviewImg = db.zapiConfig?.reviewPreviewImage || customFlatImg;
-      const pageUrl = `https://corpflats.com.br${req.originalUrl || req.url || req.path}`;
-      const redirectHtml = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8" /><title>${reviewTitle}</title><meta name="description" content="${reviewDesc}" /><meta property="og:type" content="website" /><meta property="og:title" content="${reviewTitle}" /><meta property="og:description" content="${reviewDesc}" /><meta property="og:url" content="${pageUrl}" /><meta property="og:image" content="${reviewImg}" /><meta property="og:image:secure_url" content="${reviewImg}" /><meta property="og:image:width" content="1200" /><meta property="og:image:height" content="630" /><meta name="twitter:card" content="summary_large_image" /><meta name="twitter:title" content="${reviewTitle}" /><meta name="twitter:description" content="${reviewDesc}" /><meta name="twitter:image" content="${reviewImg}" /><meta http-equiv="refresh" content="0;url=${targetGoogleReview}" /><script>window.location.replace(${JSON.stringify(targetGoogleReview)});</script></head><body style="font-family:sans-serif;text-align:center;padding:40px;"><p>Redirecionando para Avaliação 5 Estrelas no Google...</p><p><a href="${targetGoogleReview}">Clique aqui se não for redirecionado automaticamente</a></p></body></html>`;
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-      return res.send(redirectHtml);
-    }
-
-    const isRestockerKiosk = rawPath.startsWith("/frigobar-reposicao") || rawPath.startsWith("/anserve/reposicao");
-    if (isRestockerKiosk) {
-      title = "Repositora • Frigobar CorpFlats & Anserve";
-      desc = "Terminal dedicado de conferência diária e reposição de frigobar.";
-    } else if (rawPath.startsWith("/whatsapp-chat") || rawPath.startsWith("/chat-whatsapp") || rawPath.startsWith("/whatsapp-web") || rawPath === "/chat") {
-      title = "CF WhatsApp • Chat & Sofia IA";
-      desc = "WhatsApp Corporativo CorpFlats com Assistente Sofia IA em tempo real.";
-    }
-    const pageUrl = `https://corpflats.com.br${req.originalUrl || req.url || req.path}`;
+    const safeTitle = escapeOgHtmlAttr(meta.title);
+    const safeDesc = escapeOgHtmlAttr(meta.desc);
+    const safeImg = escapeOgHtmlAttr(meta.image);
+    const safeUrl = escapeOgHtmlAttr(meta.pageUrl);
+    const safeAlt = escapeOgHtmlAttr(meta.imageAlt);
 
     html = html
-      .replace(/<title>.*?<\/title>/i, `<title>${title}</title>`)
-      .replace(/<meta\s+name=["']description["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="description" content="${desc}" />`)
-      .replace(/<meta\s+property=["']og:title["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:title" content="${title}" />`)
-      .replace(/<meta\s+property=["']og:description["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:description" content="${desc}" />`)
-      .replace(/<meta\s+property=["']og:url["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:url" content="${pageUrl}" />`)
-      .replace(/<meta\s+property=["']og:image["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image" content="${image}" />`)
-      .replace(/<meta\s+property=["']og:image:secure_url["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image:secure_url" content="${image}" />`)
-      .replace(/<meta\s+property=["']og:image:width["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image:width" content="${imageWidth}" />`)
-      .replace(/<meta\s+property=["']og:image:height["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image:height" content="${imageHeight}" />`)
-      .replace(/<meta\s+property=["']og:image:alt["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image:alt" content="${imageAlt}" />`)
-      .replace(/<link\s+rel=["']image_src["']\s+href=["'].*?["']\s*\/?>/i, `<link rel="image_src" href="${image}" />`)
-      .replace(/<meta\s+name=["']twitter:title["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="twitter:title" content="${title}" />`)
-      .replace(/<meta\s+name=["']twitter:description["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="twitter:description" content="${desc}" />`)
-      .replace(/<meta\s+name=["']twitter:image["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="twitter:image" content="${image}" />`);
+      .replace(/<title>.*?<\/title>/i, `<title>${safeTitle}</title>`)
+      .replace(/<meta\s+name=["']description["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="description" content="${safeDesc}" />`)
+      .replace(/<meta\s+property=["']og:title["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:title" content="${safeTitle}" />`)
+      .replace(/<meta\s+property=["']og:description["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:description" content="${safeDesc}" />`)
+      .replace(/<meta\s+property=["']og:url["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:url" content="${safeUrl}" />`)
+      .replace(/<meta\s+property=["']og:image["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image" content="${safeImg}" />`)
+      .replace(/<meta\s+property=["']og:image:secure_url["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image:secure_url" content="${safeImg}" />`)
+      .replace(/<meta\s+property=["']og:image:width["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image:width" content="${meta.imageWidth}" />`)
+      .replace(/<meta\s+property=["']og:image:height["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image:height" content="${meta.imageHeight}" />`)
+      .replace(/<meta\s+property=["']og:image:alt["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image:alt" content="${safeAlt}" />`)
+      .replace(/<link\s+rel=["']image_src["']\s+href=["'].*?["']\s*\/?>/i, `<link rel="image_src" href="${safeImg}" />`)
+      .replace(/<meta\s+name=["']twitter:title["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="twitter:title" content="${safeTitle}" />`)
+      .replace(/<meta\s+name=["']twitter:description["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="twitter:description" content="${safeDesc}" />`)
+      .replace(/<meta\s+name=["']twitter:image["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="twitter:image" content="${safeImg}" />`);
 
-    if (isRestockerKiosk) {
+    if (meta.isRestockerKiosk) {
       html = html
         .replace(/href=["']\/manifest-chat\.json["']/i, 'href="/manifest-repositora.json"')
         .replace(/<meta\s+name=["']apple-mobile-web-app-title["']\s+content=["'].*?["']\s*\/?>/i, '<meta name="apple-mobile-web-app-title" content="Repositora" />')
@@ -77454,12 +77951,39 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
     ? `https://wa.me/${adminWhatsApp}?text=${encodeURIComponent(`Olá! Minha pré-reserva ${rawCode} expirou e eu ainda tenho interesse. Poderia consultar a disponibilidade e valores novamente?`)}`
     : `https://wa.me/${adminWhatsApp}?text=${encodeURIComponent(`Olá! Estou com uma dúvida sobre o pagamento PIX da reserva ${rawCode}.`)}`;
 
+  const pixPreviewFirstName = extractValidPreviewFirstName(guestName);
+  const pixOgTitle = isSundayUpsell
+    ? `☀️ Oferta Domingo Sem Pressa${flatNumber ? ` • Flat ${flatNumber}` : ""} (${formattedValue} no PIX) • CorpFlats`
+    : `💠 PIX Copia e Cola${pendingAmount > 0 ? ` • ${formattedValue}` : ""}${flatNumber ? ` • Flat ${flatNumber}` : ""} • CorpFlats`;
+  const pixOgDesc = isSundayUpsell
+    ? `Garanta check-out livre no domingo + bônus até segunda às 12h com ${upsellDiscountPct}% de desconto via PIX Copia e Cola!`
+    : `${pixPreviewFirstName ? `Olá ${pixPreviewFirstName}! ` : ""}Toque aqui para copiar o código PIX${rawCode ? ` da reserva ${rawCode}` : ""} com confirmação automática imediata.`;
+  const pixOgImg = resolvePreviewImageUrl(db.zapiConfig?.pixPreviewImage, "pix-preview.jpg");
+  const pixPageUrl = `https://corpflats.com.br${req.originalUrl || req.url || req.path || "/copiar-pix"}`;
+
   const pageHtml = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>📋 Copiar Código PIX • CorpFlats</title>
+  <title>${escapeOgHtmlAttr(pixOgTitle)}</title>
+  <meta name="description" content="${escapeOgHtmlAttr(pixOgDesc)}">
+  <meta property="og:site_name" content="CorpFlats">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="${escapeOgHtmlAttr(pixOgTitle)}">
+  <meta property="og:description" content="${escapeOgHtmlAttr(pixOgDesc)}">
+  <meta property="og:url" content="${escapeOgHtmlAttr(pixPageUrl)}">
+  <meta property="og:image" content="${escapeOgHtmlAttr(pixOgImg)}">
+  <meta property="og:image:secure_url" content="${escapeOgHtmlAttr(pixOgImg)}">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:type" content="image/jpeg">
+  <meta property="og:image:alt" content="Pagamento PIX Copia e Cola • CorpFlats">
+  <link rel="image_src" href="${escapeOgHtmlAttr(pixOgImg)}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="${escapeOgHtmlAttr(pixOgTitle)}">
+  <meta name="twitter:description" content="${escapeOgHtmlAttr(pixOgDesc)}">
+  <meta name="twitter:image" content="${escapeOgHtmlAttr(pixOgImg)}">
   <meta name="theme-color" content="#0f172a">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
@@ -77756,12 +78280,36 @@ app.get(["/copiar-boleto/:code", "/copiar-boleto", "/boleto/:code"], (req, res) 
   const adminWhatsApp = db.settings?.adminWhatsApp || "5522997124021";
   const whatsappUrl = `https://wa.me/${adminWhatsApp}?text=${encodeURIComponent(`Olá! Estou com uma dúvida sobre o boleto ${bol?.code || rawCode || ""} no CorpFlats.`)}`;
 
+  const boletoOgTitle = activeMode === "pix"
+    ? `⚡ PIX do Boleto${bol?.code ? ` #${bol.code}` : ""}${effectiveAmount > 0 ? ` • ${formattedAmount}` : ""} • CorpFlats`
+    : `🏦 Boleto Bancário${bol?.code ? ` #${bol.code}` : ""}${effectiveAmount > 0 ? ` • ${formattedAmount}` : ""} • CorpFlats`;
+  const boletoOgDesc = `${payerName && payerName !== "Cliente Corporativo" ? `${payerName} • ` : ""}${formattedDueDate !== "—" ? `Vencimento ${formattedDueDate}. ` : ""}Toque para copiar ${activeMode === "pix" ? "o código PIX do boleto com baixa imediata" : "a Linha Digitável, pagar via PIX ou baixar o PDF oficial"}.`;
+  const boletoOgImg = resolvePreviewImageUrl(db.zapiConfig?.boletoPreviewImage, "boleto-preview.jpg");
+  const boletoPageUrl = `https://corpflats.com.br${req.originalUrl || req.url || req.path || "/copiar-boleto"}`;
+
   const pageHtml = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>${activeMode === "pix" ? "⚡ Copiar PIX do Boleto • CorpFlats" : "📋 Copiar Código do Boleto • CorpFlats"}</title>
+  <title>${escapeHtml(boletoOgTitle)}</title>
+  <meta name="description" content="${escapeHtml(boletoOgDesc)}">
+  <meta property="og:site_name" content="CorpFlats">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="${escapeHtml(boletoOgTitle)}">
+  <meta property="og:description" content="${escapeHtml(boletoOgDesc)}">
+  <meta property="og:url" content="${escapeHtml(boletoPageUrl)}">
+  <meta property="og:image" content="${escapeHtml(boletoOgImg)}">
+  <meta property="og:image:secure_url" content="${escapeHtml(boletoOgImg)}">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:type" content="image/jpeg">
+  <meta property="og:image:alt" content="Boleto Bancário & PIX Integrado • CorpFlats">
+  <link rel="image_src" href="${escapeHtml(boletoOgImg)}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="${escapeHtml(boletoOgTitle)}">
+  <meta name="twitter:description" content="${escapeHtml(boletoOgDesc)}">
+  <meta name="twitter:image" content="${escapeHtml(boletoOgImg)}">
   <meta name="theme-color" content="#0f172a">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
@@ -78023,6 +78571,7 @@ if (fs.existsSync(distPath)) {
     });
   }
   app.use(express.static(distPath, {
+    index: false,
     setHeaders: setSmartAssetCacheHeaders
   }));
   app.use((req, res, next) => {
@@ -78034,6 +78583,7 @@ if (fs.existsSync(distPath)) {
   console.log(`[Production Server] Servindo frontend em: ${distPath}`);
 } else if (fs.existsSync(fallbackDistPath)) {
   app.use(express.static(fallbackDistPath, {
+    index: false,
     setHeaders: setSmartAssetCacheHeaders
   }));
   app.use((req, res, next) => {

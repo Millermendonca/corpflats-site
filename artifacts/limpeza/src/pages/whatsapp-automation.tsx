@@ -236,11 +236,30 @@ interface ZapiConfig {
   reviewPreviewImage?: string
   breakfastPreviewImage?: string
   flatPreviewImage?: string
+  credentialPreviewImage?: string
+  preCheckinPreviewImage?: string
+  portalPreviewImage?: string
+  pixPreviewImage?: string
+  boletoPreviewImage?: string
+  minibarPreviewImage?: string
+  checkoutPreviewImage?: string
   guestGuidePdfUrl?: string
   guestGuidePdfName?: string
   testModeOnly?: boolean
   testAllowedPhones?: string
 }
+
+type PreviewSlotKey =
+  | "credential"
+  | "preCheckin"
+  | "portal"
+  | "pix"
+  | "boleto"
+  | "breakfast"
+  | "minibar"
+  | "checkout"
+  | "review"
+  | "flat"
 
 const TAG_GROUPS = [
   {
@@ -609,16 +628,23 @@ export default function WhatsappAutomation() {
     wifiNetwork: "CorpFlats-Hospedes",
     wifiPassword: "corpflats2026",
     googleReviewUrl: "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA",
-    reviewPreviewTitle: "⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)",
-    reviewPreviewDescription: "Toque aqui para avaliar no Google",
-    reviewPreviewImage: "https://corpflats.com.br/flat-preview.jpg",
-    breakfastPreviewImage: "https://corpflats.com.br/breakfast-preview.jpg",
-    flatPreviewImage: "https://corpflats.com.br/flat-preview.jpg"
+    reviewPreviewTitle: "⭐ Avalie sua Estadia • CorpFlats Soho Residence",
+    reviewPreviewDescription: "Sua experiência foi 5 estrelas? Toque aqui para avaliar a CorpFlats no Google em menos de 30 segundos!",
+    reviewPreviewImage: "https://corpflats.com.br/previews/review-preview.jpg?v=20261113",
+    breakfastPreviewImage: "https://corpflats.com.br/previews/breakfast-preview.jpg?v=20261113",
+    flatPreviewImage: "https://corpflats.com.br/previews/reservar-preview.jpg?v=20261113",
+    credentialPreviewImage: "https://corpflats.com.br/previews/credenciamento-preview.jpg?v=20261113",
+    preCheckinPreviewImage: "https://corpflats.com.br/previews/precheckin-preview.jpg?v=20261113",
+    portalPreviewImage: "https://corpflats.com.br/previews/portal-preview.jpg?v=20261113",
+    pixPreviewImage: "https://corpflats.com.br/previews/pix-preview.jpg?v=20261113",
+    boletoPreviewImage: "https://corpflats.com.br/previews/boleto-preview.jpg?v=20261113",
+    minibarPreviewImage: "https://corpflats.com.br/previews/frigobar-preview.jpg?v=20261113",
+    checkoutPreviewImage: "https://corpflats.com.br/previews/checkout-preview.jpg?v=20261113"
   })
-  const [uploadingPreviewSlot, setUploadingPreviewSlot] = useState<"review" | "breakfast" | "flat" | null>(null)
+  const [uploadingPreviewSlot, setUploadingPreviewSlot] = useState<PreviewSlotKey | null>(null)
   const [savingPreviewTexts, setSavingPreviewTexts] = useState<boolean>(false)
 
-  const handleUploadPreviewImage = async (slot: "review" | "breakfast" | "flat", file: File) => {
+  const handleUploadPreviewImage = async (slot: PreviewSlotKey, file: File) => {
     if (!file) return
     setUploadingPreviewSlot(slot)
     try {
@@ -667,12 +693,13 @@ export default function WhatsappAutomation() {
       const res = await fetch("/api/whatsapp/upload-preview-image", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slot, dataUrl })
+        body: JSON.stringify({ slot, fileBase64: dataUrl, dataUrl, fileName: file.name })
       })
       const data = await res.json()
       if (res.ok && data.success) {
-        const propName = slot === "review" ? "reviewPreviewImage" : slot === "breakfast" ? "breakfastPreviewImage" : "flatPreviewImage"
-        setConfig(prev => ({ ...prev, [propName]: data.imageUrl }))
+        const propName = `${slot}PreviewImage` as keyof ZapiConfig
+        const resolvedUrl = data.url || data.imageUrl
+        setConfig(prev => ({ ...prev, [propName]: resolvedUrl }))
         toast({
           title: "🖼️ Foto de Pré-Visualização Atualizada!",
           description: "A nova imagem já foi salva e será usada nos próximos links enviados no WhatsApp."
@@ -706,7 +733,14 @@ export default function WhatsappAutomation() {
           reviewPreviewDescription: config.reviewPreviewDescription,
           reviewPreviewImage: config.reviewPreviewImage,
           breakfastPreviewImage: config.breakfastPreviewImage,
-          flatPreviewImage: config.flatPreviewImage
+          flatPreviewImage: config.flatPreviewImage,
+          credentialPreviewImage: config.credentialPreviewImage,
+          preCheckinPreviewImage: config.preCheckinPreviewImage,
+          portalPreviewImage: config.portalPreviewImage,
+          pixPreviewImage: config.pixPreviewImage,
+          boletoPreviewImage: config.boletoPreviewImage,
+          minibarPreviewImage: config.minibarPreviewImage,
+          checkoutPreviewImage: config.checkoutPreviewImage
         })
       })
       if (res.ok) {
@@ -6573,48 +6607,101 @@ export default function WhatsappAutomation() {
                         {/* Balão de Mensagem Estilo WhatsApp */}
                         <div className="relative self-end max-w-[92%] bg-[#D9FDD3] dark:bg-[#005C4B] rounded-2xl rounded-tr-xs shadow-xs p-2.5 pb-1 text-xs border border-emerald-300/30">
                           
-                          {!/writereview\?placeid=|link_avaliacao_google|g\.page\/r\//i.test(editingMessage || "") && /link_cafe_manha|\/cafe\//i.test(editingMessage || "") && (
-                            <div className="mb-2 rounded-xl overflow-hidden bg-black/5 dark:bg-white/10 border border-emerald-500/20">
-                              <img
-                                src={config.breakfastPreviewImage || "/breakfast-preview.jpg"}
-                                alt="Café da Manhã Preview"
-                                className="w-full h-28 object-cover"
-                                onError={(e) => { (e.target as HTMLImageElement).src = "/breakfast-preview.jpg" }}
-                              />
-                              <div className="p-2 space-y-0.5">
-                                <p className="text-[11px] font-bold text-neutral-900 dark:text-neutral-100 leading-snug">
-                                  ☕ Café da Manhã no Flat • CorpFlats
-                                </p>
-                                <p className="text-[10px] text-neutral-600 dark:text-neutral-300 leading-tight line-clamp-2">
-                                  Escolha seus itens favoritos e o horário de entrega na porta do seu flat!
-                                </p>
-                                <p className="text-[9px] text-neutral-500 dark:text-neutral-400 truncate pt-0.5">
-                                  corpflats.com.br
-                                </p>
+                          {(() => {
+                            const combinedCtx = [
+                              editingMessage || "",
+                              ...(editingButtons || []).map(b => b?.url || "")
+                            ].join(" ")
+
+                            let previewCard: { img: string; fallback: string; title: string; desc: string } | null = null
+                            if (/link_credenciamento_agencia|\/credenciamento\/|\/identificar-reserva\//i.test(combinedCtx)) {
+                              previewCard = {
+                                img: config.credentialPreviewImage || "/previews/credenciamento-preview.jpg",
+                                fallback: "/previews/credenciamento-preview.jpg",
+                                title: "🪪 Preencher Dados do Hóspede • CorpFlats",
+                                desc: "Informe nome completo, documento e WhatsApp do hóspede para liberação na recepção 24h."
+                              }
+                            } else if (/link_copiar_pix|\/copiar-pix|\/pix\//i.test(combinedCtx)) {
+                              previewCard = {
+                                img: config.pixPreviewImage || "/previews/pix-preview.jpg",
+                                fallback: "/previews/pix-preview.jpg",
+                                title: "💠 PIX Copia e Cola • CorpFlats",
+                                desc: "Toque aqui para copiar o código PIX da reserva com confirmação automática imediata."
+                              }
+                            } else if (/link_copiar_boleto|\/copiar-boleto|\/boleto\//i.test(combinedCtx)) {
+                              previewCard = {
+                                img: config.boletoPreviewImage || "/previews/boleto-preview.jpg",
+                                fallback: "/previews/boleto-preview.jpg",
+                                title: "🏦 Boleto Bancário & PIX • CorpFlats",
+                                desc: "Toque para copiar a Linha Digitável, pagar via PIX imediato ou baixar o PDF oficial."
+                              }
+                            } else if (/link_cafe_manha|\/cafe\//i.test(combinedCtx)) {
+                              previewCard = {
+                                img: config.breakfastPreviewImage || "/previews/breakfast-preview.jpg",
+                                fallback: "/previews/breakfast-preview.jpg",
+                                title: "☕ Cardápio de Café da Manhã • CorpFlats",
+                                desc: "Escolha seus itens favoritos e agende o horário para receber na porta do flat."
+                              }
+                            } else if (/link_frigobar|\/frigobar\/|\/minibar\//i.test(combinedCtx)) {
+                              previewCard = {
+                                img: config.minibarPreviewImage || "/previews/frigobar-preview.jpg",
+                                fallback: "/previews/frigobar-preview.jpg",
+                                title: "🍫 Frigobar & Conveniência • CorpFlats",
+                                desc: "Consulte a tabela de bebidas e snacks do flat e registre seu consumo pelo celular."
+                              }
+                            } else if (/link_checkout|\/checkout\/|\/check-out\//i.test(combinedCtx)) {
+                              previewCard = {
+                                img: config.checkoutPreviewImage || "/previews/checkout-preview.jpg",
+                                fallback: "/previews/checkout-preview.jpg",
+                                title: "🚪 Check-out Expresso • CorpFlats",
+                                desc: "Confirme sua saída com 1 toque pelo celular e entregue o cartão NFC na recepção 24h."
+                              }
+                            } else if (/link_precheckin|link_checkin_digital|\/pre-checkin\//i.test(combinedCtx)) {
+                              previewCard = {
+                                img: config.preCheckinPreviewImage || "/previews/precheckin-preview.jpg",
+                                fallback: "/previews/precheckin-preview.jpg",
+                                title: "📝 Check-in Digital Online • CorpFlats",
+                                desc: "Confirme seus dados na Ficha FNRH antes da chegada para retirar seu cartão na portaria 24h."
+                              }
+                            } else if (/writereview\?placeid=|link_avaliacao_google|\/avaliar|g\.page\/r\//i.test(combinedCtx)) {
+                              previewCard = {
+                                img: config.reviewPreviewImage || "/previews/review-preview.jpg",
+                                fallback: "/previews/review-preview.jpg",
+                                title: config.reviewPreviewTitle || "⭐ Avalie sua Estadia • CorpFlats Soho Residence",
+                                desc: config.reviewPreviewDescription || "Sua experiência foi 5 estrelas? Toque aqui para avaliar a CorpFlats no Google!"
+                              }
+                            } else if (/link_portal_reserva|link_portal_hospede|\/minha-reserva\//i.test(combinedCtx)) {
+                              previewCard = {
+                                img: config.portalPreviewImage || "/previews/portal-preview.jpg",
+                                fallback: "/previews/portal-preview.jpg",
+                                title: "🏨 Minha Reserva • CorpFlats Soho Residence",
+                                desc: "Acesse senha do Wi-Fi, instruções da recepção 24h e garagem, guia do flat e NFS-e."
+                              }
+                            }
+
+                            if (!previewCard) return null
+                            return (
+                              <div className="mb-2 rounded-xl overflow-hidden bg-black/5 dark:bg-white/10 border border-emerald-500/20">
+                                <img
+                                  src={previewCard.img}
+                                  alt={previewCard.title}
+                                  className="w-full h-28 object-cover"
+                                  onError={(e) => { (e.target as HTMLImageElement).src = previewCard!.fallback }}
+                                />
+                                <div className="p-2 space-y-0.5">
+                                  <p className="text-[11px] font-bold text-neutral-900 dark:text-neutral-100 leading-snug">
+                                    {previewCard.title}
+                                  </p>
+                                  <p className="text-[10px] text-neutral-600 dark:text-neutral-300 leading-tight line-clamp-2">
+                                    {previewCard.desc}
+                                  </p>
+                                  <p className="text-[9px] text-neutral-500 dark:text-neutral-400 truncate pt-0.5">
+                                    corpflats.com.br
+                                  </p>
+                                </div>
                               </div>
-                            </div>
-                          )}
-                          {!/writereview\?placeid=|link_avaliacao_google|g\.page\/r\/|link_cafe_manha|\/cafe\//i.test(editingMessage || "") && /link_precheckin|link_portal_reserva|link_checkout|\/pre-checkin\/|\/minha-reserva\/|\/checkout\//i.test(editingMessage || "") && (
-                            <div className="mb-2 rounded-xl overflow-hidden bg-black/5 dark:bg-white/10 border border-emerald-500/20">
-                              <img
-                                src={config.flatPreviewImage || "/flat-preview.jpg"}
-                                alt="Flat Preview"
-                                className="w-full h-28 object-cover"
-                                onError={(e) => { (e.target as HTMLImageElement).src = "/flat-preview.jpg" }}
-                              />
-                              <div className="p-2 space-y-0.5">
-                                <p className="text-[11px] font-bold text-neutral-900 dark:text-neutral-100 leading-snug">
-                                  🏨 Portal da Reserva • CorpFlats Soho Residence
-                                </p>
-                                <p className="text-[10px] text-neutral-600 dark:text-neutral-300 leading-tight line-clamp-2">
-                                  Acesse as informações do seu flat, Wi-Fi, senhas e serviços exclusivos.
-                                </p>
-                                <p className="text-[9px] text-neutral-500 dark:text-neutral-400 truncate pt-0.5">
-                                  corpflats.com.br
-                                </p>
-                              </div>
-                            </div>
-                          )}
+                            )
+                          })()}
 
                           {/* Conteúdo formatado */}
                           <div className="text-[12px] whitespace-pre-wrap break-words text-neutral-900 dark:text-neutral-100">
@@ -6692,87 +6779,43 @@ export default function WhatsappAutomation() {
                           </span>
                         </div>
 
-                        <div className="grid grid-cols-3 gap-2">
-                          {/* Avaliação Google */}
-                          <div className="p-2 rounded-xl border bg-background space-y-1.5 text-center">
-                            <span className="text-[10px] font-bold block truncate">⭐ Avaliação</span>
-                            <img
-                              src={config.reviewPreviewImage || "/flat-preview.jpg"}
-                              alt="Avaliação"
-                              className="w-full h-14 object-cover rounded-lg border"
-                              onError={(e) => { (e.target as HTMLImageElement).src = "/flat-preview.jpg" }}
-                            />
-                            <label className="cursor-pointer block">
-                              <input
-                                type="file"
-                                accept="image/*"
-                                className="hidden"
-                                onChange={(e) => {
-                                  const f = e.target.files?.[0]
-                                  if (f) handleUploadPreviewImage("review", f)
-                                  e.target.value = ""
-                                }}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          {([
+                            { slot: "credential" as PreviewSlotKey, label: "🪪 Dados Hóspede", prop: "credentialPreviewImage" as const, fallback: "/previews/credenciamento-preview.jpg" },
+                            { slot: "preCheckin" as PreviewSlotKey, label: "📝 Check-in", prop: "preCheckinPreviewImage" as const, fallback: "/previews/precheckin-preview.jpg" },
+                            { slot: "portal" as PreviewSlotKey, label: "🏨 Reserva", prop: "portalPreviewImage" as const, fallback: "/previews/portal-preview.jpg" },
+                            { slot: "pix" as PreviewSlotKey, label: "💠 PIX", prop: "pixPreviewImage" as const, fallback: "/previews/pix-preview.jpg" },
+                            { slot: "breakfast" as PreviewSlotKey, label: "☕ Café", prop: "breakfastPreviewImage" as const, fallback: "/previews/breakfast-preview.jpg" },
+                            { slot: "minibar" as PreviewSlotKey, label: "🍫 Frigobar", prop: "minibarPreviewImage" as const, fallback: "/previews/frigobar-preview.jpg" },
+                            { slot: "checkout" as PreviewSlotKey, label: "🚪 Check-out", prop: "checkoutPreviewImage" as const, fallback: "/previews/checkout-preview.jpg" },
+                            { slot: "review" as PreviewSlotKey, label: "⭐ Avaliação", prop: "reviewPreviewImage" as const, fallback: "/previews/review-preview.jpg" }
+                          ]).map((item) => (
+                            <div key={item.slot} className="p-1.5 rounded-xl border bg-background space-y-1 text-center">
+                              <span className="text-[9.5px] font-bold block truncate">{item.label}</span>
+                              <img
+                                src={config[item.prop] || item.fallback}
+                                alt={item.label}
+                                className="w-full h-12 object-cover rounded-lg border"
+                                onError={(e) => { (e.target as HTMLImageElement).src = item.fallback }}
                               />
-                              <span className="w-full inline-flex items-center justify-center gap-1 text-[10px] font-semibold py-1 px-1.5 rounded-md bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 border border-amber-500/30">
-                                <Upload className="w-2.5 h-2.5" />
-                                {uploadingPreviewSlot === "review" ? "..." : "Trocar"}
-                              </span>
-                            </label>
-                          </div>
-
-                          {/* Café da Manhã */}
-                          <div className="p-2 rounded-xl border bg-background space-y-1.5 text-center">
-                            <span className="text-[10px] font-bold block truncate">☕ Café</span>
-                            <img
-                              src={config.breakfastPreviewImage || "/breakfast-preview.jpg"}
-                              alt="Café"
-                              className="w-full h-14 object-cover rounded-lg border"
-                              onError={(e) => { (e.target as HTMLImageElement).src = "/breakfast-preview.jpg" }}
-                            />
-                            <label className="cursor-pointer block">
-                              <input
-                                type="file"
-                                accept="image/*"
-                                className="hidden"
-                                onChange={(e) => {
-                                  const f = e.target.files?.[0]
-                                  if (f) handleUploadPreviewImage("breakfast", f)
-                                  e.target.value = ""
-                                }}
-                              />
-                              <span className="w-full inline-flex items-center justify-center gap-1 text-[10px] font-semibold py-1 px-1.5 rounded-md bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 border border-amber-500/30">
-                                <Upload className="w-2.5 h-2.5" />
-                                {uploadingPreviewSlot === "breakfast" ? "..." : "Trocar"}
-                              </span>
-                            </label>
-                          </div>
-
-                          {/* Flat / Check-in */}
-                          <div className="p-2 rounded-xl border bg-background space-y-1.5 text-center">
-                            <span className="text-[10px] font-bold block truncate">🏨 Flat / Links</span>
-                            <img
-                              src={config.flatPreviewImage || "/flat-preview.jpg"}
-                              alt="Flat"
-                              className="w-full h-14 object-cover rounded-lg border"
-                              onError={(e) => { (e.target as HTMLImageElement).src = "/flat-preview.jpg" }}
-                            />
-                            <label className="cursor-pointer block">
-                              <input
-                                type="file"
-                                accept="image/*"
-                                className="hidden"
-                                onChange={(e) => {
-                                  const f = e.target.files?.[0]
-                                  if (f) handleUploadPreviewImage("flat", f)
-                                  e.target.value = ""
-                                }}
-                              />
-                              <span className="w-full inline-flex items-center justify-center gap-1 text-[10px] font-semibold py-1 px-1.5 rounded-md bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 border border-amber-500/30">
-                                <Upload className="w-2.5 h-2.5" />
-                                {uploadingPreviewSlot === "flat" ? "..." : "Trocar"}
-                              </span>
-                            </label>
-                          </div>
+                              <label className="cursor-pointer block">
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const f = e.target.files?.[0]
+                                    if (f) handleUploadPreviewImage(item.slot, f)
+                                    e.target.value = ""
+                                  }}
+                                />
+                                <span className="w-full inline-flex items-center justify-center gap-1 text-[9.5px] font-semibold py-0.5 px-1.5 rounded-md bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 border border-amber-500/30">
+                                  <Upload className="w-2.5 h-2.5" />
+                                  {uploadingPreviewSlot === item.slot ? "..." : "Trocar"}
+                                </span>
+                              </label>
+                            </div>
+                          ))}
                         </div>
 
                         <div className="space-y-2 pt-1">
