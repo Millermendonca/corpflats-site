@@ -1101,8 +1101,8 @@ export const DEV_ONLY_MODULES = [
 export const ALL_CANONICAL_MODULES = [
   // 1. 📅 Reservas & Hospedagem
   "/reservas",
+  "/lista-reservas",
   "/painel-aovivo",
-  "/caixa-entrada-ota",
   "/relatorios-reservas",
   "/crm",
   "/portaria",
@@ -1157,6 +1157,7 @@ export const OPERATIONAL_MODULES = ALL_CANONICAL_MODULES.filter(m => !DEV_ONLY_M
 
 export const THAMIRIS_CLEAN_MODULES = [
   "/reservas",
+  "/lista-reservas",
   "/crm",
   "/dashboard",
   "/reports",
@@ -1167,7 +1168,6 @@ export const THAMIRIS_CLEAN_MODULES = [
   "/tasks",
   "/lista-compras",
   "/whatsapp-chat",
-  "/caixa-entrada-ota",
   "/tarifas",
   "/pedidos-cafe",
   "/portaria",
@@ -1189,8 +1189,8 @@ export const CAMAREIRA_DEFAULT_MODULES = [
 
 export const RECEPCAO_DEFAULT_MODULES = [
   "/reservas",
+  "/lista-reservas",
   "/painel-aovivo",
-  "/caixa-entrada-ota",
   "/relatorios-reservas",
   "/crm",
   "/portaria",
@@ -1395,11 +1395,14 @@ export const ROUTE_ALIASES = {
   "/site-editor": "/editor-site",
   "/cms": "/editor-site",
 
-  // Caixa de Entrada OTA
-  "/ota-inbox": "/caixa-entrada-ota",
-  "/quarentena": "/caixa-entrada-ota",
-  "/ajuda-wbp": "/caixa-entrada-ota",
-  "/ajuda-channex": "/caixa-entrada-ota",
+  // Lista / Central de Reservas & Caixa de Entrada OTA Unificada
+  "/central-reservas": "/lista-reservas",
+  "/todas-reservas": "/lista-reservas",
+  "/caixa-entrada-ota": "/lista-reservas",
+  "/ota-inbox": "/lista-reservas",
+  "/quarentena": "/lista-reservas",
+  "/ajuda-wbp": "/lista-reservas",
+  "/ajuda-channex": "/lista-reservas",
 
   // Reservar
   "/booking": "/reservar",
@@ -1484,6 +1487,12 @@ export function hasModuleAccess(user, path) {
     if (canonical === "/disparo-inteligente") {
       const waEquivalents = ["/whatsapp", "/whatsapp-chat", "/crm", "/reservas"];
       return allowed.some(m => waEquivalents.includes(canonicalizeRoute(m)));
+    }
+    if (canonical === "/lista-reservas") {
+      const resEquivalents = ["/reservas", "/caixa-entrada-ota"];
+      if (allowed.some(m => resEquivalents.includes(canonicalizeRoute(m)) || resEquivalents.includes(m))) {
+        return true;
+      }
     }
     if (canonical === "/raio-x-flats") {
       if (user.role === "admin" || user.role === "dev") return true;
@@ -1620,6 +1629,26 @@ export function ensureSystemUsers(database) {
     }
     if (!Array.isArray(thamirisUser.allowedModules) || thamirisUser.allowedModules.length === 0) {
       thamirisUser.allowedModules = [...THAMIRIS_CLEAN_MODULES];
+      thamirisUser.listaReservasSynced = true;
+      changed = true;
+    } else if (!thamirisUser.listaReservasSynced) {
+      const nextMods = Array.from(
+        new Set(
+          thamirisUser.allowedModules
+            .map(m => (typeof m === "string" ? canonicalizeRoute(m.trim()) : ""))
+            .filter(Boolean)
+        )
+      );
+      if (!nextMods.includes("/lista-reservas")) {
+        const resIdx = nextMods.indexOf("/reservas");
+        if (resIdx >= 0) {
+          nextMods.splice(resIdx + 1, 0, "/lista-reservas");
+        } else {
+          nextMods.unshift("/lista-reservas");
+        }
+      }
+      thamirisUser.allowedModules = nextMods;
+      thamirisUser.listaReservasSynced = true;
       changed = true;
     }
   }
@@ -1685,24 +1714,41 @@ export function ensureSystemUsers(database) {
     if (!Array.isArray(u.allowedModules)) {
       u.allowedModules = uIsCustom ? [...THAMIRIS_CLEAN_MODULES] : getDefaultModulesForRole(u.role);
       changed = true;
-    } else if ((u.role === "dev" || u.role === "admin") && !uIsCustom) {
-      for (const reqMod of ["/frigobar", "/anserve", "/frigobar-reposicao", "/frigobar-gestao"]) {
-        if (!u.allowedModules.includes(reqMod)) {
-          u.allowedModules.push(reqMod);
-          changed = true;
-        }
-      }
-    } else if (u.role === "anserve_gestor") {
-      for (const reqMod of ["/anserve", "/frigobar-reposicao", "/frigobar-gestao"]) {
-        if (!u.allowedModules.includes(reqMod)) {
-          u.allowedModules.push(reqMod);
-          changed = true;
-        }
-      }
-    } else if (u.role === "anserve_repositora") {
-      if (!u.allowedModules.includes("/frigobar-reposicao")) {
-        u.allowedModules.push("/frigobar-reposicao");
+    } else {
+      const normalized = Array.from(
+        new Set(
+          u.allowedModules
+            .map(m => (typeof m === "string" ? canonicalizeRoute(m.trim()) : ""))
+            .filter(Boolean)
+        )
+      );
+      if (
+        normalized.length !== u.allowedModules.length ||
+        normalized.some((m, i) => m !== u.allowedModules[i])
+      ) {
+        u.allowedModules = normalized;
         changed = true;
+      }
+
+      if ((u.role === "dev" || u.role === "admin") && !uIsCustom) {
+        for (const reqMod of ["/frigobar", "/anserve", "/frigobar-reposicao", "/frigobar-gestao"]) {
+          if (!u.allowedModules.includes(reqMod)) {
+            u.allowedModules.push(reqMod);
+            changed = true;
+          }
+        }
+      } else if (u.role === "anserve_gestor") {
+        for (const reqMod of ["/anserve", "/frigobar-reposicao", "/frigobar-gestao"]) {
+          if (!u.allowedModules.includes(reqMod)) {
+            u.allowedModules.push(reqMod);
+            changed = true;
+          }
+        }
+      } else if (u.role === "anserve_repositora") {
+        if (!u.allowedModules.includes("/frigobar-reposicao")) {
+          u.allowedModules.push("/frigobar-reposicao");
+          changed = true;
+        }
       }
     }
   }
@@ -18895,7 +18941,7 @@ export function sanitizeUserMenuPreferences(raw, existing = null) {
     for (const [k, v] of Object.entries(raw.usageCounts).slice(0, 60)) {
       const key = canonicalizeRoute(k);
       const val = Math.max(0, Math.floor(Number(v) || 0));
-      if (key && val > 0) cleanCounts[key] = val;
+      if (key && val > 0) cleanCounts[key] = Math.max(cleanCounts[key] || 0, val);
     }
     base.usageCounts = cleanCounts;
   }
@@ -18905,7 +18951,7 @@ export function sanitizeUserMenuPreferences(raw, existing = null) {
     for (const [k, v] of Object.entries(raw.lastUsedAt).slice(0, 60)) {
       const key = canonicalizeRoute(k);
       const val = Math.max(0, Math.floor(Number(v) || 0));
-      if (key && val > 0) cleanTs[key] = val;
+      if (key && val > 0) cleanTs[key] = Math.max(cleanTs[key] || 0, val);
     }
     base.lastUsedAt = cleanTs;
   }
@@ -18934,11 +18980,18 @@ export function resolveEffectiveAllowedModules(userObj) {
   const isCustomRestricted =
     userObj.customPermissions === true ||
     (userObj.customPermissions === undefined && uName === "thamiris");
-  const base = Array.isArray(userObj.allowedModules)
+  const rawBase = Array.isArray(userObj.allowedModules)
     ? [...userObj.allowedModules]
     : isCustomRestricted
       ? [...THAMIRIS_CLEAN_MODULES]
       : [...getDefaultModulesForRole(userObj.role)];
+  const base = Array.from(
+    new Set(
+      rawBase
+        .map(m => (typeof m === "string" ? canonicalizeRoute(m.trim()) : ""))
+        .filter(Boolean)
+    )
+  );
   if ((userObj.role === "dev" || userObj.role === "admin") && !isCustomRestricted) {
     for (const m of ["/frigobar", "/anserve", "/frigobar-reposicao", "/frigobar-gestao", "/painel-aovivo", "/rh", "/disparo-inteligente"]) {
       if (!base.includes(m)) base.push(m);
@@ -78803,6 +78856,9 @@ export function resolveSpaOpenGraphMetadata(req, dbRef = db) {
 
   const isReservationsPms =
     rawPath.startsWith("/reservas") ||
+    rawPath.startsWith("/lista-reservas") ||
+    rawPath.startsWith("/central-reservas") ||
+    rawPath.startsWith("/todas-reservas") ||
     rawPath.startsWith("/relatorios-reservas") ||
     rawPath.startsWith("/jornada-reservas") ||
     rawPath.startsWith("/caixa-entrada-ota") ||

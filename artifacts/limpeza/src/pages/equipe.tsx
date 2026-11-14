@@ -54,6 +54,7 @@ import {
   PERMISSION_CATEGORIES,
   getDefaultModulesForRole,
   isDefaultPermissionsForRole,
+  canonicalizeRoute,
   DEV_ONLY_MODULES,
   THAMIRIS_CLEAN_MODULES
 } from "@/lib/permissions";
@@ -427,7 +428,7 @@ export function TeamPage() {
     setPermissionsRole(user.role || "camareira");
     setPermissionsModules(
       Array.isArray(user.allowedModules)
-        ? [...user.allowedModules]
+        ? Array.from(new Set(user.allowedModules.map(canonicalizeRoute).filter(Boolean)))
         : getDefaultModulesForRole(user.role)
     );
     setPermissionsError("");
@@ -481,7 +482,7 @@ export function TeamPage() {
     setEditHideCopilot(Boolean(user.hideCopilot));
     setEditAllowedModules(
       Array.isArray(user.allowedModules)
-        ? [...user.allowedModules]
+        ? Array.from(new Set(user.allowedModules.map(canonicalizeRoute).filter(Boolean)))
         : getDefaultModulesForRole(user.role)
     );
     setEditUserError("");

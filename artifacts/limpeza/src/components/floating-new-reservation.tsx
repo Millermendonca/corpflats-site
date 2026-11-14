@@ -146,7 +146,14 @@ export function FloatingNewReservationButton() {
     return null;
   }
 
-  const isOnReservationsPage = location === '/reservas';
+  const isOnReservationsPage =
+    location === '/reservas' ||
+    location === '/lista-reservas' ||
+    location === '/central-reservas' ||
+    location === '/todas-reservas' ||
+    location === '/caixa-entrada-ota' ||
+    location === '/ota-inbox' ||
+    location === '/quarentena';
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 && e.pointerType === 'mouse') return;

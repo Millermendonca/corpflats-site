@@ -178,6 +178,7 @@ export const DEV_MODULES: string[] = [...ALL_CANONICAL_MODULES];
 export const THAMIRIS_CLEAN_MODULES: string[] = [
   // Pacote Principal
   "/reservas",
+  "/lista-reservas",
   "/crm",
   "/dashboard",
   "/reports",
@@ -190,8 +191,7 @@ export const THAMIRIS_CLEAN_MODULES: string[] = [
   "/lista-compras",
   // WhatsApp Chat
   "/whatsapp-chat",
-  // OTA & Tarifas
-  "/caixa-entrada-ota",
+  // Tarifas
   "/tarifas",
   // Operação Diária
   "/pedidos-cafe",

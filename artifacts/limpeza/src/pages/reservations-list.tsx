@@ -1,6 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense, lazy } from "react";
 import { useLocation } from "wouter";
-import { useGetSettings } from "@workspace/api-client-react";
+import { useGetMe, useGetSettings } from "@workspace/api-client-react";
+import { hasModuleAccess } from "@/lib/permissions";
+import {
+  useBackLayer,
+  useBackTabState,
+  recordBackSelectionStep,
+  clearBackStepsBySource,
+  navigateFromOverlay,
+} from "@/lib/back-navigation";
 import {
   ListOrdered,
   CalendarDays,
@@ -62,8 +70,12 @@ const SOUND_STORAGE_KEY = "corpflats_res_list_sound_v1";
 export default function ReservationsListPage() {
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
+  const { data: currentUser } = useGetMe();
   const { data: settings } = useGetSettings();
   const { activeQuickMessages, dispatchQuickMessage } = useQuickMessages();
+  const canBroadcast = Boolean(
+    currentUser && hasModuleAccess(currentUser as any, "/disparo-inteligente")
+  );
 
   // Detecta se abriu via /quarentena ou ?tab=...
   const initialTabFromUrl = useMemo<QuickTabKey>(() => {
@@ -92,6 +104,13 @@ export default function ReservationsListPage() {
   }));
   const [sortField, setSortField] = useState<SortField>("receivedAt");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+
+  const handleBackTabRestore = useCallback((prevTab: QuickTabKey) => {
+    setFilters((prev) => ({ ...prev, tab: prevTab }));
+  }, []);
+  useBackTabState(filters.tab, handleBackTabRestore, {
+    id: "reservations-list-quick-tabs",
+  });
 
   useEffect(() => {
     if (location.startsWith("/quarentena")) {
@@ -146,9 +165,18 @@ export default function ReservationsListPage() {
 
   // Seleção em massa
   const [selectedUids, setSelectedUids] = useState<Set<string>>(new Set());
+  useBackLayer(
+    selectedUids.size > 0,
+    () => setSelectedUids(new Set()),
+    "reservations-list-bulk-selection"
+  );
 
   // Drawers e Modais
   const [drawerUid, setDrawerUid] = useState<string | null>(null);
+  const closeQuickDrawer = useCallback(() => {
+    clearBackStepsBySource("res-quick-drawer-row");
+    setDrawerUid(null);
+  }, []);
   const [quarantineItem, setQuarantineItem] = useState<OtaReservationItem | null>(null);
   const [quarantineOpen, setQuarantineOpen] = useState<boolean>(false);
   const [channexSheetOpen, setChannexSheetOpen] = useState<boolean>(false);
@@ -250,8 +278,17 @@ export default function ReservationsListPage() {
         fetchCentralData(false);
       }
     };
+    const onGlobalOpenNewRes = () => {
+      setEditingResCode(null);
+      setReactivatingResCode(null);
+      setCreatingNewRes(true);
+    };
     window.addEventListener("gfm-res-modal-state", onModalState);
-    return () => window.removeEventListener("gfm-res-modal-state", onModalState);
+    window.addEventListener("open-new-reservation-modal", onGlobalOpenNewRes);
+    return () => {
+      window.removeEventListener("gfm-res-modal-state", onModalState);
+      window.removeEventListener("open-new-reservation-modal", onGlobalOpenNewRes);
+    };
   }, [fetchCentralData]);
 
   const handleChangeDensity = (d: TableDensity) => {
@@ -659,15 +696,23 @@ export default function ReservationsListPage() {
     const params = new URLSearchParams();
     if (row.checkinDate) params.set("focusDate", row.checkinDate);
     if (row.flatNumber) params.set("focusFlat", row.flatNumber);
-    setLocation(`/reservas?${params.toString()}`);
+    const targetUrl = `/reservas?${params.toString()}`;
+    if (drawerUid) {
+      navigateFromOverlay(setLocation, targetUrl, closeQuickDrawer);
+    } else {
+      setLocation(targetUrl);
+    }
   };
 
   const handleOpenInternalChat = (row: UnifiedReservationRow) => {
     const clean = cleanWhatsAppPhone(row.guestPhone || "");
-    if (clean) {
-      setLocation(`/whatsapp-chat?phone=${encodeURIComponent(clean)}`);
+    const targetUrl = clean
+      ? `/whatsapp-chat?phone=${encodeURIComponent(clean)}`
+      : "/whatsapp-chat";
+    if (drawerUid) {
+      navigateFromOverlay(setLocation, targetUrl, closeQuickDrawer);
     } else {
-      setLocation("/whatsapp-chat");
+      setLocation(targetUrl);
     }
   };
 
@@ -1067,13 +1112,13 @@ export default function ReservationsListPage() {
             onClearSelection={() => setSelectedUids(new Set())}
             onSelectRowDrawer={handleSelectRowDrawer}
             onOpenFullEdit={(row) => {
-              setDrawerUid(null);
+              closeQuickDrawer();
               setReactivatingResCode(null);
               setCreatingNewRes(false);
               setEditingResCode(row.code || String(row.id));
             }}
             onReactivateExpired={(row) => {
-              setDrawerUid(null);
+              closeQuickDrawer();
               setEditingResCode(null);
               setCreatingNewRes(false);
               setReactivatingResCode(row.code || String(row.id));
@@ -1109,7 +1154,12 @@ export default function ReservationsListPage() {
             onOpenSecureCard={(row) => setSecureCardRow(row)}
             onExportSelectedCsv={handleExportSelectedCsv}
             onPrintSelected={() => window.print()}
-            onBroadcastSelected={() => setLocation("/disparo-inteligente")}
+            onBroadcastSelected={() =>
+              navigateFromOverlay(setLocation, "/disparo-inteligente", () =>
+                setSelectedUids(new Set())
+              )
+            }
+            canBroadcast={canBroadcast}
           />
         )}
       </div>
@@ -1119,7 +1169,7 @@ export default function ReservationsListPage() {
         row={activeDrawerRow}
         open={Boolean(activeDrawerRow)}
         onOpenChange={(open) => {
-          if (!open) setDrawerUid(null);
+          if (!open) closeQuickDrawer();
         }}
         todayStr={todayStr}
         hasPrev={activeDrawerIndex > 0}
@@ -1129,7 +1179,12 @@ export default function ReservationsListPage() {
         }
         onNavigatePrev={() => {
           if (activeDrawerIndex > 0) {
-            setDrawerUid(filteredAndSortedRows[activeDrawerIndex - 1].uid);
+            const prevUid = drawerUid;
+            const nextTargetUid = filteredAndSortedRows[activeDrawerIndex - 1].uid;
+            if (prevUid && prevUid !== nextTargetUid) {
+              recordBackSelectionStep("res-quick-drawer-row", () => setDrawerUid(prevUid));
+            }
+            setDrawerUid(nextTargetUid);
           }
         }}
         onNavigateNext={() => {
@@ -1137,17 +1192,22 @@ export default function ReservationsListPage() {
             activeDrawerIndex >= 0 &&
             activeDrawerIndex < filteredAndSortedRows.length - 1
           ) {
-            setDrawerUid(filteredAndSortedRows[activeDrawerIndex + 1].uid);
+            const prevUid = drawerUid;
+            const nextTargetUid = filteredAndSortedRows[activeDrawerIndex + 1].uid;
+            if (prevUid && prevUid !== nextTargetUid) {
+              recordBackSelectionStep("res-quick-drawer-row", () => setDrawerUid(prevUid));
+            }
+            setDrawerUid(nextTargetUid);
           }
         }}
         onOpenFullEdit={(row) => {
-          setDrawerUid(null);
+          closeQuickDrawer();
           setReactivatingResCode(null);
           setCreatingNewRes(false);
           setEditingResCode(row.code || String(row.id));
         }}
         onReactivateExpired={(row) => {
-          setDrawerUid(null);
+          closeQuickDrawer();
           setEditingResCode(null);
           setCreatingNewRes(false);
           setReactivatingResCode(row.code || String(row.id));
@@ -1163,10 +1223,18 @@ export default function ReservationsListPage() {
         onCopyPreCheckinLink={handleCopyPreCheckinLink}
         onOpenPortalNewTab={handleOpenPortalNewTab}
         onOpenNfseHub={(row) =>
-          setLocation(`/notas?search=${encodeURIComponent(row.code)}`)
+          navigateFromOverlay(
+            setLocation,
+            `/notas?search=${encodeURIComponent(row.code)}`,
+            closeQuickDrawer
+          )
         }
         onOpenPaymentsHub={(row) =>
-          setLocation(`/pagamentos?search=${encodeURIComponent(row.code)}`)
+          navigateFromOverlay(
+            setLocation,
+            `/pagamentos?search=${encodeURIComponent(row.code)}`,
+            closeQuickDrawer
+          )
         }
         onOpenSecureCard={(row) => setSecureCardRow(row)}
       />

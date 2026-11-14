@@ -12,6 +12,7 @@ import {
   PowerOff,
 } from "lucide-react";
 import { useLocation } from "wouter";
+import { navigateFromOverlay } from "@/lib/back-navigation";
 import {
   Sheet,
   SheetContent,
@@ -361,8 +362,7 @@ export const ChannexSyncSheet: React.FC<ChannexSyncSheetProps> = ({
                   size="sm"
                   className="h-auto p-0 text-xs gap-1"
                   onClick={() => {
-                    onOpenChange(false);
-                    setLocation("/ajuda-wbp");
+                    navigateFromOverlay(setLocation, "/ajuda-wbp", () => onOpenChange(false));
                   }}
                 >
                   <HelpCircle className="w-3.5 h-3.5" />

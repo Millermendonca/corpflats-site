@@ -106,6 +106,7 @@ interface ReservationsDataTableProps {
   onExportSelectedCsv: () => void;
   onPrintSelected: () => void;
   onBroadcastSelected: () => void;
+  canBroadcast?: boolean;
 }
 
 export const ReservationsDataTable: React.FC<ReservationsDataTableProps> = ({
@@ -146,6 +147,7 @@ export const ReservationsDataTable: React.FC<ReservationsDataTableProps> = ({
   onExportSelectedCsv,
   onPrintSelected,
   onBroadcastSelected,
+  canBroadcast = true,
 }) => {
   const [pageSize, setPageSize] = useState<number>(100);
   const [page, setPage] = useState<number>(1);
@@ -1270,14 +1272,16 @@ export const ReservationsDataTable: React.FC<ReservationsDataTableProps> = ({
               <Printer className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Imprimir Relação</span>
             </Button>
-            <Button
-              size="sm"
-              onClick={onBroadcastSelected}
-              className="h-8 text-xs font-bold gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white"
-            >
-              <Send className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Disparo WhatsApp</span>
-            </Button>
+            {canBroadcast && (
+              <Button
+                size="sm"
+                onClick={onBroadcastSelected}
+                className="h-8 text-xs font-bold gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Disparo WhatsApp</span>
+              </Button>
+            )}
             <Button
               size="icon"
               variant="ghost"

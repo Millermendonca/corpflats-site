@@ -106,6 +106,12 @@ export const ReservationQuickDrawer: React.FC<ReservationQuickDrawerProps> = ({
   const [resendingCommId, setResendingCommId] = useState<string | number | null>(null);
   const [busyOp, setBusyOp] = useState(false);
 
+  useEffect(() => {
+    if (!open) {
+      setActiveTab("overview");
+    }
+  }, [open]);
+
   // Navegação rápida pelo teclado (Alt + Setas ↑/↓) estilo Mews / Cloudbeds
   useEffect(() => {
     if (!open) return;
