@@ -6,6 +6,7 @@ import {
   getListObservationsQueryKey,
 } from "@workspace/api-client-react"
 import { Shell } from "@/components/layout"
+import { useBackTabState } from "@/lib/back-navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -76,6 +77,7 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
 
   // Filtros
   const [filterStage, setFilterStage] = useState<string>("open_all")
+  useBackTabState(filterStage, setFilterStage, { id: "observations-stage-tabs" })
   const [filterFlat, setFilterFlat] = useState<string>("all")
   const [filterSpecialty, setFilterSpecialty] = useState<string>("all")
   const [searchQuery, setSearchQuery] = useState("")

@@ -31,6 +31,7 @@ export function createBackNavigationController(env: BackHistoryEnv) {
   let currentSearch = env.getSearch();
   let currentPageId = `gfm_page_${++pageSeq}`;
   let lastObservedState: any = env.getState();
+  let cleanHrefForPage: string | null = null;
 
   let ledger: BackLedgerStep[] = [];
   let isRestoringFromBack = false;
@@ -73,6 +74,7 @@ export function createBackNavigationController(env: BackHistoryEnv) {
     currentPageId = `gfm_page_${++pageSeq}`;
     ledger = [];
     pendingRewindTargetDepth = null;
+    cleanHrefForPage = null;
     lastObservedState = env.getState();
     if (scheduledHandle !== null) {
       env.cancelSchedule(scheduledHandle);
@@ -182,29 +184,41 @@ export function createBackNavigationController(env: BackHistoryEnv) {
   }
 
   function removeStepById(stepId: string | null | undefined) {
+    if (env.getPathname() !== currentPathname) {
+      resetForNewRoute();
+      return;
+    }
     if (!stepId) return;
     const before = ledger.length;
     ledger = ledger.filter((s) => s.id !== stepId);
     if (ledger.length !== before) {
-      if (env.getPathname() !== currentPathname) {
-        resetForNewRoute();
-        return;
-      }
       scheduleSync();
     }
   }
 
   function removeStepsBySource(sourceId: string) {
+    if (env.getPathname() !== currentPathname) {
+      resetForNewRoute();
+      return;
+    }
     if (!sourceId) return;
     const before = ledger.length;
     ledger = ledger.filter((s) => s.sourceId !== sourceId);
     if (ledger.length !== before) {
-      if (env.getPathname() !== currentPathname) {
-        resetForNewRoute();
-        return;
-      }
       scheduleSync();
     }
+  }
+
+  function handleExternalHistoryWrite(kind?: "push" | "replace") {
+    if (env.getPathname() !== currentPathname) {
+      resetForNewRoute();
+      return;
+    }
+    if (kind === "replace" && (ledger.length > 0 || getActualBrowserDepth() > 0)) {
+      cleanHrefForPage = env.getHref();
+    }
+    currentSearch = env.getSearch();
+    lastObservedState = env.getState();
   }
 
   function prepareOverlayNavigation(targetHref: string): { shouldReplace: boolean } {
@@ -250,6 +264,11 @@ export function createBackNavigationController(env: BackHistoryEnv) {
       const expectedDepth = pendingRewindTargetDepth;
       pendingRewindTargetDepth = null;
 
+      if (cleanHrefForPage && env.getHref() !== cleanHrefForPage) {
+        env.replaceState(curState, cleanHrefForPage);
+        currentSearch = env.getSearch();
+      }
+
       // If the user ALSO pressed Back beyond our programmatic rewind target, undo remaining steps down to actualDepth
       if (actualDepth < expectedDepth && ledger.length > actualDepth) {
         isRestoringFromBack = true;
@@ -272,6 +291,10 @@ export function createBackNavigationController(env: BackHistoryEnv) {
 
     // Normal user Back press on the current page: pop and undo in LIFO order down to actualDepth
     if (ledger.length > actualDepth) {
+      if (cleanHrefForPage && env.getHref() !== cleanHrefForPage) {
+        env.replaceState(curState, cleanHrefForPage);
+        currentSearch = env.getSearch();
+      }
       isRestoringFromBack = true;
       try {
         while (ledger.length > actualDepth) {
@@ -285,25 +308,31 @@ export function createBackNavigationController(env: BackHistoryEnv) {
     }
 
     // Stale orphan entry from an earlier visit to this same URL (e.g. tabs visited before navigating away via a link):
-    // Skip past ghost entries cleanly so the user never gets stuck on the same URL.
+    // Skip past ghost entries cleanly in BOTH Back and Forward directions so the user never gets stuck on the same URL.
     if (
       ledger.length === 0 &&
       nowPath === prevPath &&
-      nowSearch === prevSearch &&
-      prevState &&
-      typeof prevState === "object" &&
-      typeof prevState.__gfmPageId === "string" &&
-      prevState.__gfmPageId !== currentPageId
+      nowSearch === prevSearch
     ) {
-      const stalePageId = prevState.__gfmPageId;
-      const prevDepth = typeof prevState.__gfmDepth === "number" ? prevState.__gfmDepth : 1;
-      const currIsSameStale =
-        curState && typeof curState === "object" && curState.__gfmPageId === stalePageId;
-      const currDepth = currIsSameStale && typeof curState.__gfmDepth === "number" ? curState.__gfmDepth : 0;
+      const prevHasStalePage =
+        Boolean(prevState && typeof prevState === "object" && typeof prevState.__gfmPageId === "string" && prevState.__gfmPageId !== currentPageId);
+      const curHasStalePage =
+        Boolean(curState && typeof curState === "object" && typeof curState.__gfmPageId === "string" && curState.__gfmPageId !== currentPageId);
 
-      if (!currIsSameStale || currDepth < prevDepth) {
-        env.back();
-      } else if (currDepth > prevDepth) {
+      if (prevHasStalePage) {
+        const stalePageId = prevState.__gfmPageId;
+        const prevDepth = typeof prevState.__gfmDepth === "number" ? prevState.__gfmDepth : 1;
+        const currIsSameStale =
+          Boolean(curState && typeof curState === "object" && curState.__gfmPageId === stalePageId);
+        const currDepth = currIsSameStale && typeof curState.__gfmDepth === "number" ? curState.__gfmDepth : 0;
+
+        if (!currIsSameStale || currDepth < prevDepth) {
+          env.back();
+        } else if (currDepth > prevDepth) {
+          env.forward();
+        }
+      } else if (curHasStalePage) {
+        // Stepped Forward from a base (non-step) page entry onto a stale ghost entry
         env.forward();
       }
     }
@@ -314,6 +343,7 @@ export function createBackNavigationController(env: BackHistoryEnv) {
     removeStepById,
     removeStepsBySource,
     prepareOverlayNavigation,
+    handleExternalHistoryWrite,
     handlePopState,
     getLedger: () => [...ledger],
     getIsRestoringFromBack: () => isRestoringFromBack,
@@ -331,6 +361,14 @@ function getBrowserController(): ControllerInstance | null {
     const rawPushState = window.history.pushState.bind(window.history);
     const rawReplaceState = window.history.replaceState.bind(window.history);
     let internalHistoryMutation = false;
+
+    window.history.pushState = function (data: any, unused: string, url?: string | URL | null) {
+      const result = rawPushState(data, unused, url);
+      if (!internalHistoryMutation) {
+        singletonController?.handleExternalHistoryWrite("push");
+      }
+      return result;
+    };
 
     // Preserve active in-page back-ledger metadata when external callers (e.g., query-param cleanup
     // `window.history.replaceState({}, "", cleanUrl)`) update the URL on the same pathname.
@@ -358,7 +396,11 @@ function getBrowserController(): ControllerInstance | null {
           }
         }
       }
-      return rawReplaceState(data, unused, url);
+      const result = rawReplaceState(data, unused, url);
+      if (!internalHistoryMutation) {
+        singletonController?.handleExternalHistoryWrite("replace");
+      }
+      return result;
     };
 
     singletonController = createBackNavigationController({

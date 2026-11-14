@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react"
 import { useLocation } from "wouter"
 import { FrozenSlot } from "@/lib/render-freeze"
+import { useBackTabState } from "@/lib/back-navigation"
 import { Shell } from "@/components/layout"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -189,6 +190,10 @@ export default function FiscalInvoicesPage() {
 
   // ── Emissor Studio: Chat IA vs Formulário Estruturado ───────────────────────
   const [studioInputMode, setStudioInputMode] = useState<"chat" | "form">("chat")
+  useBackTabState(studioInputMode, setStudioInputMode, {
+    id: "nfse-studio-mode-tabs",
+    disabled: activeTab !== "studio",
+  })
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",

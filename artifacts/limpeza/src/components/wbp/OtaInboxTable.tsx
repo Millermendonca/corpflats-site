@@ -27,6 +27,7 @@ import {
   TableRow 
 } from "@/components/ui/table";
 import { OtaReservationItem } from "./types";
+import { useBackTabState } from "@/lib/back-navigation";
 
 interface OtaInboxTableProps {
   items: OtaReservationItem[];
@@ -42,6 +43,7 @@ export const OtaInboxTable: React.FC<OtaInboxTableProps> = ({
   isLoading,
 }) => {
   const [filterTab, setFilterTab] = useState<FilterTab>("all");
+  useBackTabState(filterTab, setFilterTab, { id: "ota-inbox-filter-tabs" });
   const [searchQuery, setSearchQuery] = useState("");
 
   // Deduplication guarantee: Keep only the latest entry per external orderId / channelReservationId

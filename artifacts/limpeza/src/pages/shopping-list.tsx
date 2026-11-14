@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { Shell } from "@/components/layout"
+import { useBackTabState } from "@/lib/back-navigation"
 import { useGetMe } from "@workspace/api-client-react"
 import { useToast } from "@/hooks/use-toast"
 import { ToastAction } from "@/components/ui/toast"
@@ -157,6 +158,7 @@ export default function ShoppingListPage() {
   const [catalog, setCatalog] = useState<CatalogEntry[]>(() => loadCachedCatalog())
   const [loading, setLoading] = useState(() => loadCachedShoppingItems().length === 0)
   const [activeTab, setActiveTab] = useState<"pending" | "completed">("pending")
+  useBackTabState(activeTab, setActiveTab, { id: "shopping-list-tabs" })
   const [editingId, setEditingId] = useState<string | null>(null)
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
 

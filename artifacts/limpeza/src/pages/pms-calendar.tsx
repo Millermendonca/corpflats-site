@@ -3,6 +3,7 @@ import { useLocation } from "wouter"
 import { useGetMe, useGetSettings } from "@workspace/api-client-react"
 import { getCheckinUrl } from "@/lib/checkin-url"
 import { FrozenSlot } from "@/lib/render-freeze"
+import { useBackLayer, useBackTabState } from "@/lib/back-navigation"
 import { Shell } from "@/components/layout"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -469,6 +470,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   const [selectedRes, setSelectedRes] = useState<any | null>(null)
   const [savingRes, setSavingRes] = useState(false)
   const [mobileCardResId, setMobileCardResId] = useState<number | string | null>(null)
+  useBackLayer(mobileCardResId !== null, () => setMobileCardResId(null), "pms-mobile-res-card")
 
   // Export CSV States
   const [csvExportModalOpen, setCsvExportModalOpen] = useState(false)
@@ -1016,6 +1018,10 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   // Modal Tabs, Audit Logs & Communications State
   const [resModalTab, setResModalTab] = useState<"reservation" | "payments" | "audit" | "communications" | "links" | "details">("reservation")
   const [commSubTab, setCommSubTab] = useState<"whatsapp" | "email">("whatsapp")
+  useBackTabState(commSubTab, setCommSubTab, {
+    id: "pms-comm-subtabs",
+    disabled: !resModalOpen || resModalTab !== "communications",
+  })
   const [auditLogs, setAuditLogs] = useState<any[]>([])
   const [loadingAudit, setLoadingAudit] = useState(false)
   const [communications, setCommunications] = useState<any[]>([])

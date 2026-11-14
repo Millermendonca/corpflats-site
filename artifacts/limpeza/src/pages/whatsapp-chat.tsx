@@ -941,7 +941,16 @@ export default function WhatsappChat() {
     }
   }, [messages.length])
 
-  // Smart Back Navigation: filter tabs, expanded editor, and active conversation
+  // Smart Back Navigation: filter tabs, expanded editor, active conversation, and mobile/laptop guest dossier drawer
+  const [isOverlayDossierViewport, setIsOverlayDossierViewport] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 1280 : false
+  )
+  useEffect(() => {
+    const syncViewport = () => setIsOverlayDossierViewport(window.innerWidth < 1280)
+    window.addEventListener('resize', syncViewport)
+    return () => window.removeEventListener('resize', syncViewport)
+  }, [])
+
   useBackTabState(filterTab, setFilterTab, { id: 'wa-filter-tabs' })
   useBackLayer(isExpandedEditor, () => setIsExpandedEditor(false), 'wa-expanded-editor')
   useBackLayer(
@@ -953,6 +962,11 @@ export default function WhatsappChat() {
       setActiveConversation(null)
     },
     'wa-active-conversation'
+  )
+  useBackLayer(
+    Boolean(activeConversation && showDossier && isOverlayDossierViewport),
+    () => setShowDossier(false),
+    'wa-dossier-drawer'
   )
 
   // Select conversation
@@ -1501,7 +1515,7 @@ export default function WhatsappChat() {
   const activeStageStyle = STAGE_BADGE_MAP[sofiaAssist?.stayStage || 'sem_reserva'] || STAGE_BADGE_MAP.sem_reserva
 
   const mainContent = (
-    <div className={`flex ${isStandaloneApp ? 'h-[100dvh]' : 'h-[calc(100dvh-64px)] md:h-[100dvh]'} w-full overflow-hidden bg-slate-100 dark:bg-slate-950 font-sans relative`}>
+    <div className={`flex ${isStandaloneApp ? 'h-[100dvh]' : '-mb-24 md:mb-0 h-[calc(100dvh-7.75rem)] md:flex-1 md:min-h-0 md:h-full'} w-full overflow-hidden bg-slate-100 dark:bg-slate-950 font-sans relative`}>
 
       {/* Hidden Direct File & Camera Inputs */}
       <input

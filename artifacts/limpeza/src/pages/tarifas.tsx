@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react"
 import { Shell } from "@/components/layout"
+import { useBackTabState } from "@/lib/back-navigation"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -130,6 +131,10 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
   const [activeTab, setActiveTab] = useState<string>(resolveInitialTab)
   // Sub-aba dentro de Engenharia SEBRAE & Custos
   const [sebraeSubView, setSebraeSubView] = useState<"all" | "calculadora" | "custos" | "analises">("all")
+  useBackTabState(sebraeSubView, setSebraeSubView, {
+    id: "tarifas-sebrae-subtabs",
+    disabled: activeTab !== "sebrae",
+  })
 
   // Estados de Dados e Carregamento
   const [loading, setLoading] = useState(true)

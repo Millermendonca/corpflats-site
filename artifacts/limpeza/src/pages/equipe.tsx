@@ -1492,11 +1492,21 @@ export function TeamPage() {
                   </p>
                 </div>
                 <select
-                  value={permissionsRole}
+                  value={
+                    permissionsModules.length === THAMIRIS_CLEAN_MODULES.length &&
+                    THAMIRIS_CLEAN_MODULES.every((m) => permissionsModules.includes(m))
+                      ? "clean_ops"
+                      : permissionsRole
+                  }
                   onChange={(e) => {
                     const r = e.target.value;
-                    setPermissionsRole(r);
-                    setPermissionsModules(getDefaultModulesForRole(r));
+                    if (r === "clean_ops") {
+                      setPermissionsRole("admin");
+                      setPermissionsModules([...THAMIRIS_CLEAN_MODULES]);
+                    } else {
+                      setPermissionsRole(r);
+                      setPermissionsModules(getDefaultModulesForRole(r));
+                    }
                   }}
                   disabled={permissionsUser?.role === "dev" && !isDev}
                   className="h-8 rounded-xl border border-input bg-background px-2.5 py-1 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring font-medium"
@@ -1505,7 +1515,8 @@ export function TeamPage() {
                   <option value="recepcao">🛎️ Recepção / Portaria</option>
                   <option value="anserve_repositora">📦 Anserve - Repositora</option>
                   <option value="anserve_gestor">🏢 Anserve - Gestor / Supervisão</option>
-                  <option value="admin">👔 Administrador</option>
+                  <option value="clean_ops">✨ Perfil Limpo (Operação & Notas)</option>
+                  <option value="admin">👔 Administrador (Completo)</option>
                   {isDev && <option value="dev">🛠️ Desenvolvedor</option>}
                 </select>
               </div>

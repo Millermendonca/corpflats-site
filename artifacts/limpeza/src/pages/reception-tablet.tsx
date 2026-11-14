@@ -16,7 +16,7 @@ import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { getCheckinUrl } from "@/lib/checkin-url"
 import { useToast } from "@/hooks/use-toast"
-import { useBackLayer, useBackTabState } from "@/lib/back-navigation"
+import { useBackTabState } from "@/lib/back-navigation"
 import { formatSmartPhone } from "@/lib/phone-mask"
 import { FrozenSlot } from "@/lib/render-freeze"
 
@@ -114,10 +114,9 @@ export default function ReceptionTablet() {
   const [modalGuestIndex, setModalGuestIndex] = useState(1)
   const [modalViewMode, setModalViewMode] = useState<"pdf" | "data">("pdf")
 
-  // Visualizador Ampliado de Fotos (Zoom / Lightbox)
+  // Visualizador Ampliado de Fotos (Zoom / Lightbox) — <Dialog> já registra useBackLayer automaticamente
   const [zoomedPhoto, setZoomedPhoto] = useState<{ url: string; title: string } | null>(null)
   useBackTabState(activeTab, setActiveTab, { id: "reception-main-tabs" })
-  useBackLayer(Boolean(zoomedPhoto), () => setZoomedPhoto(null), "reception-zoom-photo")
 
   // Diálogo de Liberação Forçada de Quarto em Limpeza (apenas janela regular >= 14:00)
   const [forceCheckinItem, setForceCheckinItem] = useState<any | null>(null)

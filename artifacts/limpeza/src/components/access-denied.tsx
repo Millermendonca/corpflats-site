@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { ShieldAlert, LogIn, LayoutDashboard, Home } from "lucide-react"
-import { hasModuleAccess, canonicalizeRoute, getDefaultModulesForRole } from "@/lib/permissions"
+import { hasModuleAccess, resolveInitialRouteForUser } from "@/lib/permissions"
 
 interface AccessDeniedProps {
   moduleName?: string
@@ -36,12 +36,8 @@ export function AccessDenied({ moduleName = "este serviço" }: AccessDeniedProps
   }
 
   const currentUser = user as any
-  const hasDashboard = hasModuleAccess(currentUser, "/dashboard")
-  const userModules = Array.isArray(currentUser?.allowedModules)
-    ? currentUser.allowedModules
-    : getDefaultModulesForRole(currentUser?.role)
-  const candidate = userModules.find((m: string) => hasModuleAccess(currentUser, m)) || "/reservar"
-  const fallbackRoute = hasDashboard ? "/dashboard" : canonicalizeRoute(candidate)
+  const fallbackRoute = resolveInitialRouteForUser(currentUser)
+  const isGovernanceFallback = fallbackRoute === "/dashboard"
 
   return (
     <Shell>
@@ -79,7 +75,7 @@ export function AccessDenied({ moduleName = "este serviço" }: AccessDeniedProps
                 onClick={() => setLocation(fallbackRoute)}
                 className="w-full bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 font-bold h-11 rounded-xl text-xs gap-2"
               >
-                {hasDashboard ? (
+                {isGovernanceFallback ? (
                   <>
                     <LayoutDashboard className="w-4 h-4" />
                     <span>Ir para Painel de Governança</span>
@@ -87,7 +83,7 @@ export function AccessDenied({ moduleName = "este serviço" }: AccessDeniedProps
                 ) : (
                   <>
                     <Home className="w-4 h-4" />
-                    <span>Ir para Início</span>
+                    <span>Ir para Tela Inicial</span>
                   </>
                 )}
               </Button>

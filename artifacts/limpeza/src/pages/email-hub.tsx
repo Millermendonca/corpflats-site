@@ -2156,7 +2156,7 @@ export default function EmailHub() {
         className={`flex flex-col w-full px-2 pt-2 pb-1.5 md:px-4 md:py-3 overflow-hidden select-none ${
           isFullscreenApp
             ? "fixed inset-0 z-40 h-[100dvh] bg-background"
-            : "-mb-20 md:mb-0 h-[calc(100dvh-7.5rem)] md:h-[100dvh] min-h-[420px] md:min-h-[560px]"
+            : "-mb-20 md:mb-0 h-[calc(100dvh-7.5rem)] md:flex-1 md:min-h-0 md:h-full min-h-[420px] md:min-h-[520px]"
         }`}
       >
         <FrozenSlot

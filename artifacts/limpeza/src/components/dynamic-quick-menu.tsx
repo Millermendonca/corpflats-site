@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Link, useLocation } from "wouter";
+import { useQueryClient } from "@tanstack/react-query";
+import { getGetMeQueryKey } from "@workspace/api-client-react";
 import {
   Menu,
   Pin,
@@ -248,6 +250,7 @@ export function useDynamicQuickMenu(
   accessibleItems: QuickMenuItem[],
   location: string
 ) {
+  const queryClient = useQueryClient();
   const userIdentity = `${effectiveUser?.id || ""}_${effectiveUser?.username || ""}`;
   const [state, setState] = useState<QuickMenuState>(() =>
     loadInitialQuickMenuState(effectiveUser, accessibleItems.length)
@@ -256,7 +259,27 @@ export function useDynamicQuickMenu(
   const [mobileGridOpen, setMobileGridOpen] = useState(false);
 
   const syncTimerRef = useRef<any>(null);
+  const pendingSyncPayloadRef = useRef<QuickMenuState | null>(null);
   const lastTrackedModuleRef = useRef<string>("");
+
+  const flushPendingServerSync = useCallback((useKeepalive = false) => {
+    const payload = pendingSyncPayloadRef.current;
+    if (!payload) return;
+    pendingSyncPayloadRef.current = null;
+    if (syncTimerRef.current) {
+      clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = null;
+    }
+    try {
+      fetch("/api/auth/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        keepalive: useKeepalive,
+        body: JSON.stringify({ menuPreferences: payload }),
+      }).catch(() => {});
+    } catch {}
+  }, []);
 
   // Re-hydrate when user identity changes (e.g. login / account switch)
   useEffect(() => {
@@ -274,31 +297,42 @@ export function useDynamicQuickMenu(
       // Only sync to server for real session users (skip anonymous pin routes without session cookie)
       if (!effectiveUser?.id) return;
 
+      // Keep React Query /api/auth/me cache in sync so Shell remounts never revert to stale server prefs
+      queryClient.setQueryData(getGetMeQueryKey(), (old: any) =>
+        old && typeof old === "object" ? { ...old, menuPreferences: next } : old
+      );
+
+      pendingSyncPayloadRef.current = next;
       if (syncTimerRef.current) {
         clearTimeout(syncTimerRef.current);
       }
       syncTimerRef.current = setTimeout(
-        async () => {
-          try {
-            await fetch("/api/auth/preferences", {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              credentials: "include",
-              body: JSON.stringify({ menuPreferences: next }),
-            });
-          } catch {}
+        () => {
+          flushPendingServerSync(false);
         },
         immediateServerSync ? 350 : 2200
       );
     },
-    [effectiveUser]
+    [effectiveUser, queryClient, flushPendingServerSync]
   );
 
   useEffect(() => {
-    return () => {
-      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        flushPendingServerSync(true);
+      }
     };
-  }, []);
+    const handlePageHide = () => {
+      flushPendingServerSync(true);
+    };
+    window.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      window.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", handlePageHide);
+      flushPendingServerSync(true);
+    };
+  }, [flushPendingServerSync]);
 
   // Track usage automatically whenever user navigates to a module
   useEffect(() => {
@@ -770,7 +804,7 @@ export function MobileQuickMenuBar({
       <div
         role="toolbar"
         aria-label="Atalhos rápidos minimizados"
-        className="md:hidden print:hidden fixed bottom-3 left-3 z-40 flex items-center gap-1 px-2 py-1.5 rounded-full bg-card/95 backdrop-blur-md border border-border shadow-2xl"
+        className="md:hidden print:hidden fixed bottom-[max(0.75rem,env(safe-area-inset-bottom,0px))] left-3 z-40 flex items-center gap-1 px-2 py-1.5 rounded-full bg-card/95 backdrop-blur-md border border-border shadow-2xl"
       >
         <button
           type="button"
@@ -778,7 +812,7 @@ export function MobileQuickMenuBar({
           aria-label="Expandir barra inferior de atalhos"
           className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary text-primary-foreground text-[11px] font-extrabold shadow-xs"
         >
-          <Sparkles className="w-3.5 h-3.5" />
+          <Sparkles aria-hidden="true" className="w-3.5 h-3.5" />
           <span>Atalhos ({effectiveVisibleCount})</span>
         </button>
         <button
@@ -787,7 +821,7 @@ export function MobileQuickMenuBar({
           aria-label="Abrir menu completo por categorias"
           className="p-1.5 rounded-full text-foreground hover:bg-muted"
         >
-          <Menu className="w-4 h-4" />
+          <Menu aria-hidden="true" className="w-4 h-4" />
         </button>
       </div>
     );
@@ -809,7 +843,7 @@ export function MobileQuickMenuBar({
             className="fixed inset-0 bg-black/55 backdrop-blur-[1px] animate-in fade-in"
           />
 
-          <div className="relative z-10 bg-card border-t border-border rounded-t-3xl shadow-2xl p-3.5 pb-5 max-h-[82dvh] flex flex-col gap-3 animate-in slide-in-from-bottom duration-200">
+          <div className="relative z-10 bg-card border-t border-border rounded-t-3xl shadow-2xl p-3.5 pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] max-h-[82dvh] flex flex-col gap-3 animate-in slide-in-from-bottom duration-200">
             <div className="w-10 h-1 rounded-full bg-muted-foreground/30 mx-auto -mt-1" />
 
             <div className="flex items-center justify-between gap-2">
@@ -991,7 +1025,7 @@ export function MobileQuickMenuBar({
       )}
 
       {/* Barra Inferior em 1 Linha (Celular) */}
-      <div className="md:hidden print:hidden fixed bottom-0 left-0 right-0 z-40 bg-card/95 backdrop-blur-md border-t border-border px-1.5 py-1 flex items-center gap-1 shadow-2xl">
+      <div className="md:hidden print:hidden fixed bottom-0 left-0 right-0 z-40 bg-card/95 backdrop-blur-md border-t border-border px-1.5 pt-1 pb-[max(0.25rem,env(safe-area-inset-bottom,0px))] flex items-center gap-1 shadow-2xl">
         <div className="flex-1 min-w-0 flex items-center gap-0.5 overflow-x-auto no-scrollbar">
           {visibleItems.map((item) => {
             const canon = canonicalizeRoute(item.href);

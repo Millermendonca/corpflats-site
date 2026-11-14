@@ -18918,6 +18918,12 @@ export function sanitizeUserMenuPreferences(raw, existing = null) {
     base.mobileMode = raw.mobileMode;
   }
 
+  const rawUpdatedAt = Number(raw.updatedAt);
+  if (Number.isFinite(rawUpdatedAt) && rawUpdatedAt > 0) {
+    base.updatedAt = Math.floor(rawUpdatedAt);
+  } else {
+    base.updatedAt = Date.now();
+  }
 
   return base;
 }

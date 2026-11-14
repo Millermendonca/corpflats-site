@@ -17,7 +17,7 @@ import {
   CalendarDays, Users, Tablet, Globe, DollarSign, Bot, FileText, Coffee, Menu, X, Search, ChevronRight,
   CreditCard, Palette, Coins, ScrollText, Building2, Package, TrendingUp, Car, ThumbsUp, MessageSquare,
   Smartphone, ShoppingCart, Wallet, Mail, Workflow, Wrench, Activity,
-  Inbox, Pin, PinOff, ChevronDown, UserCheck, Send
+  Inbox, Pin, PinOff, ChevronDown, UserCheck, Send, ListOrdered
 } from "lucide-react"
 import { Button } from "./ui/button"
 import { Skeleton } from "./ui/skeleton"
@@ -28,7 +28,7 @@ import { Input } from "./ui/input"
 import { Label } from "./ui/label"
 import { QuickShoppingModal } from "./quick-shopping-modal"
 import { CorpFlatsIcon, CorpFlatsWordmark } from "./brand-logo"
-import { hasModuleAccess } from "@/lib/permissions"
+import { hasModuleAccess, canonicalizeRoute } from "@/lib/permissions"
 import { useBackLayer, navigateFromOverlay } from "@/lib/back-navigation"
 import {
   useDynamicQuickMenu,
@@ -219,7 +219,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       clearCategoryTrayNotification("maintenance")
     } else if (location === "/dashboard" || location.startsWith("/tarefas")) {
       clearCategoryTrayNotification("cleaning")
-    } else if (location.startsWith("/reservas") || location.startsWith("/portaria")) {
+    } else if (location.startsWith("/reservas") || location.startsWith("/lista-reservas") || location.startsWith("/central-reservas") || location.startsWith("/portaria")) {
       clearCategoryTrayNotification("reservations")
     }
   }, [location])
@@ -327,32 +327,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const isAnserveRepositora = role === "anserve_repositora"
   const isAnserveGestor = role === "anserve_gestor"
 
-  // Helper de checagem de rota ativa
+  // Helper de checagem de rota ativa (cobre todos os aliases canônicos + sub-rotas dedicadas)
   const isItemActive = (href: string) => {
     if (location === href) return true
-    if (href === "/anserve" && (location === "/frigobar-gestao")) return true
-    if (href === "/frigobar-notas" && (location === "/anserve/notas" || location === "/notas-frigobar")) return true
-    if (href === "/frigobar-reposicao" && (location === "/anserve/reposicao")) return true
-    if (href === "/frigobar" && (location === "/frigobar-admin" || location === "/minibar" || location === "/minibar-admin" || location === "/admin/frigobar")) return true
-    if (href === "/reservas" && (location === "/relatorio-reservas" || location === "/relatorios-reservas" || location === "/pms-reports")) return false
-    if (href === "/tarifas" && (location === "/precificacao-sebrae" || location === "/pricing-sebrae" || location === "/gestao-tarifas" || location === "/tabela-tarifas" || location === "/precos")) return true
-    if (href === "/pagamentos" && (location === "/payments" || location === "/recebiveis" || location === "/taxas")) return true
-    if (href === "/funil-vendas" && (location === "/trafego" || location === "/marketing" || location === "/ads")) return true
-    if (href === "/financeiro" && (location === "/financial" || location === "/finance" || location === "/precificacao" || location === "/dre" || location === "/contas" || location === "/fluxo-caixa")) return true
-    if (href === "/equipe" && (location === "/usuarios" || location === "/usuarios-equipe" || location === "/users")) return true
-    if (href === "/rh" && (location === "/rh" || location === "/colaboradores" || location === "/funcionarios" || location === "/recursos-humanos" || location === "/admin/rh" || location === "/gestao-rh")) return true
-    if (href === "/configuracoes" && (location === "/settings" || location === "/configuracao" || location === "/ajustes")) return true
-    if (href === "/zapi-conexao" && (location === "/conexao-zapi" || location === "/sistema/zapi" || location === "/zapi")) return true
-    if (href === "/emails" && (location === "/email-hub" || location === "/gerenciador-emails")) return true
-    if (href === "/jornada-reservas" && (location === "/jornada-comunicacao" || location === "/fluxo-reservas" || location === "/mapa-jornada" || location === "/jornada")) return true
-    if (href === "/monitor-servidor" && (location === "/servidor" || location === "/server-monitor")) return true
-    if (href === "/ia-status" && (location === "/ai-status" || location === "/status-ia")) return true
-    if (href === "/logs" && (location === "/auditoria" || location === "/system-logs" || location === "/audit")) return true
+    if (href === "/reservas" && (location === "/relatorio-reservas" || location === "/relatorios-reservas" || location === "/pms-reports" || location === "/painel-aovivo")) return false
     if (href === "/raio-x-flats" && (location === "/raio-x-flats" || location === "/diario-flats" || location === "/hub-manutencao" || location === "/servicos" || location === "/surveys")) return true
-    if (href === "/observations" && (location === "/observations" || location === "/ocorrencias" || location === "/avarias")) return true
-    if (href === "/tasks" && (location === "/tasks" || location === "/tarefas")) return true
-    if (href === "/disparo-inteligente" && (location === "/disparo-inteligente" || location === "/whatsapp-broadcast" || location === "/broadcast" || location === "/campanhas-whatsapp")) return true
-    return false
+    return canonicalizeRoute(location) === canonicalizeRoute(href)
   }
 
   // Estrutura Categorizada dos Módulos do Sistema em 6 Categorias por Prioridade de Uso
@@ -363,8 +343,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
       title: "📅 Reservas & Hospedagem",
       items: [
         { href: "/reservas", label: "Mapa de Reservas (PMS)", icon: CalendarDays, description: "Calendário de ocupação e reservas" },
+        { href: "/lista-reservas", label: "Lista de Reservas (Central)", icon: ListOrdered, badge: quarantineCount > 0 ? quarantineCount : null, description: "Feed ao vivo por ordem de chegada de todos os canais, filtros, quarentena OTA e ações rápidas" },
         ...(isAdminOrDev ? [{ href: "/painel-aovivo", label: "Painel Ao Vivo (Monitor 32\")", icon: Activity, badge: "LIVE", description: "Centro de comando das 19 unidades, giro do dia, WhatsApp, NPS e financeiro" }] : []),
-        { href: "/caixa-entrada-ota", label: "Caixa de Entrada OTA", icon: Inbox, badge: quarantineCount > 0 ? quarantineCount : null, description: "Reservas Booking/Airbnb, quarentena e conciliação" },
         { href: "/relatorios-reservas", label: "Relatórios & Ocupação (PMS)", icon: TrendingUp, description: "Taxa de ocupação, diária média, RevPAR e ranking" },
         { href: "/crm", label: "Hóspedes & Empresas (CRM 360)", icon: Users, description: "LTV, fidelidade, preferências e faturamento PJ" },
         { href: "/portaria", label: "Terminal da Portaria (Tablet)", icon: Tablet, description: "Check-in presencial e liberação" },
@@ -498,9 +478,19 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const quickMenu = useDynamicQuickMenu(effectiveUser, allAccessibleQuickItems, location)
 
   // Smart Back Navigation para gavetas e dropdowns do Shell
+  // Nota: A gaveta retrátil por hover no Desktop (!isPinned && isDesktopOpen) NÃO deve empurrar histórico
+  // no navegador a cada movimento do mouse na borda esquerda; apenas responde à tecla Escape.
   useBackLayer(mobileMenuOpen, () => setMobileMenuOpen(false), "shell-mobile-drawer")
-  useBackLayer(!isPinned && isDesktopOpen, () => setIsDesktopOpen(false), "shell-desktop-drawer")
   useBackLayer(notifDropdownOpen, () => setNotifDropdownOpen(false), "shell-notif-dropdown")
+
+  useEffect(() => {
+    if (isPinned || !isDesktopOpen) return
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsDesktopOpen(false)
+    }
+    window.addEventListener("keydown", handleEsc)
+    return () => window.removeEventListener("keydown", handleEsc)
+  }, [isPinned, isDesktopOpen])
 
   const canAccessNotifications = Boolean(
     effectiveUser && hasModuleAccess(effectiveUser as any, "/notificacoes")
