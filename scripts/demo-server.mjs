@@ -35866,6 +35866,546 @@ app.get("/api/pms/calendar", (req, res) => {
   });
 });
 
+// ── Central / Lista Geral de Reservas (Omnichannel + Quarentena OTA) ────────
+app.get("/api/pms/reservations/central", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "reception" && userAuth.role !== "recepcao")) {
+    return res.status(403).json({ error: "Acesso negado. Apenas administradores e recepção têm acesso à Central de Reservas." });
+  }
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+
+  try {
+    const todayStr = getTodayStr();
+    sweepExpiredPreReservations(db, saveDatabase);
+
+    const cleaningRequestsToday = getRequestsForDate(todayStr);
+    const cleaningByFlat = new Map();
+    for (const cr of (cleaningRequestsToday || [])) {
+      if (
+        cr.isInstructionOnly ||
+        cr.cleaningRequest?.isInstructionOnly ||
+        cr.source === "manual_instruction" ||
+        cr.cleaningRequest?.source === "manual_instruction" ||
+        cr.type === "bed_adjustment_only" ||
+        cr.type === "instruction" ||
+        cr.cleaningRequest?.type === "bed_adjustment_only" ||
+        cr.cleaningRequest?.type === "instruction"
+      ) {
+        continue;
+      }
+      const st = cr.cleaningRequest?.status || cr.status;
+      let normClean = "clean";
+      if (st === "cleaning_now" || st === "in_progress") normClean = "cleaning_now";
+      else if (st === "dirty" || st === "pending") normClean = "dirty";
+      if (cr.flatNumber) cleaningByFlat.set(String(cr.flatNumber), { status: normClean, isVacant: Boolean(cr.isVacant) });
+      if (cr.flatId) cleaningByFlat.set(`id:${cr.flatId}`, { status: normClean, isVacant: Boolean(cr.isVacant) });
+    }
+
+    const flats = (db.flats || [])
+      .filter(f => f.isActive !== false)
+      .sort((a, b) => String(a.number).localeCompare(String(b.number), undefined, { numeric: true }))
+      .map(f => {
+        const cleanInfo = cleaningByFlat.get(String(f.number)) || cleaningByFlat.get(`id:${f.id}`);
+        return {
+          id: f.id,
+          number: String(f.number),
+          name: f.name || `Flat ${f.number}`,
+          floor: f.floor || null,
+          cleaningStatus: cleanInfo?.status || "clean"
+        };
+      });
+
+    const { guestsById, guestsByDoc, guestsByPhone, guestsByName } = getGuestIndexes();
+    const companiesById = new Map((db.companies || []).map(c => [String(c.id), c]));
+    const agenciesById = new Map((db.agencies || []).map(a => [String(a.id), a]));
+
+    const invoicesByRes = new Map();
+    for (const inv of (db.invoices || [])) {
+      if (!inv || inv.status === "cancelada") continue;
+      if (inv.reservationId != null) invoicesByRes.set(`id:${inv.reservationId}`, inv);
+      if (inv.reservationCode) invoicesByRes.set(`code:${String(inv.reservationCode).toUpperCase()}`, inv);
+    }
+
+    const normalizeChannel = (rawChan, rObj) => {
+      const low = String(rawChan || "").trim().toLowerCase();
+      if (low.includes("booking")) return "booking";
+      if (low.includes("airbnb")) return "airbnb";
+      if (low === "b2b" || Boolean(rObj?.b2bReservationNumber) || rObj?.requesterType === "agency") return "b2b";
+      if (low === "site" || low === "site_direto" || low === "site_proprio" || low === "website" || low === "motor") return "site";
+      return "whatsapp";
+    };
+
+    const seenExternalOrders = new Set();
+    const seenResCodes = new Set();
+
+    const pmsRows = (db.reservations || [])
+      .filter(Boolean)
+      .map((r, idx) => {
+        const code = r.code || r.reservationCode || `RES-${r.flatNumber || "000"}-${String(r.id || idx + 1).padStart(4, "0")}`;
+        seenResCodes.add(String(code).toUpperCase());
+
+        const extOrder = String(
+          r.externalReservationNumber ||
+          r.b2bReservationNumber ||
+          r.channelReservationId ||
+          r.otaReservationCode ||
+          ""
+        ).trim();
+        if (extOrder) seenExternalOrders.add(extOrder.toUpperCase());
+
+        let matchedGuest = null;
+        if (r.guestId) {
+          const cand = guestsById.get(r.guestId);
+          if (cand && areGuestNamesCompatible(r.guestName, cand.fullName || cand.name)) matchedGuest = cand;
+        }
+        if (!matchedGuest && r.guestDocument) {
+          const cleanDoc = String(r.guestDocument).replace(/\D/g, "");
+          const cand = cleanDoc ? guestsByDoc.get(cleanDoc) : null;
+          if (cand && areGuestNamesCompatible(r.guestName, cand.fullName || cand.name)) matchedGuest = cand;
+        }
+        if (!matchedGuest && r.guestPhone) {
+          const cleanPhone = String(r.guestPhone).replace(/\D/g, "");
+          const cand = cleanPhone ? guestsByPhone.get(cleanPhone) : null;
+          if (cand && areGuestNamesCompatible(r.guestName, cand.fullName || cand.name)) matchedGuest = cand;
+        }
+        if (!matchedGuest && r.guestName) {
+          const cleanName = String(r.guestName).toLowerCase().trim();
+          const cand = guestsByName.get(cleanName);
+          if (cand && areGuestNamesCompatible(r.guestName, cand.fullName || cand.name)) matchedGuest = cand;
+        }
+
+        const matchedCompany = r.companyId ? companiesById.get(String(r.companyId)) : null;
+        const matchedAgency = r.agencyId ? agenciesById.get(String(r.agencyId)) : null;
+        const matchedInvoice = invoicesByRes.get(`id:${r.id}`) || invoicesByRes.get(`code:${String(code).toUpperCase()}`) || null;
+
+        const channel = normalizeChannel(r.channel, r);
+        const isOtaRes = channel === "booking" || channel === "airbnb";
+
+        // Cálculo de noites
+        let nights = 1;
+        if (r.checkinDate && r.checkoutDate) {
+          const dIn = new Date(`${r.checkinDate}T12:00:00Z`).getTime();
+          const dOut = new Date(`${r.checkoutDate}T12:00:00Z`).getTime();
+          if (!isNaN(dIn) && !isNaN(dOut) && dOut > dIn) {
+            nights = Math.max(1, Math.round((dOut - dIn) / (24 * 3600 * 1000)));
+          }
+        }
+
+        const totalAmount = Math.round((Number(r.totalAmount) || 0) * 100) / 100;
+        const adr = nights > 0 ? Math.round((totalAmount / nights) * 100) / 100 : totalAmount;
+
+        const hasPendingPartialExtension =
+          (r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial") &&
+          Number(r.paidAmount) > 0 &&
+          Number(r.paidAmount) < totalAmount - 0.01;
+        const isFaturado =
+          r.paymentMethod === "faturado_b2b" ||
+          r.paymentMethod === "boleto_faturado" ||
+          (typeof isFaturadoBoletoReservation === "function" && isFaturadoBoletoReservation(r));
+        const isPaid =
+          !hasPendingPartialExtension &&
+          ((isOtaRes && r.paymentCollect !== "Property") || r.paymentStatus === "pago_total" || r.paymentStatus === "pago");
+        const paidAmount = isPaid && totalAmount > 0 ? totalAmount : Math.round((Number(r.paidAmount) || 0) * 100) / 100;
+        const balanceDue = Math.max(0, Math.round((totalAmount - paidAmount) * 100) / 100);
+
+        // Estimativa / valor líquido descontando comissão OTA ou taxa de gateway
+        let commissionAmount = 0;
+        let netAmount = totalAmount;
+        if (r.b2bNetAmount != null && Number(r.b2bNetAmount) > 0) {
+          netAmount = Math.round(Number(r.b2bNetAmount) * 100) / 100;
+          commissionAmount = Math.max(0, Math.round((totalAmount - netAmount) * 100) / 100);
+        } else if (r.netAmount != null && Number(r.netAmount) > 0) {
+          netAmount = Math.round(Number(r.netAmount) * 100) / 100;
+          commissionAmount = Math.max(0, Math.round((totalAmount - netAmount) * 100) / 100);
+        } else if (channel === "booking") {
+          commissionAmount = Math.round(totalAmount * 0.15 * 100) / 100;
+          netAmount = Math.round((totalAmount - commissionAmount) * 100) / 100;
+        } else if (channel === "airbnb") {
+          commissionAmount = Math.round(totalAmount * 0.155 * 100) / 100;
+          netAmount = Math.round((totalAmount - commissionAmount) * 100) / 100;
+        } else if (r.paymentMethod === "cartao_credito" || r.paymentMethod === "mercadopago") {
+          commissionAmount = Math.round(totalAmount * 0.0399 * 100) / 100;
+          netAmount = Math.round((totalAmount - commissionAmount) * 100) / 100;
+        }
+
+        let financialBadge = "pendente";
+        if (isFaturado && balanceDue > 0.01) financialBadge = "faturado_pj";
+        else if (isOtaRes && r.paymentCollect === "Property" && balanceDue > 0.01) financialBadge = "cobrar_hotel";
+        else if (isOtaRes && balanceDue <= 0.01) financialBadge = "pago_ota";
+        else if (balanceDue <= 0.01 && totalAmount > 0) financialBadge = "pago";
+        else if (paidAmount > 0 && balanceDue > 0.01) financialBadge = "parcial";
+
+        // Status operacional canônico
+        const rawSt = String(r.status || "confirmada").toLowerCase().trim();
+        const flatClean = cleaningByFlat.get(String(r.flatNumber || "")) || cleaningByFlat.get(`id:${r.flatId}`);
+        const isCheckoutDone = Boolean(
+          r.checkoutDone ||
+          r.earlyCheckout ||
+          ["checkout", "completed", "checked_out", "finalizada", "concluida"].includes(rawSt)
+        );
+        const isCheckedInExplicit = Boolean(
+          r.actualCheckinAt ||
+          ["checkin", "in_house", "hospedado"].includes(rawSt)
+        );
+
+        let canonicalStatus = "confirmada";
+        if (["cancelada", "cancelled", "no_show"].includes(rawSt)) {
+          canonicalStatus = "cancelada";
+        } else if (rawSt === "expirada") {
+          canonicalStatus = "expirada";
+        } else if (rawSt === "pre_reserva") {
+          canonicalStatus = "pre_reserva";
+        } else if (isCheckoutDone || (r.checkoutDate && r.checkoutDate < todayStr)) {
+          canonicalStatus = "checked_out";
+        } else if (isCheckedInExplicit || (r.checkinDate && r.checkinDate <= todayStr && r.checkoutDate && r.checkoutDate > todayStr)) {
+          canonicalStatus = "hospedado";
+        }
+
+        // Timestamp de chegada da reserva no sistema (para ordenação cronológica de entrada)
+        const firstAuditTs = Array.isArray(r.auditLogs) && r.auditLogs.length > 0 ? r.auditLogs[0]?.timestamp : null;
+        const rawCreated = r.createdAt || firstAuditTs || r.updatedAt || null;
+        let receivedAtMs = rawCreated ? new Date(rawCreated).getTime() : NaN;
+        if (isNaN(receivedAtMs)) {
+          // Fallback determinístico preservando ordem de ID para registros legados sem createdAt
+          const baseFallback = r.checkinDate ? new Date(`${r.checkinDate}T09:00:00-03:00`).getTime() : 1700000000000;
+          receivedAtMs = (isNaN(baseFallback) ? 1700000000000 : baseFallback) + (Number(r.id) || idx);
+        }
+        const receivedAtIso = new Date(receivedAtMs).toISOString();
+
+        const createdByName =
+          r.createdBy?.name ||
+          (typeof r.createdBy === "string" ? r.createdBy : null) ||
+          (Array.isArray(r.auditLogs) && r.auditLogs[0]?.actor?.name) ||
+          (channel === "booking"
+            ? "Booking.com Sync"
+            : channel === "airbnb"
+              ? "Airbnb Sync"
+              : channel === "site"
+                ? "Site Direto"
+                : channel === "b2b"
+                  ? "Portal B2B / Agência"
+                  : "Recepção / IA WhatsApp");
+
+        const guestPhone = r.guestPhone || matchedGuest?.phone || r.guests?.[0]?.phone || "";
+        const guestEmail = r.guestEmail || matchedGuest?.email || r.guests?.[0]?.email || "";
+        const guestDocument =
+          r.guestDocument ||
+          matchedGuest?.documentNumber ||
+          matchedGuest?.document ||
+          r.guests?.[0]?.cpf ||
+          r.guests?.[0]?.document ||
+          "";
+        const companyName =
+          r.companyName ||
+          matchedCompany?.tradeName ||
+          matchedCompany?.name ||
+          r.agencyTradeName ||
+          r.agencyName ||
+          matchedAgency?.tradeName ||
+          matchedAgency?.name ||
+          matchedGuest?.companyName ||
+          "";
+
+        const includeBreakfast = Boolean(
+          r.includeBreakfast ||
+          r.hasBreakfast ||
+          r.ratePlan === "with_breakfast" ||
+          r.ratePlan === "com_cafe" ||
+          r.notes?.toLowerCase().includes("café") ||
+          r.notes?.toLowerCase().includes("cafe")
+        );
+
+        const fnrhCompleted = Boolean(
+          r.preCheckinCompleted ||
+          r.fnrhCompleted ||
+          r.fnrhSignedAt ||
+          r.fnrhStatus === "completed" ||
+          r.fnrhStatus === "signed" ||
+          (Boolean(r.docPhotoUrl || matchedGuest?.docPhotoUrl) && Boolean(guestDocument))
+        );
+
+        const cardLast4 =
+          r.cardLast4 ||
+          (r.b2bCardMasked ? String(r.b2bCardMasked).replace(/\D/g, "").slice(-4) : "") ||
+          "";
+
+        // Objeto leve para ações sem carregar imagens base64 pesadas na listagem
+        const liteRaw = { ...r };
+        const hasDocPhoto = Boolean(liteRaw.docPhotoUrl || matchedGuest?.docPhotoUrl);
+        delete liteRaw.docPhotoUrl;
+        delete liteRaw.auditLogs;
+        delete liteRaw.fnrhAuditTrail;
+
+        return {
+          uid: `pms_${r.id || code}`,
+          sourceType: "pms",
+          id: r.id,
+          numericSortTie: Number(r.id) || idx,
+          code,
+          externalOrderId: extOrder || null,
+          receivedAtIso,
+          receivedAtMs,
+          createdByName,
+          channel,
+          rawChannel: r.channel || "whatsapp",
+          guestId: r.guestId || matchedGuest?.id || null,
+          guestName: r.guestName || matchedGuest?.fullName || matchedGuest?.name || r.guests?.[0]?.name || "Hóspede Sem Nome",
+          guestPhone,
+          guestEmail,
+          guestDocument,
+          adults: Number(r.adults) || 1,
+          children: Number(r.children) || 0,
+          guestCount: Math.max(1, Number(r.guestCount) || ((Number(r.adults) || 1) + (Number(r.children) || 0))),
+          companionsCount: Array.isArray(r.guests) ? Math.max(0, r.guests.length - 1) : 0,
+          companyId: r.companyId || null,
+          companyName,
+          agencyName: r.agencyTradeName || r.agencyName || matchedAgency?.tradeName || "",
+          isCorporateOrB2b: Boolean(companyName || channel === "b2b" || r.requesterType === "company" || r.requesterType === "agency"),
+          isMonthlyGuest: Boolean(r.isMonthlyGuest || r.clientType === "mensalista" || matchedGuest?.isMonthlyGuest),
+          flatId: r.flatId || null,
+          flatNumber: r.flatNumber ? String(r.flatNumber) : null,
+          checkinDate: r.checkinDate || "",
+          checkoutDate: r.checkoutDate || "",
+          checkinTime: r.checkinTime || db.settings?.checkinTime || "14:00",
+          checkoutTime: r.checkoutTime || db.settings?.checkoutTime || "12:00",
+          nights,
+          totalAmount,
+          adr,
+          paidAmount,
+          balanceDue,
+          commissionAmount,
+          netAmount,
+          paymentStatus: r.paymentStatus || (balanceDue <= 0.01 ? "pago_total" : "pendente"),
+          paymentMethod: r.paymentMethod || (isOtaRes ? channel : "pix"),
+          paymentCollect: r.paymentCollect || (isOtaRes ? "Channel" : "Property"),
+          financialBadge,
+          status: r.status || "confirmada",
+          canonicalStatus,
+          isCheckedIn: isCheckedInExplicit,
+          checkoutDone: isCheckoutDone,
+          earlyCheckout: Boolean(r.earlyCheckout),
+          earlyCheckinAuthorized: Boolean(r.earlyCheckinAuthorized),
+          expiresAt: r.expiresAt || r.pendingStayExtension?.expiresAt || null,
+          includeBreakfast,
+          fnrhCompleted,
+          hasDocPhoto,
+          vehiclePlate: r.vehiclePlate || "",
+          vehicleModel: r.vehicleModel || "",
+          vehicleSummary: [r.vehicleModel, r.vehicleColor, r.vehiclePlate].filter(Boolean).join(" • "),
+          invoiceIssued: Boolean(matchedInvoice || r.nfseIssued || r.invoiceStatus === "autorizada"),
+          invoiceNumber: matchedInvoice?.numeroNfse || matchedInvoice?.id || null,
+          autoEmitInvoice: Boolean(r.autoEmitInvoice || matchedGuest?.autoEmitInvoice),
+          cleaningStatusToday: flatClean?.status || "clean",
+          hasCardVault: Boolean(r.b2bVcnToken || cardLast4 || r.wbpVaultId),
+          cardLast4: cardLast4 || undefined,
+          cardBrand: r.b2bCardBrand || r.cardBrand || undefined,
+          cardExpMonth: r.cardExpMonth || undefined,
+          cardExpYear: r.cardExpYear || undefined,
+          hasMinor: Boolean(r.hasMinor || matchedGuest?.isMinor || (r.guests || []).some(g => g?.isMinor)),
+          riskAttentionAlert: Boolean(r.riskAttentionAlert || matchedGuest?.riskAttentionAlert),
+          riskAttentionReason: r.riskAttentionReason || matchedGuest?.riskAttentionReason || "",
+          twinBeds: Boolean(r.twinBeds),
+          extraMattress: Boolean(r.extraMattress),
+          notes: r.notes || "",
+          receptionNotes: r.receptionNotes || "",
+          specialRequests: r.specialRequests || "",
+          quarantineReason: null,
+          quarantineDiagnostic: null,
+          rawReservation: liteRaw
+        };
+      });
+
+    // Mescla itens pendentes em Quarentena OTA (db.wbpQuarantine) que ainda não viraram reserva no PMS
+    const rawQuarantine = Array.isArray(db.wbpQuarantine) ? db.wbpQuarantine : [];
+    const quarantineRows = rawQuarantine
+      .filter(q => q && q.status === "pending")
+      .filter(q => {
+        const ord = String(q.externalOrderId || q.bookingId || "").trim().toUpperCase();
+        if (ord && seenExternalOrders.has(ord)) return false;
+        return true;
+      })
+      .map((q, qIdx) => {
+        const ord = String(q.externalOrderId || q.bookingId || q.id);
+        const total = Math.round((Number(q.totalPrice) || 0) * 100) / 100;
+        const comm = Math.round(total * 0.15 * 100) / 100;
+        const net = Math.round((total - comm) * 100) / 100;
+        const nights = Math.max(1, Number(q.nights) || 1);
+        const adr = Math.round((total / nights) * 100) / 100;
+        const recRaw = q.receivedAt || q.createdAt || new Date().toISOString();
+        const recMs = !isNaN(new Date(recRaw).getTime()) ? new Date(recRaw).getTime() : Date.now();
+        const chan = normalizeChannel(q.channel, q);
+        const cardLast4 = q.cardReference?.cardLast4 || q.cardLast4 || "";
+        const expMonth = q.cardReference?.cardExpMonth || q.cardExpMonth || "";
+        const expYear = q.cardReference?.cardExpYear || q.cardExpYear || "";
+        const isComCafe = q.ratePlanId === "com_cafe" || Boolean(q.breakfastIncluded);
+        const diagMsg = q.reasonDetails?.message || q.quarantineDiagnostic || "Conflito de disponibilidade detectado na ingestão OTA.";
+
+        return {
+          uid: `quar_${q.id}`,
+          sourceType: "quarantine",
+          id: String(q.id),
+          numericSortTie: 900000 + qIdx,
+          code: `OTA-${ord}`,
+          externalOrderId: ord,
+          receivedAtIso: new Date(recMs).toISOString(),
+          receivedAtMs: recMs,
+          createdByName: "Channex.io Webhook",
+          channel: chan,
+          rawChannel: q.channel || "booking",
+          guestId: null,
+          guestName: q.guestName || "Hóspede OTA",
+          guestPhone: q.guestPhone || "",
+          guestEmail: q.guestEmail || "",
+          guestDocument: "",
+          adults: Number(q.adults) || 2,
+          children: Number(q.children) || 0,
+          guestCount: (Number(q.adults) || 2) + (Number(q.children) || 0),
+          companionsCount: Math.max(0, ((Number(q.adults) || 2) + (Number(q.children) || 0)) - 1),
+          companyId: null,
+          companyName: "",
+          agencyName: "",
+          isCorporateOrB2b: false,
+          isMonthlyGuest: false,
+          flatId: null,
+          flatNumber: q.assignedFlatNumber ? String(q.assignedFlatNumber) : null,
+          checkinDate: q.checkinDate || "",
+          checkoutDate: q.checkoutDate || "",
+          checkinTime: db.settings?.checkinTime || "14:00",
+          checkoutTime: db.settings?.checkoutTime || "12:00",
+          nights,
+          totalAmount: total,
+          adr,
+          paidAmount: q.paymentCollect === "Property" ? 0 : total,
+          balanceDue: q.paymentCollect === "Property" ? total : 0,
+          commissionAmount: comm,
+          netAmount: net,
+          paymentStatus: q.paymentCollect === "Property" ? "pendente" : "pago_total",
+          paymentMethod: chan,
+          paymentCollect: q.paymentCollect === "Property" ? "Property" : "Channel",
+          financialBadge: q.paymentCollect === "Property" ? "cobrar_hotel" : "pago_ota",
+          status: "quarantine",
+          canonicalStatus: "quarantine",
+          isCheckedIn: false,
+          checkoutDone: false,
+          earlyCheckout: false,
+          earlyCheckinAuthorized: false,
+          expiresAt: null,
+          includeBreakfast: isComCafe,
+          fnrhCompleted: false,
+          hasDocPhoto: false,
+          vehiclePlate: "",
+          vehicleModel: "",
+          vehicleSummary: "",
+          invoiceIssued: false,
+          invoiceNumber: null,
+          autoEmitInvoice: false,
+          cleaningStatusToday: "clean",
+          hasCardVault: Boolean(q.hasCard || q.cardReference || cardLast4),
+          cardLast4: cardLast4 || undefined,
+          cardBrand: q.cardReference?.cardBrand || q.cardBrand || undefined,
+          cardExpMonth: expMonth || undefined,
+          cardExpYear: expYear || undefined,
+          hasMinor: false,
+          riskAttentionAlert: true,
+          riskAttentionReason: q.reason || "Quarentena OTA",
+          twinBeds: false,
+          extraMattress: false,
+          notes: diagMsg,
+          receptionNotes: "",
+          specialRequests: "",
+          quarantineReason: q.reason || "Sem flat livre / Conflito",
+          quarantineDiagnostic: diagMsg,
+          rawQuarantineItem: {
+            ...q,
+            id: String(q.id),
+            orderId: ord,
+            channelReservationId: ord,
+            channel: chan,
+            guestName: q.guestName || "Hóspede OTA",
+            guestPhone: q.guestPhone || "",
+            guestEmail: q.guestEmail || "",
+            checkIn: q.checkinDate || "",
+            checkOut: q.checkoutDate || "",
+            nightsCount: nights,
+            planId: isComCafe ? "com_cafe" : "sem_cafe",
+            planName: isComCafe ? "Com café" : "Sem café",
+            guestCount: (Number(q.adults) || 2) + (Number(q.children) || 0),
+            paymentCollect: q.paymentCollect === "Property" ? "Property" : "Channel",
+            totalGrossAmount: total,
+            totalNetAmount: net,
+            currency: q.currency || "BRL",
+            status: "quarantine",
+            allocatedFlat: q.assignedFlatNumber || null,
+            quarantineReason: q.reason || "Conflito OTA",
+            quarantineDiagnostic: diagMsg,
+            hasCard: Boolean(q.hasCard || q.cardReference || cardLast4),
+            cardLast4: cardLast4 || undefined,
+            cardBrand: q.cardReference?.cardBrand || q.cardBrand || undefined,
+            cardExpMonth: expMonth || undefined,
+            cardExpYear: expYear || undefined,
+            receivedAt: new Date(recMs).toISOString()
+          }
+        };
+      });
+
+    const allRows = [...quarantineRows, ...pmsRows].sort((a, b) => {
+      if (b.receivedAtMs !== a.receivedAtMs) return b.receivedAtMs - a.receivedAtMs;
+      return (b.numericSortTie || 0) - (a.numericSortTie || 0);
+    });
+
+    res.json({
+      success: true,
+      serverNow: new Date().toISOString(),
+      todayStr,
+      totalCount: allRows.length,
+      quarantineCount: quarantineRows.length,
+      flats,
+      items: allRows,
+      wbpTelemetry: {
+        mode: db.wbpSettings?.mode || "observe",
+        pendingQuarantineCount: quarantineRows.length
+      }
+    });
+  } catch (err) {
+    console.error("[Central de Reservas] Erro ao carregar lista:", err);
+    res.status(500).json({ error: err.message || "Falha ao carregar Central de Reservas" });
+  }
+});
+
+// ── Ação Rápida: Check-in Presencial / Operacional 1-Clique ──────────────────
+app.post("/api/pms/reservations/:id/quick-checkin", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "reception" && userAuth.role !== "recepcao")) {
+    return res.status(403).json({ error: "Acesso negado." });
+  }
+  const param = String(req.params.id || "").trim();
+  const numId = Number(param);
+  const r = (db.reservations || []).find(x => x && (x.id === numId || x.code === param || x.reservationCode === param));
+  if (!r) return res.status(404).json({ error: "Reserva não encontrada." });
+
+  const nowIso = new Date().toISOString();
+  r.status = "in_house";
+  r.actualCheckinAt = r.actualCheckinAt || nowIso;
+  r.updatedAt = nowIso;
+  r.lastModifiedBy = { id: userAuth.id, name: userAuth.name || userAuth.username || "Recepção", role: userAuth.role };
+
+  try {
+    if (typeof addReservationAuditLog === "function") {
+      addReservationAuditLog(r, {
+        action: "checkin_performed",
+        actor: { id: userAuth.id, name: userAuth.name || userAuth.username || "Recepção", role: userAuth.role, type: "staff" },
+        source: "Central de Reservas (Ação Rápida)",
+        description: `Check-in registrado rapidamente pela Central de Reservas no Flat ${r.flatNumber || "-"}.`
+      });
+    }
+  } catch (_) {}
+
+  saveDatabase("quick_checkin_central");
+  res.json({ success: true, reservation: r });
+});
+
 app.get("/api/pms/reservations/:id/audit-logs", (req, res) => {
   const param = String(req.params.id || "").trim();
   const numId = Number(param);
