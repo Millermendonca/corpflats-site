@@ -4260,6 +4260,11 @@ const DEFAULT_SITE_CONFIG = {
       imageUrl: "/photos/soho/12-fachada-garagem.jpg"
     }
   ],
+  gbpRatingValue: 4.9,
+  gbpReviewCount: 29,
+  gbpReviewsUrl: "https://www.google.com/travel/hotels/entity/CgoIgMi68P6vqvwQEAE/reviews?hl=pt-BR",
+  gbpLastSyncedAt: "2026-11-16T14:04:27.000Z",
+  gbpSyncVersion: "2026-11-16-29",
   testimonials: [
     {
       id: 1,
@@ -4307,6 +4312,54 @@ const DEFAULT_SITE_CONFIG = {
       city: "Avaliação 5★ no Google",
       rating: 5,
       comment: "Foi uma experiência bem legal. Ótimo café da manhã. Quarto limpo e aconchegante. Boa localização. Nada a reclamar 🙌",
+      avatar: ""
+    },
+    {
+      id: 7,
+      name: "Paulo Ricardo Silva",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Super aconchegante! Tudo super organizado e limpo!",
+      avatar: ""
+    },
+    {
+      id: 8,
+      name: "Aline Maia",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Quarto amplo, sempre muito limpo, localização ótima",
+      avatar: ""
+    },
+    {
+      id: 9,
+      name: "Andre Vasserstein",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Sou cliente antigo porque estou muito satisfeito",
+      avatar: ""
+    },
+    {
+      id: 10,
+      name: "André Guzzo",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Muito boa estadia — Quartos: Muito bom • Segurança: Tudo ok • Facilidade de deslocamento a pé: É fácil.",
+      avatar: ""
+    },
+    {
+      id: 11,
+      name: "Roselene Affonso do Nascimento",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Anfitriões atenciosos",
+      avatar: ""
+    },
+    {
+      id: 12,
+      name: "Jeancarlo Macedo",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Equipado com alguns utensílios de cozinha pra fazer refeições rápidas no local. Cama confortável.",
       avatar: ""
     }
   ],
@@ -31834,6 +31887,16 @@ app.get("/api/site-content", (req, res) => {
     about: { ...DEFAULT_SITE_CONFIG.about, ...(current.about || {}) },
     amenities: Array.isArray(current.amenities) && current.amenities.length > 0 ? current.amenities : DEFAULT_SITE_CONFIG.amenities,
     gallery: Array.isArray(current.gallery) && current.gallery.length > 0 ? current.gallery : DEFAULT_SITE_CONFIG.gallery,
+    gbpRatingValue: Number.isFinite(Number(current.gbpRatingValue)) && Number(current.gbpRatingValue) >= 1 && Number(current.gbpRatingValue) <= 5
+      ? Number(current.gbpRatingValue)
+      : DEFAULT_SITE_CONFIG.gbpRatingValue,
+    gbpReviewCount: Math.max(
+      Number(DEFAULT_SITE_CONFIG.gbpReviewCount || 29),
+      Number(current.gbpReviewCount || 0),
+      Array.isArray(current.testimonials) ? current.testimonials.length : 0
+    ),
+    gbpReviewsUrl: current.gbpReviewsUrl || DEFAULT_SITE_CONFIG.gbpReviewsUrl,
+    gbpLastSyncedAt: current.gbpLastSyncedAt || DEFAULT_SITE_CONFIG.gbpLastSyncedAt,
     testimonials: Array.isArray(current.testimonials) ? current.testimonials : DEFAULT_SITE_CONFIG.testimonials,
     faq: Array.isArray(current.faq) && current.faq.length > 0 ? current.faq : DEFAULT_SITE_CONFIG.faq,
     showDirectBookingFooter: current.showDirectBookingFooter !== false,
@@ -56864,6 +56927,40 @@ export function getTariffSettings() {
     try {
       saveDatabase("settings_soho_official_site_revamp_v2");
     } catch (_) {}
+  }
+
+  // Sincronização automática de avaliações Google (sempre que DEFAULT_SITE_CONFIG.gbpSyncVersion avançar)
+  if (!isNodeTestRunner && (!pgPool || pgHydratedSuccessfully)) {
+    if (!db.siteConfig) db.siteConfig = JSON.parse(JSON.stringify(DEFAULT_SITE_CONFIG));
+    const targetSyncVer = String(DEFAULT_SITE_CONFIG.gbpSyncVersion || "");
+    if (targetSyncVer && db.siteConfig.gbpSyncVersion !== targetSyncVer) {
+      db.siteConfig.gbpRatingValue = DEFAULT_SITE_CONFIG.gbpRatingValue || 4.9;
+      db.siteConfig.gbpReviewCount = Math.max(
+        Number(db.siteConfig.gbpReviewCount || 0),
+        Number(DEFAULT_SITE_CONFIG.gbpReviewCount || 29)
+      );
+      db.siteConfig.gbpReviewsUrl = DEFAULT_SITE_CONFIG.gbpReviewsUrl;
+      db.siteConfig.gbpLastSyncedAt = DEFAULT_SITE_CONFIG.gbpLastSyncedAt;
+      db.siteConfig.gbpSyncVersion = targetSyncVer;
+
+      const fakeNamesSync = new Set(["Mariana Silveira", "Carlos Eduardo Mendes", "Patrícia & Rodrigo"]);
+      const officialReviews = JSON.parse(JSON.stringify(DEFAULT_SITE_CONFIG.testimonials));
+      const officialNames = new Set(officialReviews.map(t => String(t.name || "").trim().toLowerCase()));
+      const extraSaved = Array.isArray(db.siteConfig.testimonials)
+        ? db.siteConfig.testimonials.filter(t => {
+            const nm = String(t?.name || "").trim();
+            return nm && t?.comment && !fakeNamesSync.has(nm) && !officialNames.has(nm.toLowerCase());
+          })
+        : [];
+      db.siteConfig.testimonials = [...officialReviews, ...extraSaved].map((item, idx) => ({
+        ...item,
+        id: idx + 1
+      }));
+      db.siteConfig.updatedAt = new Date().toISOString();
+      try {
+        saveDatabase("settings_google_reviews_sync_" + targetSyncVer);
+      } catch (_) {}
+    }
   }
 
   return db.tariffSettings;

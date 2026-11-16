@@ -268,6 +268,7 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
   const [settings, setSettings] = useState<any>(null)
   const [siteConfig, setSiteConfig] = useState<any>(null)
   const [faqOpen, setFaqOpen] = useState<number | null>(null)
+  const [showAllReviews, setShowAllReviews] = useState(false)
   const [breakfastZoomOpen, setBreakfastZoomOpen] = useState(false)
 
   // Guest Account & Auth States
@@ -1100,6 +1101,48 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
       city: "Avaliação 5★ no Google",
       rating: 5,
       comment: "Foi uma experiência bem legal. Ótimo café da manhã. Quarto limpo e aconchegante. Boa localização. Nada a reclamar 🙌"
+    },
+    {
+      id: 7,
+      name: "Paulo Ricardo Silva",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Super aconchegante! Tudo super organizado e limpo!"
+    },
+    {
+      id: 8,
+      name: "Aline Maia",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Quarto amplo, sempre muito limpo, localização ótima"
+    },
+    {
+      id: 9,
+      name: "Andre Vasserstein",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Sou cliente antigo porque estou muito satisfeito"
+    },
+    {
+      id: 10,
+      name: "André Guzzo",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Muito boa estadia — Quartos: Muito bom • Segurança: Tudo ok • Facilidade de deslocamento a pé: É fácil."
+    },
+    {
+      id: 11,
+      name: "Roselene Affonso do Nascimento",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Anfitriões atenciosos"
+    },
+    {
+      id: 12,
+      name: "Jeancarlo Macedo",
+      city: "Avaliação 5★ no Google",
+      rating: 5,
+      comment: "Equipado com alguns utensílios de cozinha pra fazer refeições rápidas no local. Cama confortável."
     }
   ]
 
@@ -2178,19 +2221,19 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
                 <span>{ratingSummary.ratingValuePtBr} ★ no Google ({ratingSummary.reviewCount} avaliações)</span>
               </div>
               <a
-                href={siteConfig?.branding?.googleMapsUrl || "https://share.google/LHu3541d5lhkdvbL2"}
+                href={siteConfig?.gbpReviewsUrl || siteConfig?.branding?.googleMapsUrl || "https://share.google/LHu3541d5lhkdvbL2"}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center gap-1 text-xs font-semibold text-[#0F3D4C] hover:text-[#091E26] hover:underline transition-colors"
               >
-                <span>Ver todas no Google</span>
+                <span>Ver todas as {ratingSummary.reviewCount} no Google</span>
                 <ExternalLink className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
               </a>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {testimonialsList.map((t: any, idx: number) => (
+            {(showAllReviews ? testimonialsList : testimonialsList.slice(0, 6)).map((t: any, idx: number) => (
               <div
                 key={t.id || idx}
                 className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/70 space-y-3 flex flex-col justify-between"
@@ -2229,6 +2272,28 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
               </div>
             ))}
           </div>
+
+          {testimonialsList.length > 6 && (
+            <div className="flex justify-center pt-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowAllReviews((prev) => !prev)}
+                className="rounded-xl border-slate-300 text-[#0F3D4C] hover:bg-slate-50 text-xs font-semibold h-9 px-4 gap-1.5"
+              >
+                <span>
+                  {showAllReviews
+                    ? "Recolher avaliações"
+                    : `Mostrar mais ${testimonialsList.length - 6} comentários verificados do Google`}
+                </span>
+                <ChevronDown
+                  className={`w-3.5 h-3.5 transition-transform ${showAllReviews ? "rotate-180" : ""}`}
+                  aria-hidden="true"
+                />
+              </Button>
+            </div>
+          )}
         </section>
       )}
 

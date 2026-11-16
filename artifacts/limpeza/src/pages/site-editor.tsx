@@ -1418,6 +1418,58 @@ export default function SiteEditor() {
                 </Button>
               </CardHeader>
               <CardContent className="space-y-4">
+                <div className="p-4 rounded-2xl border border-amber-200/80 dark:border-amber-800/50 bg-amber-50/60 dark:bg-amber-950/20 grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                      Nota Média Oficial no Google (1.0 a 5.0)
+                    </Label>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      min="1"
+                      max="5"
+                      value={config.gbpRatingValue ?? 4.9}
+                      onChange={(e) =>
+                        setConfig({
+                          ...config,
+                          gbpRatingValue: Math.min(5, Math.max(1, Number(e.target.value) || 4.9)),
+                        })
+                      }
+                      className="h-9 text-xs font-bold bg-white dark:bg-slate-900"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                      Total de Avaliações no Google
+                    </Label>
+                    <Input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={config.gbpReviewCount ?? 29}
+                      onChange={(e) =>
+                        setConfig({
+                          ...config,
+                          gbpReviewCount: Math.max(1, Math.round(Number(e.target.value) || 29)),
+                        })
+                      }
+                      className="h-9 text-xs font-bold bg-white dark:bg-slate-900"
+                    />
+                  </div>
+                  <div className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                    Exibido no site e no Schema.org do Google como{" "}
+                    <strong className="text-slate-900 dark:text-slate-100">
+                      {ratingSummary.ratingValuePtBr} ★ ({ratingSummary.reviewCount} avaliações)
+                    </strong>
+                    {config.gbpLastSyncedAt && (
+                      <span className="block text-[10px] text-slate-500 mt-0.5">
+                        Última sincronização Google:{" "}
+                        {new Date(config.gbpLastSyncedAt).toLocaleDateString("pt-BR")}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
                 {(!config.testimonials || config.testimonials.length === 0) && (
                   <div className="p-6 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/40 text-center space-y-1.5">
                     <p className="text-xs font-bold text-slate-800 dark:text-slate-200">

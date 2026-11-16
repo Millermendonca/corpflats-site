@@ -39,6 +39,11 @@ export const PUBLIC_SEO_SLUGS = [
   "estadia-longa-campos",
 ];
 
+export const DEFAULT_GBP_RATING_VALUE = 4.9;
+export const DEFAULT_GBP_REVIEW_COUNT = 29;
+export const DEFAULT_GBP_REVIEWS_URL =
+  "https://www.google.com/travel/hotels/entity/CgoIgMi68P6vqvwQEAE/reviews?hl=pt-BR";
+
 const DEFAULT_FALLBACK_TESTIMONIALS = [
   {
     id: 1,
@@ -87,6 +92,50 @@ const DEFAULT_FALLBACK_TESTIMONIALS = [
     rating: 5,
     comment:
       "Foi uma experiência bem legal. Ótimo café da manhã. Quarto limpo e aconchegante. Boa localização. Nada a reclamar!",
+  },
+  {
+    id: 7,
+    name: "Paulo Ricardo Silva",
+    city: "Avaliação 5★ no Google",
+    rating: 5,
+    comment: "Super aconchegante! Tudo super organizado e limpo!",
+  },
+  {
+    id: 8,
+    name: "Aline Maia",
+    city: "Avaliação 5★ no Google",
+    rating: 5,
+    comment: "Quarto amplo, sempre muito limpo, localização ótima",
+  },
+  {
+    id: 9,
+    name: "Andre Vasserstein",
+    city: "Avaliação 5★ no Google",
+    rating: 5,
+    comment: "Sou cliente antigo porque estou muito satisfeito",
+  },
+  {
+    id: 10,
+    name: "André Guzzo",
+    city: "Avaliação 5★ no Google",
+    rating: 5,
+    comment:
+      "Muito boa estadia — Quartos: Muito bom • Segurança: Tudo ok • Facilidade de deslocamento a pé: É fácil.",
+  },
+  {
+    id: 11,
+    name: "Roselene Affonso do Nascimento",
+    city: "Avaliação 5★ no Google",
+    rating: 5,
+    comment: "Anfitriões atenciosos",
+  },
+  {
+    id: 12,
+    name: "Jeancarlo Macedo",
+    city: "Avaliação 5★ no Google",
+    rating: 5,
+    comment:
+      "Equipado com alguns utensílios de cozinha pra fazer refeições rápidas no local. Cama confortável.",
   },
 ];
 
@@ -649,7 +698,7 @@ export function computeCoherentReviewStats(siteConfig = null) {
   const finalAvg =
     Number.isFinite(configuredAvg) && configuredAvg >= 1 && configuredAvg <= 5
       ? configuredAvg
-      : computedAvg;
+      : DEFAULT_GBP_RATING_VALUE;
 
   const configuredCount = Number(
     siteConfig?.gbpReviewCount ?? siteConfig?.seo?.googleTotalReviews
@@ -657,7 +706,7 @@ export function computeCoherentReviewStats(siteConfig = null) {
   const reviewCount =
     Number.isFinite(configuredCount) && configuredCount >= effectiveReviews.length
       ? Math.round(configuredCount)
-      : effectiveReviews.length;
+      : Math.max(DEFAULT_GBP_REVIEW_COUNT, effectiveReviews.length);
 
   const ratingValueDot = finalAvg.toFixed(1);
   const ratingValueComma = ratingValueDot.replace(".", ",");

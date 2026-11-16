@@ -84,10 +84,15 @@ export const GOOGLE_BUSINESS_PROFILE_UTM_URL =
 export const CHANNEX_GOOGLE_HOTELS_CUSTOM_URL =
   "https://corpflats.com.br/?checkin=(CHECKIN_DATE)&checkout=(CHECKOUT_DATE)&adults=(ADULTS)&utm_source=google_hotels&utm_medium=free_booking_links&utm_campaign=official_site";
 
+export const DEFAULT_GBP_RATING_VALUE = 4.9;
+export const DEFAULT_GBP_REVIEW_COUNT = 29;
+export const DEFAULT_GBP_REVIEWS_URL =
+  "https://www.google.com/travel/hotels/entity/CgoIgMi68P6vqvwQEAE/reviews?hl=pt-BR";
+
 /**
- * Calcula dinamicamente a nota média e o volume de avaliações a partir de `siteConfig.testimonials`
- * (e `siteConfig.gbpReviewCount` quando definido), garantindo 100% de coerência entre o texto visível
- * e o `AggregateRating` do Schema.org JSON-LD (zero risco de Structured Data Spam).
+ * Calcula dinamicamente a nota média e o volume de avaliações a partir de `siteConfig.gbpRatingValue`,
+ * `siteConfig.gbpReviewCount` e `siteConfig.testimonials`, garantindo 100% de coerência entre o texto
+ * visível e o `AggregateRating` do Schema.org JSON-LD.
  */
 export function computeDynamicRatingSummary(siteConfig?: any): AggregateRatingSummary {
   const rawList = Array.isArray(siteConfig?.testimonials) ? siteConfig.testimonials : [];
@@ -95,21 +100,24 @@ export function computeDynamicRatingSummary(siteConfig?: any): AggregateRatingSu
     .map((item: any) => Number(item?.rating ?? 5))
     .filter((n: number) => Number.isFinite(n) && n >= 1 && n <= 5);
 
+  const configuredAvg = Number(
+    siteConfig?.gbpRatingValue ?? siteConfig?.seo?.googleRatingValue
+  );
   const computedAvg =
-    validRatings.length > 0
-      ? validRatings.reduce((acc: number, cur: number) => acc + cur, 0) / validRatings.length
-      : 5.0;
+    Number.isFinite(configuredAvg) && configuredAvg >= 1 && configuredAvg <= 5
+      ? configuredAvg
+      : DEFAULT_GBP_RATING_VALUE;
 
   const rounded = Math.round(computedAvg * 10) / 10;
   const ratingValueEn = rounded.toFixed(1);
   const ratingValuePtBr = ratingValueEn.replace(".", ",");
-  const configuredTotal = Number(siteConfig?.gbpReviewCount || 0);
+  const configuredTotal = Number(
+    siteConfig?.gbpReviewCount ?? siteConfig?.seo?.googleTotalReviews ?? 0
+  );
   const reviewCount =
-    Number.isFinite(configuredTotal) && configuredTotal > validRatings.length
+    Number.isFinite(configuredTotal) && configuredTotal >= Math.max(1, validRatings.length)
       ? Math.round(configuredTotal)
-      : validRatings.length > 0
-        ? validRatings.length
-        : 6;
+      : Math.max(DEFAULT_GBP_REVIEW_COUNT, validRatings.length);
 
   return {
     ratingValue: rounded,
