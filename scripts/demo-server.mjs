@@ -78624,7 +78624,7 @@ const fallbackDistPath = path.resolve(__dirname, "../limpeza/dist");
 
 let cachedIndexHtml = null;
 
-const PREVIEW_ASSETS_VERSION = "20261113";
+const PREVIEW_ASSETS_VERSION = "20261116";
 
 function escapeOgHtmlAttr(val) {
   return String(val ?? "")
@@ -78664,10 +78664,11 @@ function formatPreviewShortPeriod(checkInRaw, checkOutRaw) {
 }
 
 function resolvePreviewImageUrl(configuredUrl, defaultPreviewFile) {
-  const fallback = `https://corpflats.com.br/previews/${defaultPreviewFile}?v=${PREVIEW_ASSETS_VERSION}`;
+  const fallback = `https://corpflats.com.br/previews/v2/${defaultPreviewFile}?v=${PREVIEW_ASSETS_VERSION}`;
   const v = String(configuredUrl || "").trim();
   if (!v) return fallback;
-  if (/\/(flat|breakfast)-preview\.jpg(\?.*)?$/i.test(v)) return fallback;
+  if (/\/(flat|breakfast)-preview\.jpg(\?.*)?$/i.test(v) && !/\/previews\//i.test(v)) return fallback;
+  if (/\/previews\/[a-z0-9_-]+-preview\.jpg(\?.*)?$/i.test(v) && !/\/previews\/v2\//i.test(v)) return fallback;
   return v;
 }
 
@@ -80230,6 +80231,10 @@ if (fs.existsSync(distPath)) {
       next();
     });
   }
+  app.use("/previews/v2", express.static(path.join(distPath, "previews"), {
+    index: false,
+    setHeaders: setSmartAssetCacheHeaders
+  }));
   app.use(express.static(distPath, {
     index: false,
     setHeaders: setSmartAssetCacheHeaders
@@ -80242,6 +80247,10 @@ if (fs.existsSync(distPath)) {
   });
   console.log(`[Production Server] Servindo frontend em: ${distPath}`);
 } else if (fs.existsSync(fallbackDistPath)) {
+  app.use("/previews/v2", express.static(path.join(fallbackDistPath, "previews"), {
+    index: false,
+    setHeaders: setSmartAssetCacheHeaders
+  }));
   app.use(express.static(fallbackDistPath, {
     index: false,
     setHeaders: setSmartAssetCacheHeaders

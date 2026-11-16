@@ -630,16 +630,16 @@ export default function WhatsappAutomation() {
     googleReviewUrl: "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA",
     reviewPreviewTitle: "⭐ Avalie sua Estadia • CorpFlats Soho Residence",
     reviewPreviewDescription: "Sua experiência foi 5 estrelas? Toque aqui para avaliar a CorpFlats no Google em menos de 30 segundos!",
-    reviewPreviewImage: "https://corpflats.com.br/previews/review-preview.jpg?v=20261113",
-    breakfastPreviewImage: "https://corpflats.com.br/previews/breakfast-preview.jpg?v=20261113",
-    flatPreviewImage: "https://corpflats.com.br/previews/reservar-preview.jpg?v=20261113",
-    credentialPreviewImage: "https://corpflats.com.br/previews/credenciamento-preview.jpg?v=20261113",
-    preCheckinPreviewImage: "https://corpflats.com.br/previews/precheckin-preview.jpg?v=20261113",
-    portalPreviewImage: "https://corpflats.com.br/previews/portal-preview.jpg?v=20261113",
-    pixPreviewImage: "https://corpflats.com.br/previews/pix-preview.jpg?v=20261113",
-    boletoPreviewImage: "https://corpflats.com.br/previews/boleto-preview.jpg?v=20261113",
-    minibarPreviewImage: "https://corpflats.com.br/previews/frigobar-preview.jpg?v=20261113",
-    checkoutPreviewImage: "https://corpflats.com.br/previews/checkout-preview.jpg?v=20261113"
+    reviewPreviewImage: "https://corpflats.com.br/previews/v2/review-preview.jpg?v=20261116",
+    breakfastPreviewImage: "https://corpflats.com.br/previews/v2/breakfast-preview.jpg?v=20261116",
+    flatPreviewImage: "https://corpflats.com.br/previews/v2/reservar-preview.jpg?v=20261116",
+    credentialPreviewImage: "https://corpflats.com.br/previews/v2/credenciamento-preview.jpg?v=20261116",
+    preCheckinPreviewImage: "https://corpflats.com.br/previews/v2/precheckin-preview.jpg?v=20261116",
+    portalPreviewImage: "https://corpflats.com.br/previews/v2/portal-preview.jpg?v=20261116",
+    pixPreviewImage: "https://corpflats.com.br/previews/v2/pix-preview.jpg?v=20261116",
+    boletoPreviewImage: "https://corpflats.com.br/previews/v2/boleto-preview.jpg?v=20261116",
+    minibarPreviewImage: "https://corpflats.com.br/previews/v2/frigobar-preview.jpg?v=20261116",
+    checkoutPreviewImage: "https://corpflats.com.br/previews/v2/checkout-preview.jpg?v=20261116"
   })
   const [uploadingPreviewSlot, setUploadingPreviewSlot] = useState<PreviewSlotKey | null>(null)
   const [savingPreviewTexts, setSavingPreviewTexts] = useState<boolean>(false)

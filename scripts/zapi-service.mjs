@@ -5217,25 +5217,28 @@ export async function sendZapiDocument(config, {
 
 // ── Resolução Inteligente de Preview Visual Nativo na Z-API (/send-button-actions image + /send-link LARGE) ──
 export const OUTBOUND_PREVIEW_IMAGES = {
-  credential: "https://corpflats.com.br/previews/credenciamento-preview.jpg",
-  preCheckin: "https://corpflats.com.br/previews/precheckin-preview.jpg",
-  portal: "https://corpflats.com.br/previews/portal-preview.jpg",
-  pix: "https://corpflats.com.br/previews/pix-preview.jpg",
-  boleto: "https://corpflats.com.br/previews/boleto-preview.jpg",
-  breakfast: "https://corpflats.com.br/previews/breakfast-preview.jpg",
-  minibar: "https://corpflats.com.br/previews/frigobar-preview.jpg",
-  checkout: "https://corpflats.com.br/previews/checkout-preview.jpg",
-  review: "https://corpflats.com.br/previews/review-preview.jpg",
-  flat: "https://corpflats.com.br/previews/reservar-preview.jpg",
-  fnrh: "https://corpflats.com.br/previews/fnrh-preview.jpg",
-  manutencao: "https://corpflats.com.br/previews/manutencao-preview.jpg",
-  equipe: "https://corpflats.com.br/previews/equipe-preview.jpg",
-  sistema: "https://corpflats.com.br/previews/sistema-preview.jpg"
+  credential: "https://corpflats.com.br/previews/v2/credenciamento-preview.jpg",
+  preCheckin: "https://corpflats.com.br/previews/v2/precheckin-preview.jpg",
+  portal: "https://corpflats.com.br/previews/v2/portal-preview.jpg",
+  pix: "https://corpflats.com.br/previews/v2/pix-preview.jpg",
+  boleto: "https://corpflats.com.br/previews/v2/boleto-preview.jpg",
+  breakfast: "https://corpflats.com.br/previews/v2/breakfast-preview.jpg",
+  minibar: "https://corpflats.com.br/previews/v2/frigobar-preview.jpg",
+  checkout: "https://corpflats.com.br/previews/v2/checkout-preview.jpg",
+  review: "https://corpflats.com.br/previews/v2/review-preview.jpg",
+  flat: "https://corpflats.com.br/previews/v2/reservar-preview.jpg",
+  fnrh: "https://corpflats.com.br/previews/v2/fnrh-preview.jpg",
+  manutencao: "https://corpflats.com.br/previews/v2/manutencao-preview.jpg",
+  equipe: "https://corpflats.com.br/previews/v2/equipe-preview.jpg",
+  sistema: "https://corpflats.com.br/previews/v2/sistema-preview.jpg"
 };
 
 function isLegacyOutboundPreviewImage(url) {
   if (!url) return true;
-  return /\/(flat|breakfast)-preview\.jpg(\?.*)?$/i.test(String(url).trim()) && !/\/previews\//i.test(String(url).trim());
+  const s = String(url).trim();
+  if (/\/(flat|breakfast)-preview\.jpg(\?.*)?$/i.test(s) && !/\/previews\//i.test(s)) return true;
+  if (/\/previews\/[a-z0-9_-]+-preview\.jpg(\?.*)?$/i.test(s) && !/\/previews\/v2\//i.test(s)) return true;
+  return false;
 }
 
 export function resolveSlotPreviewImageUrls(slot, config = null) {
@@ -5251,8 +5254,8 @@ export function resolveSlotPreviewImageUrls(slot, config = null) {
     } else if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(normalized)) {
       normalized = normalized.replace(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i, "https://corpflats.com.br");
     }
-    // Para arquivos estáticos em /previews/*.jpg, remove query string para preservar extensão .jpg limpa na Z-API
-    if (/\/previews\/[a-z0-9_-]+\.(jpe?g|png|webp)\?/i.test(normalized)) {
+    // Para arquivos estáticos em /previews/(v2/)?*.jpg, remove query string para preservar extensão .jpg limpa na Z-API
+    if (/\/previews\/(?:v2\/)?[a-z0-9_-]+\.(jpe?g|png|webp)\?/i.test(normalized)) {
       normalized = normalized.split("?")[0];
     }
     publicImageUrl = normalized;
@@ -8712,22 +8715,26 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     if (!Array.isArray(db.faqItems)) {
       db.faqItems = [];
     }
-    const PREVIEW_ASSETS_VERSION = "20261113";
+    const PREVIEW_ASSETS_VERSION = "20261116";
     const DEFAULT_PREVIEW_IMAGES = {
-      credential: `https://corpflats.com.br/previews/credenciamento-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
-      preCheckin: `https://corpflats.com.br/previews/precheckin-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
-      portal: `https://corpflats.com.br/previews/portal-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
-      pix: `https://corpflats.com.br/previews/pix-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
-      boleto: `https://corpflats.com.br/previews/boleto-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
-      breakfast: `https://corpflats.com.br/previews/breakfast-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
-      minibar: `https://corpflats.com.br/previews/frigobar-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
-      checkout: `https://corpflats.com.br/previews/checkout-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
-      review: `https://corpflats.com.br/previews/review-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
-      flat: `https://corpflats.com.br/previews/reservar-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`
+      credential: `https://corpflats.com.br/previews/v2/credenciamento-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      preCheckin: `https://corpflats.com.br/previews/v2/precheckin-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      portal: `https://corpflats.com.br/previews/v2/portal-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      pix: `https://corpflats.com.br/previews/v2/pix-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      boleto: `https://corpflats.com.br/previews/v2/boleto-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      breakfast: `https://corpflats.com.br/previews/v2/breakfast-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      minibar: `https://corpflats.com.br/previews/v2/frigobar-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      checkout: `https://corpflats.com.br/previews/v2/checkout-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      review: `https://corpflats.com.br/previews/v2/review-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      flat: `https://corpflats.com.br/previews/v2/reservar-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`
     };
-    const isLegacyGenericPreviewUrl = (url) =>
-      !url ||
-      /\/(flat|breakfast)-preview\.jpg(\?.*)?$/i.test(String(url).trim());
+    const isLegacyGenericPreviewUrl = (url) => {
+      const s = String(url || "").trim();
+      if (!s) return true;
+      if (/\/(flat|breakfast)-preview\.jpg(\?.*)?$/i.test(s) && !/\/previews\//i.test(s)) return true;
+      if (/\/previews\/[a-z0-9_-]+-preview\.jpg(\?.*)?$/i.test(s) && !/\/previews\/v2\//i.test(s)) return true;
+      return false;
+    };
 
     if (!db.zapiConfig) {
       db.zapiConfig = {
