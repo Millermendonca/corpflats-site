@@ -1887,6 +1887,264 @@ export function renderB2bAgencyCredentialRequestEmail({
 }
 
 /**
+ * Renderiza 1 único e-mail consolidado quando uma mesma Agência + mesmo E-mail de Agente possui
+ * 2 ou mais reservas aguardando preenchimento de Nome Completo + WhatsApp dos hóspedes,
+ * exibindo tanto o botão unificado ("Preencher Todas em Uma Única Tela") quanto os links individuais de cada reserva.
+ */
+export function renderB2bAgencyBatchCredentialRequestEmail({
+  items = [],
+  reservations = [],
+  agency = null,
+  company = null,
+  settings = null,
+  baseUrl = "",
+  batchCredentialUrl = "",
+  isReminder = false,
+  db = null
+} = {}) {
+  const normalizedItems = (Array.isArray(items) && items.length > 0
+    ? items
+    : (Array.isArray(reservations) ? reservations.map(r => ({ reservation: r })) : [])
+  ).filter(it => it && it.reservation);
+
+  if (normalizedItems.length === 1) {
+    const single = normalizedItems[0];
+    return renderB2bAgencyCredentialRequestEmail({
+      reservation: single.reservation,
+      agency,
+      company,
+      settings,
+      baseUrl,
+      isReminder: Boolean(single.isReminder ?? isReminder),
+      reminderKind: single.reminderKind || "",
+      reminderNumber: single.reminderNumber || 1,
+      db
+    });
+  }
+
+  const firstRes = normalizedItems[0]?.reservation || {};
+  const count = normalizedItems.length;
+  const hostBase = String(
+    baseUrl ||
+    settings?.baseUrl ||
+    (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) ||
+    "https://corpflats.com.br"
+  )
+    .replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br")
+    .replace(/\/+$/, "");
+
+  const codes = normalizedItems
+    .map(it => String(it.reservation?.code || it.reservation?.id || "").trim())
+    .filter(Boolean);
+  const finalBatchUrl =
+    batchCredentialUrl ||
+    `${hostBase}/credenciamento/${encodeURIComponent(codes[0] || "lote")}?codes=${encodeURIComponent(codes.join(","))}`;
+
+  const reqContactName = firstRes?.requesterInfo?.name || firstRes?.requesterName || "";
+  const resolvedCompanyName = company?.tradeName || company?.corporateName || firstRes?.companyName || "";
+  const agencyName =
+    agency?.tradeName ||
+    agency?.corporateName ||
+    firstRes?.agencyTradeName ||
+    firstRes?.agencyName ||
+    resolvedCompanyName ||
+    reqContactName ||
+    "Agência Solicitante";
+  const agentName =
+    firstRes?.agencyAgentName && !/^(WEBSERVICE|SISTEMA|ARGO\.)/i.test(String(firstRes.agencyAgentName).trim())
+      ? firstRes.agencyAgentName
+      : (reqContactName && reqContactName !== agencyName ? reqContactName : "");
+
+  const anyReminder = Boolean(isReminder || normalizedItems.some(it => it.isReminder));
+  const anyCheckinToday = normalizedItems.some(
+    it =>
+      it.reminderKind === "checkin_morning" ||
+      it.reminderKind === "checkin_noon" ||
+      it.reminderKind === "sameday_2h"
+  );
+  const anyEveDay = normalizedItems.some(it => it.reminderKind === "d_minus_1");
+
+  const subject = anyCheckinToday
+    ? `[LEMBRETE URGENTE • CHECK-IN HOJE] Dados Pendentes (${count} Reservas) - ${agencyName}`
+    : anyReminder
+      ? `[LEMBRETE • DADOS DOS HÓSPEDES PENDENTES] ${count} Reservas Confirmadas - ${agencyName}`
+      : `[CONFIRMAÇÃO & DADOS DOS HÓSPEDES] ${count} Reservas Confirmadas - ${agencyName}`;
+
+  const greetingName = agentName
+    ? `Olá, <strong>${escapeHtml(agentName)}</strong>${agencyName && agencyName !== agentName ? ` (${escapeHtml(agencyName)})` : ""}`
+    : `Olá, <strong>${escapeHtml(agencyName)}</strong>`;
+
+  const headerTitle = anyCheckinToday
+    ? `⏰ Check-in Hoje • ${count} Reservas Aguardando Dados dos Hóspedes`
+    : anyReminder
+      ? `🔔 Lembrete Consolidado • ${count} Reservas com Dados dos Hóspedes Pendentes`
+      : `Reservas Confirmadas (${count}) • Credenciamento dos Hóspedes na Recepção`;
+
+  const introHtml = anyReminder
+    ? `
+      <p style="font-size: 15px; color: #374151; margin: 0 0 12px 0; line-height: 1.6;">
+        ${greetingName}, tudo bem? Para facilitar o seu atendimento sem enviar mensagens separadas, reunimos em um único resumo as <strong>${count} reservas</strong> sob sua solicitação que ainda estão aguardando o <strong>Nome Completo e o WhatsApp</strong> de cada hóspede.
+      </p>
+      <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">
+        Você pode preencher <strong>todas de uma só vez na mesma tela</strong> pelo botão principal abaixo, ou utilizar/encaminhar o link individual de cada reserva diretamente ao respectivo viajante.
+      </p>`
+    : `
+      <p style="font-size: 15px; color: #374151; margin: 0 0 12px 0; line-height: 1.6;">
+        ${greetingName}, tudo bem? Confirmamos com muita satisfação as <strong>${count} reservas</strong> solicitadas por você no <strong>Edifício Soho Residence Service</strong> (CorpFlats).
+      </p>
+      <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">
+        Reunimos todas em um único e-mail para sua comodidade: basta informar o <strong>Nome Completo e o WhatsApp</strong> de cada hóspede (CPF e E-mail opcionais) em uma única tela abaixo — ou encaminhar o link individual de cada reserva ao respectivo hóspede.
+      </p>`;
+
+  const cardsHtml = normalizedItems
+    .map((it, idx) => {
+      const r = it.reservation || {};
+      const flatObj = (db?.flats || []).find(
+        f => Number(f.id) === Number(r.flatId) || String(f.number) === String(r.flatNumber)
+      );
+      const rawFlat = flatObj?.number || r.flatNumber || "Definido";
+      const cleanFlat = String(rawFlat).replace(/^flat\s*/i, "").trim();
+      const flatDisplay = cleanFlat ? `Flat ${cleanFlat}` : "Flat Designado";
+      const buildingName = flatObj?.buildingName || flatObj?.building || settings?.buildingName || "Edifício Soho Residence";
+      const rawGuest = String(r.guestName || "").trim();
+      const pendingGuest =
+        !rawGuest ||
+        Boolean(r.guestPending) ||
+        /^(h[óo]spede(\s*\d+|\s+definir|\s+a\s+definir.*|\s+titular|\s+b2b)?|a\s+definir.*)$/i.test(rawGuest);
+      const guestDisplay = pendingGuest ? "A Definir (Pendente)" : rawGuest;
+      const checkinBr = formatDateBr(r.checkinDate);
+      const checkoutBr = formatDateBr(r.checkoutDate);
+      const resCode = String(r.code || r.id || "-");
+      const b2bNum = String(r.b2bReservationNumber || r.externalReservationNumber || "").trim();
+      const rloc = String(r.b2bLocatorRloc || b2bNum || "").trim();
+      const refTitle = b2bNum
+        ? `Reserva #${b2bNum}${rloc && rloc !== b2bNum ? ` (RLOC: ${rloc})` : ""}`
+        : `Reserva #${resCode}`;
+      const compLabel = r.companyName || resolvedCompanyName || "";
+      const indivUrl = `${hostBase}/credenciamento/${encodeURIComponent(resCode)}`;
+      const isTodayItem =
+        it.reminderKind === "checkin_morning" ||
+        it.reminderKind === "checkin_noon" ||
+        it.reminderKind === "sameday_2h";
+      const isEveItem = it.reminderKind === "d_minus_1";
+
+      const pillHtml = isTodayItem
+        ? `<span style="display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; background-color: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA;">⏰ Check-in HOJE (${checkinBr})</span>`
+        : isEveItem
+          ? `<span style="display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; background-color: #FFFBEB; color: #B45309; border: 1px solid #FDE68A;">🔔 Check-in Amanhã (${checkinBr})</span>`
+          : `<span style="display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; background-color: #EFF6FF; color: #1D4ED8; border: 1px solid #BFDBFE;">✓ Confirmada</span>`;
+
+      return `
+      <div style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 16px; margin-bottom: 14px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; border-bottom: 1px solid #E5E7EB; padding-bottom: 8px;">
+          <div style="font-size: 15px; font-weight: 700; color: #111827;">
+            ${idx + 1}. ${escapeHtml(refTitle)} <span style="font-size: 12px; font-weight: 500; color: #6B7280;">(#${escapeHtml(resCode)})</span>
+          </div>
+          <div>${pillHtml}</div>
+        </div>
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse; margin-bottom: 12px;">
+          <tr><td style="padding: 3px 0; font-size: 13px; color: #6B7280; width: 36%;">Hóspede no Voucher:</td><td style="padding: 3px 0; font-size: 13.5px; color: #111827; font-weight: 600;">${escapeHtml(guestDisplay)}</td></tr>
+          ${compLabel ? `<tr><td style="padding: 3px 0; font-size: 13px; color: #6B7280; width: 36%;">Empresa:</td><td style="padding: 3px 0; font-size: 13.5px; color: #111827; font-weight: 600;">${escapeHtml(compLabel)}</td></tr>` : ""}
+          <tr><td style="padding: 3px 0; font-size: 13px; color: #6B7280; width: 36%;">Unidade:</td><td style="padding: 3px 0; font-size: 13.5px; color: #111827; font-weight: 600;">${escapeHtml(flatDisplay)} — ${escapeHtml(buildingName)}</td></tr>
+          <tr><td style="padding: 3px 0; font-size: 13px; color: #6B7280; width: 36%;">Período:</td><td style="padding: 3px 0; font-size: 13.5px; color: #111827; font-weight: 600;">${checkinBr} a ${checkoutBr}</td></tr>
+        </table>
+        <div style="background-color: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 6px; padding: 10px 12px;">
+          <a href="${escapeHtml(indivUrl)}" style="display: inline-block; background-color: #0F766E; color: #FFFFFF !important; font-weight: 700; font-size: 12.5px; padding: 9px 16px; border-radius: 6px; text-decoration: none;">
+            🔐 Preencher Apenas ${escapeHtml(refTitle)}
+          </a>
+          <div style="font-size: 11.5px; color: #4B5563; margin-top: 6px; word-break: break-all;">
+            Link individual (pode ser encaminhado ao hóspede — sem valores): <a href="${escapeHtml(indivUrl)}" style="color: #0F766E; font-weight: 600; text-decoration: underline;">${escapeHtml(indivUrl)}</a>
+          </div>
+        </div>
+      </div>`;
+    })
+    .join("\n");
+
+  const contentHtml = `
+    <div style="margin-bottom: 20px;">
+      <h1 style="font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 10px 0;">
+        ${headerTitle}
+      </h1>
+      ${introHtml}
+    </div>
+
+    <!-- CTA Principal em Lote -->
+    <div style="background-color: #F0FDF4; border: 2px solid #86EFAC; border-radius: 8px; padding: 20px; margin-bottom: 22px; text-align: center;">
+      <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; color: #15803D; margin-bottom: 6px;">
+        Atalho Rápido para Agências • Sem Exibição de Valores Financeiros
+      </div>
+      <div style="font-size: 16px; font-weight: 700; color: #111827; margin-bottom: 8px;">
+        Preencher Todas as ${count} Reservas em Uma Única Tela
+      </div>
+      <p style="font-size: 13.5px; color: #374151; margin: 0 0 16px 0; line-height: 1.5;">
+        Informe apenas <strong>Nome Completo e WhatsApp</strong> de cada hóspede em uma única página. Assim que salvo, encerramos os lembretes e enviamos o Pré-Check-in diretamente ao WhatsApp de cada viajante:
+      </p>
+      <a href="${escapeHtml(finalBatchUrl)}" class="btn-action" style="display: inline-block; background-color: #111827; color: #FFFFFF !important; font-weight: 700; font-size: 14px; padding: 14px 28px; border-radius: 6px; text-decoration: none;">
+        ⚡ Preencher Todas as ${count} Reservas Agora
+      </a>
+      <div style="font-size: 12px; color: #4B5563; margin-top: 10px; word-break: break-all;">
+        Link unificado: <a href="${escapeHtml(finalBatchUrl)}" style="color: #111827; font-weight: 600; text-decoration: underline;">${escapeHtml(finalBatchUrl)}</a>
+      </div>
+    </div>
+
+    <div style="background-color: #FFFBEB; border: 1px solid #FDE68A; border-left: 4px solid #D97706; border-radius: 6px; padding: 14px 16px; margin-bottom: 20px;">
+      <div style="color: #92400E; font-size: 13.5px; font-weight: 700; margin-bottom: 4px;">
+        ⚠️ Liberação Antecipada na Recepção / Portaria 24h
+      </div>
+      <p style="color: #78350F; font-size: 13px; margin: 0; line-height: 1.5;">
+        Somente <strong>Nome Completo e WhatsApp</strong> de cada hóspede são obrigatórios (CPF e E-mail opcionais). Caso você prefira que cada próprio hóspede preencha, basta encaminhar o link individual correspondente abaixo.
+      </p>
+    </div>
+
+    <div class="section-title" style="font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: #374151; margin: 20px 0 10px 0;">
+      Reservas Incluídas neste Lote (${count}) — Links Individuais
+    </div>
+    ${cardsHtml}
+
+    <p style="font-size: 13.5px; color: #4B5563; margin: 16px 0 0 0; line-height: 1.5;">
+      Permanecemos à inteira disposição por este e-mail ou pelo nosso WhatsApp de Atendimento para qualquer suporte adicional. Muito obrigado pela parceria!
+    </p>
+  `;
+
+  const badge = anyCheckinToday
+    ? `<span class="badge badge-checkin" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA;">Check-in Hoje • ${count} Reservas</span>`
+    : anyReminder
+      ? `<span class="badge badge-checkin" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #FFFBEB; color: #B45309; border: 1px solid #FDE68A;">${anyEveDay ? "Check-in Amanhã" : "Lembrete"} • ${count} Reservas</span>`
+      : `<span class="badge badge-checkin" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #EFF6FF; color: #1D4ED8; border: 1px solid #BFDBFE;">${count} Reservas • Dados dos Hóspedes</span>`;
+
+  const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
+  const textItems = normalizedItems
+    .map((it, idx) => {
+      const r = it.reservation || {};
+      const resCode = String(r.code || r.id || "-");
+      const b2bNum = String(r.b2bReservationNumber || r.externalReservationNumber || "").trim();
+      const refNum = b2bNum || resCode;
+      const flatClean = String(r.flatNumber || "").replace(/^flat\s*/i, "").trim();
+      const gRaw = String(r.guestName || "").trim();
+      const indivUrl = `${hostBase}/credenciamento/${encodeURIComponent(resCode)}`;
+      return `${idx + 1}) Reserva #${refNum} (${resCode}) • Flat ${flatClean} • ${formatDateBr(r.checkinDate)} a ${formatDateBr(r.checkoutDate)}${gRaw ? ` • Hóspede: ${gRaw}` : ""}\n   Link individual: ${indivUrl}`;
+    })
+    .join("\n\n");
+
+  const bodyText = [
+    `Olá, ${agentName || agencyName}!`,
+    `Reunimos em um único resumo as ${count} reservas sob sua solicitação que aguardam Nome Completo e WhatsApp dos hóspedes no Edifício Soho Residence (CorpFlats).`,
+    `Preencher TODAS as ${count} reservas em uma única tela (sem valores financeiros): ${finalBatchUrl}`,
+    `Reservas e links individuais:\n${textItems}`,
+    `Muito obrigado pela atenção! Equipe CorpFlats`
+  ].join("\n\n");
+
+  return {
+    subject,
+    bodyHtml,
+    html: bodyHtml,
+    bodyText,
+    credentialUrl: finalBatchUrl,
+    batchCredentialUrl: finalBatchUrl
+  };
+}
+
+/**
  * Retorna a data atual no fuso horário oficial de Brasília (America/Sao_Paulo) no formato YYYY-MM-DD.
  */
 export function getBrasiliaTodayStr() {

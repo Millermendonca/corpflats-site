@@ -16750,6 +16750,255 @@ export async function dispatchRequesterGuestCredentialRequest(dbOrGetter, saveDa
 }
 
 /**
+ * Dispara 1 única mensagem consolidada de WhatsApp para a Agência / Agente quando houver 2+ reservas
+ * da mesma agência vencendo juntas (Inicial, D-1 ou D0), incluindo tanto o link individual de cada reserva
+ * quanto o link em lote ("Preencher Todas em Uma Única Tela").
+ */
+export async function dispatchBatchRequesterGuestCredentialRequest(dbOrGetter, saveDatabase, batchItems = [], options = {}) {
+  const lockKeys = [];
+  try {
+    const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
+    if (!db || !Array.isArray(batchItems) || batchItems.length === 0) {
+      return { dispatched: false, reason: "empty_batch" };
+    }
+
+    const activeItems = [];
+    for (const rawItem of batchItems) {
+      const r = rawItem?.reservation || rawItem;
+      if (!r) continue;
+      const st = String(r.status || "").toLowerCase().trim();
+      if (st === "pre_reserva" || st === "pendente" || st === "cancelada" || st === "cancelled") continue;
+      if (!isMissingGuestDataForCredential(r, db)) {
+        r.guestPending = false;
+        r.credentialStatus = "completed";
+        r.b2bCredentialCompletedAt = r.b2bCredentialCompletedAt || new Date().toISOString();
+        cancelPendingCredentialReminders(db, r);
+        continue;
+      }
+      const stageKey = String(rawItem?.stageKey || (rawItem?.isReminder ? `reminder_${rawItem?.reminderKind || Date.now()}` : "initial"));
+      const isReminder = Boolean(rawItem?.isReminder);
+      const rCodeUpper = String(r.code || r.reservationCode || "").trim().toUpperCase();
+      const rIdStr = r.id !== undefined && r.id !== null ? String(r.id) : "";
+      if (!options.force) {
+        if (!isReminder && (r.b2bCredentialWhatsappSentAt || r.credentialSentStages?.initial?.whatsappSentAt)) {
+          continue;
+        }
+        if (isReminder) {
+          const trigEv = `b2b_agency_credential_${stageKey}`;
+          const alreadyStage =
+            Boolean(r.credentialSentStages?.[stageKey]?.whatsappSentAt) ||
+            (db.whatsappHistory || []).some(h => {
+              if (!h || h.status === "failed") return false;
+              const hCode = String(h.reservationCode || "").trim().toUpperCase();
+              const hId = h.reservationId ? String(h.reservationId) : "";
+              const same = (rCodeUpper && hCode === rCodeUpper) || (rIdStr && (hId === rIdStr || hCode === rIdStr));
+              return same && h.triggerEvent === trigEv;
+            });
+          if (alreadyStage) continue;
+        }
+      }
+      activeItems.push({
+        reservation: r,
+        stageKey,
+        isReminder,
+        reminderKind: String(rawItem?.reminderKind || ""),
+        reminderNumber: Number(rawItem?.reminderNumber) || 0
+      });
+    }
+
+    if (activeItems.length === 0) {
+      return { dispatched: false, skipped: true, reason: "all_items_completed_or_sent" };
+    }
+
+    if (activeItems.length === 1) {
+      const only = activeItems[0];
+      return dispatchRequesterGuestCredentialRequest(db, saveDatabase, only.reservation, {
+        ...options,
+        stageKey: only.stageKey,
+        isReminder: only.isReminder,
+        reminderKind: only.reminderKind,
+        reminderNumber: only.reminderNumber
+      });
+    }
+
+    for (const it of activeItems) {
+      const r = it.reservation;
+      const rCodeL = String(r.code || r.reservationCode || "").trim().toUpperCase();
+      const rIdL = r.id !== undefined && r.id !== null ? String(r.id).trim() : "";
+      const b2bL = String(r.b2bReservationNumber || r.externalReservationNumber || "").trim();
+      if (rIdL) lockKeys.push(`ID:${rIdL}`);
+      if (rCodeL) lockKeys.push(`CODE:${rCodeL}`);
+      if (b2bL) lockKeys.push(`B2B:${b2bL}`);
+    }
+    if (lockKeys.some(k => inFlightRequesterWaCredentialLocks.has(k))) {
+      return { dispatched: false, skipped: true, reason: "already_in_flight" };
+    }
+    for (const k of lockKeys) inFlightRequesterWaCredentialLocks.add(k);
+
+    const firstRes = activeItems[0].reservation;
+    const recipients = getReservationRecipients(firstRes, db);
+    if (!recipients.requester?.isDifferentFromGuest) {
+      return { dispatched: false, reason: "no_separate_requester_contact" };
+    }
+
+    const waValidation = await resolveValidRequesterWhatsApp(db, firstRes, options);
+    if (!waValidation.valid || !waValidation.phone) {
+      return {
+        dispatched: false,
+        reason: "no_valid_requester_whatsapp",
+        candidatesTested: waValidation.candidatesTested || []
+      };
+    }
+
+    const validPhone = waValidation.phone;
+    const baseUrl = String(options.baseUrl || db?.settings?.baseUrl || "https://corpflats.com.br")
+      .replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br")
+      .replace(/\/+$/, "");
+
+    const codes = activeItems
+      .map(it => String(it.reservation.code || it.reservation.reservationCode || it.reservation.id || "").trim())
+      .filter(Boolean);
+    const batchCredUrl = `${baseUrl}/credenciamento/${encodeURIComponent(codes[0])}?codes=${encodeURIComponent(codes.join(","))}`;
+
+    const count = activeItems.length;
+    const anyReminder = activeItems.some(it => it.isReminder);
+    const anyCheckinToday = activeItems.some(
+      it =>
+        it.reminderKind === "checkin_morning" ||
+        it.reminderKind === "checkin_noon" ||
+        it.reminderKind === "sameday_2h"
+    );
+    const recipientDisplay = recipients.requester.name || firstRes.agencyName || firstRes.companyName || "Solicitante";
+
+    const linesList = activeItems
+      .map((it, idx) => {
+        const r = it.reservation;
+        const rCode = String(r.code || r.reservationCode || r.id || "").trim();
+        const b2bNum = String(r.b2bReservationNumber || r.externalReservationNumber || "").trim();
+        const refNum = b2bNum || rCode;
+        const flatNum = String(r.flatNumber || r.flatId || "").replace(/^flat\s*/i, "").trim();
+        const checkinBr = formatDateBrSimple(r.checkinDate);
+        const checkoutBr = formatDateBrSimple(r.checkoutDate);
+        const pendingG = isPendingGuestName(r.guestName);
+        const guestSuffix = !pendingG ? ` • *${r.guestName}*` : "";
+        const todayTag =
+          it.reminderKind === "checkin_morning" || it.reminderKind === "checkin_noon" || it.reminderKind === "sameday_2h"
+            ? " _(Check-in HOJE)_"
+            : "";
+        const indivUrl = `${baseUrl}/credenciamento/${encodeURIComponent(rCode)}`;
+        return `${idx + 1}. *Reserva #${refNum}* • Flat ${flatNum} (${checkinBr} a ${checkoutBr})${guestSuffix}${todayTag}\n   🔗 ${indivUrl}`;
+      })
+      .join("\n\n");
+
+    const batchText = anyReminder
+      ? `Olá, *${recipientDisplay}*! Tudo bem? 👋\n\n` +
+        `${anyCheckinToday ? "⏰ *Lembrete Importante (Check-in Hoje)" : "🔔 *Lembrete Consolidado"} — ${count} Reservas com Dados Pendentes:*\n` +
+        `Para facilitar sem enviar mensagens separadas, reunimos abaixo as *${count} reservas* sob sua solicitação que ainda aguardam o *Nome Completo e WhatsApp* de cada hóspede (CPF e E-mail opcionais):\n\n` +
+        `${linesList}\n\n` +
+        `⚡ *Preencher todas as ${count} reservas de uma só vez na mesma tela (sem valores financeiros):*\n` +
+        `👉 ${batchCredUrl}`
+      : `Olá, *${recipientDisplay}*! Tudo bem? 👋\n\n` +
+        `Confirmamos com muita satisfação as *${count} reservas* abaixo no *Edifício Soho Residence Service* (*CorpFlats*):\n\n` +
+        `${linesList}\n\n` +
+        `⚠️ *Dados dos Hóspedes para Liberação na Recepção 24h:*\n` +
+        `Basta informar o *Nome Completo e o WhatsApp* de cada hóspede (CPF e E-mail opcionais) para liberarmos a entrada e enviarmos o Pré-Check-in diretamente a cada viajante.\n\n` +
+        `⚡ *Preencher todas as ${count} reservas em uma única tela:*\n` +
+        `👉 ${batchCredUrl}`;
+
+    const buttons = [
+      { id: "btn_b2b_cred_batch", type: "URL", label: `⚡ Preencher Todas (${count})`, url: batchCredUrl }
+    ];
+
+    const primaryTrigEvent = anyReminder
+      ? `b2b_agency_credential_${activeItems[0].stageKey}`
+      : "b2b_agency_credential_request";
+
+    const waResult = await sendZapiMessage(db.zapiConfig, {
+      phone: validPhone,
+      message: batchText,
+      footer: "CorpFlats • Edifício Soho Residence",
+      buttons,
+      recipientRole: "solicitante",
+      triggerEvent: primaryTrigEvent,
+      db
+    });
+
+    const sentAtWa = new Date().toISOString();
+    if (!Array.isArray(db.whatsappHistory)) db.whatsappHistory = [];
+
+    for (const it of activeItems) {
+      const r = it.reservation;
+      const rCode = String(r.code || r.reservationCode || r.id || "").trim();
+      const itemTrig = it.isReminder ? `b2b_agency_credential_${it.stageKey}` : "b2b_agency_credential_request";
+      db.whatsappHistory.push({
+        id: `cred_batch_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        reservationCode: rCode,
+        reservationId: r.id || null,
+        title: `Solicitante • ${it.isReminder ? "Lembrete Agrupado" : "Credenciamento Agrupado"} (${count} Reservas)`,
+        guestName: r.guestName || "A Definir",
+        guestPhone: validPhone,
+        recipientType: "requester",
+        recipientRole: "solicitante",
+        recipientName: recipientDisplay,
+        triggerEvent: itemTrig,
+        batchCodes: codes,
+        batchSize: count,
+        message: batchText,
+        buttons,
+        status: waResult?.success !== false ? "sent" : "failed",
+        method: waResult?.method || "zapi",
+        error: waResult?.error || null,
+        sentAt: sentAtWa
+      });
+
+      if (waResult?.success !== false) {
+        if (!it.isReminder) {
+          r.b2bCredentialWhatsappSentAt = r.b2bCredentialWhatsappSentAt || sentAtWa;
+        } else {
+          r.b2bCredentialWhatsappLastReminderAt = sentAtWa;
+        }
+        r.b2bCredentialWhatsappRecipient = validPhone;
+      }
+    }
+
+    appendMessageToConversation(db, {
+      phone: validPhone,
+      senderName: "CorpFlats",
+      senderPhone: db?.zapiConfig?.instanceId || "",
+      fromMe: true,
+      text: batchText,
+      type: "text",
+      buttons,
+      triggerEvent: primaryTrigEvent,
+      reservationCode: codes.join(", "),
+      status: waResult?.success !== false ? "read" : "failed",
+      timestamp: sentAtWa,
+      messageId: waResult?.messageId || `msg_cred_batch_${Date.now()}`
+    });
+
+    if (waResult?.success !== false && typeof saveDatabase === "function") {
+      saveDatabase("requester_credential_whatsapp_batch_sent");
+    }
+
+    return {
+      dispatched: waResult?.success !== false,
+      batchSize: count,
+      batchCodes: codes,
+      batchCredentialUrl: batchCredUrl,
+      requesterName: recipientDisplay,
+      requesterPhone: validPhone,
+      requesterEmail: recipients.requester.email || "",
+      sentAt: sentAtWa
+    };
+  } catch (err) {
+    console.warn("[Requester Batch Credential Dispatch Error]:", err.message);
+    return { dispatched: false, error: err.message };
+  } finally {
+    for (const k of lockKeys) inFlightRequesterWaCredentialLocks.delete(k);
+  }
+}
+
+/**
  * Motor de Recuperação ("Catch-Up") da Régua de Envios do Hóspede:
  * Executado assim que:
  *  (A) O Solicitante preenche os dados obrigatórios do hóspede no link /credenciamento/:code; ou

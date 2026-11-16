@@ -235,6 +235,7 @@ import {
   fetchAndParseB2bVoucher,
   ingestB2bVoucherIntoDb,
   dispatchB2bAgencyCredentialEmail,
+  isGroupableAgencyReservation,
   ensurePendingB2bAgencyCredentialDispatches,
   repairIncompleteB2bReservations,
   handleZohoIncomingWebhook,
@@ -37925,11 +37926,18 @@ app.post("/api/pms/reservations", async (req, res) => {
   } else {
     // Reserva Confirmada: se houver Solicitante e faltarem dados obrigatórios do hóspede (Nome, CPF, Telefone),
     // envia o link /credenciamento/:code para o Solicitante via WhatsApp e E-mail.
-    if (hasSeparateRequester && isMissingGuestDataForCredential(newReservation)) {
-      dispatchRequesterGuestCredentialRequest(db, saveDatabase, newReservation, { baseUrl }).catch(credWaErr => {
-        console.warn("[Requester Credential WhatsApp] Aviso ao enviar link de credenciamento ao solicitante:", credWaErr.message);
-      });
-      if (req.body.sendAgencyCredentialEmail !== false) {
+    if (hasSeparateRequester && isMissingGuestDataForCredential(newReservation, db)) {
+      if (req.body.sendAgencyCredentialEmail === false) {
+        newReservation.skipAgencyCredentialAuto = true;
+        saveDatabase();
+      } else if (isGroupableAgencyReservation(newReservation, db)) {
+        // Para agências B2B, aguarda a janela de consolidação (~10 min) no motor periódico para unificar múltiplas reservas
+        newReservation.credentialPendingSince = newReservation.credentialPendingSince || new Date().toISOString();
+        saveDatabase();
+      } else {
+        dispatchRequesterGuestCredentialRequest(db, saveDatabase, newReservation, { baseUrl }).catch(credWaErr => {
+          console.warn("[Requester Credential WhatsApp] Aviso ao enviar link de credenciamento ao solicitante:", credWaErr.message);
+        });
         dispatchB2bAgencyCredentialEmail(db, saveDatabase, newReservation, {
           baseUrl,
           trigger: "b2b_agency_credential_request"
@@ -41097,16 +41105,21 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       }
     }
 
-    if (hasSepReqOnConfirm && isMissingGuestDataForCredential(r)) {
-      dispatchRequesterGuestCredentialRequest(db, saveDatabase, r, { baseUrl: editBaseUrl }).catch(err => {
-        console.warn("[Requester Credential WhatsApp] Erro ao enviar credenciamento na confirmação:", err.message);
-      });
-      dispatchB2bAgencyCredentialEmail(db, saveDatabase, r, {
-        baseUrl: editBaseUrl,
-        trigger: "b2b_agency_credential_request"
-      }).catch(err => {
-        console.warn("[Requester Credential Email] Erro ao enviar credenciamento na confirmação:", err.message);
-      });
+    if (hasSepReqOnConfirm && isMissingGuestDataForCredential(r, db)) {
+      if (isGroupableAgencyReservation(r, db)) {
+        r.credentialPendingSince = r.credentialPendingSince || new Date().toISOString();
+        saveDatabase();
+      } else {
+        dispatchRequesterGuestCredentialRequest(db, saveDatabase, r, { baseUrl: editBaseUrl }).catch(err => {
+          console.warn("[Requester Credential WhatsApp] Erro ao enviar credenciamento na confirmação:", err.message);
+        });
+        dispatchB2bAgencyCredentialEmail(db, saveDatabase, r, {
+          baseUrl: editBaseUrl,
+          trigger: "b2b_agency_credential_request"
+        }).catch(err => {
+          console.warn("[Requester Credential Email] Erro ao enviar credenciamento na confirmação:", err.message);
+        });
+      }
     }
 
     const effectiveGuestDigitsOnConfirm = String(newGuestPhone || recipsOnConfirm.guest?.cleanDigits || "").replace(/\D/g, "");
@@ -41132,22 +41145,29 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
   } else {
     // Se a reserva já estava confirmada e o gestor acabou de inserir/atualizar os contatos do Solicitante/Agência
-    // enquanto os dados do hóspede continuam pendentes, dispara imediatamente o pedido inicial de credenciamento (E-mail + WhatsApp)
-    if (r.status === "confirmada" && isMissingGuestDataForCredential(r)) {
+    // enquanto os dados do hóspede continuam pendentes, dispara ou agenda no lote inicial de credenciamento
+    if (r.status === "confirmada" && isMissingGuestDataForCredential(r, db)) {
       const recipsAfterEdit = getReservationRecipients(r, db);
       if (recipsAfterEdit.requester?.isDifferentFromGuest) {
-        if (!r.b2bCredentialWhatsappSentAt) {
-          dispatchRequesterGuestCredentialRequest(db, saveDatabase, r, { baseUrl: editBaseUrl }).catch(err => {
-            console.warn("[PMS Edit Credential WhatsApp] Aviso:", err.message);
-          });
-        }
-        if (!r.b2bCredentialEmailSentAt) {
-          dispatchB2bAgencyCredentialEmail(db, saveDatabase, r, {
-            baseUrl: editBaseUrl,
-            trigger: "b2b_agency_credential_request"
-          }).catch(err => {
-            console.warn("[PMS Edit Credential Email] Aviso:", err.message);
-          });
+        if (isGroupableAgencyReservation(r, db)) {
+          if (!r.b2bCredentialEmailSentAt && !r.b2bCredentialWhatsappSentAt) {
+            r.credentialPendingSince = r.credentialPendingSince || new Date().toISOString();
+            saveDatabase();
+          }
+        } else {
+          if (!r.b2bCredentialWhatsappSentAt) {
+            dispatchRequesterGuestCredentialRequest(db, saveDatabase, r, { baseUrl: editBaseUrl }).catch(err => {
+              console.warn("[PMS Edit Credential WhatsApp] Aviso:", err.message);
+            });
+          }
+          if (!r.b2bCredentialEmailSentAt) {
+            dispatchB2bAgencyCredentialEmail(db, saveDatabase, r, {
+              baseUrl: editBaseUrl,
+              trigger: "b2b_agency_credential_request"
+            }).catch(err => {
+              console.warn("[PMS Edit Credential Email] Aviso:", err.message);
+            });
+          }
         }
       }
     }
@@ -43322,13 +43342,7 @@ app.post(["/api/pms/reservations/:id/send-b2b-credential-email", "/api/reservati
   }
 });
 
-// Endpoint Público: Consulta da Reserva para Credenciamento do Hóspede pelo Solicitante / Agência (Sem Valores Financeiros)
-app.get(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credential/:code"], (req, res) => {
-  const code = String(req.params.code || "").trim();
-  const r = findReservationByLocatorOrContact(code);
-  if (!r) {
-    return res.status(404).json({ error: "Reserva não localizada com este código. Verifique o link enviado." });
-  }
+function serializeReservationForAgencyCredential(r) {
   const rawLinkedGuest = r.guestId
     ? (db.guests || []).find(g => String(g.id) === String(r.guestId))
     : null;
@@ -43345,36 +43359,78 @@ app.get(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credential
   const rawGuestName = r.guestName || linkedGuest?.fullName || linkedGuest?.name || "";
   const pendingName = Boolean(r.guestPending || isPendingGuestName(rawGuestName));
 
+  return {
+    id: r.id,
+    code: r.code,
+    status: r.status || "confirmada",
+    requesterType: r.requesterType || (r.agencyId || r.agencyName ? "agency" : (r.companyId || r.companyName ? "company" : "other_person")),
+    requesterName: r.requesterInfo?.name || r.agencyAgentName || r.agencyTradeName || r.agencyName || linkedAgency?.tradeName || r.companyName || linkedCompany?.tradeName || null,
+    b2bReservationNumber: r.b2bReservationNumber || r.externalReservationNumber || null,
+    b2bLocatorRloc: r.b2bLocatorRloc || null,
+    checkinDate: r.checkinDate,
+    checkoutDate: r.checkoutDate,
+    checkinTime: r.checkinTime || "14:00",
+    checkoutTime: r.checkoutTime || "12:00",
+    flatNumber: r.flatNumber,
+    includeBreakfast: r.includeBreakfast !== false && r.hasBreakfast !== false,
+    agencyName: r.agencyTradeName || r.agencyName || linkedAgency?.tradeName || linkedAgency?.corporateName || null,
+    agencyPosUnit: r.agencyPosUnit || null,
+    agencyAgentName: r.agencyAgentName || null,
+    companyName: r.companyName || linkedCompany?.tradeName || linkedCompany?.corporateName || null,
+    guestPending: pendingName,
+    guestName: pendingName ? "" : rawGuestName,
+    guestDocument: r.guestDocument || linkedGuest?.cpf || linkedGuest?.document || linkedGuest?.documentNumber || "",
+    guestDocType: r.guestDocType || linkedGuest?.docType || null,
+    guestPhone: r.guestPhone || linkedGuest?.phone || linkedGuest?.whatsapp || "",
+    guestSecondaryPhone: r.guestSecondaryPhone || linkedGuest?.secondaryPhone || "",
+    guestEmail: r.guestEmail || linkedGuest?.email || "",
+    hasDocPhoto: Boolean(r.docPhotoUrl || linkedGuest?.docPhotoUrl || (r.guests && r.guests[0]?.docPhotoUrl)),
+    docPhotoUrl: r.docPhotoUrl || linkedGuest?.docPhotoUrl || (r.guests && r.guests[0]?.docPhotoUrl) || null,
+    credentialCompletedAt: r.b2bCredentialCompletedAt || null,
+    isCredentialComplete: !isMissingGuestDataForCredential(r, db)
+  };
+}
+
+// Endpoint Público em Lote: Consulta Múltiplas Reservas da Agência na Mesma Tela (Sem Valores Financeiros)
+app.get(["/api/pms/agency-guest-credential-batch", "/api/agency-guest-credential-batch"], (req, res) => {
+  const rawCodes = String(req.query.codes || "").trim();
+  const codesList = rawCodes
+    .split(/[,;|]+/)
+    .map(c => c.trim())
+    .filter(Boolean)
+    .slice(0, 30);
+
+  if (codesList.length === 0) {
+    return res.status(400).json({ error: "Nenhum código de reserva informado no lote." });
+  }
+
+  const seenIds = new Set();
+  const reservations = [];
+  for (const code of codesList) {
+    const found = findReservationByLocatorOrContact(code);
+    if (!found) continue;
+    const uKey = String(found.id || found.code);
+    if (seenIds.has(uKey)) continue;
+    seenIds.add(uKey);
+    reservations.push(serializeReservationForAgencyCredential(found));
+  }
+
+  if (reservations.length === 0) {
+    return res.status(404).json({ error: "Nenhuma reserva localizada para os códigos informados." });
+  }
+
+  return res.json({ reservations });
+});
+
+// Endpoint Público: Consulta da Reserva para Credenciamento do Hóspede pelo Solicitante / Agência (Sem Valores Financeiros)
+app.get(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credential/:code"], (req, res) => {
+  const code = String(req.params.code || "").trim();
+  const r = findReservationByLocatorOrContact(code);
+  if (!r) {
+    return res.status(404).json({ error: "Reserva não localizada com este código. Verifique o link enviado." });
+  }
   return res.json({
-    reservation: {
-      id: r.id,
-      code: r.code,
-      status: r.status || "confirmada",
-      requesterType: r.requesterType || (r.agencyId || r.agencyName ? "agency" : (r.companyId || r.companyName ? "company" : "other_person")),
-      requesterName: r.requesterInfo?.name || r.agencyAgentName || r.agencyTradeName || r.agencyName || linkedAgency?.tradeName || r.companyName || linkedCompany?.tradeName || null,
-      b2bReservationNumber: r.b2bReservationNumber || r.externalReservationNumber || null,
-      b2bLocatorRloc: r.b2bLocatorRloc || null,
-      checkinDate: r.checkinDate,
-      checkoutDate: r.checkoutDate,
-      checkinTime: r.checkinTime || "14:00",
-      checkoutTime: r.checkoutTime || "12:00",
-      flatNumber: r.flatNumber,
-      includeBreakfast: r.includeBreakfast !== false && r.hasBreakfast !== false,
-      agencyName: r.agencyTradeName || r.agencyName || linkedAgency?.tradeName || linkedAgency?.corporateName || null,
-      agencyPosUnit: r.agencyPosUnit || null,
-      agencyAgentName: r.agencyAgentName || null,
-      companyName: r.companyName || linkedCompany?.tradeName || linkedCompany?.corporateName || null,
-      guestPending: pendingName,
-      guestName: pendingName ? "" : rawGuestName,
-      guestDocument: r.guestDocument || linkedGuest?.cpf || linkedGuest?.document || linkedGuest?.documentNumber || "",
-      guestDocType: r.guestDocType || linkedGuest?.docType || null,
-      guestPhone: r.guestPhone || linkedGuest?.phone || linkedGuest?.whatsapp || "",
-      guestSecondaryPhone: r.guestSecondaryPhone || linkedGuest?.secondaryPhone || "",
-      guestEmail: r.guestEmail || linkedGuest?.email || "",
-      hasDocPhoto: Boolean(r.docPhotoUrl || linkedGuest?.docPhotoUrl || (r.guests && r.guests[0]?.docPhotoUrl)),
-      docPhotoUrl: r.docPhotoUrl || linkedGuest?.docPhotoUrl || (r.guests && r.guests[0]?.docPhotoUrl) || null,
-      credentialCompletedAt: r.b2bCredentialCompletedAt || null
-    }
+    reservation: serializeReservationForAgencyCredential(r)
   });
 });
 
@@ -74621,11 +74677,16 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
 
   // Se houver Solicitante e ainda faltarem os dados obrigatórios do hóspede, envia o link /credenciamento/:code ao Solicitante
   const recipsPay = getReservationRecipients(r, db);
-  if (recipsPay.requester?.isDifferentFromGuest && isMissingGuestDataForCredential(r)) {
-    dispatchRequesterGuestCredentialRequest(db, saveDatabase, r).catch(() => {});
-    dispatchB2bAgencyCredentialEmail(db, saveDatabase, r, {
-      trigger: "b2b_agency_credential_request"
-    }).catch(() => {});
+  if (recipsPay.requester?.isDifferentFromGuest && isMissingGuestDataForCredential(r, db)) {
+    if (isGroupableAgencyReservation(r, db)) {
+      r.credentialPendingSince = r.credentialPendingSince || new Date().toISOString();
+      saveDatabase();
+    } else {
+      dispatchRequesterGuestCredentialRequest(db, saveDatabase, r).catch(() => {});
+      dispatchB2bAgencyCredentialEmail(db, saveDatabase, r, {
+        trigger: "b2b_agency_credential_request"
+      }).catch(() => {});
+    }
   }
 
   // 0. Assim que confirmada pelo pagamento, libera agendamentos e notifica recepção/portaria e garagem (se for para hoje e já tiver hóspede)

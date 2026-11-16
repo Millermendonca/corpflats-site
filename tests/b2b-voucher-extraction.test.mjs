@@ -31,6 +31,8 @@ import {
   fetchAndParseB2bVoucher,
   ingestB2bVoucherIntoDb,
   dispatchB2bAgencyCredentialEmail,
+  dispatchB2bAgencyBatchCredentialEmail,
+  buildAgencyCredentialGroupKey,
   resolveB2bCredentialTargetEmail,
   handleZohoIncomingWebhook,
   evaluateCredentialScheduleDecision,
@@ -44,7 +46,10 @@ import {
   cancelPendingCredentialReminders
 } from '../artifacts/api-server/zapi-service.mjs';
 
-import { renderB2bAgencyCredentialRequestEmail } from '../artifacts/api-server/mail-service.mjs';
+import {
+  renderB2bAgencyCredentialRequestEmail,
+  renderB2bAgencyBatchCredentialRequestEmail
+} from '../artifacts/api-server/mail-service.mjs';
 import { gerarLinkReservaTool } from '../artifacts/api-server/agent-architecture.mjs';
 
 import { extractTextFromPdfBuffer } from '../artifacts/api-server/pdf-extract-service.mjs';
@@ -1070,6 +1075,155 @@ Telefone Agência:
       assert.strictEqual(created.requesterPhone, '5522999112233');
       assert.strictEqual(created.requesterEmail, 'rh@empresa.com.br');
       assert.strictEqual(created.credentialStatus, 'pending_agency');
+    });
+
+    it('10.7 Múltiplas reservas da mesma agência + mesmo e-mail do agente devem aguardar janela de ~10 min e consolidar em 1 único E-mail e 1 único WhatsApp com links individuais e lote', async () => {
+      const mockDb = {
+        settings: { baseUrl: 'https://corpflats.com.br' },
+        zapiConfig: { enabled: true, instanceId: '', token: '' },
+        agencies: [
+          {
+            id: 50,
+            tradeName: 'Copastur Viagens',
+            cnpj: '47.508.411/0001-56',
+            email: 'operacional@copastur.com.br'
+          }
+        ],
+        reservations: [
+          {
+            id: 701,
+            code: 'RES-113-B2B-7001',
+            b2bReservationNumber: '7001',
+            flatNumber: '113',
+            channel: 'b2b',
+            requesterType: 'agency_b2b',
+            agencyId: 50,
+            agencyName: 'Copastur Viagens',
+            agencyAgentName: 'Camila Atendimento',
+            agencyAgentEmail: 'camila@copastur.com.br',
+            agencyAgentPhone: '5511977776666',
+            status: 'confirmada',
+            checkinDate: '2026-11-20',
+            checkoutDate: '2026-11-22',
+            guestName: 'Marcos Vinicius Rocha',
+            guestPhone: '',
+            createdAt: '2026-11-17T14:00:00.000Z',
+            credentialSentStages: {}
+          },
+          {
+            id: 702,
+            code: 'RES-211-B2B-7002',
+            b2bReservationNumber: '7002',
+            flatNumber: '211',
+            channel: 'b2b',
+            requesterType: 'agency_b2b',
+            agencyId: 50,
+            agencyName: 'Copastur Viagens',
+            agencyAgentName: 'Camila Atendimento',
+            agencyAgentEmail: 'camila@copastur.com.br',
+            agencyAgentPhone: '5511977776666',
+            status: 'confirmada',
+            checkinDate: '2026-11-20',
+            checkoutDate: '2026-11-23',
+            guestName: 'Patricia Mendes Lima',
+            guestPhone: '',
+            createdAt: '2026-11-17T14:03:00.000Z',
+            credentialSentStages: {}
+          },
+          {
+            id: 703,
+            code: 'RES-605-B2B-7003',
+            b2bReservationNumber: '7003',
+            flatNumber: '605',
+            channel: 'b2b',
+            requesterType: 'agency_b2b',
+            agencyId: 50,
+            agencyName: 'Copastur Viagens',
+            agencyAgentName: 'Camila Atendimento',
+            agencyAgentEmail: 'camila@copastur.com.br',
+            agencyAgentPhone: '5511977776666',
+            status: 'confirmada',
+            checkinDate: '2026-11-21',
+            checkoutDate: '2026-11-24',
+            guestName: 'Andre Luiz Gomes',
+            guestPhone: '',
+            createdAt: '2026-11-17T14:05:00.000Z',
+            credentialSentStages: {}
+          }
+        ],
+        whatsappHistory: [],
+        whatsappConversations: [],
+        reservationCommunications: []
+      };
+
+      // Chave de agrupamento idêntica para as 3 reservas da mesma agência + mesmo e-mail do agente
+      const k1 = buildAgencyCredentialGroupKey(mockDb, mockDb.reservations[0]);
+      const k2 = buildAgencyCredentialGroupKey(mockDb, mockDb.reservations[1]);
+      const k3 = buildAgencyCredentialGroupKey(mockDb, mockDb.reservations[2]);
+      assert.strictEqual(k1, k2);
+      assert.strictEqual(k2, k3);
+      assert.ok(k1.startsWith('AGENCY:'));
+
+      // 1) Aos 6 minutos após a 1ª (e 1 min após a 3ª, às 14:06 UTC): ainda dentro da janela de consolidação de 10 min -> 0 envios!
+      const holdCheck = await ensurePendingB2bAgencyCredentialDispatches(mockDb, () => {}, {
+        forceCheck: true,
+        allowSimulatedSend: true,
+        nowOverride: new Date('2026-11-17T14:06:00.000Z'),
+        phoneExistsChecker: async () => ({ checked: true, exists: true })
+      });
+      assert.strictEqual(holdCheck.dispatched, 0);
+      assert.strictEqual(mockDb.whatsappHistory.length, 0);
+
+      // 2) Aos 11 minutos após a última reserva do lote (14:16 UTC): consolida as 3 em 1 ÚNICO envio agrupado!
+      const batchSend = await ensurePendingB2bAgencyCredentialDispatches(mockDb, () => {}, {
+        forceCheck: true,
+        allowSimulatedSend: true,
+        nowOverride: new Date('2026-11-17T14:16:00.000Z'),
+        phoneExistsChecker: async () => ({ checked: true, exists: true })
+      });
+      assert.strictEqual(batchSend.batchesDispatched, 1);
+      assert.strictEqual(batchSend.dispatched, 1);
+      // Apenas 1 bolha de conversa enviada no WhatsApp da agência (com os 3 links individuais + link unificado ?codes=...)
+      assert.strictEqual(mockDb.whatsappConversations.length, 1);
+      assert.strictEqual(mockDb.whatsappConversations[0].messages.length, 1);
+      const sentWaMsg = mockDb.whatsappConversations[0].messages[0].text;
+      assert.ok(sentWaMsg.includes('RES-113-B2B-7001'));
+      assert.ok(sentWaMsg.includes('RES-211-B2B-7002'));
+      assert.ok(sentWaMsg.includes('RES-605-B2B-7003'));
+      assert.ok(sentWaMsg.includes('codes='));
+
+      // Verifica renderização do E-mail consolidado com os 3 links individuais + botão em lote
+      const batchEmailRendered = renderB2bAgencyBatchCredentialRequestEmail({
+        reservations: mockDb.reservations,
+        agency: mockDb.agencies[0],
+        baseUrl: 'https://corpflats.com.br',
+        isReminder: false,
+        db: mockDb
+      });
+      assert.ok(batchEmailRendered.subject.includes('3 Reservas'));
+      assert.ok(batchEmailRendered.bodyHtml.includes('/credenciamento/RES-113-B2B-7001'));
+      assert.ok(batchEmailRendered.bodyHtml.includes('/credenciamento/RES-211-B2B-7002'));
+      assert.ok(batchEmailRendered.bodyHtml.includes('/credenciamento/RES-605-B2B-7003'));
+      assert.ok(batchEmailRendered.bodyHtml.includes('codes=RES-113-B2B-7001%2CRES-211-B2B-7002%2CRES-605-B2B-7003'));
+
+      // 3) Se a agência preencher Nome + Telefone da Reserva #1 (701), no D-1 (19/11 às 09:05 BRT) apenas as 2 pendentes (701 fora; 702 em D-1) entram!
+      mockDb.reservations[0].guestPhone = '5522998112233'; // 701 concluída!
+      mockDb.reservations[2].checkinDate = '2026-11-20';   // coloca 703 também com check-in em 20/11 para vencer D-1 junto com 702
+
+      const dMinus1Batch = await ensurePendingB2bAgencyCredentialDispatches(mockDb, () => {}, {
+        forceCheck: true,
+        allowSimulatedSend: true,
+        nowOverride: new Date('2026-11-19T09:05:00-03:00'),
+        phoneExistsChecker: async () => ({ checked: true, exists: true })
+      });
+      assert.strictEqual(mockDb.reservations[0].credentialStatus, 'completed');
+      assert.strictEqual(dMinus1Batch.remindersDispatched, 1);
+      assert.strictEqual(dMinus1Batch.batchesDispatched, 1);
+      assert.strictEqual(mockDb.whatsappConversations[0].messages.length, 2, 'Apenas 1 única mensagem consolidada de lembrete D-1 para as 2 restantes');
+      const remWaMsg = mockDb.whatsappConversations[0].messages[1].text;
+      assert.ok(!remWaMsg.includes('RES-113-B2B-7001'), 'Reserva já preenchida não deve aparecer no lembrete agrupado');
+      assert.ok(remWaMsg.includes('RES-211-B2B-7002'));
+      assert.ok(remWaMsg.includes('RES-605-B2B-7003'));
     });
   });
 

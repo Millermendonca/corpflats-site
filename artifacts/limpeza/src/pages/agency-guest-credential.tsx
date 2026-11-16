@@ -18,7 +18,9 @@ import {
   Briefcase,
   Search,
   RefreshCw,
-  ExternalLink
+  ExternalLink,
+  Copy,
+  Layers
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -61,12 +63,36 @@ function formatPhoneMask(value: string): string {
   return formatSmartPhone(value);
 }
 
+interface BatchDraftItem {
+  reservation: any;
+  guestName: string;
+  docType: "cpf" | "passport";
+  guestDocument: string;
+  guestPhone: string;
+  guestEmail: string;
+  whatsappStatus: "idle" | "checking" | "valid" | "invalid";
+  saving: boolean;
+  saved: boolean;
+}
+
 export default function AgencyGuestCredential() {
   const [location, setLocation] = useLocation();
   const [, paramsCred] = useRoute("/credenciamento/:code");
   const [, paramsCredHosp] = useRoute("/credenciamento-hospede/:code");
   const [, paramsIdent] = useRoute("/identificar-reserva/:code");
   const [, paramsCad] = useRoute("/cadastro-hospede/:code");
+
+  const batchCodesParam =
+    typeof window !== "undefined"
+      ? (new URLSearchParams(window.location.search).get("codes") || "").trim()
+      : "";
+  const parsedBatchCodes = batchCodesParam
+    ? batchCodesParam
+        .split(/[,;|]+/)
+        .map((c) => c.trim())
+        .filter(Boolean)
+    : [];
+  const isBatchMode = parsedBatchCodes.length >= 2;
 
   const codeFromUrl =
     paramsCred?.code ||
@@ -76,16 +102,19 @@ export default function AgencyGuestCredential() {
     (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("code") || "" : "");
 
   const isGuestSelfIdentifyMode =
-    location.startsWith("/identificar") ||
-    location.startsWith("/cadastro-hospede") ||
-    !codeFromUrl;
+    !isBatchMode &&
+    (location.startsWith("/identificar") ||
+      location.startsWith("/cadastro-hospede") ||
+      !codeFromUrl);
 
   const { toast } = useToast();
 
   const [lookupCode, setLookupCode] = useState(codeFromUrl);
-  const [loading, setLoading] = useState(Boolean(codeFromUrl));
+  const [loading, setLoading] = useState(Boolean(codeFromUrl || isBatchMode));
   const [submitting, setSubmitting] = useState(false);
   const [reservation, setReservation] = useState<any>(null);
+  const [batchItems, setBatchItems] = useState<BatchDraftItem[]>([]);
+  const [submittingBatchAll, setSubmittingBatchAll] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [completed, setCompleted] = useState(false);
 
@@ -184,11 +213,242 @@ export default function AgencyGuestCredential() {
     }
   };
 
+  const fetchBatchReservations = async (codes: string[]) => {
+    setLoading(true);
+    setErrorMsg("");
+    try {
+      const res = await fetch(
+        `/api/pms/agency-guest-credential-batch?codes=${encodeURIComponent(codes.join(","))}`
+      );
+      const data = await res.json();
+      if (!res.ok || !Array.isArray(data.reservations) || data.reservations.length === 0) {
+        setErrorMsg(data.error || "Não foi possível carregar as reservas do lote.");
+        setBatchItems([]);
+      } else {
+        const mapped: BatchDraftItem[] = data.reservations.map((r: any) => {
+          const loadedDoc = String(r.guestDocument || "");
+          const isLoadedPassport =
+            String(r.guestDocType || "").toLowerCase().includes("pass") ||
+            /[a-zA-Z]/.test(loadedDoc);
+          const hasSavedCred = Boolean(
+            r.isCredentialComplete ||
+              r.credentialCompletedAt ||
+              (r.guestName && String(r.guestPhone || "").replace(/\D/g, "").length >= 10)
+          );
+          return {
+            reservation: r,
+            guestName: r.guestName || "",
+            docType: isLoadedPassport ? "passport" : "cpf",
+            guestDocument: loadedDoc
+              ? isLoadedPassport
+                ? formatPassport(loadedDoc)
+                : formatCpfMask(loadedDoc)
+              : "",
+            guestPhone: r.guestPhone ? formatPhoneMask(r.guestPhone) : "",
+            guestEmail: r.guestEmail || "",
+            whatsappStatus: hasSavedCred ? "valid" : "idle",
+            saving: false,
+            saved: hasSavedCred
+          };
+        });
+        setBatchItems(mapped);
+      }
+    } catch {
+      setErrorMsg("Erro de conexão ao carregar o lote de reservas. Tente novamente.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateBatchItem = (idx: number, patch: Partial<BatchDraftItem>) => {
+    setBatchItems((prev) => prev.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
+  };
+
+  const checkBatchItemWhatsApp = async (idx: number, rawPhone: string): Promise<boolean> => {
+    const queryPhone = formatPhoneForWhatsAppCheck(rawPhone);
+    if (!queryPhone) {
+      updateBatchItem(idx, { whatsappStatus: "idle" });
+      return false;
+    }
+    updateBatchItem(idx, { whatsappStatus: "checking" });
+    try {
+      const res = await fetch(`/api/whatsapp/phone-exists/${encodeURIComponent(queryPhone)}`);
+      const data = await res.json();
+      if (data && data.checked && data.exists === false) {
+        updateBatchItem(idx, { whatsappStatus: "invalid" });
+        return false;
+      }
+      updateBatchItem(idx, { whatsappStatus: "valid" });
+      return true;
+    } catch {
+      updateBatchItem(idx, { whatsappStatus: "valid" });
+      return true;
+    }
+  };
+
+  const saveSingleBatchCard = async (idx: number, silentSuccess = false): Promise<boolean> => {
+    const item = batchItems[idx];
+    if (!item) return false;
+    const refLabel = item.reservation.b2bReservationNumber
+      ? `#${item.reservation.b2bReservationNumber}`
+      : item.reservation.code;
+    const nameParts = item.guestName.trim().split(/\s+/).filter(Boolean);
+    const trimmedPhone = item.guestPhone.trim();
+    const cleanPhoneDigits = trimmedPhone.replace(/\D/g, "");
+    const isIntlPhone = trimmedPhone.startsWith("+") && !cleanPhoneDigits.startsWith("55");
+    const finalPhonePayload = isIntlPhone ? `+${cleanPhoneDigits}` : cleanPhoneDigits;
+    const hasDocInput = item.guestDocument.trim().length > 0;
+    const cleanDoc = item.guestDocument.replace(/\D/g, "");
+    const normalizedPassport = formatPassport(item.guestDocument);
+    const cleanEmail = item.guestEmail.trim();
+
+    if (nameParts.length < 2) {
+      toast({
+        title: `Nome incompleto (${refLabel})`,
+        description: "Informe o nome e sobrenome do hóspede.",
+        variant: "destructive"
+      });
+      return false;
+    }
+    if (cleanPhoneDigits.length < (isIntlPhone ? 8 : 10)) {
+      toast({
+        title: `WhatsApp obrigatório (${refLabel})`,
+        description: "Informe o telefone / WhatsApp com DDD.",
+        variant: "destructive"
+      });
+      return false;
+    }
+    if (hasDocInput) {
+      if (item.docType === "passport" && normalizedPassport.replace(/[^A-Z0-9]/g, "").length < 5) {
+        toast({
+          title: `Passaporte inválido (${refLabel})`,
+          description: "Corrija o passaporte ou deixe em branco.",
+          variant: "destructive"
+        });
+        return false;
+      }
+      if (item.docType === "cpf" && !isValidBrazilianCpf(cleanDoc)) {
+        toast({
+          title: `CPF inválido (${refLabel})`,
+          description: "Corrija os 11 dígitos do CPF ou deixe em branco.",
+          variant: "destructive"
+        });
+        return false;
+      }
+    }
+    if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      toast({
+        title: `E-mail inválido (${refLabel})`,
+        description: "Corrija o e-mail ou deixe em branco.",
+        variant: "destructive"
+      });
+      return false;
+    }
+
+    updateBatchItem(idx, { saving: true });
+    try {
+      const hasWa = await checkBatchItemWhatsApp(idx, finalPhonePayload);
+      if (!hasWa) {
+        toast({
+          title: `Sem WhatsApp ativo (${refLabel})`,
+          description: "O telefone informado não possui conta ativa no WhatsApp.",
+          variant: "destructive"
+        });
+        updateBatchItem(idx, { saving: false });
+        return false;
+      }
+
+      const res = await fetch(
+        `/api/pms/agency-guest-credential/${encodeURIComponent(item.reservation.code)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            guestName: item.guestName.trim(),
+            guestDocument: hasDocInput ? (item.docType === "passport" ? normalizedPassport : cleanDoc) : "",
+            docType: hasDocInput ? (item.docType === "passport" ? "Passaporte" : "CPF") : "",
+            guestPhone: finalPhonePayload,
+            guestEmail: cleanEmail,
+            sourceMode: "agency"
+          })
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.invalidWhatsApp) updateBatchItem(idx, { whatsappStatus: "invalid" });
+        toast({
+          title: `Atenção (${refLabel})`,
+          description: data.error || "Não foi possível salvar esta reserva.",
+          variant: "destructive"
+        });
+        updateBatchItem(idx, { saving: false });
+        return false;
+      }
+
+      updateBatchItem(idx, { saving: false, saved: true, whatsappStatus: "valid" });
+      if (!silentSuccess) {
+        toast({
+          title: `Reserva ${refLabel} credenciada!`,
+          description: "Lembretes encerrados para esta reserva e Pré-Check-in enviado ao WhatsApp do hóspede."
+        });
+      }
+      return true;
+    } catch {
+      updateBatchItem(idx, { saving: false });
+      toast({
+        title: `Erro de conexão (${refLabel})`,
+        description: "Tente novamente em instantes.",
+        variant: "destructive"
+      });
+      return false;
+    }
+  };
+
+  const handleSaveAllFilledBatch = async () => {
+    const candidateIndices = batchItems
+      .map((it, idx) => ({ it, idx }))
+      .filter(
+        ({ it }) =>
+          !it.saved &&
+          it.guestName.trim().length > 0 &&
+          it.guestPhone.replace(/\D/g, "").length >= 8
+      )
+      .map(({ idx }) => idx);
+
+    if (candidateIndices.length === 0) {
+      toast({
+        title: "Nenhuma reserva pendente preenchida",
+        description: "Preencha Nome Completo e WhatsApp em pelo menos uma reserva pendente para confirmar.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setSubmittingBatchAll(true);
+    let savedCount = 0;
+    try {
+      for (const idx of candidateIndices) {
+        const ok = await saveSingleBatchCard(idx, true);
+        if (ok) savedCount++;
+      }
+      if (savedCount > 0) {
+        toast({
+          title: `${savedCount} ${savedCount === 1 ? "reserva credenciada" : "reservas credenciadas"} com sucesso!`,
+          description: "Os hóspedes já receberam a confirmação e o link de Pré-Check-in no WhatsApp."
+        });
+      }
+    } finally {
+      setSubmittingBatchAll(false);
+    }
+  };
+
   useEffect(() => {
-    if (codeFromUrl) {
+    if (isBatchMode) {
+      fetchBatchReservations(parsedBatchCodes);
+    } else if (codeFromUrl) {
       fetchReservation(codeFromUrl);
     }
-  }, [codeFromUrl]);
+  }, [codeFromUrl, batchCodesParam]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -370,7 +630,7 @@ export default function AgencyGuestCredential() {
           </div>
         </div>
 
-        {!reservation && !loading && (
+        {!isBatchMode && !reservation && !loading && (
           <div className="rounded-2xl bg-slate-900 border border-slate-800 p-6 space-y-4 shadow-lg">
             <div className="space-y-1">
               <Label className="text-sm font-bold text-white flex items-center gap-2">
@@ -421,7 +681,238 @@ export default function AgencyGuestCredential() {
           </div>
         )}
 
-        {reservation && !completed && (
+        {isBatchMode && !loading && errorMsg && batchItems.length === 0 && (
+          <div className="rounded-2xl bg-slate-900 border border-slate-800 p-6 space-y-3">
+            <div className="rounded-xl bg-rose-500/10 border border-rose-500/30 p-3.5 text-xs text-rose-300 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+              <span>{errorMsg}</span>
+            </div>
+          </div>
+        )}
+
+        {isBatchMode && !loading && batchItems.length > 0 && (
+          <div className="space-y-5">
+            <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5 space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-teal-400">
+                    <Layers className="w-3.5 h-3.5" /> Credenciamento em Lote • Mesma Agência
+                  </span>
+                  <h2 className="text-lg font-bold text-white mt-0.5">
+                    {batchItems[0]?.reservation?.agencyName || "Reservas Vinculadas"} ({batchItems.length} reservas)
+                  </h2>
+                </div>
+                <span className="px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                  {batchItems.filter((i) => i.saved).length} de {batchItems.length} concluídas
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Informe pelo menos o <strong>Nome Completo e o WhatsApp</strong> de cada hóspede (CPF e E-mail são opcionais). Você pode confirmar todas de uma só vez no botão final, salvar apenas as que já tiver em mãos agora, ou copiar o link individual de uma reserva específica para encaminhar ao viajante.
+              </p>
+            </div>
+
+            {batchItems.map((item, idx) => {
+              const r = item.reservation;
+              const refTitle = r.b2bReservationNumber ? `Reserva #${r.b2bReservationNumber}` : `Reserva ${r.code}`;
+              const indivUrl =
+                typeof window !== "undefined"
+                  ? `${window.location.origin}/credenciamento/${encodeURIComponent(r.code)}`
+                  : `/credenciamento/${encodeURIComponent(r.code)}`;
+
+              return (
+                <div
+                  key={r.code || idx}
+                  className={`rounded-2xl bg-slate-900 border p-5 space-y-4 transition-colors ${
+                    item.saved ? "border-emerald-500/45" : "border-slate-800"
+                  }`}
+                >
+                  <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-800 pb-3">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-bold text-white">
+                          {idx + 1}. {refTitle}
+                        </span>
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-800 text-teal-300 border border-slate-700">
+                          Flat {r.flatNumber || "Definido"}
+                        </span>
+                        {item.saved && (
+                          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" /> Credenciada
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-slate-400 mt-1">
+                        Período: <strong className="text-slate-200">{formatDateBr(r.checkinDate)}</strong> a{" "}
+                        <strong className="text-slate-200">{formatDateBr(r.checkoutDate)}</strong>
+                        {r.companyName ? ` • ${r.companyName}` : ""}
+                      </div>
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        navigator.clipboard?.writeText(indivUrl);
+                        toast({
+                          title: "Link individual copiado!",
+                          description: `Você pode encaminhar este link diretamente ao hóspede da ${refTitle} (sem exibição de valores).`
+                        });
+                      }}
+                      className="h-7 px-2.5 text-[11px] border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800"
+                    >
+                      <Copy className="w-3 h-3 mr-1" />
+                      Copiar Link Individual
+                    </Button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                    <div className="space-y-1">
+                      <Label className="text-xs text-slate-300">Nome Completo do Hóspede *</Label>
+                      <Input
+                        value={item.guestName}
+                        onChange={(e) => updateBatchItem(idx, { guestName: e.target.value, saved: false })}
+                        placeholder="Nome e sobrenome"
+                        className="bg-slate-950 border-slate-700 text-white"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between gap-1">
+                        <Label className="text-xs text-slate-300 flex items-center gap-1">
+                          <Phone className="w-3 h-3 text-emerald-400" /> Telefone / WhatsApp (com DDD) *
+                        </Label>
+                        {item.whatsappStatus === "checking" && (
+                          <span className="text-[10px] text-sky-400 flex items-center gap-1">
+                            <Loader2 className="w-3 h-3 animate-spin" /> Verificando...
+                          </span>
+                        )}
+                        {item.whatsappStatus === "valid" && (
+                          <span className="text-[10px] font-bold text-emerald-400">✓ WhatsApp ativo</span>
+                        )}
+                        {item.whatsappStatus === "invalid" && (
+                          <span className="text-[10px] font-bold text-rose-400">❌ Sem WhatsApp</span>
+                        )}
+                      </div>
+                      <Input
+                        type="tel"
+                        value={item.guestPhone}
+                        onChange={(e) =>
+                          updateBatchItem(idx, {
+                            guestPhone: formatPhoneMask(e.target.value),
+                            whatsappStatus: "idle",
+                            saved: false
+                          })
+                        }
+                        onBlur={() => {
+                          if (item.guestPhone.replace(/\D/g, "").length >= 8) {
+                            checkBatchItemWhatsApp(idx, item.guestPhone);
+                          }
+                        }}
+                        placeholder="(22) 99999-9999"
+                        inputMode="tel"
+                        className={`bg-slate-950 text-white ${
+                          item.whatsappStatus === "valid"
+                            ? "border-emerald-500/60"
+                            : item.whatsappStatus === "invalid"
+                              ? "border-rose-500/70"
+                              : "border-slate-700"
+                        }`}
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-xs text-slate-400">CPF ou Passaporte (Opcional)</Label>
+                      <Input
+                        value={item.guestDocument}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (/[a-zA-Z]/.test(raw)) {
+                            updateBatchItem(idx, {
+                              docType: "passport",
+                              guestDocument: formatPassport(raw),
+                              saved: false
+                            });
+                          } else {
+                            updateBatchItem(idx, {
+                              docType: "cpf",
+                              guestDocument: formatCpfMask(raw),
+                              saved: false
+                            });
+                          }
+                        }}
+                        placeholder="000.000.000-00 (opcional)"
+                        className="bg-slate-950 border-slate-700 text-white font-mono"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-xs text-slate-400">E-mail do Hóspede (Opcional)</Label>
+                      <Input
+                        type="email"
+                        value={item.guestEmail}
+                        onChange={(e) => updateBatchItem(idx, { guestEmail: e.target.value, saved: false })}
+                        placeholder="hospede@empresa.com.br (opcional)"
+                        className="bg-slate-950 border-slate-700 text-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={item.saving}
+                      onClick={() => saveSingleBatchCard(idx)}
+                      className={
+                        item.saved
+                          ? "bg-emerald-700 hover:bg-emerald-600 text-white font-semibold"
+                          : "bg-teal-600 hover:bg-teal-500 text-white font-semibold"
+                      }
+                    >
+                      {item.saving ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                          Salvando...
+                        </>
+                      ) : item.saved ? (
+                        <>
+                          <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
+                          Atualizar Dados desta Reserva
+                        </>
+                      ) : (
+                        "Salvar Apenas Esta Reserva"
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+
+            {batchItems.some((i) => !i.saved) && (
+              <Button
+                type="button"
+                disabled={submittingBatchAll}
+                onClick={handleSaveAllFilledBatch}
+                className="w-full bg-teal-600 hover:bg-teal-500 text-white font-bold py-6 text-sm shadow-xl"
+              >
+                {submittingBatchAll ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Validando e Liberando Todas as Reservas Preenchidas...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4 mr-2" />
+                    Confirmar Todas as Reservas Preenchidas Agora
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
+        )}
+
+        {!isBatchMode && reservation && !completed && (
           <>
             {/* Resumo da Reserva (Sem Valores Financeiros) */}
             <div className="rounded-2xl bg-slate-900 border border-slate-800 p-6 space-y-4">

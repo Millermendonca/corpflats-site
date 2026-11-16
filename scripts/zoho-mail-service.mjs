@@ -13,6 +13,7 @@ import {
   renderPreCheckinReminderEmail,
   renderAccessInstructionsEmail,
   renderB2bAgencyCredentialRequestEmail,
+  renderB2bAgencyBatchCredentialRequestEmail,
   renderManualEmail,
   resolveReservationAttachments,
   ensureReservationAttachmentsReady,
@@ -52,6 +53,7 @@ import {
   getReservationRecipients,
   resolveValidRequesterWhatsApp,
   dispatchRequesterGuestCredentialRequest,
+  dispatchBatchRequesterGuestCredentialRequest,
   sendCredentialContingencyManagerAlert,
   sendZapiMessage
 } from "./zapi-service.mjs";
@@ -6377,23 +6379,29 @@ export function ingestB2bVoucherIntoDb(
     }
   }
 
-  // Disparo cordial automático (E-mail + WhatsApp validado) se a reserva B2B ainda estiver sem dados do hóspede
+  // Disparo cordial automático (E-mail + WhatsApp validado) se a reserva B2B ainda estiver sem dados do hóspede.
+  // Para reservas de agência elegíveis a agrupamento, aguarda a janela de consolidação (~10 min) no motor periódico
+  // para unificar múltiplas reservas da mesma agência + mesmo e-mail do agente em 1 único envio.
   if (autoSendCredentialEmail && isMissingGuestDataForCredential(reservation, db)) {
-    if (!hasB2bCredentialEmailAlreadyBeenSent(db, reservation, "initial")) {
-      dispatchB2bAgencyCredentialEmail(db, saveDatabase, reservation, {
-        trigger: "b2b_auto_credential_request",
-        stageKey: "initial"
-      }).catch(err => {
-        console.warn("[B2B Auto Credential] Aviso ao disparar e-mail de credenciamento à agência:", err.message);
-      });
-    }
-    if (!reservation.b2bCredentialWhatsappSentAt) {
-      dispatchRequesterGuestCredentialRequest(db, saveDatabase, reservation, {
-        stageKey: "initial",
-        isReminder: false
-      }).catch(err => {
-        console.warn("[B2B Auto Credential] Aviso ao disparar WhatsApp de credenciamento à agência:", err.message);
-      });
+    if (isGroupableAgencyReservation(reservation, db)) {
+      reservation.credentialPendingSince = reservation.credentialPendingSince || reservation.createdAt || new Date().toISOString();
+    } else {
+      if (!hasB2bCredentialEmailAlreadyBeenSent(db, reservation, "initial")) {
+        dispatchB2bAgencyCredentialEmail(db, saveDatabase, reservation, {
+          trigger: "b2b_auto_credential_request",
+          stageKey: "initial"
+        }).catch(err => {
+          console.warn("[B2B Auto Credential] Aviso ao disparar e-mail de credenciamento à agência:", err.message);
+        });
+      }
+      if (!reservation.b2bCredentialWhatsappSentAt) {
+        dispatchRequesterGuestCredentialRequest(db, saveDatabase, reservation, {
+          stageKey: "initial",
+          isReminder: false
+        }).catch(err => {
+          console.warn("[B2B Auto Credential] Aviso ao disparar WhatsApp de credenciamento à agência:", err.message);
+        });
+      }
     }
   }
 
@@ -6497,7 +6505,10 @@ function getB2bReservationLockKeys(reservation) {
   return keys;
 }
 
-function getCommCredentialStageKey(c) {
+function getCommCredentialStageKey(c, resCodeUpper = "") {
+  if (resCodeUpper && c?.metadata?.batchStageMap && c.metadata.batchStageMap[resCodeUpper]) {
+    return String(c.metadata.batchStageMap[resCodeUpper]).trim();
+  }
   if (c?.metadata?.stageKey) return String(c.metadata.stageKey).trim();
   const trig = String(c?.metadata?.trigger || "").toLowerCase();
   if (trig.includes("reminder_")) {
@@ -6516,13 +6527,26 @@ function isB2bCredentialCommMatch(c, resCodeUpper, resIdStr, b2bNum) {
   const cRes = String(c.reservation_id || "").trim().toUpperCase();
   const cMetaCode = String(c.metadata?.reservationCode || "").trim().toUpperCase();
   const cMetaB2b = String(c.metadata?.b2bReservationNumber || "").trim();
+  const batchCodes = Array.isArray(c.metadata?.batchReservationCodes)
+    ? c.metadata.batchReservationCodes.map(x => String(x || "").trim().toUpperCase())
+    : [];
+  const batchB2bNums = Array.isArray(c.metadata?.batchB2bNumbers)
+    ? c.metadata.batchB2bNumbers.map(x => String(x || "").trim())
+    : [];
   const subj = String(c.subject || "").toLowerCase();
   const trig = String(c.metadata?.trigger || "").toLowerCase();
 
   const matchesRes =
-    (resCodeUpper && (cRes === resCodeUpper || cMetaCode === resCodeUpper || subj.includes(resCodeUpper.toLowerCase()))) ||
+    (resCodeUpper &&
+      (cRes === resCodeUpper ||
+        cMetaCode === resCodeUpper ||
+        batchCodes.includes(resCodeUpper) ||
+        subj.includes(resCodeUpper.toLowerCase()))) ||
     (resIdStr && cRes === resIdStr) ||
-    (b2bNum && (cMetaB2b === b2bNum || subj.includes(b2bNum.toLowerCase())));
+    (b2bNum &&
+      (cMetaB2b === b2bNum ||
+        batchB2bNums.includes(b2bNum) ||
+        subj.includes(b2bNum.toLowerCase())));
 
   if (!matchesRes) return false;
 
@@ -6532,7 +6556,10 @@ function isB2bCredentialCommMatch(c, resCodeUpper, resIdStr, b2bNum) {
     trig.includes("credential") ||
     subj.includes("credenciamento") ||
     subj.includes("dados do hóspede") ||
-    subj.includes("dados do hospede")
+    subj.includes("dados do hospede") ||
+    subj.includes("dados dos hóspedes") ||
+    subj.includes("dados dos hospedes") ||
+    subj.includes("dados pendentes")
   );
 }
 
@@ -6560,7 +6587,7 @@ export function hasB2bCredentialEmailAlreadyBeenSent(db, reservation, stageKey =
           c &&
           c.status !== "failed" &&
           isB2bCredentialCommMatch(c, resCodeUpper, resIdStr, b2bNum) &&
-          getCommCredentialStageKey(c) === targetStage
+          getCommCredentialStageKey(c, resCodeUpper) === targetStage
       );
       if (stageComm) return true;
     }
@@ -6589,14 +6616,14 @@ export function hasB2bCredentialEmailAlreadyBeenSent(db, reservation, stageKey =
     }
   }
 
-  // 2. Verifica em db.reservationCommunications (estágio inicial)
+    // 2. Verifica em db.reservationCommunications (estágio inicial)
   if (Array.isArray(db?.reservationCommunications)) {
     const comm = db.reservationCommunications.find(
       c =>
         c &&
         c.status !== "failed" &&
         isB2bCredentialCommMatch(c, resCodeUpper, resIdStr, b2bNum) &&
-        getCommCredentialStageKey(c) === "initial"
+        getCommCredentialStageKey(c, resCodeUpper) === "initial"
     );
     if (comm) {
       reservation.b2bCredentialEmailSentAt =
@@ -6959,6 +6986,306 @@ export async function dispatchB2bAgencyCredentialEmail(
   }
 }
 
+export const INITIAL_BATCH_QUIET_WINDOW_MS = 10 * 60 * 1000; // 10 min após a última reserva da mesma agência/e-mail
+export const INITIAL_BATCH_MAX_WAIT_MS = 20 * 60 * 1000;     // teto máximo de 20 min a partir da 1ª reserva do lote
+
+export function isGroupableAgencyReservation(reservation, db = null) {
+  if (!reservation) return false;
+  const chan = String(reservation.channel || "").toLowerCase();
+  const reqType = String(reservation.requesterType || "").toLowerCase();
+  return Boolean(
+    chan.includes("b2b") ||
+    reservation.b2bReservationNumber ||
+    reqType === "agency_b2b" ||
+    reqType === "agency" ||
+    reservation.agencyId ||
+    String(reservation.agencyName || reservation.agencyTradeName || "").trim()
+  );
+}
+
+/**
+ * Gera a chave determinística de agrupamento para consolidar reservas da MESMA AGÊNCIA
+ * e do MESMO E-MAIL DE CONTATO DO AGENTE (com fallback para o mesmo WhatsApp da agência quando sem e-mail).
+ * Reservas que não pertencem a agências recebem chave individual (`SINGLE:...`).
+ */
+export function buildAgencyCredentialGroupKey(db, reservation) {
+  if (!reservation) return "SINGLE:UNKNOWN";
+  const singleFallback = `SINGLE:${reservation.id || reservation.code || Math.random()}`;
+  if (!isGroupableAgencyReservation(reservation, db)) {
+    return singleFallback;
+  }
+
+  const linkedAgency = reservation.agencyId
+    ? (db?.agencies || []).find(a => a && String(a.id) === String(reservation.agencyId))
+    : null;
+  const cnpjDigits = String(reservation.agencyCnpj || linkedAgency?.cnpj || "").replace(/\D/g, "");
+  const rawAgencyName = String(
+    linkedAgency?.tradeName ||
+    linkedAgency?.corporateName ||
+    reservation.agencyTradeName ||
+    reservation.agencyCorporateName ||
+    reservation.agencyName ||
+    ""
+  )
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  const agencyIdentity = reservation.agencyId
+    ? `ID_${reservation.agencyId}`
+    : cnpjDigits.length === 14
+      ? `CNPJ_${cnpjDigits}`
+      : rawAgencyName
+        ? `NAME_${rawAgencyName}`
+        : "";
+
+  if (!agencyIdentity) return singleFallback;
+
+  const { targetEmail } = resolveRequesterTargetEmail(db, reservation);
+  const cleanEmail = String(targetEmail || "").trim().toLowerCase();
+  if (cleanEmail && cleanEmail.includes("@")) {
+    return `AGENCY:${agencyIdentity}::EMAIL:${cleanEmail}`;
+  }
+
+  const recips = getReservationRecipients(reservation, db);
+  const cleanReqPhone = String(recips?.requester?.phone || reservation.agencyAgentPhone || "").replace(/\D/g, "");
+  if (cleanReqPhone.length >= 10) {
+    return `AGENCY:${agencyIdentity}::WA:${cleanReqPhone}`;
+  }
+
+  return singleFallback;
+}
+
+/**
+ * Dispara 1 único e-mail consolidado quando 2 ou mais reservas da mesma agência + mesmo e-mail de agente
+ * atingem o momento de disparo juntas (Inicial após janela de consolidação, D-1 às 09h ou D0 às 09h).
+ */
+export async function dispatchB2bAgencyBatchCredentialEmail(
+  db,
+  saveDatabase,
+  batchItems = [],
+  {
+    toEmail = "",
+    baseUrl = "https://corpflats.com.br",
+    trigger = "b2b_agency_batch_credential_request",
+    force = false,
+    nowIsoOverride = ""
+  } = {}
+) {
+  if (!db || !Array.isArray(batchItems) || batchItems.length === 0) {
+    return { ok: false, error: "Nenhuma reserva informada para envio em lote." };
+  }
+
+  const eligibleItems = [];
+  for (const rawItem of batchItems) {
+    const r = rawItem?.reservation || rawItem;
+    if (!r) continue;
+    const stageKey = String(
+      rawItem?.stageKey || (rawItem?.isReminder ? `reminder_${rawItem?.reminderKind || rawItem?.reminderNumber || 1}` : "initial")
+    ).trim();
+    if (!force && (r.b2bCredentialCompletedAt || r.credentialStatus === "completed" || !isMissingGuestDataForCredential(r, db))) {
+      if (!isMissingGuestDataForCredential(r, db)) {
+        r.guestPending = false;
+        r.credentialStatus = "completed";
+        r.b2bCredentialCompletedAt = r.b2bCredentialCompletedAt || nowIsoOverride || new Date().toISOString();
+        cancelPendingCredentialReminders(db, r);
+      }
+      continue;
+    }
+    if (!force && hasB2bCredentialEmailAlreadyBeenSent(db, r, stageKey)) {
+      continue;
+    }
+    eligibleItems.push({
+      reservation: r,
+      stageKey,
+      isReminder: Boolean(rawItem?.isReminder),
+      reminderKind: String(rawItem?.reminderKind || ""),
+      reminderNumber: Number(rawItem?.reminderNumber) || 0
+    });
+  }
+
+  if (eligibleItems.length === 0) {
+    return { ok: true, skipped: true, alreadySent: true };
+  }
+
+  if (eligibleItems.length === 1) {
+    const only = eligibleItems[0];
+    return dispatchB2bAgencyCredentialEmail(db, saveDatabase, only.reservation, {
+      toEmail,
+      baseUrl,
+      trigger: only.isReminder ? `b2b_credential_${only.stageKey}` : "b2b_auto_credential_request",
+      force,
+      isReminder: only.isReminder,
+      reminderKind: only.reminderKind,
+      reminderNumber: only.reminderNumber,
+      stageKey: only.stageKey,
+      nowIsoOverride
+    });
+  }
+
+  const allLockKeys = [];
+  for (const it of eligibleItems) {
+    allLockKeys.push(...getB2bReservationLockKeys(it.reservation));
+  }
+  if (allLockKeys.some(k => inFlightB2bCredentialLocks.has(k))) {
+    return { ok: true, skipped: true, reason: "already_in_flight" };
+  }
+
+  const firstRes = eligibleItems[0].reservation;
+  const { targetEmail, linkedAgency, linkedCompany } = resolveRequesterTargetEmail(db, firstRes, toEmail);
+  if (!targetEmail || !targetEmail.includes("@")) {
+    return {
+      ok: false,
+      blockedMissingSolicitanteEmail: true,
+      error: "E-mail do solicitante ('Reservado por') não informado."
+    };
+  }
+
+  const ccList = [];
+  const hostBase = String(baseUrl || "https://corpflats.com.br")
+    .replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br")
+    .replace(/\/+$/, "");
+
+  const codes = eligibleItems
+    .map(it => String(it.reservation.code || it.reservation.id || "").trim())
+    .filter(Boolean);
+  const b2bNums = eligibleItems
+    .map(it => String(it.reservation.b2bReservationNumber || it.reservation.externalReservationNumber || "").trim())
+    .filter(Boolean);
+  const batchCredentialUrl = `${hostBase}/credenciamento/${encodeURIComponent(codes[0])}?codes=${encodeURIComponent(codes.join(","))}`;
+  const anyReminder = eligibleItems.some(it => it.isReminder);
+
+  const rendered = renderB2bAgencyBatchCredentialRequestEmail({
+    items: eligibleItems,
+    agency: linkedAgency,
+    company: linkedCompany,
+    settings: db.settings,
+    baseUrl: hostBase,
+    batchCredentialUrl,
+    isReminder: anyReminder,
+    db
+  });
+
+  const previousSnapshots = eligibleItems.map(it => ({
+    reservation: it.reservation,
+    stageKey: it.stageKey,
+    previousSentAt: it.reservation.b2bCredentialEmailSentAt || null,
+    previousStageEntry: it.reservation.credentialSentStages?.[it.stageKey]
+      ? { ...it.reservation.credentialSentStages[it.stageKey] }
+      : null
+  }));
+
+  const preSendIso = nowIsoOverride || new Date().toISOString();
+  for (const k of allLockKeys) inFlightB2bCredentialLocks.add(k);
+  for (const it of eligibleItems) {
+    if (!it.isReminder || !it.reservation.b2bCredentialEmailSentAt) {
+      it.reservation.b2bCredentialEmailSentAt = preSendIso;
+    }
+    it.reservation.b2bCredentialEmailRecipient = targetEmail;
+  }
+
+  try {
+    const sendRes = await sendWebmailMessage(db, saveDatabase, {
+      to: targetEmail,
+      cc: ccList,
+      subject: rendered.subject,
+      bodyHtml: rendered.bodyHtml,
+      bodyText: rendered.bodyText,
+      reservationId: codes[0],
+      reservationCode: codes[0],
+      useTransactionalLayout: false,
+      trigger
+    });
+
+    const nowIso = nowIsoOverride || new Date().toISOString();
+    const failed = !sendRes?.ok || sendRes?.communication?.status === "failed";
+
+    if (failed) {
+      for (const snap of previousSnapshots) {
+        snap.reservation.b2bCredentialEmailSentAt = snap.previousSentAt;
+        if (snap.reservation.credentialSentStages) {
+          if (snap.previousStageEntry) snap.reservation.credentialSentStages[snap.stageKey] = snap.previousStageEntry;
+          else delete snap.reservation.credentialSentStages[snap.stageKey];
+        }
+      }
+    } else {
+      for (let i = 0; i < eligibleItems.length; i++) {
+        const it = eligibleItems[i];
+        const snap = previousSnapshots[i];
+        const r = it.reservation;
+        if (!it.isReminder || !snap.previousSentAt) {
+          r.b2bCredentialEmailSentAt = nowIso;
+        } else {
+          r.b2bCredentialEmailSentAt = snap.previousSentAt;
+        }
+        r.credentialLastEmailSentAt = nowIso;
+        r.credentialFirstRequestSentAt = r.credentialFirstRequestSentAt || nowIso;
+        r.credentialLastRequestSentAt = nowIso;
+        if (!r.credentialSentStages || typeof r.credentialSentStages !== "object") {
+          r.credentialSentStages = {};
+        }
+        r.credentialSentStages[it.stageKey] = {
+          ...(r.credentialSentStages[it.stageKey] || {}),
+          sentAt: r.credentialSentStages[it.stageKey]?.sentAt || nowIso,
+          emailSentAt: nowIso,
+          recipient: targetEmail,
+          batchSize: eligibleItems.length,
+          batchCodes: codes
+        };
+      }
+    }
+
+    if (sendRes?.communication) {
+      const batchStageMap = {};
+      for (const it of eligibleItems) {
+        const cUp = String(it.reservation.code || "").trim().toUpperCase();
+        if (cUp) batchStageMap[cUp] = it.stageKey;
+      }
+      sendRes.communication.metadata = {
+        ...(sendRes.communication.metadata || {}),
+        trigger,
+        stageKey: eligibleItems[0].stageKey,
+        batchStageMap,
+        batchReservationCodes: codes.map(c => c.toUpperCase()),
+        batchB2bNumbers: b2bNums,
+        batchSize: eligibleItems.length,
+        isReminder: anyReminder,
+        credentialUrl: rendered.batchCredentialUrl || batchCredentialUrl,
+        agencyName: firstRes.agencyTradeName || firstRes.agencyName || linkedAgency?.tradeName || "",
+        lastAutoRetryAt: nowIso
+      };
+    }
+
+    if (typeof saveDatabase === "function") {
+      saveDatabase(anyReminder ? "b2b_credential_batch_email_reminder_sent" : "b2b_credential_batch_email_sent");
+    }
+
+    return {
+      ok: Boolean(sendRes?.ok),
+      success: Boolean(sendRes?.ok),
+      batchSize: eligibleItems.length,
+      batchCodes: codes,
+      isReminder: anyReminder,
+      sentTo: targetEmail,
+      recipient: targetEmail,
+      cc: ccList,
+      credentialUrl: rendered.batchCredentialUrl || batchCredentialUrl,
+      sentAt: nowIso,
+      communicationId: sendRes?.communication?.id || null,
+      communication: sendRes?.communication || null
+    };
+  } catch (err) {
+    for (const snap of previousSnapshots) {
+      snap.reservation.b2bCredentialEmailSentAt = snap.previousSentAt;
+    }
+    throw err;
+  } finally {
+    for (const k of allLockKeys) inFlightB2bCredentialLocks.delete(k);
+  }
+}
+
 export function getBrtDateParts(dateInput = new Date()) {
   const d = dateInput instanceof Date ? dateInput : new Date(dateInput);
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -6995,8 +7322,11 @@ export function getBrtDateParts(dateInput = new Date()) {
  *  - Contingência Interna: Alerta exclusivo para o WhatsApp do Gestor às 12:00 BRT no `D0` (ou +2h após a criação em reservas
  *    same-day criadas a partir das 10:00 BRT), sem disparar nova cobrança para a agência.
  */
-export function evaluateCredentialScheduleDecision(reservation, nowInput = new Date(), db = null) {
+export function evaluateCredentialScheduleDecision(reservation, nowInput = new Date(), db = null, options = {}) {
   if (!reservation) return { action: "none", reason: "no_reservation" };
+  if (reservation.skipAgencyCredentialAuto) {
+    return { action: "none", reason: "manual_skip_flag" };
+  }
   if (reservation.b2bCredentialCompletedAt || reservation.credentialStatus === "completed") {
     return { action: "none", reason: "already_completed" };
   }
@@ -7033,6 +7363,63 @@ export function evaluateCredentialScheduleDecision(reservation, nowInput = new D
     "";
 
   if (!initialIso) {
+    const rawCreatedIso = reservation.credentialPendingSince || reservation.createdAt || "";
+    const createdMs = rawCreatedIso ? new Date(rawCreatedIso).getTime() : 0;
+    const shouldHoldForBatch =
+      !options?.skipInitialBatchWindow &&
+      !reservation._skipInitialBatchWindow &&
+      createdMs > 0 &&
+      !Number.isNaN(createdMs) &&
+      isGroupableAgencyReservation(reservation, db);
+
+    if (shouldHoldForBatch) {
+      let earliestMs = createdMs;
+      let latestMs = createdMs;
+      if (Array.isArray(db?.reservations)) {
+        const myGroupKey = buildAgencyCredentialGroupKey(db, reservation);
+        if (myGroupKey.startsWith("AGENCY:")) {
+          for (const sib of db.reservations) {
+            if (!sib || sib === reservation) continue;
+            const sibSt = String(sib.status || "").toLowerCase().trim();
+            if (
+              sibSt === "cancelada" ||
+              sibSt === "cancelled" ||
+              sibSt === "checkout" ||
+              sibSt === "concluida" ||
+              sibSt === "no_show" ||
+              sibSt === "pre_reserva" ||
+              sibSt === "pendente"
+            ) {
+              continue;
+            }
+            if (sib.b2bCredentialCompletedAt || sib.credentialStatus === "completed") continue;
+            const sibInit =
+              sib.credentialFirstRequestSentAt ||
+              sib.credentialSentStages?.initial?.sentAt ||
+              sib.credentialSentStages?.initial?.emailSentAt ||
+              sib.credentialSentStages?.initial?.whatsappSentAt ||
+              sib.b2bCredentialEmailSentAt ||
+              sib.b2bCredentialWhatsappSentAt ||
+              "";
+            if (sibInit) continue;
+            if (!isMissingGuestDataForCredential(sib, db)) continue;
+            if (buildAgencyCredentialGroupKey(db, sib) !== myGroupKey) continue;
+            const sibCreatedMs = new Date(sib.credentialPendingSince || sib.createdAt || 0).getTime();
+            if (sibCreatedMs > 0 && !Number.isNaN(sibCreatedMs)) {
+              if (sibCreatedMs < earliestMs) earliestMs = sibCreatedMs;
+              if (sibCreatedMs > latestMs) latestMs = sibCreatedMs;
+            }
+          }
+        }
+      }
+
+      const quietElapsed = nowMs - latestMs;
+      const totalElapsed = nowMs - earliestMs;
+      if (quietElapsed < INITIAL_BATCH_QUIET_WINDOW_MS && totalElapsed < INITIAL_BATCH_MAX_WAIT_MS) {
+        return { action: "none", reason: "waiting_initial_batch_window" };
+      }
+    }
+
     return {
       action: "send_stage",
       stageKey: "initial",
@@ -7168,17 +7555,18 @@ export async function ensurePendingB2bAgencyCredentialDispatches(
     forceCheck = false,
     nowOverride = null,
     allowSimulatedSend = false,
-    phoneExistsChecker = null
+    phoneExistsChecker = null,
+    skipInitialBatchWindow = false
   } = {}
 ) {
-  if (!db || !Array.isArray(db.reservations)) return { dispatched: 0, remindersDispatched: 0, managerAlerts: 0 };
+  if (!db || !Array.isArray(db.reservations)) return { dispatched: 0, remindersDispatched: 0, managerAlerts: 0, batchesDispatched: 0 };
   if (!Array.isArray(db.reservationCommunications)) db.reservationCommunications = [];
 
   if (isRunningPendingB2bDispatches) {
-    return { dispatched: 0, remindersDispatched: 0, managerAlerts: 0, skipped: true };
+    return { dispatched: 0, remindersDispatched: 0, managerAlerts: 0, batchesDispatched: 0, skipped: true };
   }
   if (!forceCheck && !nowOverride && Date.now() - lastPendingB2bDispatchCheckAt < 55000) {
-    return { dispatched: 0, remindersDispatched: 0, managerAlerts: 0, throttled: true };
+    return { dispatched: 0, remindersDispatched: 0, managerAlerts: 0, batchesDispatched: 0, throttled: true };
   }
 
   const canSendEmailReal = Boolean(
@@ -7191,7 +7579,7 @@ export async function ensurePendingB2bAgencyCredentialDispatches(
   );
 
   if (!canSendEmailReal && !canSendWaReal) {
-    return { dispatched: 0, remindersDispatched: 0, managerAlerts: 0 };
+    return { dispatched: 0, remindersDispatched: 0, managerAlerts: 0, batchesDispatched: 0 };
   }
 
   isRunningPendingB2bDispatches = true;
@@ -7201,6 +7589,7 @@ export async function ensurePendingB2bAgencyCredentialDispatches(
   let dispatched = 0;
   let remindersDispatched = 0;
   let managerAlerts = 0;
+  let batchesDispatched = 0;
   let didMutateState = false;
 
   const evalDate = nowOverride ? (nowOverride instanceof Date ? nowOverride : new Date(nowOverride)) : new Date();
@@ -7210,6 +7599,9 @@ export async function ensurePendingB2bAgencyCredentialDispatches(
   try {
     const removedDups = deduplicateB2bCredentialCommunications(db);
     if (removedDups > 0) didMutateState = true;
+
+    const pendingStageGroups = new Map();
+    const pendingCatchupWaGroups = new Map();
 
     for (const r of db.reservations) {
       if (!r) continue;
@@ -7270,29 +7662,20 @@ export async function ensurePendingB2bAgencyCredentialDispatches(
         didMutateState = true;
       }
 
-      const decision = evaluateCredentialScheduleDecision(r, evalDate, db);
+      const decision = evaluateCredentialScheduleDecision(r, evalDate, db, { skipInitialBatchWindow });
       if (decision.action === "none") continue;
 
       if (decision.action === "catchup_initial_whatsapp") {
         if (canSendWaReal) {
-          r.credentialInitialWaEvaluatedAt = evalIso;
-          didMutateState = true;
-          const waCatchup = await dispatchRequesterGuestCredentialRequest(db, saveDatabase, r, {
-            baseUrl,
+          const gKey = buildAgencyCredentialGroupKey(db, r);
+          if (!pendingCatchupWaGroups.has(gKey)) pendingCatchupWaGroups.set(gKey, []);
+          pendingCatchupWaGroups.get(gKey).push({
+            reservation: r,
             stageKey: "initial",
             isReminder: false,
-            ...(phoneExistsChecker ? { phoneExistsChecker } : {})
+            reminderKind: "",
+            reminderNumber: 0
           });
-          if (waCatchup?.dispatched) {
-            if (!r.credentialSentStages || typeof r.credentialSentStages !== "object") r.credentialSentStages = {};
-            r.credentialSentStages.initial = {
-              ...(r.credentialSentStages.initial || {}),
-              sentAt: r.credentialSentStages.initial?.sentAt || r.b2bCredentialEmailSentAt || evalIso,
-              whatsappSentAt: evalIso,
-              whatsappRecipient: waCatchup.requesterPhone || ""
-            };
-            dispatched++;
-          }
         }
         continue;
       }
@@ -7310,106 +7693,238 @@ export async function ensurePendingB2bAgencyCredentialDispatches(
       }
 
       if (decision.action === "send_stage") {
-        const { stageKey, isReminder, reminderKind, reminderNumber } = decision;
-        const { targetEmail } = resolveRequesterTargetEmail(db, r);
-        const hasEmailTarget = Boolean(targetEmail && targetEmail.includes("@"));
+        const gKey = buildAgencyCredentialGroupKey(db, r);
+        if (!pendingStageGroups.has(gKey)) pendingStageGroups.set(gKey, []);
+        pendingStageGroups.get(gKey).push({
+          reservation: r,
+          stageKey: decision.stageKey,
+          isReminder: decision.isReminder,
+          reminderKind: decision.reminderKind,
+          reminderNumber: decision.reminderNumber
+        });
+      }
+    }
 
-        // Verifica se este estágio falhou por e-mail há menos de 15 min para evitar flood de retentativa SMTP
-        const resCode = String(r.code || "").trim().toUpperCase();
-        const resId = String(r.id || "").trim();
-        const b2bNum = String(r.b2bReservationNumber || r.externalReservationNumber || "").trim();
-        const existingFailedComm = db.reservationCommunications.find(
-          c =>
-            c &&
-            c.status === "failed" &&
-            isB2bCredentialCommMatch(c, resCode, resId, b2bNum) &&
-            getCommCredentialStageKey(c) === stageKey
-        );
-        const emailRetryThrottled = Boolean(
-          existingFailedComm &&
-          evalDate.getTime() -
-            new Date(
-              existingFailedComm.metadata?.lastAutoRetryAt ||
-                existingFailedComm.created_at ||
-                existingFailedComm.createdAt ||
-                0
-            ).getTime() <
-            900000
-        );
+    // Executa eventuais catch-ups iniciais de WhatsApp agrupados por agência/contato
+    for (const [, waItems] of pendingCatchupWaGroups.entries()) {
+      for (const it of waItems) {
+        it.reservation.credentialInitialWaEvaluatedAt = evalIso;
+      }
+      didMutateState = true;
+      const waCatchup =
+        waItems.length >= 2
+          ? await dispatchBatchRequesterGuestCredentialRequest(db, saveDatabase, waItems, {
+              baseUrl,
+              ...(phoneExistsChecker ? { phoneExistsChecker } : {})
+            })
+          : await dispatchRequesterGuestCredentialRequest(db, saveDatabase, waItems[0].reservation, {
+              baseUrl,
+              stageKey: "initial",
+              isReminder: false,
+              ...(phoneExistsChecker ? { phoneExistsChecker } : {})
+            });
+      if (waCatchup?.dispatched) {
+        for (const it of waItems) {
+          const r = it.reservation;
+          if (!r.credentialSentStages || typeof r.credentialSentStages !== "object") r.credentialSentStages = {};
+          r.credentialSentStages.initial = {
+            ...(r.credentialSentStages.initial || {}),
+            sentAt: r.credentialSentStages.initial?.sentAt || r.b2bCredentialEmailSentAt || evalIso,
+            whatsappSentAt: evalIso,
+            whatsappRecipient: waCatchup.requesterPhone || ""
+          };
+        }
+        dispatched++;
+        if (waItems.length >= 2) batchesDispatched++;
+      }
+    }
+
+    // Executa os estágios vencidos ("initial", "reminder_d_minus_1", "reminder_checkin_morning")
+    // consolidando em 1 único E-mail + 1 único WhatsApp sempre que houver 2+ reservas da mesma agência + mesmo contato
+    for (const [, groupItems] of pendingStageGroups.entries()) {
+      if (!groupItems || groupItems.length === 0) continue;
+
+      if (groupItems.length >= 2) {
+        const firstRes = groupItems[0].reservation;
+        const { targetEmail } = resolveRequesterTargetEmail(db, firstRes);
+        const hasEmailTarget = Boolean(targetEmail && targetEmail.includes("@"));
+        const anyReminder = groupItems.some(it => it.isReminder);
 
         let emailSucceeded = false;
         let waSucceeded = false;
 
-        if (hasEmailTarget && canSendEmailReal && !emailRetryThrottled) {
+        if (hasEmailTarget && canSendEmailReal) {
           try {
-            const emailRes = await dispatchB2bAgencyCredentialEmail(db, saveDatabase, r, {
+            const batchEmailRes = await dispatchB2bAgencyBatchCredentialEmail(db, saveDatabase, groupItems, {
               baseUrl,
-              trigger: isReminder ? `b2b_credential_${stageKey}` : "b2b_auto_credential_request",
+              trigger: anyReminder ? "b2b_credential_batch_reminder" : "b2b_auto_credential_batch_request",
               force: false,
-              isReminder,
-              reminderKind,
-              reminderNumber,
-              stageKey,
               nowIsoOverride: evalIso
             });
-            if (emailRes?.ok && !emailRes?.skipped) {
+            if (batchEmailRes?.ok && !batchEmailRes?.skipped) {
               emailSucceeded = true;
             }
           } catch (err) {
-            console.warn(`[Credential Sync] Falha de e-mail (${stageKey}) na reserva ${r.code}:`, err.message);
+            console.warn(`[Credential Batch Sync] Falha de e-mail em lote (${groupItems.length} reservas):`, err.message);
           }
         }
 
         let waRes = null;
         if (canSendWaReal) {
           try {
-            waRes = await dispatchRequesterGuestCredentialRequest(db, saveDatabase, r, {
+            waRes = await dispatchBatchRequesterGuestCredentialRequest(db, saveDatabase, groupItems, {
               baseUrl,
-              isReminder,
-              reminderKind,
-              reminderNumber,
-              stageKey,
               ...(phoneExistsChecker ? { phoneExistsChecker } : {})
             });
             if (waRes?.dispatched) {
               waSucceeded = true;
-              r.credentialInitialWaEvaluatedAt = r.credentialInitialWaEvaluatedAt || evalIso;
-              if (!r.credentialSentStages || typeof r.credentialSentStages !== "object") {
-                r.credentialSentStages = {};
+              for (const it of groupItems) {
+                const r = it.reservation;
+                r.credentialInitialWaEvaluatedAt = r.credentialInitialWaEvaluatedAt || evalIso;
+                if (!r.credentialSentStages || typeof r.credentialSentStages !== "object") {
+                  r.credentialSentStages = {};
+                }
+                r.credentialSentStages[it.stageKey] = {
+                  ...(r.credentialSentStages[it.stageKey] || {}),
+                  sentAt: r.credentialSentStages[it.stageKey]?.sentAt || evalIso,
+                  whatsappSentAt: evalIso,
+                  whatsappRecipient: waRes.requesterPhone || "",
+                  batchSize: groupItems.length
+                };
+                r.credentialFirstRequestSentAt = r.credentialFirstRequestSentAt || evalIso;
+                r.credentialLastRequestSentAt = evalIso;
               }
-              r.credentialSentStages[stageKey] = {
-                ...(r.credentialSentStages[stageKey] || {}),
-                sentAt: r.credentialSentStages[stageKey]?.sentAt || evalIso,
-                whatsappSentAt: evalIso,
-                whatsappRecipient: waRes.requesterPhone || ""
-              };
-              r.credentialFirstRequestSentAt = r.credentialFirstRequestSentAt || evalIso;
-              r.credentialLastRequestSentAt = evalIso;
               didMutateState = true;
             } else if (waRes?.reason === "no_valid_requester_whatsapp") {
-              r.credentialInitialWaEvaluatedAt = r.credentialInitialWaEvaluatedAt || evalIso;
+              for (const it of groupItems) {
+                it.reservation.credentialInitialWaEvaluatedAt = it.reservation.credentialInitialWaEvaluatedAt || evalIso;
+              }
             }
           } catch (err) {
-            console.warn(`[Credential Sync] Falha de WhatsApp (${stageKey}) na reserva ${r.code}:`, err.message);
+            console.warn(`[Credential Batch Sync] Falha de WhatsApp em lote (${groupItems.length} reservas):`, err.message);
           }
         }
 
         if (emailSucceeded || waSucceeded) {
-          if (isReminder) remindersDispatched++;
+          batchesDispatched++;
+          if (anyReminder) remindersDispatched++;
           else dispatched++;
         } else if (!hasEmailTarget && (!waRes || !waRes.dispatched)) {
-          // Contingência imediata: Reserva sem NENHUM e-mail e sem NENHUM WhatsApp válido da agência/solicitante
-          const waCheck = waRes || (await resolveValidRequesterWhatsApp(db, r, phoneExistsChecker ? { phoneExistsChecker } : {}));
+          const waCheck = waRes || (await resolveValidRequesterWhatsApp(db, firstRes, phoneExistsChecker ? { phoneExistsChecker } : {}));
           if (!waCheck?.valid) {
-            const alertRes = await sendCredentialContingencyManagerAlert(
-              db,
-              saveDatabase,
-              r,
-              "missing_contact",
-              { baseUrl }
-            );
-            if (alertRes?.sent) managerAlerts++;
+            for (const it of groupItems) {
+              const alertRes = await sendCredentialContingencyManagerAlert(
+                db,
+                saveDatabase,
+                it.reservation,
+                "missing_contact",
+                { baseUrl }
+              );
+              if (alertRes?.sent) managerAlerts++;
+            }
           }
+        }
+        continue;
+      }
+
+      // Fluxo individual padrão (apenas 1 reserva neste grupo)
+      const { reservation: r, stageKey, isReminder, reminderKind, reminderNumber } = groupItems[0];
+      const { targetEmail } = resolveRequesterTargetEmail(db, r);
+      const hasEmailTarget = Boolean(targetEmail && targetEmail.includes("@"));
+
+      const resCode = String(r.code || "").trim().toUpperCase();
+      const resId = String(r.id || "").trim();
+      const b2bNum = String(r.b2bReservationNumber || r.externalReservationNumber || "").trim();
+      const existingFailedComm = db.reservationCommunications.find(
+        c =>
+          c &&
+          c.status === "failed" &&
+          isB2bCredentialCommMatch(c, resCode, resId, b2bNum) &&
+          getCommCredentialStageKey(c, resCode) === stageKey
+      );
+      const emailRetryThrottled = Boolean(
+        existingFailedComm &&
+        evalDate.getTime() -
+          new Date(
+            existingFailedComm.metadata?.lastAutoRetryAt ||
+              existingFailedComm.created_at ||
+              existingFailedComm.createdAt ||
+              0
+          ).getTime() <
+          900000
+      );
+
+      let emailSucceeded = false;
+      let waSucceeded = false;
+
+      if (hasEmailTarget && canSendEmailReal && !emailRetryThrottled) {
+        try {
+          const emailRes = await dispatchB2bAgencyCredentialEmail(db, saveDatabase, r, {
+            baseUrl,
+            trigger: isReminder ? `b2b_credential_${stageKey}` : "b2b_auto_credential_request",
+            force: false,
+            isReminder,
+            reminderKind,
+            reminderNumber,
+            stageKey,
+            nowIsoOverride: evalIso
+          });
+          if (emailRes?.ok && !emailRes?.skipped) {
+            emailSucceeded = true;
+          }
+        } catch (err) {
+          console.warn(`[Credential Sync] Falha de e-mail (${stageKey}) na reserva ${r.code}:`, err.message);
+        }
+      }
+
+      let waRes = null;
+      if (canSendWaReal) {
+        try {
+          waRes = await dispatchRequesterGuestCredentialRequest(db, saveDatabase, r, {
+            baseUrl,
+            isReminder,
+            reminderKind,
+            reminderNumber,
+            stageKey,
+            ...(phoneExistsChecker ? { phoneExistsChecker } : {})
+          });
+          if (waRes?.dispatched) {
+            waSucceeded = true;
+            r.credentialInitialWaEvaluatedAt = r.credentialInitialWaEvaluatedAt || evalIso;
+            if (!r.credentialSentStages || typeof r.credentialSentStages !== "object") {
+              r.credentialSentStages = {};
+            }
+            r.credentialSentStages[stageKey] = {
+              ...(r.credentialSentStages[stageKey] || {}),
+              sentAt: r.credentialSentStages[stageKey]?.sentAt || evalIso,
+              whatsappSentAt: evalIso,
+              whatsappRecipient: waRes.requesterPhone || ""
+            };
+            r.credentialFirstRequestSentAt = r.credentialFirstRequestSentAt || evalIso;
+            r.credentialLastRequestSentAt = evalIso;
+            didMutateState = true;
+          } else if (waRes?.reason === "no_valid_requester_whatsapp") {
+            r.credentialInitialWaEvaluatedAt = r.credentialInitialWaEvaluatedAt || evalIso;
+          }
+        } catch (err) {
+          console.warn(`[Credential Sync] Falha de WhatsApp (${stageKey}) na reserva ${r.code}:`, err.message);
+        }
+      }
+
+      if (emailSucceeded || waSucceeded) {
+        if (isReminder) remindersDispatched++;
+        else dispatched++;
+      } else if (!hasEmailTarget && (!waRes || !waRes.dispatched)) {
+        const waCheck = waRes || (await resolveValidRequesterWhatsApp(db, r, phoneExistsChecker ? { phoneExistsChecker } : {}));
+        if (!waCheck?.valid) {
+          const alertRes = await sendCredentialContingencyManagerAlert(
+            db,
+            saveDatabase,
+            r,
+            "missing_contact",
+            { baseUrl }
+          );
+          if (alertRes?.sent) managerAlerts++;
         }
       }
     }
@@ -7421,7 +7936,7 @@ export async function ensurePendingB2bAgencyCredentialDispatches(
     isRunningPendingB2bDispatches = false;
   }
 
-  return { dispatched, remindersDispatched, managerAlerts };
+  return { dispatched, remindersDispatched, managerAlerts, batchesDispatched };
 }
 
 /**
