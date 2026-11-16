@@ -5641,8 +5641,13 @@ export function resolveZapiOutboundPreview({
     )
   );
 
-  // Prioridade: 1) Boleto -> 2) Pré-Reserva -> 3) Pagamento geral -> 4) Primeiro botão CorpFlats -> 5) Primeiro link no texto
+  const isBreakfastTrigger =
+    ev === "breakfast_reminder" ||
+    ev === "breakfast_link_manual";
+
+  // Prioridade: 1) Café explícito em gatilho de café -> 2) Boleto -> 3) Pré-Reserva -> 4) Pagamento geral -> 5) Primeiro botão CorpFlats -> 6) Primeiro link no texto
   let selected =
+    (isBreakfastTrigger ? (btnCandidates.find(c => c.slot === "breakfast") || msgCandidates.find(c => c.slot === "breakfast")) : null) ||
     btnCandidates.find(c => c.slot === "boleto") ||
     msgCandidates.find(c => c.slot === "boleto") ||
     btnCandidates.find(c => c.slot === "preReserva") ||
@@ -10273,11 +10278,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       footer = "", 
       buttons = [], 
       reservationId = null,
-      sendMode = "buttons",
+      sendMode,
       sendDocument = false,
       documentUrl = "",
       documentName = "",
-      documentCaption = ""
+      documentCaption = "",
+      bypassTestMode = false
     } = req.body;
     
     if (!phone) {
@@ -10286,15 +10292,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     let finalMessage = message || "Mensagem de teste CorpFlats Z-API";
     let finalButtons = Array.isArray(buttons) && buttons.length > 0 ? buttons : [];
-
-    // Se o modo selecionado for botões e nenhum botão foi enviado, provê botões de teste interativos oficiais
-    if (sendMode === "buttons" && finalButtons.length === 0) {
-      finalButtons = [
-        { id: "btn_test_chk", type: "URL", label: "📝 Ficha Check-in", url: "{{link_checkin_digital}}" },
-        { id: "btn_test_res", type: "URL", label: "🏨 Ver Reserva", url: "{{link_portal_hospede}}" },
-        { id: "btn_test_call", type: "CALL", label: "📞 Ligar Administração", phone: "{{telefone_hotel}}" }
-      ];
-    }
+    const effectiveSendMode = sendMode
+      ? (sendMode === "buttons" && finalButtons.length === 0 ? "text" : sendMode)
+      : (finalButtons.length > 0 ? "buttons" : "text");
 
     const reqProto = req.headers["x-forwarded-proto"]
       ? String(req.headers["x-forwarded-proto"]).split(",")[0].trim()
@@ -10360,10 +10360,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       title,
       footer,
       buttons: finalButtons,
-      sendMode,
+      sendMode: effectiveSendMode,
       documentUrl: finalDocUrl,
       documentName: finalDocName,
       documentCaption: hasDocTest ? documentCaption : undefined,
+      bypassTestMode: Boolean(bypassTestMode),
       channelId: "transactional_chat",
       recipientRole: "operator",
       triggerEvent: req.body?.triggerEvent || "manual_test_send"
@@ -10385,7 +10386,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       documentUrl: finalDocUrl || null,
       documentName: finalDocName || null,
       status: result.success ? "sent" : "failed",
-      method: result.method || (sendMode === "text" ? "text_links" : "buttons"),
+      method: result.method || (effectiveSendMode === "text" ? "text_links" : "buttons"),
       error: result.error || null,
       sentAt: new Date().toISOString()
     });

@@ -1175,6 +1175,7 @@ export async function sendDirectZapiWithFallback(options: {
   }
 
   try {
+    const hasExplicitButtons = Array.isArray(options.buttons) && options.buttons.length > 0
     const res = await fetch("/api/whatsapp/send-test", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1183,7 +1184,8 @@ export async function sendDirectZapiWithFallback(options: {
         message: options.message,
         title: options.title,
         footer: options.footer,
-        buttons: options.buttons,
+        buttons: hasExplicitButtons ? options.buttons : [],
+        sendMode: hasExplicitButtons ? "buttons" : "text",
         recipientName: options.recipientName,
         reservationCode: options.reservationCode,
         flatNumber: options.flatNumber,

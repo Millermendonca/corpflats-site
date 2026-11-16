@@ -154,9 +154,16 @@ export default function BreakfastProduction() {
       return
     }
 
+    const resIdentifier = room.reservationCode || room.reservationId || room.breakfastToken || flatNumber
+    const cafeLink = `${window.location.origin}/cafe/${encodeURIComponent(String(resIdentifier))}`
+
     await sendDirectZapiWithFallback({
       phone,
       message: msg,
+      footer: "CorpFlats • Café no Flat",
+      buttons: [
+        { id: "btn_cafe", type: "URL", label: "🥐 Escolher Itens do Café", url: cafeLink }
+      ],
       recipientName: guestName,
       reservationCode: room.reservationCode || room.breakfastToken || undefined,
       flatNumber: String(flatNumber),
