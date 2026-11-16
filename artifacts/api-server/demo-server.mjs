@@ -78972,7 +78972,7 @@ const fallbackDistPath = path.resolve(__dirname, "../limpeza/dist");
 
 let cachedIndexHtml = null;
 
-const PREVIEW_ASSETS_VERSION = "20261116";
+const PREVIEW_ASSETS_VERSION = "20261116b";
 
 function escapeOgHtmlAttr(val) {
   return String(val ?? "")
@@ -79012,11 +79012,11 @@ function formatPreviewShortPeriod(checkInRaw, checkOutRaw) {
 }
 
 function resolvePreviewImageUrl(configuredUrl, defaultPreviewFile) {
-  const fallback = `https://corpflats.com.br/previews/v2/${defaultPreviewFile}?v=${PREVIEW_ASSETS_VERSION}`;
+  const fallback = `https://corpflats.com.br/previews/v3/${defaultPreviewFile}?v=${PREVIEW_ASSETS_VERSION}`;
   const v = String(configuredUrl || "").trim();
   if (!v) return fallback;
   if (/\/(flat|breakfast)-preview\.jpg(\?.*)?$/i.test(v) && !/\/previews\//i.test(v)) return fallback;
-  if (/\/previews\/[a-z0-9_-]+-preview\.jpg(\?.*)?$/i.test(v) && !/\/previews\/v2\//i.test(v)) return fallback;
+  if (/\/previews\/(?:v2\/)?[a-z0-9_-]+-preview\.jpg(\?.*)?$/i.test(v) && !/\/previews\/v3\//i.test(v)) return fallback;
   return v;
 }
 
@@ -79346,12 +79346,12 @@ export function resolveSpaOpenGraphMetadata(req, dbRef = db) {
     const periodPart = periodLabel ? ` (${periodLabel})` : "";
 
     if (isUnpaidPreRes) {
-      title = `💳 Confirmar Pré-Reserva${flatPart}${periodPart} • CorpFlats`;
+      title = `⏳ Pagamento Pré-Reserva${flatPart}${periodPart} • CorpFlats`;
       desc = guestFirstName
-        ? `Olá ${guestFirstName}! Garanta sua reserva via PIX Copia e Cola (5% OFF) ou Cartão de Crédito com confirmação automática.`
-        : "Garanta sua hospedagem agora via PIX Copia e Cola (5% OFF) ou Cartão de Crédito com confirmação imediata.";
-      image = resolvePreviewImageUrl(zCfg.pixPreviewImage, "pix-preview.jpg");
-      imageAlt = "Confirmar Pré-Reserva via PIX ou Cartão • CorpFlats";
+        ? `Olá ${guestFirstName}! Garanta sua acomodação via PIX (5% OFF) ou Cartão de Crédito com confirmação automática.`
+        : "Garanta sua hospedagem agora via PIX (5% OFF) ou Cartão de Crédito com confirmação imediata.";
+      image = resolvePreviewImageUrl(zCfg.preReservaPreviewImage, "prereserva-preview.jpg");
+      imageAlt = "Pagamento Pré-Reserva • CorpFlats";
     } else if (isRequesterView) {
       title = `🏢 Painel Corporativo da Reserva${flatPart} • CorpFlats`;
       desc = requesterFirstName
@@ -79932,13 +79932,20 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
     : `https://wa.me/${adminWhatsApp}?text=${encodeURIComponent(`Olá! Estou com uma dúvida sobre o pagamento PIX da reserva ${rawCode}.`)}`;
 
   const pixPreviewFirstName = extractValidPreviewFirstName(guestName);
+  const isPreResPix = Boolean(r && String(r.status || "").toLowerCase() === "pre_reserva");
   const pixOgTitle = isSundayUpsell
     ? `☀️ Oferta Domingo Sem Pressa${flatNumber ? ` • Flat ${flatNumber}` : ""} (${formattedValue} no PIX) • CorpFlats`
-    : `💠 PIX Copia e Cola${pendingAmount > 0 ? ` • ${formattedValue}` : ""}${flatNumber ? ` • Flat ${flatNumber}` : ""} • CorpFlats`;
+    : isPreResPix
+    ? `⏳ Pagamento Pré-Reserva${pendingAmount > 0 ? ` • ${formattedValue}` : ""}${flatNumber ? ` • Flat ${flatNumber}` : ""} • CorpFlats`
+    : `💳 Pagamento${pendingAmount > 0 ? ` • ${formattedValue}` : ""}${flatNumber ? ` • Flat ${flatNumber}` : ""} • CorpFlats`;
   const pixOgDesc = isSundayUpsell
     ? `Garanta check-out livre no domingo + bônus até segunda às 12h com ${upsellDiscountPct}% de desconto via PIX Copia e Cola!`
-    : `${pixPreviewFirstName ? `Olá ${pixPreviewFirstName}! ` : ""}Toque aqui para copiar o código PIX${rawCode ? ` da reserva ${rawCode}` : ""} com confirmação automática imediata.`;
-  const pixOgImg = resolvePreviewImageUrl(db.zapiConfig?.pixPreviewImage, "pix-preview.jpg");
+    : isPreResPix
+    ? `${pixPreviewFirstName ? `Olá ${pixPreviewFirstName}! ` : ""}Copie o código PIX para confirmar sua pré-reserva${rawCode ? ` (${rawCode})` : ""} imediatamente.`
+    : `${pixPreviewFirstName ? `Olá ${pixPreviewFirstName}! ` : ""}Conclua seu pagamento${rawCode ? ` da reserva ${rawCode}` : ""} com confirmação automática imediata.`;
+  const pixOgImg = isPreResPix
+    ? resolvePreviewImageUrl(db.zapiConfig?.preReservaPreviewImage, "prereserva-preview.jpg")
+    : resolvePreviewImageUrl(db.zapiConfig?.pixPreviewImage, "pix-preview.jpg");
   const pixPageUrl = `https://corpflats.com.br${req.originalUrl || req.url || req.path || "/copiar-pix"}`;
 
   const pageHtml = `<!DOCTYPE html>
@@ -80579,6 +80586,10 @@ if (fs.existsSync(distPath)) {
       next();
     });
   }
+  app.use("/previews/v3", express.static(path.join(distPath, "previews"), {
+    index: false,
+    setHeaders: setSmartAssetCacheHeaders
+  }));
   app.use("/previews/v2", express.static(path.join(distPath, "previews"), {
     index: false,
     setHeaders: setSmartAssetCacheHeaders
@@ -80595,6 +80606,10 @@ if (fs.existsSync(distPath)) {
   });
   console.log(`[Production Server] Servindo frontend em: ${distPath}`);
 } else if (fs.existsSync(fallbackDistPath)) {
+  app.use("/previews/v3", express.static(path.join(fallbackDistPath, "previews"), {
+    index: false,
+    setHeaders: setSmartAssetCacheHeaders
+  }));
   app.use("/previews/v2", express.static(path.join(fallbackDistPath, "previews"), {
     index: false,
     setHeaders: setSmartAssetCacheHeaders

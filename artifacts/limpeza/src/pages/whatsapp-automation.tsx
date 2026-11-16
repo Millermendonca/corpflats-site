@@ -239,6 +239,7 @@ interface ZapiConfig {
   credentialPreviewImage?: string
   preCheckinPreviewImage?: string
   portalPreviewImage?: string
+  preReservaPreviewImage?: string
   pixPreviewImage?: string
   boletoPreviewImage?: string
   minibarPreviewImage?: string
@@ -253,6 +254,7 @@ type PreviewSlotKey =
   | "credential"
   | "preCheckin"
   | "portal"
+  | "preReserva"
   | "pix"
   | "boleto"
   | "breakfast"
@@ -630,16 +632,17 @@ export default function WhatsappAutomation() {
     googleReviewUrl: "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA",
     reviewPreviewTitle: "⭐ Avalie sua Estadia • CorpFlats Soho Residence",
     reviewPreviewDescription: "Sua experiência foi 5 estrelas? Toque aqui para avaliar a CorpFlats no Google em menos de 30 segundos!",
-    reviewPreviewImage: "https://corpflats.com.br/previews/v2/review-preview.jpg?v=20261116",
-    breakfastPreviewImage: "https://corpflats.com.br/previews/v2/breakfast-preview.jpg?v=20261116",
-    flatPreviewImage: "https://corpflats.com.br/previews/v2/reservar-preview.jpg?v=20261116",
-    credentialPreviewImage: "https://corpflats.com.br/previews/v2/credenciamento-preview.jpg?v=20261116",
-    preCheckinPreviewImage: "https://corpflats.com.br/previews/v2/precheckin-preview.jpg?v=20261116",
-    portalPreviewImage: "https://corpflats.com.br/previews/v2/portal-preview.jpg?v=20261116",
-    pixPreviewImage: "https://corpflats.com.br/previews/v2/pix-preview.jpg?v=20261116",
-    boletoPreviewImage: "https://corpflats.com.br/previews/v2/boleto-preview.jpg?v=20261116",
-    minibarPreviewImage: "https://corpflats.com.br/previews/v2/frigobar-preview.jpg?v=20261116",
-    checkoutPreviewImage: "https://corpflats.com.br/previews/v2/checkout-preview.jpg?v=20261116"
+    reviewPreviewImage: "https://corpflats.com.br/previews/v3/review-preview.jpg?v=20261116b",
+    breakfastPreviewImage: "https://corpflats.com.br/previews/v3/breakfast-preview.jpg?v=20261116b",
+    flatPreviewImage: "https://corpflats.com.br/previews/v3/reservar-preview.jpg?v=20261116b",
+    credentialPreviewImage: "https://corpflats.com.br/previews/v3/credenciamento-preview.jpg?v=20261116b",
+    preCheckinPreviewImage: "https://corpflats.com.br/previews/v3/precheckin-preview.jpg?v=20261116b",
+    portalPreviewImage: "https://corpflats.com.br/previews/v3/portal-preview.jpg?v=20261116b",
+    preReservaPreviewImage: "https://corpflats.com.br/previews/v3/prereserva-preview.jpg?v=20261116b",
+    pixPreviewImage: "https://corpflats.com.br/previews/v3/pix-preview.jpg?v=20261116b",
+    boletoPreviewImage: "https://corpflats.com.br/previews/v3/boleto-preview.jpg?v=20261116b",
+    minibarPreviewImage: "https://corpflats.com.br/previews/v3/frigobar-preview.jpg?v=20261116b",
+    checkoutPreviewImage: "https://corpflats.com.br/previews/v3/checkout-preview.jpg?v=20261116b"
   })
   const [uploadingPreviewSlot, setUploadingPreviewSlot] = useState<PreviewSlotKey | null>(null)
   const [savingPreviewTexts, setSavingPreviewTexts] = useState<boolean>(false)
@@ -6615,6 +6618,8 @@ export default function WhatsappAutomation() {
                             if (
                               tplTrigger === "nps_approved" ||
                               tplTrigger === "reservation_cancelled" ||
+                              tplTrigger === "pre_reservation_expired" ||
+                              tplTrigger === "additional_daily_expired" ||
                               tplTrigger === "lost_item_registered" ||
                               tplTrigger === "nps_satisfaction_check" ||
                               tplTrigger.startsWith("nps_score_") ||
@@ -6643,8 +6648,8 @@ export default function WhatsappAutomation() {
                                   slot: "pix",
                                   img: config.pixPreviewImage || "/previews/pix-preview.jpg",
                                   fallback: "/previews/pix-preview.jpg",
-                                  title: "💠 PIX Copia e Cola • CorpFlats",
-                                  desc: "Toque aqui para copiar o código PIX da reserva com confirmação automática imediata."
+                                  title: "💳 Pagamento • CorpFlats",
+                                  desc: "Conclua seu pagamento com confirmação automática imediata."
                                 }
                               }
                               if (/link_credenciamento_agencia|\/credenciamento\/|\/identificar-reserva\//i.test(s)) {
@@ -6718,10 +6723,13 @@ export default function WhatsappAutomation() {
                               .filter(Boolean) as { slot: string; img: string; fallback: string; title: string; desc: string }[]
                             const msgCard = classifyCtxItem(editingMessage || "")
 
-                            const isPixTrigger = [
+                            const isPreReservaCtx =
+                              tplTrigger === "pre_reservation_created" ||
+                              tplTrigger === "pre_reservation_expiring_soon" ||
+                              /\bpr[eé][\s-]?reserva\b/i.test(editingMessage || "")
+
+                            const isGeneralPaymentTrigger = [
                               "payment_pending",
-                              "pre_reservation_created",
-                              "pre_reservation_expiring_soon",
                               "additional_daily_pending",
                               "additional_daily_expiring_soon",
                               "sunday_upsell_offer"
@@ -6731,19 +6739,26 @@ export default function WhatsappAutomation() {
                             let previewCard =
                               btnCards.find(c => c.slot === "boleto") ||
                               (msgCard?.slot === "boleto" ? msgCard : null) ||
-                              btnCards.find(c => c.slot === "pix") ||
-                              (msgCard?.slot === "pix" ? msgCard : null) ||
+                              (!isPreReservaCtx ? (btnCards.find(c => c.slot === "pix") || (msgCard?.slot === "pix" ? msgCard : null)) : null) ||
                               btnCards[0] ||
                               msgCard ||
                               null
 
-                            if (previewCard && previewCard.slot === "portal" && (isPixTrigger || hasPixLabel)) {
+                            if (previewCard && isPreReservaCtx && (previewCard.slot === "portal" || previewCard.slot === "pix")) {
+                              previewCard = {
+                                slot: "preReserva",
+                                img: config.preReservaPreviewImage || "/previews/prereserva-preview.jpg",
+                                fallback: "/previews/prereserva-preview.jpg",
+                                title: "⏳ Pagamento Pré-Reserva • CorpFlats",
+                                desc: "Garanta sua acomodação via PIX (com desconto) ou Cartão de Crédito com confirmação automática."
+                              }
+                            } else if (previewCard && previewCard.slot === "portal" && (isGeneralPaymentTrigger || hasPixLabel)) {
                               previewCard = {
                                 slot: "pix",
                                 img: config.pixPreviewImage || "/previews/pix-preview.jpg",
                                 fallback: "/previews/pix-preview.jpg",
-                                title: "💠 Pagamento PIX Imediato • CorpFlats",
-                                desc: "Finalize seu pagamento via PIX Copia e Cola com confirmação automática imediata."
+                                title: "💳 Pagamento • CorpFlats",
+                                desc: "Conclua seu pagamento via PIX ou Cartão com confirmação automática imediata."
                               }
                             }
 
@@ -6870,7 +6885,8 @@ export default function WhatsappAutomation() {
                             { slot: "credential" as PreviewSlotKey, label: "🪪 Dados Hóspede", prop: "credentialPreviewImage" as const, fallback: "/previews/credenciamento-preview.jpg" },
                             { slot: "preCheckin" as PreviewSlotKey, label: "📝 Check-in", prop: "preCheckinPreviewImage" as const, fallback: "/previews/precheckin-preview.jpg" },
                             { slot: "portal" as PreviewSlotKey, label: "🏨 Reserva", prop: "portalPreviewImage" as const, fallback: "/previews/portal-preview.jpg" },
-                            { slot: "pix" as PreviewSlotKey, label: "💠 PIX", prop: "pixPreviewImage" as const, fallback: "/previews/pix-preview.jpg" },
+                            { slot: "preReserva" as PreviewSlotKey, label: "⏳ Pré-Reserva", prop: "preReservaPreviewImage" as const, fallback: "/previews/prereserva-preview.jpg" },
+                            { slot: "pix" as PreviewSlotKey, label: "💳 Pagamento", prop: "pixPreviewImage" as const, fallback: "/previews/pix-preview.jpg" },
                             { slot: "breakfast" as PreviewSlotKey, label: "☕ Café", prop: "breakfastPreviewImage" as const, fallback: "/previews/breakfast-preview.jpg" },
                             { slot: "minibar" as PreviewSlotKey, label: "🍫 Frigobar", prop: "minibarPreviewImage" as const, fallback: "/previews/frigobar-preview.jpg" },
                             { slot: "checkout" as PreviewSlotKey, label: "🚪 Check-out", prop: "checkoutPreviewImage" as const, fallback: "/previews/checkout-preview.jpg" },

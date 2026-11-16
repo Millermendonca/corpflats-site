@@ -5217,27 +5217,28 @@ export async function sendZapiDocument(config, {
 
 // ── Resolução Inteligente de Preview Visual Nativo na Z-API (/send-button-actions image + /send-link LARGE) ──
 export const OUTBOUND_PREVIEW_IMAGES = {
-  credential: "https://corpflats.com.br/previews/v2/credenciamento-preview.jpg",
-  preCheckin: "https://corpflats.com.br/previews/v2/precheckin-preview.jpg",
-  portal: "https://corpflats.com.br/previews/v2/portal-preview.jpg",
-  pix: "https://corpflats.com.br/previews/v2/pix-preview.jpg",
-  boleto: "https://corpflats.com.br/previews/v2/boleto-preview.jpg",
-  breakfast: "https://corpflats.com.br/previews/v2/breakfast-preview.jpg",
-  minibar: "https://corpflats.com.br/previews/v2/frigobar-preview.jpg",
-  checkout: "https://corpflats.com.br/previews/v2/checkout-preview.jpg",
-  review: "https://corpflats.com.br/previews/v2/review-preview.jpg",
-  flat: "https://corpflats.com.br/previews/v2/reservar-preview.jpg",
-  fnrh: "https://corpflats.com.br/previews/v2/fnrh-preview.jpg",
-  manutencao: "https://corpflats.com.br/previews/v2/manutencao-preview.jpg",
-  equipe: "https://corpflats.com.br/previews/v2/equipe-preview.jpg",
-  sistema: "https://corpflats.com.br/previews/v2/sistema-preview.jpg"
+  credential: "https://corpflats.com.br/previews/v3/credenciamento-preview.jpg",
+  preCheckin: "https://corpflats.com.br/previews/v3/precheckin-preview.jpg",
+  portal: "https://corpflats.com.br/previews/v3/portal-preview.jpg",
+  preReserva: "https://corpflats.com.br/previews/v3/prereserva-preview.jpg",
+  pix: "https://corpflats.com.br/previews/v3/pix-preview.jpg",
+  boleto: "https://corpflats.com.br/previews/v3/boleto-preview.jpg",
+  breakfast: "https://corpflats.com.br/previews/v3/breakfast-preview.jpg",
+  minibar: "https://corpflats.com.br/previews/v3/frigobar-preview.jpg",
+  checkout: "https://corpflats.com.br/previews/v3/checkout-preview.jpg",
+  review: "https://corpflats.com.br/previews/v3/review-preview.jpg",
+  flat: "https://corpflats.com.br/previews/v3/reservar-preview.jpg",
+  fnrh: "https://corpflats.com.br/previews/v3/fnrh-preview.jpg",
+  manutencao: "https://corpflats.com.br/previews/v3/manutencao-preview.jpg",
+  equipe: "https://corpflats.com.br/previews/v3/equipe-preview.jpg",
+  sistema: "https://corpflats.com.br/previews/v3/sistema-preview.jpg"
 };
 
 function isLegacyOutboundPreviewImage(url) {
   if (!url) return true;
   const s = String(url).trim();
   if (/\/(flat|breakfast)-preview\.jpg(\?.*)?$/i.test(s) && !/\/previews\//i.test(s)) return true;
-  if (/\/previews\/[a-z0-9_-]+-preview\.jpg(\?.*)?$/i.test(s) && !/\/previews\/v2\//i.test(s)) return true;
+  if (/\/previews\/(?:v2\/)?[a-z0-9_-]+-preview\.jpg(\?.*)?$/i.test(s) && !/\/previews\/v3\//i.test(s)) return true;
   return false;
 }
 
@@ -5254,8 +5255,8 @@ export function resolveSlotPreviewImageUrls(slot, config = null) {
     } else if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(normalized)) {
       normalized = normalized.replace(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i, "https://corpflats.com.br");
     }
-    // Para arquivos estáticos em /previews/(v2/)?*.jpg, remove query string para preservar extensão .jpg limpa na Z-API
-    if (/\/previews\/(?:v2\/)?[a-z0-9_-]+\.(jpe?g|png|webp)\?/i.test(normalized)) {
+    // Para arquivos estáticos em /previews/(v2/|v3/)?*.jpg, remove query string para preservar extensão .jpg limpa na Z-API
+    if (/\/previews\/(?:v\d+\/)?[a-z0-9_-]+\.(jpe?g|png|webp)\?/i.test(normalized)) {
       normalized = normalized.split("?")[0];
     }
     publicImageUrl = normalized;
@@ -5275,10 +5276,10 @@ function lookupOutboundPreviewReservation(rawParam, db = null, isFlatParam = fal
   } catch {
     cleanParam = String(rawParam || "").split(/[?#]/)[0].trim();
   }
-  if (!cleanParam) return { flatLabel: "", guestFirst: "" };
+  if (!cleanParam) return { flatLabel: "", guestFirst: "", isPreReserva: false };
 
   if (isFlatParam && /^\d{2,4}[A-Za-z]?$/.test(cleanParam)) {
-    return { flatLabel: `Flat ${cleanParam}`, guestFirst: "" };
+    return { flatLabel: `Flat ${cleanParam}`, guestFirst: "", isPreReserva: false };
   }
 
   const upper = cleanParam.toUpperCase();
@@ -5308,7 +5309,9 @@ function lookupOutboundPreviewReservation(rawParam, db = null, isFlatParam = fal
     guestFirst = rawGuestName.split(/\s+/)[0].replace(/[^A-Za-zÀ-ÿ'-]/g, "");
   }
 
-  return { flatLabel, guestFirst };
+  const isPreReserva = Boolean(resv && String(resv.status || "").toLowerCase() === "pre_reserva");
+
+  return { flatLabel, guestFirst, isPreReserva };
 }
 
 export function classifyOutboundPreviewUrl(rawUrl, config = null, db = null) {
@@ -5381,10 +5384,11 @@ export function classifyOutboundPreviewUrl(rawUrl, config = null, db = null) {
   }
 
   const isMinibarRoute = /^\/(frigobar|minibar)(\/|$)/i.test(pathname);
-  const { flatLabel, guestFirst } = lookupOutboundPreviewReservation(secondSeg, db, isMinibarRoute);
+  const { flatLabel, guestFirst, isPreReserva } = lookupOutboundPreviewReservation(secondSeg, db, isMinibarRoute);
   const flatSuffix = flatLabel ? ` • ${flatLabel}` : "";
   const guestPrefix = guestFirst ? `${guestFirst}, ` : "";
   const capDesc = (txt) => txt ? txt.charAt(0).toUpperCase() + txt.slice(1) : "";
+  const isPaymentPendingParam = String(parsed.searchParams?.get("payment") || "").toLowerCase() === "pending";
 
   if (/^\/(credenciamento|identificar-reserva|identificar|cadastro-hospede)(\/|$)/i.test(pathname)) {
     return {
@@ -5407,12 +5411,21 @@ export function classifyOutboundPreviewUrl(rawUrl, config = null, db = null) {
   }
 
   if (/^\/(copiar-pix|pix)(\/|$)/i.test(pathname)) {
+    if (isPreReserva) {
+      return {
+        slot: "preReserva",
+        linkUrl: cleaned,
+        ...resolveSlotPreviewImageUrls("preReserva", config),
+        title: `⏳ Pagamento Pré-Reserva${flatSuffix} • CorpFlats`,
+        linkDescription: "Conclua o pagamento via PIX (com desconto) ou Cartão para confirmar sua acomodação."
+      };
+    }
     return {
       slot: "pix",
       linkUrl: cleaned,
       ...resolveSlotPreviewImageUrls("pix", config),
-      title: `💠 PIX Copia e Cola${flatSuffix} • CorpFlats`,
-      linkDescription: "Toque aqui para copiar o código PIX da reserva com confirmação automática em segundos."
+      title: `💳 Pagamento${flatSuffix} • CorpFlats`,
+      linkDescription: "Conclua seu pagamento com confirmação automática em segundos."
     };
   }
 
@@ -5487,6 +5500,15 @@ export function classifyOutboundPreviewUrl(rawUrl, config = null, db = null) {
   }
 
   if (/^\/(minha-reserva|portal-hospede|guest-portal|portal|minha-conta)(\/|$)/i.test(pathname)) {
+    if (isPreReserva || isPaymentPendingParam) {
+      return {
+        slot: "preReserva",
+        linkUrl: cleaned,
+        ...resolveSlotPreviewImageUrls("preReserva", config),
+        title: `⏳ Pagamento Pré-Reserva${flatSuffix} • CorpFlats`,
+        linkDescription: capDesc(`${guestPrefix}garanta sua acomodação via PIX (com desconto) ou Cartão de Crédito com confirmação imediata.`)
+      };
+    }
     return {
       slot: "portal",
       linkUrl: cleaned,
@@ -5530,6 +5552,8 @@ export function resolveZapiOutboundPreview({
   if (
     ev === "nps_approved" ||
     ev === "reservation_cancelled" ||
+    ev === "pre_reservation_expired" ||
+    ev === "additional_daily_expired" ||
     ev === "lost_item_registered" ||
     ev === "nps_satisfaction_check" ||
     ev.startsWith("nps_score_") ||
@@ -5565,10 +5589,13 @@ export function resolveZapiOutboundPreview({
     if (classified) msgCandidates.push(classified);
   }
 
-  const isPixBillingTrigger = [
+  const isPreReservaContext =
+    ev === "pre_reservation_created" ||
+    ev === "pre_reservation_expiring_soon" ||
+    /\bpr[eé][\s-]?reserva\b/i.test(msgStr);
+
+  const isGeneralBillingTrigger = [
     "payment_pending",
-    "pre_reservation_created",
-    "pre_reservation_expiring_soon",
     "additional_daily_pending",
     "additional_daily_expiring_soon",
     "sunday_upsell_offer"
@@ -5583,18 +5610,28 @@ export function resolveZapiOutboundPreview({
     )
   );
 
-  // Prioridade: 1) Boleto explícito -> 2) PIX explícito -> 3) Primeiro botão CorpFlats na ordem -> 4) Primeiro link no texto
+  // Prioridade: 1) Boleto -> 2) Pré-Reserva -> 3) Pagamento geral -> 4) Primeiro botão CorpFlats -> 5) Primeiro link no texto
   let selected =
     btnCandidates.find(c => c.slot === "boleto") ||
     msgCandidates.find(c => c.slot === "boleto") ||
-    btnCandidates.find(c => c.slot === "pix") ||
-    msgCandidates.find(c => c.slot === "pix") ||
+    btnCandidates.find(c => c.slot === "preReserva") ||
+    msgCandidates.find(c => c.slot === "preReserva") ||
+    (!isPreReservaContext ? (btnCandidates.find(c => c.slot === "pix") || msgCandidates.find(c => c.slot === "pix")) : null) ||
     btnCandidates[0] ||
     msgCandidates[0] ||
     null;
 
-  // Se a mensagem é cobrança PIX/Boleto mas o único link HTTP era o portal (/minha-reserva), aplica a arte contextual de cobrança mantendo linkUrl válido
-  if (selected && selected.slot === "portal" && (hasBoletoBtn || hasPixBtn || isPixBillingTrigger)) {
+  // Se for contexto de Pré-Reserva (mesmo que o link seja /minha-reserva ou /copiar-pix), aplica a capa dedicada "Pagamento Pré-Reserva"
+  if (selected && isPreReservaContext && !hasBoletoBtn && (selected.slot === "portal" || selected.slot === "pix")) {
+    const imgs = resolveSlotPreviewImageUrls("preReserva", config);
+    selected = {
+      ...selected,
+      slot: "preReserva",
+      ...imgs,
+      title: "⏳ Pagamento Pré-Reserva • CorpFlats",
+      linkDescription: "Garanta sua acomodação via PIX (com desconto) ou Cartão de Crédito com confirmação automática."
+    };
+  } else if (selected && selected.slot === "portal" && (hasBoletoBtn || hasPixBtn || isGeneralBillingTrigger)) {
     const targetBillingSlot = hasBoletoBtn ? "boleto" : "pix";
     const imgs = resolveSlotPreviewImageUrls(targetBillingSlot, config);
     selected = {
@@ -5603,26 +5640,30 @@ export function resolveZapiOutboundPreview({
       ...imgs,
       title: targetBillingSlot === "boleto"
         ? "🏦 Boleto Bancário & PIX • CorpFlats"
-        : "💠 Pagamento PIX Imediato • CorpFlats",
+        : "💳 Pagamento • CorpFlats",
       linkDescription: targetBillingSlot === "boleto"
         ? "Toque para copiar a Linha Digitável do boleto, pagar via PIX imediato ou baixar o PDF oficial."
-        : "Finalize seu pagamento via PIX Copia e Cola com confirmação automática imediata."
+        : "Conclua seu pagamento via PIX ou Cartão com confirmação automática imediata."
     };
   }
 
   // Caso especial: mensagem com botões apenas de código PIX/Boleto sem URL HTTP
-  if (!selected && allButtons.length > 0 && (hasBoletoBtn || hasPixBtn || isPixBillingTrigger)) {
-    const targetBillingSlot = hasBoletoBtn ? "boleto" : "pix";
+  if (!selected && allButtons.length > 0 && (hasBoletoBtn || hasPixBtn || isPreReservaContext || isGeneralBillingTrigger)) {
+    const targetBillingSlot = hasBoletoBtn ? "boleto" : isPreReservaContext ? "preReserva" : "pix";
     return {
       slot: targetBillingSlot,
       linkUrl: "",
       ...resolveSlotPreviewImageUrls(targetBillingSlot, config),
       title: targetBillingSlot === "boleto"
         ? "🏦 Boleto Bancário & PIX • CorpFlats"
-        : "💠 PIX Copia e Cola • CorpFlats",
+        : targetBillingSlot === "preReserva"
+        ? "⏳ Pagamento Pré-Reserva • CorpFlats"
+        : "💳 Pagamento • CorpFlats",
       linkDescription: targetBillingSlot === "boleto"
         ? "Toque para copiar a Linha Digitável do boleto ou pagar via PIX imediato."
-        : "Toque para copiar o código PIX da reserva com confirmação automática."
+        : targetBillingSlot === "preReserva"
+        ? "Conclua o pagamento para confirmar sua pré-reserva imediatamente."
+        : "Conclua seu pagamento com confirmação automática imediata."
     };
   }
 
@@ -8715,24 +8756,25 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     if (!Array.isArray(db.faqItems)) {
       db.faqItems = [];
     }
-    const PREVIEW_ASSETS_VERSION = "20261116";
+    const PREVIEW_ASSETS_VERSION = "20261116b";
     const DEFAULT_PREVIEW_IMAGES = {
-      credential: `https://corpflats.com.br/previews/v2/credenciamento-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
-      preCheckin: `https://corpflats.com.br/previews/v2/precheckin-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
-      portal: `https://corpflats.com.br/previews/v2/portal-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
-      pix: `https://corpflats.com.br/previews/v2/pix-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
-      boleto: `https://corpflats.com.br/previews/v2/boleto-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
-      breakfast: `https://corpflats.com.br/previews/v2/breakfast-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
-      minibar: `https://corpflats.com.br/previews/v2/frigobar-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
-      checkout: `https://corpflats.com.br/previews/v2/checkout-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
-      review: `https://corpflats.com.br/previews/v2/review-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
-      flat: `https://corpflats.com.br/previews/v2/reservar-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`
+      credential: `https://corpflats.com.br/previews/v3/credenciamento-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      preCheckin: `https://corpflats.com.br/previews/v3/precheckin-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      portal: `https://corpflats.com.br/previews/v3/portal-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      preReserva: `https://corpflats.com.br/previews/v3/prereserva-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      pix: `https://corpflats.com.br/previews/v3/pix-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      boleto: `https://corpflats.com.br/previews/v3/boleto-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      breakfast: `https://corpflats.com.br/previews/v3/breakfast-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      minibar: `https://corpflats.com.br/previews/v3/frigobar-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      checkout: `https://corpflats.com.br/previews/v3/checkout-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      review: `https://corpflats.com.br/previews/v3/review-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`,
+      flat: `https://corpflats.com.br/previews/v3/reservar-preview.jpg?v=${PREVIEW_ASSETS_VERSION}`
     };
     const isLegacyGenericPreviewUrl = (url) => {
       const s = String(url || "").trim();
       if (!s) return true;
       if (/\/(flat|breakfast)-preview\.jpg(\?.*)?$/i.test(s) && !/\/previews\//i.test(s)) return true;
-      if (/\/previews\/[a-z0-9_-]+-preview\.jpg(\?.*)?$/i.test(s) && !/\/previews\/v2\//i.test(s)) return true;
+      if (/\/previews\/(?:v2\/)?[a-z0-9_-]+-preview\.jpg(\?.*)?$/i.test(s) && !/\/previews\/v3\//i.test(s)) return true;
       return false;
     };
 
@@ -8755,6 +8797,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         credentialPreviewImage: DEFAULT_PREVIEW_IMAGES.credential,
         preCheckinPreviewImage: DEFAULT_PREVIEW_IMAGES.preCheckin,
         portalPreviewImage: DEFAULT_PREVIEW_IMAGES.portal,
+        preReservaPreviewImage: DEFAULT_PREVIEW_IMAGES.preReserva,
         pixPreviewImage: DEFAULT_PREVIEW_IMAGES.pix,
         boletoPreviewImage: DEFAULT_PREVIEW_IMAGES.boleto,
         minibarPreviewImage: DEFAULT_PREVIEW_IMAGES.minibar,
@@ -9989,6 +10032,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     credential: "previews/credenciamento-preview.jpg",
     preCheckin: "previews/precheckin-preview.jpg",
     portal: "previews/portal-preview.jpg",
+    preReserva: "previews/prereserva-preview.jpg",
     pix: "previews/pix-preview.jpg",
     boleto: "previews/boleto-preview.jpg",
     breakfast: "previews/breakfast-preview.jpg",
@@ -10002,6 +10046,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     const s = String(raw || "").trim().replace(/\.(jpg|jpeg|png|webp)$/i, "").toLowerCase();
     if (s === "credential" || s.startsWith("credenciamento") || s.startsWith("cadastro")) return "credential";
     if (s === "precheckin" || s === "pre-checkin" || s.startsWith("precheckin") || s.startsWith("checkin")) return "preCheckin";
+    if (s === "prereserva" || s === "pre-reserva" || s === "pre_reserva" || s.startsWith("prereserva")) return "preReserva";
     if (s.startsWith("portal") || s.startsWith("minha-reserva")) return "portal";
     if (s.startsWith("pix") || s.startsWith("copiar-pix")) return "pix";
     if (s.startsWith("boleto") || s.startsWith("copiar-boleto")) return "boleto";

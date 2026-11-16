@@ -53,6 +53,7 @@ type PreviewSlotKey =
   | "credential"
   | "preCheckin"
   | "portal"
+  | "preReserva"
   | "pix"
   | "boleto"
   | "breakfast"
@@ -79,6 +80,7 @@ interface ZapiConfig {
   credentialPreviewImage?: string
   preCheckinPreviewImage?: string
   portalPreviewImage?: string
+  preReservaPreviewImage?: string
   pixPreviewImage?: string
   boletoPreviewImage?: string
   minibarPreviewImage?: string
@@ -127,16 +129,17 @@ export default function ZapiConnection() {
     googleReviewUrl: "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA",
     reviewPreviewTitle: "⭐ Avalie sua Estadia • CorpFlats Soho Residence",
     reviewPreviewDescription: "Sua experiência foi 5 estrelas? Toque aqui para avaliar a CorpFlats no Google em menos de 30 segundos!",
-    reviewPreviewImage: "https://corpflats.com.br/previews/v2/review-preview.jpg?v=20261116",
-    breakfastPreviewImage: "https://corpflats.com.br/previews/v2/breakfast-preview.jpg?v=20261116",
-    flatPreviewImage: "https://corpflats.com.br/previews/v2/reservar-preview.jpg?v=20261116",
-    credentialPreviewImage: "https://corpflats.com.br/previews/v2/credenciamento-preview.jpg?v=20261116",
-    preCheckinPreviewImage: "https://corpflats.com.br/previews/v2/precheckin-preview.jpg?v=20261116",
-    portalPreviewImage: "https://corpflats.com.br/previews/v2/portal-preview.jpg?v=20261116",
-    pixPreviewImage: "https://corpflats.com.br/previews/v2/pix-preview.jpg?v=20261116",
-    boletoPreviewImage: "https://corpflats.com.br/previews/v2/boleto-preview.jpg?v=20261116",
-    minibarPreviewImage: "https://corpflats.com.br/previews/v2/frigobar-preview.jpg?v=20261116",
-    checkoutPreviewImage: "https://corpflats.com.br/previews/v2/checkout-preview.jpg?v=20261116",
+    reviewPreviewImage: "https://corpflats.com.br/previews/v3/review-preview.jpg?v=20261116b",
+    breakfastPreviewImage: "https://corpflats.com.br/previews/v3/breakfast-preview.jpg?v=20261116b",
+    flatPreviewImage: "https://corpflats.com.br/previews/v3/reservar-preview.jpg?v=20261116b",
+    credentialPreviewImage: "https://corpflats.com.br/previews/v3/credenciamento-preview.jpg?v=20261116b",
+    preCheckinPreviewImage: "https://corpflats.com.br/previews/v3/precheckin-preview.jpg?v=20261116b",
+    portalPreviewImage: "https://corpflats.com.br/previews/v3/portal-preview.jpg?v=20261116b",
+    preReservaPreviewImage: "https://corpflats.com.br/previews/v3/prereserva-preview.jpg?v=20261116b",
+    pixPreviewImage: "https://corpflats.com.br/previews/v3/pix-preview.jpg?v=20261116b",
+    boletoPreviewImage: "https://corpflats.com.br/previews/v3/boleto-preview.jpg?v=20261116b",
+    minibarPreviewImage: "https://corpflats.com.br/previews/v3/frigobar-preview.jpg?v=20261116b",
+    checkoutPreviewImage: "https://corpflats.com.br/previews/v3/checkout-preview.jpg?v=20261116b",
     alertEmail: "millerpessanha@gmail.com",
     alertEmailEnabled: true,
     alertOnReconnect: true,
@@ -1798,16 +1801,24 @@ export default function ZapiConnection() {
                     fallback: "/previews/portal-preview.jpg"
                   },
                   {
+                    slot: "preReserva" as PreviewSlotKey,
+                    label: "4. Pagamento Pré-Reserva",
+                    badge: "Pré-Reserva",
+                    desc: "Confirmação de pré-reserva via PIX ou Cartão de Crédito.",
+                    prop: "preReservaPreviewImage" as const,
+                    fallback: "/previews/prereserva-preview.jpg"
+                  },
+                  {
                     slot: "pix" as PreviewSlotKey,
-                    label: "4. PIX Copia e Cola",
+                    label: "5. Pagamento Geral",
                     badge: "/copiar-pix/...",
-                    desc: "Página rápida de pagamento PIX da reserva ou oferta.",
+                    desc: "Cobrança geral de reserva, diária extra ou upsell.",
                     prop: "pixPreviewImage" as const,
                     fallback: "/previews/pix-preview.jpg"
                   },
                   {
                     slot: "boleto" as PreviewSlotKey,
-                    label: "5. Boleto Bancário",
+                    label: "6. Boleto Bancário",
                     badge: "/copiar-boleto/...",
                     desc: "Linha digitável, PIX do boleto e PDF Banco Inter.",
                     prop: "boletoPreviewImage" as const,
@@ -1815,7 +1826,7 @@ export default function ZapiConnection() {
                   },
                   {
                     slot: "breakfast" as PreviewSlotKey,
-                    label: "6. Café da Manhã",
+                    label: "7. Café da Manhã",
                     badge: "/cafe/...",
                     desc: "Cardápio personalizado entregue na porta do flat.",
                     prop: "breakfastPreviewImage" as const,
@@ -1823,7 +1834,7 @@ export default function ZapiConnection() {
                   },
                   {
                     slot: "minibar" as PreviewSlotKey,
-                    label: "7. Frigobar do Flat",
+                    label: "8. Frigobar do Flat",
                     badge: "/frigobar/...",
                     desc: "Tabela de bebidas e snacks de conveniência do flat.",
                     prop: "minibarPreviewImage" as const,
@@ -1831,7 +1842,7 @@ export default function ZapiConnection() {
                   },
                   {
                     slot: "checkout" as PreviewSlotKey,
-                    label: "8. Check-out Expresso",
+                    label: "9. Check-out Expresso",
                     badge: "/checkout/...",
                     desc: "Confirmação de saída em 1 toque e devolução do cartão.",
                     prop: "checkoutPreviewImage" as const,
@@ -1839,7 +1850,7 @@ export default function ZapiConnection() {
                   },
                   {
                     slot: "review" as PreviewSlotKey,
-                    label: "9. Avaliação Google",
+                    label: "10. Avaliação Google",
                     badge: "/avaliar",
                     desc: "Link pós-checkout para avaliação 5 estrelas no Google.",
                     prop: "reviewPreviewImage" as const,
@@ -1847,7 +1858,7 @@ export default function ZapiConnection() {
                   },
                   {
                     slot: "flat" as PreviewSlotKey,
-                    label: "10. Site / Reservar",
+                    label: "11. Site / Reservar",
                     badge: "corpflats.com.br",
                     desc: "Motor de reserva direta e página principal Soho Residence.",
                     prop: "flatPreviewImage" as const,
