@@ -292,6 +292,65 @@ function markProcessedZohoB2bCancelKey(db, keys = []) {
 }
 
 /**
+ * Verifica se um número/código de reserva B2B já foi cancelado (manualmente ou via e-mail)
+ * para impedir que sincronizações posteriores da caixa de entrada recriem clones da reserva.
+ */
+export function isB2bReservationCancelledInDb(db, rawResNum = "", extraCodes = []) {
+  if (!db) return false;
+  const cleanNum = String(rawResNum || "").replace(/^B2B-/i, "").trim();
+  const candidates = new Set();
+  if (cleanNum) {
+    candidates.add(cleanNum);
+    candidates.add(`B2B-${cleanNum}`);
+  }
+  for (const ex of extraCodes) {
+    const s = String(ex || "").trim();
+    if (!s) continue;
+    candidates.add(s);
+    const stripped = s.replace(/^B2B-/i, "").trim();
+    if (/^\d{6,12}$/.test(stripped)) {
+      candidates.add(stripped);
+      candidates.add(`B2B-${stripped}`);
+    }
+  }
+  if (candidates.size === 0) return false;
+
+  if (Array.isArray(db.deletedB2bSeeds)) {
+    for (const c of candidates) {
+      if (db.deletedB2bSeeds.includes(c)) return true;
+    }
+  }
+
+  if (Array.isArray(db.reservations)) {
+    const hasCancelled = db.reservations.some(r => {
+      if (!r) return false;
+      const st = String(r.status || "").toLowerCase().trim();
+      if (st !== "cancelada" && st !== "cancelled") return false;
+      const b2bNum = String(r.b2bReservationNumber || "").replace(/^B2B-/i, "").trim();
+      const extNum = String(r.externalReservationNumber || "").replace(/^B2B-/i, "").trim();
+      const codeStr = String(r.code || "").trim();
+      if (
+        cleanNum &&
+        (b2bNum === cleanNum ||
+          extNum === cleanNum ||
+          codeStr === `B2B-${cleanNum}` ||
+          codeStr.endsWith(`-B2B-${cleanNum}`))
+      ) {
+        return true;
+      }
+      return (
+        candidates.has(codeStr) ||
+        (b2bNum && candidates.has(b2bNum)) ||
+        (extNum && candidates.has(extNum))
+      );
+    });
+    if (hasCancelled) return true;
+  }
+
+  return false;
+}
+
+/**
  * Obtém a configuração consolidada do Zoho OAuth2 (.env > db.settings.zohoOAuth)
  */
 export function getZohoOAuthConfig(db, overrides = {}) {
@@ -1159,6 +1218,10 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
     const nowSyncMs = Date.now();
     const MAX_AUTONOMOUS_CANCEL_AGE_MS = 24 * 60 * 60 * 1000; // 24 horas (evita disparar alertas retroativos de e-mails antigos)
 
+    // Ordena cronologicamente (mais antigos primeiro) para que confirmações cheguem ao banco antes de seus cancelamentos
+    // quando ambos forem recebidos na mesma janela de sincronização, mantendo os mais novos no topo via unshift ao final.
+    rawZohoMessages.sort((a, b) => (Number(a?.receivedTime) || 0) - (Number(b?.receivedTime) || 0));
+
     for (const zm of rawZohoMessages) {
       if (!zm || !zm.messageId) continue;
       const zId = `zoho_${zm.messageId}`;
@@ -1204,40 +1267,10 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
       };
       const subjResMatch =
         String(mapped.subject || "").match(/Confirma[cç][aã]o\s+(?:d[ae]\s+)?(?:Reserva\s*)?[\s:\-#]*(\d{7,10})/i) ||
+        String(mapped.subject || "").match(/Cancelamento\s+(?:d[aeo]\s+)?(?:Reserva\s*)?[\s:\-#]*(\d{6,12})/i) ||
         String(mapped.subject || "").match(/Reserva(?:\s+B2B)?\s*[\s:\-#]+(\d{7,10})/i) ||
-        String(mapped.subject || "").match(/\b(25\d{6})\b/);
+        String(mapped.subject || "").match(/\b(2[4-9]\d{6})\b/);
       const subjResNum = subjResMatch ? String(subjResMatch[1] || "").trim() : "";
-      const isB2bConfirmationEmail =
-        mapped.direction === "inbound" &&
-        (String(mapped.fromEmail || "").toLowerCase().includes("b2breservas") ||
-          Boolean(subjResNum) ||
-          /\b(?:b2b\s*reservas|ordem\s+de\s+hospedagem|conf_reserva\.php)\b/i.test(`${mapped.subject || ""} ${mapped.snippet || ""}`));
-
-      const hasCompleteB2bReservation =
-        subjResNum &&
-        (db.reservations || []).some(
-          r =>
-            r &&
-            r.status !== "cancelada" &&
-            (String(r.b2bReservationNumber || "") === subjResNum ||
-              String(r.externalReservationNumber || "") === subjResNum) &&
-            Boolean(
-              r.guestName &&
-              r.checkinDate &&
-              r.agencyName &&
-              r.agencyCnpj &&
-              r.agencyAgentEmail &&
-              r.companyName &&
-              r.companyCnpj &&
-              Array.isArray(r.nfDeliveryEmails) &&
-              r.nfDeliveryEmails.length > 0 &&
-              (String(r.agencyName || "").trim().toUpperCase() !== String(r.companyName || "").trim().toUpperCase() ||
-                String(r.agencyTradeName || "").trim().toUpperCase() !== String(r.companyName || "").trim().toUpperCase()) &&
-              !String(r.companyName || "").includes("HOTEL CORPFLATS") &&
-              Number(r.dailyRate) > 0 &&
-              Number(r.dailyRate) < 10000
-            )
-        );
 
       const extractAttList = (attRes) => {
         if (!attRes || !attRes.ok) return [];
@@ -1263,26 +1296,54 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
       const messagePreview = {
         subject: mapped.subject,
         text: mapped.snippet,
+        html: mapped.bodyHtml,
         from: mapped.fromEmail
       };
       const previewIntent = detectB2bEmailIntent(messagePreview);
       const cancelSig = buildZohoB2bCancelSignature(mapped.subject, mapped.fromEmail);
-      const alreadyCancelEvaluated =
-        mapped.b2bCancelProcessed ||
-        hasProcessedZohoB2bCancelKey(db, [zId, cancelSig]);
+      const msgTimeMs = Number(mapped.receivedTimeMs) || new Date(isoDate || 0).getTime() || 0;
+      const isStaleHistoricalEmail = msgTimeMs > 0 && (nowSyncMs - msgTimeMs) > MAX_AUTONOMOUS_CANCEL_AGE_MS;
 
       const isB2bCancellationCandidate =
         mapped.direction === "inbound" &&
         !isNonB2bSystemOrMarketing &&
         (previewIntent.isCancellation || /cancel/i.test(mapped.subject || ""));
 
-      if (isB2bCancellationCandidate && !alreadyCancelEvaluated) {
-        const msgTimeMs = Number(mapped.receivedTimeMs) || new Date(isoDate || 0).getTime() || 0;
-        const isStaleHistoricalEmail = msgTimeMs > 0 && (nowSyncMs - msgTimeMs) > MAX_AUTONOMOUS_CANCEL_AGE_MS;
+      let alreadyCancelEvaluated =
+        mapped.b2bCancelProcessed ||
+        hasProcessedZohoB2bCancelKey(db, [zId, cancelSig]);
 
+      // Se um e-mail recente (<24h) foi carimbado antes sem ter cancelado a reserva (ex: número 252xxxxx não extraído na versão anterior),
+      // permite reavaliação cirúrgica SOMENTE se ele casar diretamente com uma reserva ainda ativa no banco (sem risco de spam sem correspondência).
+      let isActiveMatchRetry = false;
+      if (isB2bCancellationCandidate && alreadyCancelEvaluated && !mapped.b2bCancelled && !isStaleHistoricalEmail && previewIntent.isCancellation) {
+        const retryMatch = matchReservationForCancellation(db, messagePreview);
+        if (
+          retryMatch.matched &&
+          retryMatch.reservation &&
+          retryMatch.reservation.status !== "cancelada" &&
+          retryMatch.reservation.status !== "cancelled"
+        ) {
+          alreadyCancelEvaluated = false;
+          isActiveMatchRetry = true;
+        }
+      }
+
+      if (isB2bCancellationCandidate && alreadyCancelEvaluated && previewIntent.isCancellation) {
+        // Garante que e-mail de cancelamento já processado (ex: via webhook segundos antes) nunca caia no parser de voucher
+        mapped.b2bCancelProcessed = true;
+        mapped.b2bCancelled = true;
+        mapped.b2bParsed = true;
+      }
+
+      if (isB2bCancellationCandidate && !alreadyCancelEvaluated) {
         // E-mails históricos (> 24h) são apenas carimbados como já avaliados sem disparar cancelamento retroativo nem spam WhatsApp
         if (isStaleHistoricalEmail) {
           mapped.b2bCancelProcessed = true;
+          if (previewIntent.isCancellation) {
+            mapped.b2bCancelled = true;
+            mapped.b2bParsed = true;
+          }
           markProcessedZohoB2bCancelKey(db, [zId, cancelSig]);
           b2bCancelProcessedMutated = true;
         } else {
@@ -1356,18 +1417,18 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
 
             const fullIntent = detectB2bEmailIntent(emailCancelData);
             if (fullIntent.isCancellation) {
+              mapped.b2bParsed = true;
+              mapped.b2bCancelled = true;
               const preMatch = matchReservationForCancellation(db, emailCancelData);
               const isExplicitB2bSender = fromLower.includes("b2breservas");
               // Na sincronização passiva de caixa de entrada, só executa se casar com reserva do PMS ou vier do portal B2B Reservas
-              if (preMatch.matched || preMatch.candidatesCount > 0 || isExplicitB2bSender) {
+              if (preMatch.matched || (!isActiveMatchRetry && (preMatch.candidatesCount > 0 || isExplicitB2bSender))) {
                 const cancelRes = await executeAutonomousB2bCancellation(db, emailCancelData, {
                   saveDatabase
                 });
                 if (cancelRes.cancelled) {
                   addedOrUpdated++;
                 }
-                mapped.b2bParsed = true;
-                mapped.b2bCancelled = Boolean(cancelRes.cancelled);
               }
             }
           } catch (cancelErr) {
@@ -1376,8 +1437,47 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
         }
       }
 
+      const isB2bConfirmationEmail =
+        mapped.direction === "inbound" &&
+        !mapped.b2bCancelled &&
+        !previewIntent.isCancellation &&
+        !isB2bCancellationCandidate &&
+        (fromLower.includes("b2breservas") ||
+          Boolean(subjResNum) ||
+          /\b(?:b2b\s*reservas|ordem\s+de\s+hospedagem|conf_reserva\.php)\b/i.test(`${mapped.subject || ""} ${mapped.snippet || ""}`));
+
+      const isKnownCancelledB2b = subjResNum ? isB2bReservationCancelledInDb(db, subjResNum) : false;
+
+      const hasCompleteB2bReservation =
+        subjResNum &&
+        (db.reservations || []).some(
+          r =>
+            r &&
+            r.status !== "cancelada" &&
+            r.status !== "cancelled" &&
+            (String(r.b2bReservationNumber || "") === subjResNum ||
+              String(r.externalReservationNumber || "") === subjResNum) &&
+            Boolean(
+              r.guestName &&
+              r.checkinDate &&
+              r.agencyName &&
+              r.agencyCnpj &&
+              r.agencyAgentEmail &&
+              r.companyName &&
+              r.companyCnpj &&
+              Array.isArray(r.nfDeliveryEmails) &&
+              r.nfDeliveryEmails.length > 0 &&
+              (String(r.agencyName || "").trim().toUpperCase() !== String(r.companyName || "").trim().toUpperCase() ||
+                String(r.agencyTradeName || "").trim().toUpperCase() !== String(r.companyName || "").trim().toUpperCase()) &&
+              !String(r.companyName || "").includes("HOTEL CORPFLATS") &&
+              Number(r.dailyRate) > 0 &&
+              Number(r.dailyRate) < 10000
+            )
+        );
+
       const needsB2bParse =
         !mapped.b2bCancelled &&
+        !isKnownCancelledB2b &&
         isB2bConfirmationEmail &&
         (!existingMsg?.b2bParsed || (subjResNum && !hasCompleteB2bReservation));
 
@@ -1451,38 +1551,69 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
           }
 
           const combinedRawText = [mapped.snippet || "", attachmentPdfText].filter(Boolean).join("\n");
-          const parsedB2b = await fetchAndParseB2bVoucher({
-            rawText: combinedRawText,
-            htmlText: fetchedHtml || "",
-            subject: mapped.subject || "",
-            fromEmail: mapped.fromEmail || "",
-            cc: mapped.cc || "",
-            replyTo: mapped.replyTo || "",
-            pdfBuffers: attachmentPdfBuffers,
-            db
+          const postFetchIntent = detectB2bEmailIntent({
+            subject: mapped.subject,
+            text: combinedRawText,
+            html: fetchedHtml,
+            from: mapped.fromEmail
           });
-          if (parsedB2b.b2bReservationNumber && parsedB2b.guestName && parsedB2b.checkinDate) {
-            const ingestRes = ingestB2bVoucherIntoDb(db, parsedB2b, {
-              saveDatabase,
-              autoSendCredentialEmail: false
-            });
-            if (ingestRes?.ok) {
-              await enrichB2bIngestedEntitiesCnpj(db, { ...ingestRes, saveDatabase });
-              addedOrUpdated++;
-            }
-          }
-          const gotCompleteAgency = Boolean(
-            parsedB2b.agencyName &&
-            parsedB2b.agencyAgentName &&
-            (parsedB2b.agencyAgentEmail || parsedB2b.agencyAgentPhone)
-          );
-          if ((!contentFetchFailed && !attFetchFailed) || gotCompleteAgency) {
+
+          // Proteção contra cancelamentos em respostas/encaminhamentos ("Re: Confirmação de Reserva") cujo comando só aparece no corpo/PDF
+          if (postFetchIntent.isCancellation) {
+            mapped.b2bCancelProcessed = true;
+            mapped.b2bCancelled = true;
             mapped.b2bParsed = true;
+            markProcessedZohoB2bCancelKey(db, [zId, cancelSig]);
+            b2bCancelProcessedMutated = true;
+            if (!isStaleHistoricalEmail) {
+              const cancelRes = await executeAutonomousB2bCancellation(
+                db,
+                {
+                  id: zId,
+                  zohoMessageId: mapped.zohoMessageId,
+                  subject: mapped.subject,
+                  text: combinedRawText,
+                  html: fetchedHtml,
+                  from: mapped.fromEmail
+                },
+                { saveDatabase }
+              );
+              if (cancelRes.cancelled) addedOrUpdated++;
+            }
+          } else {
+            const parsedB2b = await fetchAndParseB2bVoucher({
+              rawText: combinedRawText,
+              htmlText: fetchedHtml || "",
+              subject: mapped.subject || "",
+              fromEmail: mapped.fromEmail || "",
+              cc: mapped.cc || "",
+              replyTo: mapped.replyTo || "",
+              pdfBuffers: attachmentPdfBuffers,
+              db
+            });
+            if (parsedB2b.b2bReservationNumber && parsedB2b.guestName && parsedB2b.checkinDate) {
+              const ingestRes = ingestB2bVoucherIntoDb(db, parsedB2b, {
+                saveDatabase,
+                autoSendCredentialEmail: false
+              });
+              if (ingestRes?.ok) {
+                await enrichB2bIngestedEntitiesCnpj(db, { ...ingestRes, saveDatabase });
+                addedOrUpdated++;
+              }
+            }
+            const gotCompleteAgency = Boolean(
+              parsedB2b.agencyName &&
+              parsedB2b.agencyAgentName &&
+              (parsedB2b.agencyAgentEmail || parsedB2b.agencyAgentPhone)
+            );
+            if ((!contentFetchFailed && !attFetchFailed) || gotCompleteAgency) {
+              mapped.b2bParsed = true;
+            }
           }
         } catch (b2bErr) {
           console.warn("[B2B Sync Parse] Aviso ao processar voucher B2B:", b2bErr?.message || b2bErr);
         }
-      } else if (existingMsg?.b2bParsed) {
+      } else if (existingMsg?.b2bParsed || isKnownCancelledB2b) {
         mapped.b2bParsed = true;
       }
 
@@ -2610,6 +2741,7 @@ export async function getWebmailMessageDetail(db, saveDatabase, messageId, optio
   // Se for confirmação de reserva B2B AINDA NÃO PROCESSADA, extrai dados do voucher e garante vínculo das 4 pontas no banco
   if (
     !target.b2bParsed &&
+    !target.b2bCancelled &&
     target.direction === "inbound" &&
     (String(target.fromEmail || "").toLowerCase().includes("b2breservas") ||
       /Confirma[cç][aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*\d{7,10}/i.test(target.subject || "") ||
@@ -2637,25 +2769,43 @@ export async function getWebmailMessageDetail(db, saveDatabase, messageId, optio
     }
 
     const combinedBody = [target.bodyText || target.snippet || "", attachmentPdfText].filter(Boolean).join("\n");
-    const parsedB2b = await fetchAndParseB2bVoucher({
-      rawText: combinedBody,
-      htmlText: target.bodyHtml || "",
-      subject: target.subject || ""
+    const detailIntent = detectB2bEmailIntent({
+      subject: target.subject || "",
+      text: combinedBody,
+      html: target.bodyHtml || "",
+      from: target.fromEmail || ""
     });
-    if (parsedB2b.b2bReservationNumber && parsedB2b.guestName && parsedB2b.checkinDate) {
-      const ingestRes = ingestB2bVoucherIntoDb(db, parsedB2b, { saveDatabase, autoSendCredentialEmail: false });
-      if (ingestRes?.ok) {
-        await enrichB2bIngestedEntitiesCnpj(db, { ...ingestRes, saveDatabase });
+
+    if (detailIntent.isCancellation) {
+      target.b2bCancelled = true;
+      target.b2bParsed = true;
+      const cached = (db.zohoMessagesCache || []).find(c => c.id === target.id);
+      if (cached) {
+        cached.b2bCancelled = true;
+        cached.b2bParsed = true;
+        cacheMutated = true;
       }
-      if (!target.matchedReservation) {
-        target.matchedReservation = matchEmailWithReservation(db, target);
+    } else {
+      const parsedB2b = await fetchAndParseB2bVoucher({
+        rawText: combinedBody,
+        htmlText: target.bodyHtml || "",
+        subject: target.subject || ""
+      });
+      if (parsedB2b.b2bReservationNumber && parsedB2b.guestName && parsedB2b.checkinDate) {
+        const ingestRes = ingestB2bVoucherIntoDb(db, parsedB2b, { saveDatabase, autoSendCredentialEmail: false });
+        if (ingestRes?.ok) {
+          await enrichB2bIngestedEntitiesCnpj(db, { ...ingestRes, saveDatabase });
+        }
+        if (!target.matchedReservation) {
+          target.matchedReservation = matchEmailWithReservation(db, target);
+        }
       }
-    }
-    target.b2bParsed = true;
-    const cached = (db.zohoMessagesCache || []).find(c => c.id === target.id);
-    if (cached) {
-      cached.b2bParsed = true;
-      cacheMutated = true;
+      target.b2bParsed = true;
+      const cached = (db.zohoMessagesCache || []).find(c => c.id === target.id);
+      if (cached) {
+        cached.b2bParsed = true;
+        cacheMutated = true;
+      }
     }
   }
 
@@ -3928,7 +4078,7 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
     fullScan.match(/N[uú°º]?(?:mero)?\s+d[ae]\s+(?:Reserva|Confirma[cç][aã]o)\s*[\s:\-#]*(\d{7,10})/i) ||
     fullScan.match(/Reserva(?:\s+B2B)?\s*[\s:\-#]+(\d{7,10})/i) ||
     fullScan.match(/C[oó]d(?:igo)?\.?\s+Reserva\s*[\s:\-#]*(\d{7,10})/i) ||
-    fullScan.match(/\b(25\d{6})\b/);
+    fullScan.match(/\b(2[4-9]\d{6})\b/);
   const b2bReservationNumber = resNumMatch ? resNumMatch[1].trim() : "";
 
   const rlocMatch =
@@ -5332,7 +5482,11 @@ function findAvailableFlatForPeriod(db, checkinDate, checkoutDate) {
  * Registra/vincula automaticamente as 4 pontas (B2B + Agência + Empresa + Hóspede) no banco
  * a partir de um voucher B2B parseado.
  */
-export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCredentialEmail = false } = {}) {
+export function ingestB2bVoucherIntoDb(
+  db,
+  parsed,
+  { saveDatabase, autoSendCredentialEmail = false, allowReactivateCancelled = false } = {}
+) {
   if (!db || !parsed) return { ok: false, skipped: true };
   const resNum = String(parsed.b2bReservationNumber || parsed.b2bLocatorRloc || "").trim();
   if (!resNum || !parsed.guestName || !parsed.checkinDate) {
@@ -5343,6 +5497,47 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
   if (!Array.isArray(db.companies)) db.companies = [];
   if (!Array.isArray(db.guests)) db.guests = [];
   if (!Array.isArray(db.reservations)) db.reservations = [];
+
+  const cleanResNum = resNum.replace(/^B2B-/i, "").trim();
+  const alreadyCancelledInDb =
+    !allowReactivateCancelled && isB2bReservationCancelledInDb(db, cleanResNum, [parsed.b2bLocatorRloc]);
+
+  // Trava soberana anti-ressurreição: se o código B2B já foi cancelado (por e-mail ou manualmente),
+  // bloqueia integralmente a recriação da reserva ao reler o voucher original na caixa de entrada.
+  if (alreadyCancelledInDb) {
+    const normGuestHelper = (s = "") =>
+      String(s || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toUpperCase()
+        .replace(/[^A-Z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter(t => t.length >= 3 && !["DOS", "DAS", "DE", "DA", "DO", "FILHO", "NETO", "JUNIOR", "SRA", "SRTA", "SR"].includes(t));
+
+    const parsedGuestToks = normGuestHelper(parsed.guestName);
+    const hasSameGuestCancelled = db.reservations.some(r => {
+      if (!r) return false;
+      const st = String(r.status || "").toLowerCase().trim();
+      if (st !== "cancelada" && st !== "cancelled") return false;
+      const rB2b = String(r.b2bReservationNumber || r.externalReservationNumber || "").replace(/^B2B-/i, "").trim();
+      if (rB2b !== cleanResNum && String(r.code || "").trim() !== `B2B-${cleanResNum}`) return false;
+      const rToks = normGuestHelper(r.guestName);
+      if (parsedGuestToks.length === 0 || rToks.length === 0) return true;
+      return parsedGuestToks.every(t => rToks.includes(t)) || rToks.every(t => parsedGuestToks.includes(t));
+    });
+
+    const hasOtherActiveRoomOnSameB2b = db.reservations.some(r => {
+      if (!r) return false;
+      const st = String(r.status || "").toLowerCase().trim();
+      if (st === "cancelada" || st === "cancelled") return false;
+      const rB2b = String(r.b2bReservationNumber || r.externalReservationNumber || "").replace(/^B2B-/i, "").trim();
+      return rB2b === cleanResNum;
+    });
+
+    if (hasSameGuestCancelled || !hasOtherActiveRoomOnSameB2b) {
+      return { ok: false, skipped: true, skippedReason: "already_cancelled" };
+    }
+  }
 
   // Higieniza eventuais empresas ou reservas que capturaram snippet sem quebra de linha ou tarifa multiplicada por 100
   db.companies = db.companies.filter(
@@ -5830,6 +6025,9 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
     agency?.email && !isPureBillingMailbox(agency.email) ? agency.email : "";
 
   if (!reservation) {
+    if (alreadyCancelledInDb) {
+      return { ok: false, skipped: true, skippedReason: "already_cancelled" };
+    }
     const flat = findAvailableFlatForPeriod(db, checkinDate, checkoutDate);
     const nextResId = db.reservations.reduce((m, r) => Math.max(m, Number(r.id) || 0), 0) + 1;
     const initialSolicitanteEmail =

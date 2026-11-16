@@ -11124,6 +11124,9 @@ export function ensureB2bSeedData(targetDb = db) {
       (r.b2bLocatorRloc && r.b2bLocatorRloc === sr.b2bLocatorRloc && r.checkinDate === sr.checkinDate)
     );
     if (existingRes) {
+      if (existingRes.status === "cancelada" || existingRes.status === "cancelled") {
+        continue;
+      }
       let resUpdated = false;
       const hasManualEdit = Boolean(
         existingRes._manualEditProtected ||
@@ -11623,7 +11626,171 @@ export function ensureB2bSeedData(targetDb = db) {
     if (rChanged) changed = true;
   }
 
+  // Reconciliação autônoma de clones B2B recriados indevidamente por sync de e-mail após cancelamento
+  if (reconcileZombieCancelledB2bReservations(targetDb)) {
+    changed = true;
+  }
+
   return changed;
+}
+
+/**
+ * Reconcilia e cancela eventuais clones automáticos de reservas B2B que foram recriados
+ * pela leitura da confirmação antiga na caixa de entrada após a reserva original já ter sido cancelada.
+ */
+function reconcileZombieCancelledB2bReservations(targetDb = db) {
+  if (!targetDb || !Array.isArray(targetDb.reservations) || targetDb.reservations.length < 2) {
+    return false;
+  }
+  let healed = false;
+  const nowIso = new Date().toISOString();
+  if (!Array.isArray(targetDb.deletedB2bSeeds)) targetDb.deletedB2bSeeds = [];
+
+  for (const r of targetDb.reservations) {
+    if (!r || r.status !== "confirmada") continue;
+    if (r.checkedIn || r.checkedInAt || r.actualCheckinTime || r.checkoutDone || r.actualCheckoutAt) continue;
+    if (Number(r.paidAmount) > 0) continue;
+
+    const rawNum = String(r.b2bReservationNumber || r.externalReservationNumber || "").replace(/^B2B-/i, "").trim();
+    if (!rawNum) continue;
+
+    // Se um operador humano criou ou reativou manualmente este registro específico, preserva-o integralmente
+    const hasHumanAction =
+      Array.isArray(r.auditLogs) &&
+      r.auditLogs.some(l => l && l.actor && l.actor.type === "user" && l.action !== "cancelled");
+    if (hasHumanAction) continue;
+
+    const cancelledOriginal = targetDb.reservations.find(other => {
+      if (!other || other.id === r.id) return false;
+      const otherStatus = String(other.status || "").toLowerCase().trim();
+      if (otherStatus !== "cancelada" && otherStatus !== "cancelled") return false;
+      if (Number(other.id) >= Number(r.id)) return false;
+      const otherNum = String(other.b2bReservationNumber || other.externalReservationNumber || "")
+        .replace(/^B2B-/i, "")
+        .trim();
+      if (!otherNum || otherNum !== rawNum) return false;
+      if (!other.checkinDate || other.checkinDate !== r.checkinDate) return false;
+      if (!areGuestNamesCompatible(other.guestName || "", r.guestName || "")) return false;
+      const wasExplicitlyCancelled =
+        targetDb.deletedB2bSeeds.includes(rawNum) ||
+        targetDb.deletedB2bSeeds.includes(`B2B-${rawNum}`) ||
+        (Array.isArray(other.auditLogs) && other.auditLogs.some(l => l && l.action === "cancelled"));
+      return wasExplicitlyCancelled;
+    });
+
+    if (!cancelledOriginal) continue;
+
+    r.status = "cancelada";
+    r.cancelledAt = nowIso;
+    r.cancellationReason =
+      cancelledOriginal.cancellationReason || "Reconciliação automática de reserva B2B já cancelada";
+    r.updatedAt = nowIso;
+    r.calendarSequence = (r.calendarSequence || 0) + 1;
+
+    for (const seedKey of [rawNum, `B2B-${rawNum}`, String(r.code || "").trim()]) {
+      if (seedKey && !targetDb.deletedB2bSeeds.includes(seedKey)) {
+        targetDb.deletedB2bSeeds.push(seedKey);
+      }
+    }
+
+    const flatNum = String(
+      r.flatNumber || (Array.isArray(targetDb.flats) ? targetDb.flats.find(f => f.id === r.flatId)?.number : "") || ""
+    );
+    const cleanReq = (targetDb.cleaningRequests || []).find(
+      c =>
+        (String(c.flatNumber) === flatNum || (r.flatId && c.flatId === r.flatId)) &&
+        c.requestDate === r.checkinDate &&
+        !c.isInstructionOnly &&
+        c.source !== "manual_instruction" &&
+        c.source !== "manual"
+    );
+    if (cleanReq && (cleanReq.autoReservationId === r.id || cleanReq.autoReservationCode === r.code)) {
+      if (!cleanReq.manualTwinBeds) cleanReq.twinBeds = false;
+      if (!cleanReq.manualExtraMattress) cleanReq.extraMattress = false;
+      if (!cleanReq.manualAdminNote) {
+        cleanReq.adminNote = null;
+        cleanReq.pendingObservation = null;
+      }
+      cleanReq.arrivingGuest = null;
+      cleanReq.autoReservationCode = null;
+      cleanReq.autoReservationId = null;
+      cleanReq.updatedAt = nowIso;
+    }
+
+    const checkoutDatesToClear = Array.from(new Set([r.checkoutDate, r.earlyCheckoutDate].filter(Boolean)));
+    for (const chkDate of checkoutDatesToClear) {
+      const hasOtherActiveCheckout = (targetDb.reservations || []).some(
+        other =>
+          other.id !== r.id &&
+          other.status !== "cancelada" &&
+          other.status !== "cancelado" &&
+          other.status !== "cancelled" &&
+          other.status !== "no_show" &&
+          String(
+            other.flatNumber ||
+              (Array.isArray(targetDb.flats) ? targetDb.flats.find(f => f.id === other.flatId)?.number : "") ||
+              ""
+          ) === flatNum &&
+          (other.checkoutDate === chkDate || other.earlyCheckoutDate === chkDate)
+      );
+      if (!hasOtherActiveCheckout) {
+        for (const c of targetDb.cleaningRequests || []) {
+          const isInst = Boolean(
+            c.isInstructionOnly ||
+              c.source === "manual_instruction" ||
+              c.type === "instruction" ||
+              c.type === "bed_adjustment_only" ||
+              c.isBedAdjustmentOnly
+          );
+          if (isInst) continue;
+          if (
+            (String(c.flatNumber) === flatNum || (r.flatId && c.flatId === r.flatId)) &&
+            c.requestDate === chkDate &&
+            c.source === "checkout" &&
+            c.status !== "clean" &&
+            c.status !== "deleted" &&
+            !c.isDeleted &&
+            !c.isVacantExplicitlySet &&
+            !c.markedByAdmin
+          ) {
+            c.isDeleted = true;
+            c.status = "deleted";
+            c.deletedAt = nowIso;
+            c.deletedBy = "reservation_cancelled";
+            c.deletedReservationId = r.id;
+            c.updatedAt = nowIso;
+          }
+        }
+      }
+    }
+
+    if (Array.isArray(targetDb.breakfastOrders)) {
+      targetDb.breakfastOrders.forEach(o => {
+        if (
+          (o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) ||
+          o.reservationId === r.id
+        ) {
+          o.status = "cancelled";
+          o.cancelReason = "Clone de reserva B2B cancelada reconciliado automaticamente";
+        }
+      });
+    }
+
+    if (!Array.isArray(r.auditLogs)) r.auditLogs = [];
+    r.auditLogs.unshift({
+      id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      timestamp: nowIso,
+      action: "cancelled",
+      actor: { id: null, name: "Sistema Autônomo B2B", role: "system", type: "system" },
+      source: "Reconciliação Anti-Clone B2B",
+      description: `Clone automático reconciliado a partir do cancelamento prévio da reserva #${cancelledOriginal.code || cancelledOriginal.id}.`,
+      changes: [{ field: "status", label: "Status da Reserva", oldValue: "confirmada", newValue: "cancelada" }]
+    });
+
+    healed = true;
+  }
+
+  return healed;
 }
 
 export async function reconcileCrmCnpjAddresses(targetDb = db) {
@@ -46782,22 +46949,106 @@ app.get("/api/tts/checkout", async (req, res) => {
 });
 
 app.delete("/api/pms/reservations/:id", (req, res) => {
-  const id = Number(req.params.id);
-  const r = (db.reservations || []).find(x => x.id === id);
+  const rawParam = String(req.params.id || "").trim();
+  const id = Number(rawParam);
+  const r = (db.reservations || []).find(
+    x =>
+      x &&
+      ((!Number.isNaN(id) && Number(x.id) === id) ||
+        String(x.id) === rawParam ||
+        String(x.code || "").toUpperCase() === rawParam.toUpperCase())
+  );
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
   const nowIso = new Date().toISOString();
   r.status = "cancelada";
+  r.cancelledAt = nowIso;
   r.updatedAt = nowIso;
   r.calendarSequence = (r.calendarSequence || 0) + 1;
 
-  if (r.b2bReservationNumber || (r.code && String(r.code).startsWith("B2B-"))) {
+  const codeEmbeddedB2b = String(r.code || "").match(/\bB2B-(\d{6,12})\b/i)?.[1] || "";
+  const isB2bCancel =
+    Boolean(r.b2bReservationNumber) ||
+    Boolean(r.externalReservationNumber) ||
+    Boolean(codeEmbeddedB2b) ||
+    String(r.code || "").startsWith("B2B-") ||
+    String(r.channel || "").toLowerCase().includes("b2b") ||
+    r.requesterType === "agency_b2b";
+
+  if (isB2bCancel) {
     if (!Array.isArray(db.deletedB2bSeeds)) db.deletedB2bSeeds = [];
-    if (r.b2bReservationNumber && !db.deletedB2bSeeds.includes(String(r.b2bReservationNumber))) {
-      db.deletedB2bSeeds.push(String(r.b2bReservationNumber));
+    for (const rawSeed of [
+      r.b2bReservationNumber,
+      r.externalReservationNumber,
+      r.b2bLocatorRloc,
+      codeEmbeddedB2b,
+      r.code
+    ]) {
+      const s = String(rawSeed || "").trim();
+      if (!s) continue;
+      if (!db.deletedB2bSeeds.includes(s)) db.deletedB2bSeeds.push(s);
+      const cleanDigits = s.replace(/^B2B-/i, "").trim();
+      if (/^\d{6,12}$/.test(cleanDigits)) {
+        if (!db.deletedB2bSeeds.includes(cleanDigits)) db.deletedB2bSeeds.push(cleanDigits);
+        const pref = `B2B-${cleanDigits}`;
+        if (!db.deletedB2bSeeds.includes(pref)) db.deletedB2bSeeds.push(pref);
+      }
     }
-    if (r.code && !db.deletedB2bSeeds.includes(String(r.code))) {
-      db.deletedB2bSeeds.push(String(r.code));
+
+    // Cancela em conjunto eventuais clones automáticos da mesma reserva B2B (mesmo número B2B, data e hóspede)
+    const targetB2bNum = String(r.b2bReservationNumber || r.externalReservationNumber || codeEmbeddedB2b || "")
+      .replace(/^B2B-/i, "")
+      .trim();
+    if (targetB2bNum) {
+      for (const other of db.reservations || []) {
+        if (!other || other.id === r.id) continue;
+        if (other.status === "cancelada" || other.status === "cancelled") continue;
+        if (other.checkedIn || other.checkedInAt || other.actualCheckinTime) continue;
+        const otherNum = String(other.b2bReservationNumber || other.externalReservationNumber || "")
+          .replace(/^B2B-/i, "")
+          .trim();
+        if (
+          otherNum === targetB2bNum &&
+          other.checkinDate === r.checkinDate &&
+          areGuestNamesCompatible(other.guestName || "", r.guestName || "")
+        ) {
+          other.status = "cancelada";
+          other.cancelledAt = nowIso;
+          other.updatedAt = nowIso;
+          other.calendarSequence = (other.calendarSequence || 0) + 1;
+          if (other.code && !db.deletedB2bSeeds.includes(String(other.code))) {
+            db.deletedB2bSeeds.push(String(other.code));
+          }
+        }
+      }
     }
+  }
+
+  // Cancela agendamentos pendentes de e-mail e WhatsApp vinculados à reserva
+  if (Array.isArray(db.emailQueue)) {
+    db.emailQueue.forEach(q => {
+      if (
+        q &&
+        q.status === "pending" &&
+        (String(q.reservationId) === String(r.id) ||
+          String(q.reservationId) === String(r.code) ||
+          (q.reservationCode && q.reservationCode === r.code))
+      ) {
+        q.status = "cancelled";
+        q.error = "Reserva cancelada manualmente";
+      }
+    });
+  }
+  if (Array.isArray(db.whatsappQueue)) {
+    db.whatsappQueue.forEach(q => {
+      if (
+        q &&
+        (q.status === "scheduled" || q.status === "pending" || q.status === "pending_approval") &&
+        (String(q.reservationId) === String(r.id) || String(q.reservationCode) === String(r.code))
+      ) {
+        q.status = "cancelled";
+        q.cancelledAt = nowIso;
+      }
+    });
   }
 
   // Limpa instruções automáticas da governança na data de check-in

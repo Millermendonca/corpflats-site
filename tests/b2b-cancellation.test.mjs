@@ -33,7 +33,9 @@ import {
 
 import {
   handleZohoIncomingWebhook,
-  syncZohoMessagesToCache
+  syncZohoMessagesToCache,
+  ingestB2bVoucherIntoDb,
+  isB2bReservationCancelledInDb
 } from '../artifacts/api-server/zoho-mail-service.mjs';
 
 function computeSha256(filePath) {
@@ -565,6 +567,113 @@ describe('M3: Cancelamento Autônomo B2B & Notificação ao Gestor', () => {
 
       const r101 = db.reservations.find(r => r.id === 101);
       assert.equal(r101.status, 'cancelada');
+    });
+
+    it('6.2 Deve extrair números B2B modernos (252xxxxx+) separados por hífen e formato (SOBRENOME/NOME)', async () => {
+      const db = createMockDatabase();
+      db.reservations.push({
+        id: 205,
+        code: 'RES-211-B2B-25252964',
+        b2bReservationNumber: '25252964',
+        flatId: 2,
+        flatNumber: '211',
+        guestName: 'Anderson Archanjo',
+        checkinDate: '2026-11-17',
+        checkoutDate: '2026-11-18',
+        status: 'confirmada',
+        channel: 'b2b',
+        auditLogs: []
+      });
+
+      const email = {
+        subject: 'Cancelamento da Reserva - 25252964 - (ARCHANJO/ANDERSON)',
+        html: '<table><tr><td>Reserva:</td><td>25252964</td></tr><tr><td>Hóspede(s):</td><td>(ARCHANJO/ANDERSON)</td></tr><tr><td>Check-in:</td><td>17/11/2026</td></tr></table>',
+        from: 'naoresponda@b2breservas.com.br'
+      };
+
+      const extracted = extractCancellationData(email);
+      assert.equal(extracted.b2bReservationNumber, '25252964');
+      assert.equal(extracted.guestName, 'ANDERSON ARCHANJO');
+      assert.equal(extracted.checkinDate, '2026-11-17');
+
+      const cancelRes = await executeAutonomousB2bCancellation(db, email, {
+        sendZapiMessage: async () => ({ success: true })
+      });
+      assert.equal(cancelRes.cancelled, true);
+      assert.equal(db.reservations.find(r => r.id === 205).status, 'cancelada');
+      assert.equal(isB2bReservationCancelledInDb(db, '25252964'), true);
+    });
+
+    it('6.3 Anti-Ressurreição: ingestB2bVoucherIntoDb NUNCA deve recriar reserva após cancelamento por e-mail ou manual', async () => {
+      const db = createMockDatabase();
+
+      // Cancela reserva 25055349 (simulando cancelamento autônomo ou manual)
+      await executeAutonomousB2bCancellation(
+        db,
+        {
+          subject: 'Cancelamento de Reserva - 25055349',
+          text: 'Confirmamos o cancelamento da reserva 25055349.',
+          from: 'reservas@b2breservas.com.br'
+        },
+        { sendZapiMessage: async () => ({ success: true }) }
+      );
+
+      assert.equal(db.reservations.find(r => r.id === 101).status, 'cancelada');
+      const countBefore = db.reservations.length;
+
+      // Simula varredura periódica do Zoho relendo o e-mail de confirmação original que permanece na Caixa de Entrada
+      const reingestResult = ingestB2bVoucherIntoDb(db, {
+        b2bReservationNumber: '25055349',
+        b2bLocatorRloc: 'LOC-OPUS99',
+        guestName: 'Carlos Pires Hage',
+        checkinDate: '2026-10-26',
+        checkoutDate: '2026-10-28',
+        dailyRate: 280,
+        totalAmount: 560,
+        agencyName: 'Opus Viagens e Eventos Ltda',
+        companyName: 'Lactalis do Brasil'
+      });
+
+      assert.equal(reingestResult.ok, false);
+      assert.equal(reingestResult.skipped, true);
+      assert.equal(reingestResult.skippedReason, 'already_cancelled');
+      assert.equal(db.reservations.length, countBefore, 'Nenhum clone de reserva deve ser criado após cancelamento');
+      const activeForB2b = db.reservations.filter(
+        r => r.b2bReservationNumber === '25055349' && r.status !== 'cancelada'
+      );
+      assert.equal(activeForB2b.length, 0, 'Zero reservas ativas devem restar para o código cancelado');
+    });
+
+    it('6.4 Desempate de Clones: se existirem clones duplicados da mesma estadia/hóspede, cancela todos juntos', async () => {
+      const db = createMockDatabase();
+      // Adiciona clone acidental idêntico (mesmo número B2B, mesmo hóspede, mesmo check-in)
+      db.reservations.push({
+        id: 999,
+        code: 'RES-205-B2B-25055349',
+        b2bReservationNumber: '25055349',
+        flatId: 2,
+        flatNumber: '205',
+        guestName: 'Carlos Pires Hage',
+        checkinDate: '2026-10-26',
+        checkoutDate: '2026-10-28',
+        status: 'confirmada',
+        channel: 'b2b',
+        auditLogs: []
+      });
+
+      const res = await executeAutonomousB2bCancellation(
+        db,
+        {
+          subject: 'Cancelamento da Reserva - 25055349',
+          text: 'Favor cancelar a reserva 25055349.',
+          from: 'reservas@b2breservas.com.br'
+        },
+        { sendZapiMessage: async () => ({ success: true }) }
+      );
+
+      assert.equal(res.cancelled, true);
+      assert.equal(db.reservations.find(r => r.id === 101).status, 'cancelada');
+      assert.equal(db.reservations.find(r => r.id === 999).status, 'cancelada');
     });
 
   });

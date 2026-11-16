@@ -139,6 +139,26 @@ export function normalizeIsoDate(dateStr = "") {
 }
 
 /**
+ * Converte HTML em texto preservando quebras de linha de blocos e células de tabela
+ */
+function htmlToStructuredCancellationText(html = "") {
+  if (!html) return "";
+  return String(html)
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(?:p|div|tr|td|th|li|h[1-6]|section|article|header|footer)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s*\n+/g, "\n")
+    .trim();
+}
+
+/**
  * Detecta intenção de cancelamento em e-mails recebidos, diferenciando-os de confirmações
  * de reserva que citam políticas de cancelamento ou termos genéricos.
  *
@@ -163,7 +183,7 @@ export function detectB2bEmailIntent(emailData = {}) {
   const strippedSubject = subject.replace(threadPrefixRegex, "").trim();
 
   const cleanSubject = normalizeStr(strippedSubject);
-  const cleanBody = normalizeStr(`${text}\n${html.replace(/<[^>]+>/g, " ")}`);
+  const cleanBody = normalizeStr(`${text}\n${htmlToStructuredCancellationText(html)}`);
   const fullText = `${cleanSubject}\n${cleanBody}`;
 
   const cancellationKeywordsFound = [];
@@ -183,17 +203,17 @@ export function detectB2bEmailIntent(emailData = {}) {
     }
   }
 
-  // Padrões explícitos de cancelamento no assunto
-  const subjectCancellationPattern =
-    /(?:CANCELAMENTO\s+D[EO]\s+RESERVA|SOLICITA[CÇ][AÃ]O\s+DE\s+CANCELAMENTO|CANCELAMENTO\s+EFETUADO|PEDIDO\s+DE\s+CANCELAMENTO|\bCANCELAMENTO\b|\bCANCELLATION\b|BOOKING\s+CANCELL?ATION|CANCELLATION\s+OF\s+BOOKING|BOOKING\s+CANCELL?ED|RESERVA\s+(?:FOI\s+)?CANCELADA)/i;
-
   const isSubjectPolicyNotice =
     /(?:POL[IÍ]TICA\s+DE\s+CANCELAMENTO|REGRAS?\s+DE\s+CANCELAMENTO)/i.test(cleanSubject);
 
-  // Padrões imperativos / de ação de cancelamento no corpo do e-mail
-  // ATENÇÃO: NÃO incluir a locução passiva "CANCELAMENTO DA RESERVA", que surge rotineiramente em cláusulas de política em vouchers
+  // Padrões explícitos de cancelamento no assunto (incluindo número/código entre "Reserva/Voucher" e "Cancelada/Cancelado")
+  const subjectCancellationPattern =
+    /(?:CANCELAMENTO\s+D[AEO]\s+(?:RESERVA|VOUCHER|HOSPEDAGEM)|SOLICITA[CÇ][AÃ]O\s+DE\s+CANCELAMENTO|CANCELAMENTO\s+EFETUADO|PEDIDO\s+DE\s+CANCELAMENTO|\bCANCELAMENTO\b|\bCANCELLATION\b|BOOKING\s+CANCELL?ATION|CANCELLATION\s+OF\s+BOOKING|(?:BOOKING|RESERVATION|VOUCHER)\b[^\n]{0,45}\bCANCELL?ED\b|(?:RESERVA|VOUCHER|HOSPEDAGEM|PEDIDO|ORDEM\s+DE\s+HOSPEDAGEM)\b[^\n]{0,45}\bCANCELAD[OA]\b|\bCANCELAD[OA]\b)/i;
+
+  // Padrões imperativos / de ação / status de cancelamento no corpo do e-mail
+  // ATENÇÃO: NÃO incluir a locução passiva isolada "CANCELAMENTO DA RESERVA", que surge rotineiramente em cláusulas de política em vouchers
   const bodyActionCancellationPattern =
-    /(?:(?:SOLICITA(?:MOS)?|PEDIMOS|FAVOR|PROCEDER\s+COM\s+O|EFETUAR\s+O|CONFIRMAMOS\s+O)\s+(?:O\s+)?CANCELAMENTO|FAVOR\s+CANCELAR|RESERVA\s+(?:FOI|ESTA|ESTÁ)\s+CANCELADA|PLEASE\s+CANCEL\s+(?:THE\s+)?BOOKING|WE\s+REQUEST\s+(?:THE\s+)?CANCELLATION|(?:RESERVATION|BOOKING)\s+HAS\s+BEEN\s+CANCELLED)/i;
+    /(?:(?:SOLICITA(?:MOS)?|SOLICITO|PEDIMOS|FAVOR|POR\s+FAVOR|GENTILEZA|PROCEDER\s+COM\s+O|EFETUAR\s+O|CONFIRMAMOS\s+O|INFORMAMOS\s+O|COMUNICAMOS\s+O|NOTIFICAMOS\s+O)\s+(?:O\s+)?CANCELAMENTO|(?:FAVOR|POR\s+FAVOR|GENTILEZA|PODERIA(?:M)?|PRECISAMOS|SOLICITO|SOLICITAMOS)\s+(?:EFETUAR\s+O\s+|PROCEDER\s+COM\s+O\s+)?CANCELAR|RESERVA\s+(?:N[ºO°#]?\s*[\w-]+\s+|ACIMA\s+|ABAIXO\s+)?(?:FOI|ENCONTRA-SE|ESTA|ESTÁ)\s+CANCELADA|VOUCHER\s+(?:N[ºO°#]?\s*[\w-]+\s+)?(?:FOI|ENCONTRA-SE|ESTA|ESTÁ)\s+CANCELADO|(?:STATUS|SITUA[CÇ][AÃ]O)\s*(?:DA\s+RESERVA|DO\s+VOUCHER)?\s*[:\-]\s*CANCELAD[OA]\b|CANCELAMENTO\s+(?:D[AEO]\s+RESERVA\s+)?(?:N[ºO°#]?\s*[\w-]+\s+)?(?:REALIZADO|EFETUADO|PROCESSADO|CONFIRMADO)\s+COM\s+SUCESSO|PLEASE\s+CANCEL\s+(?:THE\s+|THIS\s+)?(?:BOOKING|RESERVATION)|WE\s+REQUEST\s+(?:THE\s+)?CANCELLATION|(?:RESERVATION|BOOKING|VOUCHER)\s+(?:#?[\w-]+\s+)?HAS\s+BEEN\s+CANCELL?ED)/i;
 
   // Padrões de voucher / confirmação
   const voucherPattern =
@@ -284,19 +304,22 @@ export function extractCancellationData(emailData = {}) {
     html = String(emailData.html || emailData.bodyHtml || emailData.content || "").trim();
   }
 
-  const combined = `${subject}\n${text}\n${html.replace(/<[^>]+>/g, " ")}`;
+  const combined = `${subject}\n${text}\n${htmlToStructuredCancellationText(html)}`;
 
-  // 1. Número da reserva B2B (ex: 25055349 ou B2B-25055349)
+  // 1. Número da reserva B2B (ex: 25055349, 25252964, B2B-25055349 ou "Cancelamento de Reserva - 25252964")
   let b2bReservationNumber = null;
-  const b2bPrefixMatch = combined.match(/\bB2B[-_\s]?(\d{6,10})\b/i);
+  const b2bPrefixMatch = combined.match(/\bB2B[-_\s]?(\d{6,12})\b/i);
   if (b2bPrefixMatch) {
     b2bReservationNumber = b2bPrefixMatch[1];
   } else {
-    const numLabelMatch = combined.match(/(?:reserva|voucher|b2b|n[ºo°]|número|pedido)[:\s#]*(\d{6,10})\b/i);
-    if (numLabelMatch) {
-      b2bReservationNumber = numLabelMatch[1];
+    const cancelHeaderNumMatch =
+      combined.match(/Cancelamento\s+(?:d[aeo]\s+)?(?:Reserva|Voucher|Hospedagem)?\s*[\s:\-#]*(\d{6,12})\b/i) ||
+      combined.match(/N[uú°º]?(?:mero)?\s+(?:d[aeo]\s+)?(?:Reserva|Voucher|Confirma[cç][aã]o|Pedido)\s*[\s:\-#]*(\d{6,12})\b/i) ||
+      combined.match(/(?:reserva(?:\s+b2b)?|voucher|b2b|c[oó]d(?:igo)?(?:\s+d[aeo]\s+reserva)?|pedido|n[ºo°]|n[uú]mero)\s*[\s:\-#]+(\d{6,12})\b/i);
+    if (cancelHeaderNumMatch) {
+      b2bReservationNumber = cancelHeaderNumMatch[1];
     } else {
-      const standaloneNumMatch = combined.match(/\b(250\d{5})\b/);
+      const standaloneNumMatch = combined.match(/\b(2[4-9]\d{6})\b/);
       if (standaloneNumMatch) {
         b2bReservationNumber = standaloneNumMatch[1];
       }
@@ -306,38 +329,87 @@ export function extractCancellationData(emailData = {}) {
   // 2. Localizador / RLOC (ex: LOC-12345, RLOC: ABCD12, RLOC-AZUL01)
   let rloc = null;
   const rlocMatch =
-    combined.match(/(?:localizador|rloc|locator|loc)[:\s#]+(?:rloc[-_\s]?)?([A-Z0-9_-]{3,15})\b/i) ||
+    combined.match(/\b(?:localizador(?:\s+da\s+reserva)?|rloc|locator|loc)[:\s#-]+(?:rloc[-_\s]?)?([A-Z0-9_-]{3,15})\b/i) ||
     combined.match(/\b(?:RLOC[-_:\s]?|LOC[-_:\s]+)([A-Z0-9]{4,10})\b/i);
   if (rlocMatch) {
     rloc = rlocMatch[1].trim().toUpperCase();
   }
 
-  // 3. Código PMS (ex: RES-605, RES-113)
+  // 3. Código PMS (ex: RES-605, RES-113, RES-211-B2B-25252964)
   let pmsCode = null;
-  const pmsMatch = combined.match(/\b(RES-\d{3,7})\b/i);
+  const pmsMatch = combined.match(/\b(RES-[A-Z0-9-]{3,24})\b/i);
   if (pmsMatch) {
     pmsCode = pmsMatch[1].toUpperCase();
   }
 
-  // 4. Hóspede
+  // 4. Hóspede (suporta "(SOBRENOME/NOME)" do B2B Reservas no assunto/corpo e rótulos singulares/plurais)
   let guestName = null;
-  const guestMatch = combined.match(/(?:h[óo]spede|guest|passageiro|nome(?:\s+do\s+h[óo]spede)?|titular)[:\s]+([A-ZÀ-Úa-zà-ú\s]{4,60})(?:\n|\r|,|-|\.|\/|$)/i);
-  if (guestMatch) {
-    guestName = guestMatch[1].trim();
+  const slashParenMatch =
+    subject.match(/\(([A-ZÀ-Úa-zà-ú\s']{2,40})\/([A-ZÀ-Úa-zà-ú\s']{2,40})\)/) ||
+    combined.match(/(?:h[óo]spedes?(?:\(s\))?|passageiros?(?:\(s\))?|pax|guest)[:\s\-]*\(?([A-ZÀ-Úa-zà-ú\s']{2,40})\/([A-ZÀ-Úa-zà-ú\s']{2,40})\)?/i);
+  if (slashParenMatch) {
+    const part1 = slashParenMatch[1].trim();
+    const part2 = slashParenMatch[2].trim();
+    if (/\b(?:DE|DA|DO|DOS|DAS)\b/i.test(part2) && !/\b(?:DE|DA|DO|DOS|DAS)\b/i.test(part1)) {
+      guestName = `${part1} ${part2}`.replace(/\s+/g, " ").trim();
+    } else {
+      guestName = `${part2} ${part1}`.replace(/\s+/g, " ").trim();
+    }
+  } else {
+    const guestMatch = combined.match(
+      /(?:h[óo]spedes?(?:\(s\))?|guest|passageiros?(?:\(s\))?|pax|nome(?:\s+do\s+h[óo]spede)?|titular)(?:\s*\([^)]*\))?[:\s\-]+\(?([A-ZÀ-Úa-zà-ú\s'.]{4,60}?)\)?(?:\s*\(\d*\s*ADT\)|\n|\r|,|-|\.|\/|\s+(?:check-?in|check-?out|entrada|sa[ií]da|per[ií]odo|data|motivo|rloc|localizador)\b|$)/i
+    );
+    if (guestMatch) {
+      guestName = guestMatch[1].trim();
+    }
   }
 
   // 5. Datas (Check-in e Check-out)
   let checkinDate = null;
   let checkoutDate = null;
-  const periodMatch = combined.match(/(?:per[íi]odo|periodo)[:\s]+(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4})\s+(?:a|at[ée]|-)\s+(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4})/i);
+  const periodMatch = combined.match(
+    /(?:per[íi]odo|periodo|estadia)[:\s\-]+(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4}|\d{4}-\d{2}-\d{2})\s*(?:a|at[ée]|[-–—])\s*(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4}|\d{4}-\d{2}-\d{2})/i
+  );
   if (periodMatch) {
     checkinDate = normalizeIsoDate(periodMatch[1]);
     checkoutDate = normalizeIsoDate(periodMatch[2]);
   } else {
-    const inMatch = combined.match(/(?:check-?in|entrada|chegada|data\s+de\s+entrada)[:\s]+(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4})/i);
-    if (inMatch) checkinDate = normalizeIsoDate(inMatch[1]);
-    const outMatch = combined.match(/(?:check-?out|sa[íi]da|partida|data\s+de\s+sa[íi]da)[:\s]+(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4})/i);
-    if (outMatch) checkoutDate = normalizeIsoDate(outMatch[1]);
+    const periodShortMatch = combined.match(
+      /(?:per[íi]odo|periodo|estadia)[:\s\-]*(\d{1,2})[\/\.-](\d{1,2})\s*(?:a|at[ée]|[-–—])\s*(\d{1,2})[\/\.-](\d{1,2})[\/\.-](\d{4})/i
+    );
+    if (periodShortMatch) {
+      const year = Number(periodShortMatch[5]);
+      const m1 = periodShortMatch[2].padStart(2, "0");
+      const d1 = periodShortMatch[1].padStart(2, "0");
+      const m2 = periodShortMatch[4].padStart(2, "0");
+      const d2 = periodShortMatch[3].padStart(2, "0");
+      const y1 = Number(m1) > Number(m2) ? year - 1 : year;
+      checkinDate = `${y1}-${m1}-${d1}`;
+      checkoutDate = `${year}-${m2}-${d2}`;
+    } else {
+      const periodMonthNameMatch = combined.match(
+        /(?:per[íi]odo|periodo)[:\s\-]*(\d{1,2})\s*\/\s*([a-zç]{3})\s*[-–—a]\s*(\d{1,2})\s*\/\s*([a-zç]{3})/i
+      );
+      if (periodMonthNameMatch) {
+        const monthMap = {
+          jan: "01", fev: "02", mar: "03", abr: "04", mai: "05", jun: "06",
+          jul: "07", ago: "08", set: "09", out: "10", nov: "11", dez: "12"
+        };
+        const baseYear = new Date().getFullYear();
+        const d1 = periodMonthNameMatch[1].padStart(2, "0");
+        const m1 = monthMap[periodMonthNameMatch[2].toLowerCase()] || "01";
+        const d2 = periodMonthNameMatch[3].padStart(2, "0");
+        const m2 = monthMap[periodMonthNameMatch[4].toLowerCase()] || m1;
+        const y2 = Number(m2) < Number(m1) ? baseYear + 1 : baseYear;
+        checkinDate = `${baseYear}-${m1}-${d1}`;
+        checkoutDate = `${y2}-${m2}-${d2}`;
+      } else {
+        const inMatch = combined.match(/(?:check-?in|entrada|chegada|data\s+d[ae]\s+entrada)[:\s\-]+(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4}|\d{4}-\d{2}-\d{2})/i);
+        if (inMatch) checkinDate = normalizeIsoDate(inMatch[1]);
+        const outMatch = combined.match(/(?:check-?out|sa[íi]da|partida|data\s+d[ae]\s+sa[íi]da)[:\s\-]+(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4}|\d{4}-\d{2}-\d{2})/i);
+        if (outMatch) checkoutDate = normalizeIsoDate(outMatch[1]);
+      }
+    }
   }
 
   // 6. Motivo do cancelamento
@@ -356,6 +428,135 @@ export function extractCancellationData(emailData = {}) {
     checkoutDate,
     reason
   };
+}
+
+/**
+ * Verifica se duas reservas representam exatamente a mesma estadia/hóspede (ex: clones duplicados)
+ */
+function areSameStayClones(a, b) {
+  if (!a || !b) return false;
+  if (!a.checkinDate || !b.checkinDate || a.checkinDate !== b.checkinDate) return false;
+  const tokA = extractNameTokens(a.guestName || "");
+  const tokB = extractNameTokens(b.guestName || "");
+  if (tokA.length === 0 || tokB.length === 0) return false;
+  return tokA.every(t => tokB.includes(t)) || tokB.every(t => tokA.includes(t));
+}
+
+/**
+ * Desempata múltiplos candidatos ativos:
+ * - Se houver apenas 1 ativo, retorna-o.
+ * - Se houver 0 ativos (todos já cancelados), retorna o primeiro já cancelado para manter idempotência.
+ * - Se todos os ativos forem clones idênticos da mesma estadia/hóspede, retorna o principal + duplicateClones.
+ * - Se o e-mail informar nome do hóspede (e/ou check-in), filtra pelo hóspede específico em reservas multi-quarto.
+ */
+function resolveMultipleActiveCandidates(activeCandidates, allMatches, matchedBy, rawGuestName, rawCheckinDate) {
+  if (activeCandidates.length === 1) {
+    return {
+      matched: true,
+      reservation: activeCandidates[0],
+      matchedBy,
+      candidatesCount: 1
+    };
+  }
+  if (activeCandidates.length === 0 && allMatches.length > 0) {
+    return {
+      matched: true,
+      reservation: allMatches[0],
+      matchedBy,
+      candidatesCount: 1
+    };
+  }
+  if (activeCandidates.length > 1) {
+    if (activeCandidates.every(c => areSameStayClones(activeCandidates[0], c))) {
+      return {
+        matched: true,
+        reservation: activeCandidates[0],
+        duplicateClones: activeCandidates.slice(1),
+        matchedBy,
+        candidatesCount: 1
+      };
+    }
+    if (rawGuestName) {
+      const queryTokens = extractNameTokens(rawGuestName);
+      if (queryTokens.length > 0) {
+        const narrowed = activeCandidates.filter(c => {
+          if (rawCheckinDate && c.checkinDate && c.checkinDate !== rawCheckinDate) return false;
+          const resTokens = extractNameTokens(c.guestName || "");
+          if (resTokens.length === 0) return false;
+          const common = queryTokens.filter(t => resTokens.includes(t));
+          return common.length >= Math.min(2, queryTokens.length);
+        });
+        if (narrowed.length === 1) {
+          return {
+            matched: true,
+            reservation: narrowed[0],
+            matchedBy,
+            candidatesCount: 1
+          };
+        }
+        if (narrowed.length > 1 && narrowed.every(c => areSameStayClones(narrowed[0], c))) {
+          return {
+            matched: true,
+            reservation: narrowed[0],
+            duplicateClones: narrowed.slice(1),
+            matchedBy,
+            candidatesCount: 1
+          };
+        }
+      }
+    }
+  }
+  return {
+    matched: false,
+    matchedBy,
+    candidatesCount: allMatches.length,
+    candidates: allMatches
+  };
+}
+
+/**
+ * Registra todos os identificadores B2B da reserva em db.deletedB2bSeeds para impedir recriação/ressurreição
+ */
+export function recordDeletedB2bIdentifiers(db, reservation = {}) {
+  if (!db || !reservation) return;
+  const rawNums = [
+    reservation.b2bReservationNumber,
+    reservation.externalReservationNumber,
+    reservation.b2bLocatorRloc,
+    reservation.rloc,
+    reservation.code
+  ];
+  const codeEmbeddedMatch = String(reservation.code || "").match(/\bB2B-(\d{6,12})\b/i);
+  if (codeEmbeddedMatch) {
+    rawNums.push(codeEmbeddedMatch[1]);
+  }
+  const hasB2bContext =
+    Boolean(reservation.b2bReservationNumber) ||
+    Boolean(codeEmbeddedMatch) ||
+    String(reservation.code || "").startsWith("B2B-") ||
+    String(reservation.channel || "").toLowerCase().includes("b2b") ||
+    reservation.requesterType === "agency_b2b";
+
+  if (!hasB2bContext) return;
+  if (!Array.isArray(db.deletedB2bSeeds)) db.deletedB2bSeeds = [];
+
+  for (const val of rawNums) {
+    const s = String(val || "").trim();
+    if (!s) continue;
+    if (!db.deletedB2bSeeds.includes(s)) {
+      db.deletedB2bSeeds.push(s);
+    }
+    const stripped = s.replace(/^B2B-/i, "").trim();
+    if (/^\d{6,12}$/.test(stripped)) {
+      if (!db.deletedB2bSeeds.includes(stripped)) {
+        db.deletedB2bSeeds.push(stripped);
+      }
+      const pref = `B2B-${stripped}`;
+      if (!db.deletedB2bSeeds.includes(pref)) {
+        db.deletedB2bSeeds.push(pref);
+      }
+    }
+  }
 }
 
 /**
@@ -417,22 +618,16 @@ export function matchReservationForCancellation(db, cancelData = {}) {
     }
 
     if (tier1Matches.length > 1) {
-      // Desempate por reserva ativa / não cancelada
+      // Desempate por reserva ativa / não cancelada, clones idênticos ou hóspede explícito no e-mail
       const activeCandidates = tier1Matches.filter(r => r.status !== "cancelada" && r.status !== "cancelled");
-      if (activeCandidates.length === 1) {
-        return {
-          matched: true,
-          reservation: activeCandidates[0],
-          matchedBy: "b2b_number",
-          candidatesCount: 1
-        };
-      }
-      return {
-        matched: false,
-        matchedBy: "b2b_number",
-        candidatesCount: tier1Matches.length,
-        candidates: tier1Matches
-      };
+      const resolvedTier1 = resolveMultipleActiveCandidates(
+        activeCandidates,
+        tier1Matches,
+        "b2b_number",
+        rawGuestName,
+        rawCheckinDate
+      );
+      if (resolvedTier1) return resolvedTier1;
     }
   }
 
@@ -483,20 +678,14 @@ export function matchReservationForCancellation(db, cancelData = {}) {
 
     if (tier2Matches.length > 1) {
       const activeCandidates = tier2Matches.filter(r => r.status !== "cancelada" && r.status !== "cancelled");
-      if (activeCandidates.length === 1) {
-        return {
-          matched: true,
-          reservation: activeCandidates[0],
-          matchedBy: "rloc",
-          candidatesCount: 1
-        };
-      }
-      return {
-        matched: false,
-        matchedBy: "rloc",
-        candidatesCount: tier2Matches.length,
-        candidates: tier2Matches
-      };
+      const resolvedTier2 = resolveMultipleActiveCandidates(
+        activeCandidates,
+        tier2Matches,
+        "rloc",
+        rawGuestName,
+        rawCheckinDate
+      );
+      if (resolvedTier2) return resolvedTier2;
     }
   }
 
@@ -939,124 +1128,164 @@ export async function executeAutonomousB2bCancellation(db, emailData = {}, optio
   const prevStatus = reservation.status;
   const reasonText = cancelExtract.reason || options.cancellationReason || "E-mail de cancelamento B2B autônomo";
 
-  reservation.status = "cancelada";
-  reservation.cancelledAt = nowIso;
-  reservation.cancellationReason = reasonText;
-  reservation.updatedAt = nowIso;
-  reservation.calendarSequence = (reservation.calendarSequence || 0) + 1;
+  const targetsToCancel = [
+    reservation,
+    ...(Array.isArray(matchResult.duplicateClones)
+      ? matchResult.duplicateClones.filter(
+          c =>
+            c &&
+            c.status !== "in_house" &&
+            c.status !== "checked_in" &&
+            c.status !== "hospedado" &&
+            c.status !== "checkin_realizado" &&
+            !c.checkedIn &&
+            !c.checkedInAt &&
+            !c.actualCheckinTime
+        )
+      : [])
+  ];
 
-  // Registro em deletedB2bSeeds para evitar ressuscitação por mock ou sync
-  if (reservation.b2bReservationNumber || (reservation.code && String(reservation.code).startsWith("B2B-"))) {
-    if (!Array.isArray(db.deletedB2bSeeds)) db.deletedB2bSeeds = [];
-    if (reservation.b2bReservationNumber && !db.deletedB2bSeeds.includes(String(reservation.b2bReservationNumber))) {
-      db.deletedB2bSeeds.push(String(reservation.b2bReservationNumber));
-    }
-    if (reservation.code && !db.deletedB2bSeeds.includes(String(reservation.code))) {
-      db.deletedB2bSeeds.push(String(reservation.code));
-    }
-  }
+  for (const targetRes of targetsToCancel) {
+    targetRes.status = "cancelada";
+    targetRes.cancelledAt = nowIso;
+    targetRes.cancellationReason = reasonText;
+    targetRes.updatedAt = nowIso;
+    targetRes.calendarSequence = (targetRes.calendarSequence || 0) + 1;
 
-  // Liberação de instruções automáticas da governança na data de check-in
-  const flatNum = String(
-    reservation.flatNumber ||
-      (Array.isArray(db.flats) ? db.flats.find(f => f.id === reservation.flatId)?.number : "") ||
-      ""
-  );
+    // Registro completo em deletedB2bSeeds para evitar ressuscitação por mock ou sync de e-mail
+    recordDeletedB2bIdentifiers(db, targetRes);
 
-  const cleanReq = (db.cleaningRequests || []).find(
-    c =>
-      (String(c.flatNumber) === flatNum || (reservation.flatId && c.flatId === reservation.flatId)) &&
-      c.requestDate === reservation.checkinDate &&
-      !c.isInstructionOnly &&
-      c.source !== "manual_instruction" &&
-      c.source !== "manual"
-  );
-
-  if (cleanReq) {
-    if (!cleanReq.manualTwinBeds) cleanReq.twinBeds = false;
-    if (!cleanReq.manualExtraMattress) cleanReq.extraMattress = false;
-    if (!cleanReq.manualAdminNote) {
-      cleanReq.adminNote = null;
-      cleanReq.pendingObservation = null;
-    }
-    cleanReq.arrivingGuest = null;
-    cleanReq.autoReservationCode = null;
-    cleanReq.autoReservationId = null;
-    cleanReq.updatedAt = nowIso;
-  }
-
-  // Descarte automático de cards de limpeza de check-out não realizados na data de saída
-  const checkoutDatesToClear = Array.from(new Set([reservation.checkoutDate, reservation.earlyCheckoutDate].filter(Boolean)));
-  for (const chkDate of checkoutDatesToClear) {
-    const hasOtherActiveCheckout = (db.reservations || []).some(
-      other =>
-        other.id !== reservation.id &&
-        other.status !== "cancelada" &&
-        other.status !== "cancelado" &&
-        other.status !== "cancelled" &&
-        other.status !== "no_show" &&
-        String(other.flatNumber || (Array.isArray(db.flats) ? db.flats.find(f => f.id === other.flatId)?.number : "") || "") === flatNum &&
-        (other.checkoutDate === chkDate || other.earlyCheckoutDate === chkDate)
+    // Liberação de instruções automáticas da governança na data de check-in
+    const flatNum = String(
+      targetRes.flatNumber ||
+        (Array.isArray(db.flats) ? db.flats.find(f => f.id === targetRes.flatId)?.number : "") ||
+        ""
     );
 
-    if (!hasOtherActiveCheckout) {
-      for (const c of db.cleaningRequests || []) {
-        const isInst = Boolean(
-          c.isInstructionOnly ||
-            c.source === "manual_instruction" ||
-            c.type === "instruction" ||
-            c.type === "bed_adjustment_only" ||
-            c.isBedAdjustmentOnly
-        );
-        if (isInst) continue;
-        if (
-          (String(c.flatNumber) === flatNum || (reservation.flatId && c.flatId === reservation.flatId)) &&
-          c.requestDate === chkDate &&
-          c.source === "checkout" &&
-          c.status !== "clean" &&
-          c.status !== "deleted" &&
-          !c.isDeleted &&
-          !c.isVacantExplicitlySet &&
-          !c.markedByAdmin
-        ) {
-          c.isDeleted = true;
-          c.status = "deleted";
-          c.deletedAt = nowIso;
-          c.deletedBy = "reservation_cancelled";
-          c.deletedReservationId = reservation.id;
-          c.updatedAt = nowIso;
+    const cleanReq = (db.cleaningRequests || []).find(
+      c =>
+        (String(c.flatNumber) === flatNum || (targetRes.flatId && c.flatId === targetRes.flatId)) &&
+        c.requestDate === targetRes.checkinDate &&
+        !c.isInstructionOnly &&
+        c.source !== "manual_instruction" &&
+        c.source !== "manual"
+    );
+
+    if (cleanReq) {
+      if (!cleanReq.manualTwinBeds) cleanReq.twinBeds = false;
+      if (!cleanReq.manualExtraMattress) cleanReq.extraMattress = false;
+      if (!cleanReq.manualAdminNote) {
+        cleanReq.adminNote = null;
+        cleanReq.pendingObservation = null;
+      }
+      cleanReq.arrivingGuest = null;
+      cleanReq.autoReservationCode = null;
+      cleanReq.autoReservationId = null;
+      cleanReq.updatedAt = nowIso;
+    }
+
+    // Descarte automático de cards de limpeza de check-out não realizados na data de saída
+    const checkoutDatesToClear = Array.from(new Set([targetRes.checkoutDate, targetRes.earlyCheckoutDate].filter(Boolean)));
+    for (const chkDate of checkoutDatesToClear) {
+      const hasOtherActiveCheckout = (db.reservations || []).some(
+        other =>
+          other.id !== targetRes.id &&
+          other.status !== "cancelada" &&
+          other.status !== "cancelado" &&
+          other.status !== "cancelled" &&
+          other.status !== "no_show" &&
+          String(other.flatNumber || (Array.isArray(db.flats) ? db.flats.find(f => f.id === other.flatId)?.number : "") || "") === flatNum &&
+          (other.checkoutDate === chkDate || other.earlyCheckoutDate === chkDate)
+      );
+
+      if (!hasOtherActiveCheckout) {
+        for (const c of db.cleaningRequests || []) {
+          const isInst = Boolean(
+            c.isInstructionOnly ||
+              c.source === "manual_instruction" ||
+              c.type === "instruction" ||
+              c.type === "bed_adjustment_only" ||
+              c.isBedAdjustmentOnly
+          );
+          if (isInst) continue;
+          if (
+            (String(c.flatNumber) === flatNum || (targetRes.flatId && c.flatId === targetRes.flatId)) &&
+            c.requestDate === chkDate &&
+            c.source === "checkout" &&
+            c.status !== "clean" &&
+            c.status !== "deleted" &&
+            !c.isDeleted &&
+            !c.isVacantExplicitlySet &&
+            !c.markedByAdmin
+          ) {
+            c.isDeleted = true;
+            c.status = "deleted";
+            c.deletedAt = nowIso;
+            c.deletedBy = "reservation_cancelled";
+            c.deletedReservationId = targetRes.id;
+            c.updatedAt = nowIso;
+          }
         }
       }
     }
-  }
 
-  // Marca pedidos de café da manhã vinculados como cancelados
-  if (!db.breakfastOrders) db.breakfastOrders = [];
-  db.breakfastOrders.forEach(o => {
-    if (
-      (o.reservationCode && (o.reservationCode === reservation.code || o.reservationCode === reservation.reservationCode)) ||
-      o.reservationId === reservation.id ||
-      (String(o.roomNumber) === String(reservation.flatNumber) && o.date >= reservation.checkinDate && o.date <= reservation.checkoutDate)
-    ) {
-      o.status = "cancelled";
-      o.cancelReason = "Reserva B2B cancelada via e-mail autônomo";
-    }
-  });
-
-  // Marca tarefas de serviço / OS associadas como canceladas se presentes
-  if (Array.isArray(db.tasks)) {
-    db.tasks.forEach(t => {
-      if (t.reservationId === reservation.id || t.reservationCode === reservation.code) {
-        t.status = "cancelled";
-        t.updatedAt = nowIso;
+    // Marca pedidos de café da manhã vinculados como cancelados
+    if (!db.breakfastOrders) db.breakfastOrders = [];
+    db.breakfastOrders.forEach(o => {
+      if (
+        (o.reservationCode && (o.reservationCode === targetRes.code || o.reservationCode === targetRes.reservationCode)) ||
+        o.reservationId === targetRes.id ||
+        (String(o.roomNumber) === String(targetRes.flatNumber) && o.date >= targetRes.checkinDate && o.date <= targetRes.checkoutDate)
+      ) {
+        o.status = "cancelled";
+        o.cancelReason = "Reserva B2B cancelada via e-mail autônomo";
       }
     });
-  }
 
-  // FNRH SERPRO
-  if (reservation.serproReservaId && reservation.serproStatus !== "CANCELADA") {
-    reservation.serproStatus = "CANCELADA";
-    reservation.serproCancelledAt = nowIso;
+    // Marca tarefas de serviço / OS associadas como canceladas se presentes
+    if (Array.isArray(db.tasks)) {
+      db.tasks.forEach(t => {
+        if (t.reservationId === targetRes.id || t.reservationCode === targetRes.code) {
+          t.status = "cancelled";
+          t.updatedAt = nowIso;
+        }
+      });
+    }
+
+    // Cancela agendamentos pendentes de e-mail e WhatsApp vinculados à reserva
+    if (Array.isArray(db.emailQueue)) {
+      db.emailQueue.forEach(q => {
+        if (
+          q &&
+          q.status === "pending" &&
+          (String(q.reservationId) === String(targetRes.id) ||
+            String(q.reservationId) === String(targetRes.code) ||
+            (q.reservationCode && q.reservationCode === targetRes.code))
+        ) {
+          q.status = "cancelled";
+          q.error = "Reserva B2B cancelada via e-mail autônomo";
+        }
+      });
+    }
+    if (Array.isArray(db.whatsappQueue)) {
+      db.whatsappQueue.forEach(q => {
+        if (
+          q &&
+          (q.status === "scheduled" || q.status === "pending" || q.status === "pending_approval") &&
+          (String(q.reservationId) === String(targetRes.id) ||
+            String(q.reservationCode) === String(targetRes.code))
+        ) {
+          q.status = "cancelled";
+          q.cancelledAt = nowIso;
+        }
+      });
+    }
+
+    // FNRH SERPRO
+    if (targetRes.serproReservaId && targetRes.serproStatus !== "CANCELADA") {
+      targetRes.serproStatus = "CANCELADA";
+      targetRes.serproCancelledAt = nowIso;
+    }
   }
 
   // Sincronização ARI opcional (Channel Manager)

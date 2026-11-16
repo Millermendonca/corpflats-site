@@ -6763,18 +6763,77 @@ export default function PmsCalendar(props?: {
   const handleDeleteRes = async () => {
     if (!selectedRes) return
     if (!confirm("Tem certeza que deseja cancelar esta reserva?")) return
+    const cancelledId = selectedRes.id
+    const cancelledCode = String(selectedRes.code || selectedRes.reservationCode || "").trim().toUpperCase()
+    const cancelledB2b = String(selectedRes.b2bReservationNumber || "").trim()
     try {
-      await fetch(`/api/pms/reservations/${selectedRes.id}`, {
+      const resp = await fetch(`/api/pms/reservations/${cancelledId}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ source: "PMS Calendário (Cancelamento Manual)" }),
         credentials: "include"
       })
+      if (!resp.ok) {
+        const errJson = await resp.json().catch(() => ({}))
+        toast({
+          title: "Erro ao cancelar reserva",
+          description: errJson.error || "Não foi possível cancelar a reserva no servidor.",
+          variant: "destructive"
+        })
+        return
+      }
+      if (
+        focusTargetCodeRef.current &&
+        (focusTargetCodeRef.current.toUpperCase() === cancelledCode ||
+          focusTargetCodeRef.current === String(cancelledId))
+      ) {
+        focusTargetCodeRef.current = ""
+      }
+      if (typeof window !== "undefined" && window.location.search) {
+        const sp = new URLSearchParams(window.location.search)
+        const urlCode = (sp.get("code") || sp.get("reservation") || "").trim().toUpperCase()
+        if (urlCode && (urlCode === cancelledCode || urlCode === String(cancelledId))) {
+          sp.delete("code")
+          sp.delete("reservation")
+          const qs = sp.toString()
+          window.history.replaceState({}, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`)
+        }
+      }
+      setData(prev =>
+        prev
+          ? {
+              ...prev,
+              reservations: prev.reservations.filter(r => {
+                if (String(r.id) === String(cancelledId)) return false
+                if (
+                  cancelledB2b &&
+                  String(r.b2bReservationNumber || "").trim() === cancelledB2b &&
+                  r.checkinDate === selectedRes.checkinDate &&
+                  String(r.guestName || "").trim().toLowerCase() ===
+                    String(selectedRes.guestName || "").trim().toLowerCase()
+                ) {
+                  return false
+                }
+                return true
+              })
+            }
+          : prev
+      )
       setResModalOpen(false)
-      fetchData()
+      await fetchData()
       fetchCrmGuests()
       notifyCalendarUpdated()
-    } catch {}
+      toast({
+        title: "Reserva cancelada",
+        description: "A reserva foi cancelada e removida do calendário."
+      })
+    } catch (err: any) {
+      toast({
+        title: "Erro de conexão",
+        description: err?.message || "Falha ao comunicar com o servidor.",
+        variant: "destructive"
+      })
+    }
   }
 
   const handleUndoEarlyCheckout = async (targetRes: any, options?: { closeModal?: boolean }) => {
