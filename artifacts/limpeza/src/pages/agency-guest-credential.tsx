@@ -245,27 +245,30 @@ export default function AgencyGuestCredential() {
       });
       return;
     }
-    if (docType === "passport") {
-      if (normalizedPassport.replace(/[^A-Z0-9]/g, "").length < 5) {
+    const hasDocInput = guestDocument.trim().length > 0;
+    if (hasDocInput) {
+      if (docType === "passport") {
+        if (normalizedPassport.replace(/[^A-Z0-9]/g, "").length < 5) {
+          toast({
+            title: "Passaporte inválido",
+            description: "Informe um número de Passaporte válido (mínimo de 5 caracteres) ou deixe em branco.",
+            variant: "destructive"
+          });
+          return;
+        }
+      } else if (!isValidBrazilianCpf(cleanDoc)) {
         toast({
-          title: "Passaporte inválido",
-          description: "Informe um número de Passaporte válido (mínimo de 5 caracteres).",
+          title: "CPF inválido",
+          description: "O CPF informado não é válido. Verifique os 11 dígitos ou deixe em branco para o próprio hóspede preencher no Pré-Check-in.",
           variant: "destructive"
         });
         return;
       }
-    } else if (!isValidBrazilianCpf(cleanDoc)) {
-      toast({
-        title: "CPF inválido",
-        description: "O CPF informado não é válido. Verifique os 11 dígitos ou selecione 'Passaporte' caso seja estrangeiro.",
-        variant: "destructive"
-      });
-      return;
     }
     if (cleanPhoneDigits.length < (isIntlPhone ? 8 : 10)) {
       toast({
         title: "Telefone / WhatsApp obrigatório",
-        description: "Informe o telefone / WhatsApp com DDD (ou DDI internacional com +) para receber a confirmação e a senha do flat.",
+        description: "Informe o telefone / WhatsApp com DDD (ou DDI internacional com +) para receber a confirmação e o Pré-Check-in.",
         variant: "destructive"
       });
       return;
@@ -284,10 +287,10 @@ export default function AgencyGuestCredential() {
         return;
       }
 
-      if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
         toast({
-          title: "E-mail válido obrigatório",
-          description: "Informe um endereço de e-mail válido do hóspede.",
+          title: "E-mail inválido",
+          description: "Informe um endereço de e-mail válido ou deixe o campo em branco.",
           variant: "destructive"
         });
         setSubmitting(false);
@@ -299,8 +302,8 @@ export default function AgencyGuestCredential() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           guestName: guestName.trim(),
-          guestDocument: docType === "passport" ? normalizedPassport : cleanDoc,
-          docType: docType === "passport" ? "Passaporte" : "CPF",
+          guestDocument: hasDocInput ? (docType === "passport" ? normalizedPassport : cleanDoc) : "",
+          docType: hasDocInput ? (docType === "passport" ? "Passaporte" : "CPF") : "",
           guestPhone: finalPhonePayload,
           guestSecondaryPhone: finalSecPhonePayload,
           guestEmail: cleanEmail,
@@ -525,13 +528,13 @@ export default function AgencyGuestCredential() {
                 {isGuestSelfIdentifyMode ? (
                   <>
                     O <strong>CorpFlats (Edifício Soho)</strong> opera com liberação antecipada na recepção 24h. Assim que você preencher seu{" "}
-                    <strong>Nome Completo, CPF ou Passaporte, WhatsApp e E-mail</strong>, sua entrada estará liberada e enviaremos imediatamente para o seu{" "}
-                    <strong>WhatsApp</strong> a confirmação da sua estadia e as instruções de acesso ao flat.
+                    <strong>Nome Completo e WhatsApp</strong>, enviaremos imediatamente para o seu{" "}
+                    <strong>WhatsApp</strong> a confirmação da estadia, o link rápido de Pré-Check-in e as instruções de acesso ao flat.
                   </>
                 ) : (
                   <>
                     O <strong>CorpFlats (Edifício Soho)</strong> opera com controle eletrônico de acesso e liberação prévia na recepção/portaria 24h.{" "}
-                    <strong>Não é possível realizar o cadastro presencialmente na hora da chegada no balcão</strong>, pois sem o registro prévio neste link a portaria não conseguirá localizar a reserva no sistema de acesso nem autorizar a entrada do hóspede. Assim que você concluir os dados obrigatórios abaixo, enviaremos automaticamente a confirmação da reserva e as instruções de acesso ao WhatsApp do hóspede (sem exibir tarifas ou valores financeiros).
+                    Basta informar o <strong>Nome Completo e o WhatsApp do hóspede</strong> abaixo (CPF e E-mail são opcionais) para encerrarmos os lembretes e enviarmos automaticamente ao WhatsApp do hóspede a confirmação da reserva e o link de Pré-Check-in Digital (sem exibir tarifas ou valores financeiros).
                   </>
                 )}
               </div>
@@ -544,10 +547,10 @@ export default function AgencyGuestCredential() {
                   <User className="w-4 h-4 text-teal-400" />
                   {isGuestSelfIdentifyMode
                     ? "Seus Dados para Liberação na Recepção"
-                    : "Dados Obrigatórios do Hóspede para a Portaria"}
+                    : "Dados do Hóspede para a Portaria"}
                 </h3>
                 <span className="text-[11px] text-amber-300 font-semibold">
-                  * Todos os campos principais são obrigatórios
+                  * Somente Nome Completo e WhatsApp são obrigatórios
                 </span>
               </div>
 
@@ -563,12 +566,56 @@ export default function AgencyGuestCredential() {
                   />
                 </div>
 
-                {/* CPF ou Passaporte Estrangeiro */}
+                {/* Telefone / WhatsApp com Verificação Real na Z-API */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-1">
+                    <Label className="text-xs text-slate-300 flex items-center gap-1">
+                      <Phone className="w-3.5 h-3.5 text-emerald-400" /> Telefone / WhatsApp (com DDD) *
+                    </Label>
+                    {whatsappStatus === "checking" && (
+                      <span className="text-[10px] text-sky-400 flex items-center gap-1">
+                        <Loader2 className="w-3 h-3 animate-spin" /> Verificando WhatsApp...
+                      </span>
+                    )}
+                    {whatsappStatus === "valid" && (
+                      <span className="text-[10px] font-bold text-emerald-400">✓ WhatsApp ativo</span>
+                    )}
+                    {whatsappStatus === "invalid" && (
+                      <span className="text-[10px] font-bold text-rose-400">❌ Sem WhatsApp ativo</span>
+                    )}
+                  </div>
+                  <Input
+                    type="tel"
+                    value={guestPhone}
+                    onChange={(e) => {
+                      const formatted = formatPhoneMask(e.target.value);
+                      setGuestPhone(formatted);
+                      if (whatsappStatus !== "idle") setWhatsappStatus("idle");
+                    }}
+                    onBlur={() => {
+                      if (guestPhone.replace(/\D/g, "").length >= 8) {
+                        verifyWhatsAppNumber(guestPhone);
+                      }
+                    }}
+                    placeholder="(22) 99999-9999"
+                    inputMode="tel"
+                    required
+                    className={`bg-slate-950 text-white ${
+                      whatsappStatus === "valid"
+                        ? "border-emerald-500/60"
+                        : whatsappStatus === "invalid"
+                          ? "border-rose-500/70"
+                          : "border-slate-700"
+                    }`}
+                  />
+                </div>
+
+                {/* CPF ou Passaporte Estrangeiro (Opcional) */}
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between gap-1 flex-wrap">
                     <div className="flex items-center gap-1.5">
                       <Label className="text-xs text-slate-300">
-                        {docType === "passport" ? "Passaporte *" : "CPF ou Passaporte *"}
+                        {docType === "passport" ? "Passaporte (Opcional)" : "CPF ou Passaporte (Opcional)"}
                       </Label>
                       <div className="inline-flex rounded-lg bg-slate-950 border border-slate-800 p-0.5 text-[10px]">
                         <button
@@ -633,10 +680,9 @@ export default function AgencyGuestCredential() {
                         setGuestDocument(formatCpfMask(raw));
                       }
                     }}
-                    placeholder={docType === "passport" ? "Ex: AB123456" : "000.000.000-00 ou Passaporte"}
+                    placeholder={docType === "passport" ? "Ex: AB123456 (opcional)" : "000.000.000-00 (opcional)"}
                     inputMode="text"
                     maxLength={20}
-                    required
                     className={`bg-slate-950 text-white font-mono ${
                       docType === "passport"
                         ? passportIsComplete
@@ -651,61 +697,16 @@ export default function AgencyGuestCredential() {
                   />
                 </div>
 
-                {/* Telefone / WhatsApp com Verificação Real na Z-API */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between gap-1">
-                    <Label className="text-xs text-slate-300 flex items-center gap-1">
-                      <Phone className="w-3.5 h-3.5 text-emerald-400" /> Telefone / WhatsApp (com DDD) *
-                    </Label>
-                    {whatsappStatus === "checking" && (
-                      <span className="text-[10px] text-sky-400 flex items-center gap-1">
-                        <Loader2 className="w-3 h-3 animate-spin" /> Verificando WhatsApp...
-                      </span>
-                    )}
-                    {whatsappStatus === "valid" && (
-                      <span className="text-[10px] font-bold text-emerald-400">✓ WhatsApp ativo</span>
-                    )}
-                    {whatsappStatus === "invalid" && (
-                      <span className="text-[10px] font-bold text-rose-400">❌ Sem WhatsApp ativo</span>
-                    )}
-                  </div>
-                  <Input
-                    type="tel"
-                    value={guestPhone}
-                    onChange={(e) => {
-                      const formatted = formatPhoneMask(e.target.value);
-                      setGuestPhone(formatted);
-                      if (whatsappStatus !== "idle") setWhatsappStatus("idle");
-                    }}
-                    onBlur={() => {
-                      if (guestPhone.replace(/\D/g, "").length >= 8) {
-                        verifyWhatsAppNumber(guestPhone);
-                      }
-                    }}
-                    placeholder="(22) 99999-9999"
-                    inputMode="tel"
-                    required
-                    className={`bg-slate-950 text-white ${
-                      whatsappStatus === "valid"
-                        ? "border-emerald-500/60"
-                        : whatsappStatus === "invalid"
-                          ? "border-rose-500/70"
-                          : "border-slate-700"
-                    }`}
-                  />
-                </div>
-
-                {/* E-mail Obrigatório */}
+                {/* E-mail Opcional */}
                 <div className="space-y-1.5">
                   <Label className="text-xs text-slate-300 flex items-center gap-1">
-                    <Mail className="w-3.5 h-3.5 text-teal-400" /> E-mail do Hóspede *
+                    <Mail className="w-3.5 h-3.5 text-teal-400" /> E-mail do Hóspede (Opcional)
                   </Label>
                   <Input
                     type="email"
                     value={guestEmail}
                     onChange={(e) => setGuestEmail(e.target.value)}
-                    placeholder="hospede@empresa.com.br"
-                    required
+                    placeholder="hospede@empresa.com.br (opcional)"
                     className="bg-slate-950 border-slate-700 text-white"
                   />
                 </div>

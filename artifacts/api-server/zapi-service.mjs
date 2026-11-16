@@ -479,7 +479,7 @@ Confirmamos com muita satisfação a reserva *#{{numero_reserva_b2b}}* para o(a)
 • Canal da Reserva: *{{canal_reserva}}*
 
 ⚠️ *Importante — Dados do Hóspede para Liberação na Recepção:*
-Como ainda não temos o contato direto do hóspede na reserva, pedimos que preencha antecipadamente os dados dele(a) (*Nome Completo, CPF, WhatsApp e E-mail*) pelo nosso link seguro para gerarmos a liberação na recepção e enviarmos as instruções de acesso:
+Como ainda não temos o contato direto do hóspede na reserva, pedimos que preencha antecipadamente pelo menos o *Nome Completo e o WhatsApp* dele(a) pelo nosso link seguro (CPF e E-mail opcionais), para gerarmos a liberação e enviarmos diretamente ao hóspede as instruções de acesso e o Pré-Check-in:
 
 👉 {{link_credenciamento_agencia}}
 
@@ -2908,28 +2908,59 @@ export function isPendingGuestName(name) {
   return /^(h[óo]spede(\s*\d+|\s+a\s+definir.*|\s+titular|\s+b2b)?|a\s+definir.*)$/i.test(s);
 }
 
-export function isMissingGuestDataForCredential(reservation = {}) {
+export function isMissingGuestDataForCredential(reservation = {}, db = null) {
   if (!reservation) return false;
   if (reservation.b2bCredentialCompletedAt || reservation.credentialStatus === "completed") return false;
-  const gName = String(reservation.guestName || reservation.guests?.[0]?.name || "").trim();
-  const rawPhone = String(reservation.guestPhone || reservation.guests?.[0]?.phone || "").trim();
+
+  const rawResName = String(reservation.guestName || reservation.guests?.[0]?.name || "").trim();
+  let linkedGuest = null;
+  if (reservation.guestId && Array.isArray(db?.guests)) {
+    const cand = db.guests.find(g => g && String(g.id) === String(reservation.guestId));
+    if (cand) {
+      const candName = String(cand.fullName || cand.name || "").trim();
+      if (candName && !isPendingGuestName(candName) && (isPendingGuestName(rawResName) || areGuestNamesCompatibleInline(rawResName, candName))) {
+        linkedGuest = cand;
+      }
+    }
+  }
+
+  const gName = rawResName && !isPendingGuestName(rawResName)
+    ? rawResName
+    : String(linkedGuest?.fullName || linkedGuest?.name || rawResName || "").trim();
+  const rawPhone = String(
+    reservation.guestPhone ||
+    reservation.guests?.[0]?.phone ||
+    linkedGuest?.whatsapp ||
+    linkedGuest?.phone ||
+    ""
+  ).trim();
   const cleanPhone = rawPhone.replace(/\D/g, "");
   const minPhoneLen = rawPhone.startsWith("+") && !cleanPhone.startsWith("55") ? 8 : 10;
-  const rawDoc = String(
-    reservation.guestDocument ||
-    reservation.guests?.[0]?.cpf ||
-    reservation.guests?.[0]?.document ||
-    ""
-  ).replace(/[^A-Za-z0-9]/g, "");
-  const isB2b =
-    String(reservation.channel || "").toLowerCase().includes("b2b") ||
-    Boolean(reservation.b2bReservationNumber);
-  return Boolean(
-    reservation.guestPending ||
-    isPendingGuestName(gName) ||
-    cleanPhone.length < minPhoneLen ||
-    (isB2b && rawDoc.length < 5)
-  );
+
+  const hasValidName = Boolean(gName && !isPendingGuestName(gName));
+  const hasValidPhone = cleanPhone.length >= minPhoneLen;
+
+  // Trava soberana: basta Nome válido + Telefone/WhatsApp do hóspede titular preenchidos para encerrar lembretes à agência
+  if (hasValidName && hasValidPhone) {
+    return false;
+  }
+
+  return true;
+}
+
+function areGuestNamesCompatibleInline(nameA = "", nameB = "") {
+  const norm = s =>
+    String(s || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter(w => w.length >= 2 && !["de", "da", "do", "das", "dos"].includes(w));
+  const tokA = norm(nameA);
+  const tokB = norm(nameB);
+  if (tokA.length === 0 || tokB.length === 0) return false;
+  return tokA[0] === tokB[0] || tokA.every(t => tokB.includes(t)) || tokB.every(t => tokA.includes(t));
 }
 
 export function getReservationRecipients(reservation = {}, db = {}) {
@@ -9009,6 +9040,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
               tpl.message?.includes("parceria") ||
               tpl.message?.includes("{{nome_agencia}}") ||
               tpl.message?.includes("e Documento") ||
+              tpl.message?.includes("Nome Completo, CPF, WhatsApp e E-mail") ||
               tpl.footer?.includes("B2B") ||
               !tpl.message?.includes("{{num_hospedes}}") ||
               !tpl.message?.includes("{{canal_reserva}}"))
@@ -16497,11 +16529,14 @@ export async function sendCredentialContingencyManagerAlert(
   }
 }
 
+const inFlightRequesterWaCredentialLocks = new Set();
+
 /**
  * Dispara a solicitação de credenciamento do hóspede (/credenciamento/:code) ou seus lembretes
  * para o Solicitante (Agência B2B, Empresa ou Terceiro PF) via WhatsApp validado na Z-API.
  */
 export async function dispatchRequesterGuestCredentialRequest(dbOrGetter, saveDatabase, reservation, options = {}) {
+  const lockKeys = [];
   try {
     const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
     if (!db || !reservation) return { dispatched: false, reason: "no_reservation" };
@@ -16511,9 +16546,25 @@ export async function dispatchRequesterGuestCredentialRequest(dbOrGetter, saveDa
       return { dispatched: false, reason: `status_${st}` };
     }
 
-    if (!isMissingGuestDataForCredential(reservation)) {
+    if (!isMissingGuestDataForCredential(reservation, db)) {
+      reservation.guestPending = false;
+      reservation.credentialStatus = "completed";
+      reservation.b2bCredentialCompletedAt = reservation.b2bCredentialCompletedAt || new Date().toISOString();
+      cancelPendingCredentialReminders(db, reservation);
       return { dispatched: false, reason: "guest_data_already_complete" };
     }
+
+    const rCodeLock = String(reservation.code || reservation.reservationCode || "").trim().toUpperCase();
+    const rIdLock = reservation.id !== undefined && reservation.id !== null ? String(reservation.id).trim() : "";
+    const b2bLock = String(reservation.b2bReservationNumber || reservation.externalReservationNumber || "").trim();
+    if (rIdLock) lockKeys.push(`ID:${rIdLock}`);
+    if (rCodeLock) lockKeys.push(`CODE:${rCodeLock}`);
+    if (b2bLock) lockKeys.push(`B2B:${b2bLock}`);
+
+    if (lockKeys.some(k => inFlightRequesterWaCredentialLocks.has(k))) {
+      return { dispatched: false, skipped: true, reason: "already_in_flight" };
+    }
+    for (const k of lockKeys) inFlightRequesterWaCredentialLocks.add(k);
 
     const recipients = getReservationRecipients(reservation, db);
     if (!recipients.requester?.isDifferentFromGuest) {
@@ -16553,7 +16604,7 @@ export async function dispatchRequesterGuestCredentialRequest(dbOrGetter, saveDa
         const isSameRes = (rCodeUpper && hCode === rCodeUpper) || (rIdStr && (hId === rIdStr || hCode === rIdStr));
         return isSameRes && h.triggerEvent === trigEvent;
       });
-      if (alreadySentStage && !options.force) {
+      if ((alreadySentStage || reservation.credentialSentStages?.[stageKey]?.whatsappSentAt) && !options.force) {
         return { dispatched: false, skipped: true, reason: "stage_already_sent", requesterPhone: validPhone };
       }
 
@@ -16567,18 +16618,19 @@ export async function dispatchRequesterGuestCredentialRequest(dbOrGetter, saveDa
         reminderKind === "checkin_morning" ||
         reminderKind === "checkin_noon" ||
         reminderKind === "sameday_2h";
+      const isEveDay = reminderKind === "d_minus_1";
 
       const reminderText = isCheckinDay
         ? `Olá, *${recipientDisplay}*! Tudo bem? 👋\n\n` +
           `⏰ *Lembrete Importante — Check-in Hoje (${checkinBr}):*\n` +
-          `Vimos que os dados completos${guestRef} da reserva *#${refNumber}* (*Flat ${flatNum}*, Edifício Soho Residence) *ainda não foram preenchidos*.\n\n` +
-          `⚠️ Para que a recepção/portaria 24h possa localizar a reserva e autorizar a entrada do hóspede hoje sem atrasos, pedimos por gentileza o preenchimento imediato pelo link seguro abaixo (sem exibição de valores financeiros):\n\n` +
+          `Vimos que o *Nome Completo e o WhatsApp*${guestRef} da reserva *#${refNumber}* (*Flat ${flatNum}*, Edifício Soho Residence) *ainda não foram preenchidos*.\n\n` +
+          `⚠️ Para que a recepção/portaria 24h possa localizar a reserva e enviarmos as instruções de chegada diretamente ao hóspede hoje sem atrasos, pedimos por gentileza o preenchimento imediato pelo link seguro abaixo (sem exibição de valores financeiros):\n\n` +
           `👉 ${credUrl}\n\n` +
-          `Assim que preenchido, enviaremos automaticamente ao WhatsApp do hóspede todas as instruções de chegada e acesso ao flat!`
+          `Basta informar *Nome Completo e WhatsApp* do hóspede — o restante do Pré-Check-in enviaremos diretamente a ele!`
         : `Olá, *${recipientDisplay}*! Tudo bem? 👋\n\n` +
-          `🔔 *Lembrete — Preenchimento dos Dados do Hóspede:*\n` +
-          `Vimos que ainda não foram preenchidos os dados completos${guestRef} referentes à reserva *#${refNumber}* no *Edifício Soho Residence* (*Flat ${flatNum}*, período de *${checkinBr} a ${checkoutBr}*).\n\n` +
-          `⚠️ Lembramos que o cadastro prévio (*Nome Completo, CPF/Passaporte, WhatsApp e E-mail*) é indispensável para gerarmos a autorização de entrada na portaria 24h.\n\n` +
+          `🔔 *Lembrete${isEveDay ? ` — Check-in Amanhã (${checkinBr})` : " — Dados do Hóspede"}:*\n` +
+          `Vimos que ainda não foram preenchidos o *Nome Completo e o WhatsApp*${guestRef} referentes à reserva *#${refNumber}* no *Edifício Soho Residence* (*Flat ${flatNum}*, período de *${checkinBr} a ${checkoutBr}*).\n\n` +
+          `⚠️ O cadastro prévio de *Nome Completo e WhatsApp* do hóspede (CPF e E-mail opcionais) é indispensável para gerarmos a liberação na portaria 24h e enviarmos o Pré-Check-in diretamente ao hóspede.\n\n` +
           `Você pode preencher agora (ou encaminhar este link direto ao hóspede, pois não exibe valores financeiros):\n` +
           `👉 ${credUrl}`;
 
@@ -16604,7 +16656,9 @@ export async function dispatchRequesterGuestCredentialRequest(dbOrGetter, saveDa
         reservationId: reservation.id || null,
         title: isCheckinDay
           ? "Solicitante • Lembrete Check-in Hoje (Dados do Hóspede)"
-          : "Solicitante • Lembrete 24h (Dados do Hóspede)",
+          : isEveDay
+            ? "Solicitante • Lembrete Véspera Check-in (Dados do Hóspede)"
+            : "Solicitante • Lembrete (Dados do Hóspede)",
         guestName: reservation.guestName || "A Definir",
         guestPhone: validPhone,
         recipientType: "requester",
@@ -16649,6 +16703,15 @@ export async function dispatchRequesterGuestCredentialRequest(dbOrGetter, saveDa
       };
     }
 
+    if (!options.force && (reservation.b2bCredentialWhatsappSentAt || reservation.credentialSentStages?.initial?.whatsappSentAt)) {
+      return {
+        dispatched: false,
+        skipped: true,
+        reason: "initial_already_sent",
+        requesterPhone: validPhone
+      };
+    }
+
     await triggerImmediateWhatsApp(
       db,
       saveDatabase,
@@ -16680,6 +16743,8 @@ export async function dispatchRequesterGuestCredentialRequest(dbOrGetter, saveDa
   } catch (err) {
     console.warn("[Requester Credential Dispatch Error]:", err.message);
     return { dispatched: false, error: err.message };
+  } finally {
+    for (const k of lockKeys) inFlightRequesterWaCredentialLocks.delete(k);
   }
 }
 

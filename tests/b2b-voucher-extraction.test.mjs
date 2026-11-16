@@ -34,10 +34,12 @@ import {
   resolveB2bCredentialTargetEmail,
   handleZohoIncomingWebhook,
   evaluateCredentialScheduleDecision,
+  ensurePendingB2bAgencyCredentialDispatches,
   repairIncompleteB2bReservations
 } from '../artifacts/api-server/zoho-mail-service.mjs';
 
 import {
+  isMissingGuestDataForCredential,
   resolveValidRequesterWhatsApp,
   cancelPendingCredentialReminders
 } from '../artifacts/api-server/zapi-service.mjs';
@@ -837,7 +839,7 @@ Telefone Agência:
       assert.strictEqual(invalidCheck.phone, '');
     });
 
-    it('10.4 evaluateCredentialScheduleDecision deve respeitar 24h até D-1, manhã + 12:00 no D0, same-day (+2h) e alerta de contingência', () => {
+    it('10.4 evaluateCredentialScheduleDecision e trava Nome+Telefone devem respeitar Inicial + D-1 09h + D0 09h + Gestor 12h e travar sem CPF/E-mail', async () => {
       const res = {
         code: 'CF-CRED1',
         status: 'confirmada',
@@ -846,7 +848,7 @@ Telefone Agência:
         credentialSentStages: {}
       };
 
-      // 1) Sem envio inicial -> stageKey = initial
+      // 1) Sem envio inicial -> stageKey = initial (17/11 = D-3)
       const d0 = evaluateCredentialScheduleDecision(res, new Date('2026-11-17T13:00:00-03:00'));
       assert.strictEqual(d0.action, 'send_stage');
       assert.strictEqual(d0.stageKey, 'initial');
@@ -857,37 +859,57 @@ Telefone Agência:
       res.b2bCredentialWhatsappSentAt = '2026-11-17T16:00:00.000Z';
       res.credentialSentStages.initial = { sentAt: '2026-11-17T16:00:00.000Z' };
 
-      // 2) 23h depois -> aguarda completar 24h
-      const dWait = evaluateCredentialScheduleDecision(res, new Date('2026-11-18T12:00:00-03:00'));
-      assert.strictEqual(dWait.action, 'none');
+      // 2) Dias antes de D-1 (18/11 = D-2, mesmo > 24h após o inicial) -> NÃO dispara lembrete diário!
+      const dNoDailyLoop = evaluateCredentialScheduleDecision(res, new Date('2026-11-18T14:00:00-03:00'));
+      assert.strictEqual(dNoDailyLoop.action, 'none');
+      assert.strictEqual(dNoDailyLoop.reason, 'waiting_d_minus_1');
 
-      // 3) 24h depois (18/11 às 13:05 BRT) -> reminder_24h_1
-      const dRem1 = evaluateCredentialScheduleDecision(res, new Date('2026-11-18T13:05:00-03:00'));
-      assert.strictEqual(dRem1.action, 'send_stage');
-      assert.strictEqual(dRem1.stageKey, 'reminder_24h_1');
-      assert.strictEqual(dRem1.reminderKind, '24h');
-      assert.strictEqual(dRem1.reminderNumber, 1);
-      res.credentialSentStages.reminder_24h_1 = { sentAt: '2026-11-18T16:05:00.000Z' };
+      // 3) Véspera (19/11 = D-1) antes das 09:00 BRT -> aguarda 09h
+      const dEveBefore9 = evaluateCredentialScheduleDecision(res, new Date('2026-11-19T08:30:00-03:00'));
+      assert.strictEqual(dEveBefore9.action, 'none');
 
-      // 4) Dia do check-in (20/11) às 08:15 BRT -> reminder_checkin_morning
-      const dMorning = evaluateCredentialScheduleDecision(res, new Date('2026-11-20T08:15:00-03:00'));
+      // 4) Véspera (19/11 = D-1) às 09:05 BRT -> reminder_d_minus_1
+      const dEve = evaluateCredentialScheduleDecision(res, new Date('2026-11-19T09:05:00-03:00'));
+      assert.strictEqual(dEve.action, 'send_stage');
+      assert.strictEqual(dEve.stageKey, 'reminder_d_minus_1');
+      assert.strictEqual(dEve.reminderKind, 'd_minus_1');
+      assert.strictEqual(dEve.reminderNumber, 1);
+      res.credentialSentStages.reminder_d_minus_1 = { sentAt: '2026-11-19T12:05:00.000Z' };
+
+      // 5) Dia do check-in (20/11 = D0) antes das 09:00 BRT -> aguarda 09h
+      const dCheckinBefore9 = evaluateCredentialScheduleDecision(res, new Date('2026-11-20T08:15:00-03:00'));
+      assert.strictEqual(dCheckinBefore9.action, 'none');
+
+      // 6) Dia do check-in (20/11 = D0) às 09:10 BRT -> reminder_checkin_morning (único lembrete do D0)
+      const dMorning = evaluateCredentialScheduleDecision(res, new Date('2026-11-20T09:10:00-03:00'));
       assert.strictEqual(dMorning.action, 'send_stage');
       assert.strictEqual(dMorning.stageKey, 'reminder_checkin_morning');
       assert.strictEqual(dMorning.reminderKind, 'checkin_morning');
-      res.credentialSentStages.reminder_checkin_morning = { sentAt: '2026-11-20T11:15:00.000Z' };
+      res.credentialSentStages.reminder_checkin_morning = { sentAt: '2026-11-20T12:10:00.000Z' };
 
-      // 5) Dia do check-in (20/11) às 12:00 BRT -> reminder_checkin_noon
-      const dNoon = evaluateCredentialScheduleDecision(res, new Date('2026-11-20T12:00:00-03:00'));
-      assert.strictEqual(dNoon.action, 'send_stage');
-      assert.strictEqual(dNoon.stageKey, 'reminder_checkin_noon');
-      assert.strictEqual(dNoon.reminderKind, 'checkin_noon');
-      res.credentialSentStages.reminder_checkin_noon = { sentAt: '2026-11-20T15:00:00.000Z' };
-
-      // 6) Dia do check-in (20/11) às 13:05 BRT ainda pendente -> manager_overdue_alert
-      const dOverdue = evaluateCredentialScheduleDecision(res, new Date('2026-11-20T13:05:00-03:00'));
+      // 7) Dia do check-in (20/11 = D0) às 12:00 BRT ainda pendente -> alerta somente para o Gestor (sem 2º lembrete à agência)
+      const dOverdue = evaluateCredentialScheduleDecision(res, new Date('2026-11-20T12:00:00-03:00'));
       assert.strictEqual(dOverdue.action, 'manager_overdue_alert');
 
-      // 7) Reserva Same-Day criada às 11:30 BRT -> lembrete +2h (13:30 BRT) e alerta +1h (14:30 BRT)
+      // 8) Reserva criada na véspera (D-1 às 14:00 BRT) -> NÃO cobra 2x no D-1; cobra apenas no D0 às 09h
+      const eveCreatedRes = {
+        code: 'CF-EVE',
+        status: 'confirmada',
+        checkinDate: '2026-11-20',
+        checkoutDate: '2026-11-22',
+        credentialFirstRequestSentAt: '2026-11-19T17:00:00.000Z', // 14:00 BRT no D-1
+        b2bCredentialWhatsappSentAt: '2026-11-19T17:00:00.000Z',
+        credentialSentStages: {
+          initial: { sentAt: '2026-11-19T17:00:00.000Z' }
+        }
+      };
+      const eveSameDayCheck = evaluateCredentialScheduleDecision(eveCreatedRes, new Date('2026-11-19T18:00:00-03:00'));
+      assert.strictEqual(eveSameDayCheck.action, 'none');
+      const eveNextMorning = evaluateCredentialScheduleDecision(eveCreatedRes, new Date('2026-11-20T09:00:00-03:00'));
+      assert.strictEqual(eveNextMorning.action, 'send_stage');
+      assert.strictEqual(eveNextMorning.stageKey, 'reminder_checkin_morning');
+
+      // 9) Reserva Same-Day criada às 11:30 BRT -> NÃO cobra 2x a agência no mesmo dia; alerta o Gestor após 2h (13:31 BRT)
       const sameDayRes = {
         code: 'CF-SAMEDAY',
         status: 'confirmada',
@@ -902,13 +924,57 @@ Telefone Agência:
       const sdWait = evaluateCredentialScheduleDecision(sameDayRes, new Date('2026-11-20T12:30:00-03:00'));
       assert.strictEqual(sdWait.action, 'none');
 
-      const sd2h = evaluateCredentialScheduleDecision(sameDayRes, new Date('2026-11-20T13:31:00-03:00'));
-      assert.strictEqual(sd2h.action, 'send_stage');
-      assert.strictEqual(sd2h.stageKey, 'reminder_sameday_2h');
-      sameDayRes.credentialSentStages.reminder_sameday_2h = { sentAt: '2026-11-20T16:31:00.000Z' };
-
-      const sdAlert = evaluateCredentialScheduleDecision(sameDayRes, new Date('2026-11-20T14:35:00-03:00'));
+      const sdAlert = evaluateCredentialScheduleDecision(sameDayRes, new Date('2026-11-20T13:31:00-03:00'));
       assert.strictEqual(sdAlert.action, 'manager_overdue_alert');
+
+      // 10) Trava Soberana: Reserva B2B com Nome + Telefone preenchidos (sem CPF, sem E-mail e com guestPending residual)
+      // encerra imediatamente qualquer cobrança e marca credentialStatus = "completed"
+      const b2bWithNameAndPhone = {
+        id: 991,
+        code: 'RES-605-B2B-9991',
+        b2bReservationNumber: '9991',
+        channel: 'b2b',
+        requesterType: 'agency_b2b',
+        agencyName: 'Agência Teste B2B',
+        agencyAgentEmail: 'operacao@agenciateste.com.br',
+        agencyAgentPhone: '5511988887777',
+        status: 'confirmada',
+        checkinDate: '2026-11-20',
+        checkoutDate: '2026-11-22',
+        guestName: 'Roberto Carlos Almeida',
+        guestPhone: '5522999112233',
+        guestDocument: '',
+        guestEmail: '',
+        guestPending: true,
+        guestCount: 2,
+        credentialStatus: 'pending_agency',
+        credentialFirstRequestSentAt: '2026-11-17T16:00:00.000Z',
+        credentialSentStages: { initial: { sentAt: '2026-11-17T16:00:00.000Z' } }
+      };
+      assert.strictEqual(isMissingGuestDataForCredential(b2bWithNameAndPhone), false);
+      assert.strictEqual(
+        evaluateCredentialScheduleDecision(b2bWithNameAndPhone, new Date('2026-11-19T09:30:00-03:00')).action,
+        'none'
+      );
+
+      const lockMockDb = {
+        reservations: [b2bWithNameAndPhone],
+        whatsappQueue: [
+          { id: 'wq-lock-1', reservationCode: 'RES-605-B2B-9991', triggerEvent: 'b2b_agency_credential_reminder', status: 'pending' }
+        ],
+        reservationCommunications: []
+      };
+      const syncOut = await ensurePendingB2bAgencyCredentialDispatches(lockMockDb, () => {}, {
+        forceCheck: true,
+        allowSimulatedSend: true,
+        nowOverride: new Date('2026-11-19T09:30:00-03:00')
+      });
+      assert.strictEqual(syncOut.dispatched, 0);
+      assert.strictEqual(syncOut.remindersDispatched, 0);
+      assert.strictEqual(b2bWithNameAndPhone.credentialStatus, 'completed');
+      assert.strictEqual(b2bWithNameAndPhone.guestPending, false);
+      assert.ok(b2bWithNameAndPhone.b2bCredentialCompletedAt);
+      assert.strictEqual(lockMockDb.whatsappQueue[0].status, 'cancelled');
     });
 
     it('10.5 renderB2bAgencyCredentialRequestEmail e cancelPendingCredentialReminders devem operar com hóspede "A Definir" e encerrar fila ao concluir', () => {

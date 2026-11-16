@@ -1756,12 +1756,15 @@ export function renderB2bAgencyCredentialRequestEmail({
   const isCheckinDayReminder =
     isReminder &&
     (reminderKind === "checkin_morning" || reminderKind === "checkin_noon" || reminderKind === "sameday_2h");
+  const isEveDayReminder = isReminder && reminderKind === "d_minus_1";
 
   const guestSubjectPart = !isPendingGuest ? ` - ${guestName}` : "";
   const subject = isReminder
     ? isCheckinDayReminder
       ? `[LEMBRETE URGENTE • CHECK-IN HOJE] Dados do Hóspede Pendentes - ${refLabel}${guestSubjectPart} (${checkinDateBr})`
-      : `[LEMBRETE • DADOS DO HÓSPEDE PENDENTES] ${refLabel}${guestSubjectPart} (${checkinDateBr} a ${checkoutDateBr})`
+      : isEveDayReminder
+        ? `[LEMBRETE • CHECK-IN AMANHÃ] Dados do Hóspede Pendentes - ${refLabel}${guestSubjectPart} (${checkinDateBr} a ${checkoutDateBr})`
+        : `[LEMBRETE • DADOS DO HÓSPEDE PENDENTES] ${refLabel}${guestSubjectPart} (${checkinDateBr} a ${checkoutDateBr})`
     : `[CONFIRMAÇÃO & DADOS DO HÓSPEDE] ${refLabel}${guestSubjectPart} (${checkinDateBr} a ${checkoutDateBr})`;
 
   const greetingName = agentName
@@ -1775,21 +1778,23 @@ export function renderB2bAgencyCredentialRequestEmail({
   const headerTitle = isReminder
     ? (isCheckinDayReminder
         ? "⏰ Check-in Hoje • Preenchimento Urgente dos Dados do Hóspede"
-        : "🔔 Lembrete • Preenchimento Pendente dos Dados do Hóspede")
+        : isEveDayReminder
+          ? "🔔 Check-in Amanhã • Lembrete de Dados do Hóspede"
+          : "🔔 Lembrete • Preenchimento Pendente dos Dados do Hóspede")
     : "Reserva Confirmada • Dados do Hóspede para Liberação na Recepção";
 
   const introParagraphsHtml = isReminder
     ? isCheckinDayReminder
       ? `
       <p style="font-size: 15px; color: #374151; margin: 0 0 12px 0; line-height: 1.6;">
-        ${greetingName}, tudo bem? O check-in da <strong>${escapeHtml(refLabel)}</strong> ${guestIntroFragment}${companyName ? ` (<strong>${escapeHtml(companyName)}</strong>)` : ""} no <strong>${escapeHtml(buildingName)}</strong> (${escapeHtml(flatDisplay)}) acontece <strong>hoje (${checkinDateBr}, a partir das ${checkinTime})</strong>, e vimos que os dados completos do hóspede <strong>ainda não foram preenchidos</strong> em nosso sistema.
+        ${greetingName}, tudo bem? O check-in da <strong>${escapeHtml(refLabel)}</strong> ${guestIntroFragment}${companyName ? ` (<strong>${escapeHtml(companyName)}</strong>)` : ""} no <strong>${escapeHtml(buildingName)}</strong> (${escapeHtml(flatDisplay)}) acontece <strong>hoje (${checkinDateBr}, a partir das ${checkinTime})</strong>, e vimos que o <strong>Nome Completo e o WhatsApp do hóspede</strong> ainda não foram preenchidos em nosso sistema.
       </p>
       <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">
         Pedimos por gentileza o preenchimento imediato pelo link seguro abaixo para que possamos liberar a entrada na portaria 24h e enviar as instruções de acesso ao hóspede sem atrasos na chegada.
       </p>`
       : `
       <p style="font-size: 15px; color: #374151; margin: 0 0 12px 0; line-height: 1.6;">
-        ${greetingName}, tudo bem? Passando para lembrar que vimos que os dados completos do hóspede da <strong>${escapeHtml(refLabel)}</strong> ${guestIntroFragment}${companyName ? ` (<strong>${escapeHtml(companyName)}</strong>)` : ""} no <strong>${escapeHtml(buildingName)}</strong> (${escapeHtml(flatDisplay)}, período de <strong>${checkinDateBr} a ${checkoutDateBr}</strong>) <strong>ainda não foram preenchidos</strong>.
+        ${greetingName}, tudo bem? Passando para lembrar que vimos que o <strong>Nome Completo e o WhatsApp do hóspede</strong> da <strong>${escapeHtml(refLabel)}</strong> ${guestIntroFragment}${companyName ? ` (<strong>${escapeHtml(companyName)}</strong>)` : ""} no <strong>${escapeHtml(buildingName)}</strong> (${escapeHtml(flatDisplay)}, período de <strong>${checkinDateBr} a ${checkoutDateBr}</strong>) <strong>ainda não foram preenchidos</strong>.
       </p>
       <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">
         Utilize o link seguro abaixo (ou encaminhe-o diretamente ao hóspede) para concluir o cadastro antecipado e garantir a liberação automática na recepção.
@@ -1799,7 +1804,7 @@ export function renderB2bAgencyCredentialRequestEmail({
         ${greetingName}, tudo bem? Confirmamos com muita satisfação a reserva ${guestIntroFragment}${companyName ? ` (<strong>${escapeHtml(companyName)}</strong>)` : ""} no <strong>${escapeHtml(buildingName)}</strong> (${escapeHtml(flatDisplay)}), para o período de <strong>${checkinDateBr} a ${checkoutDateBr}</strong>.
       </p>
       <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">
-        Como ainda não temos os dados completos e o contato direto do hóspede na reserva, disponibilizamos abaixo o nosso <strong>Link Seguro para Preenchimento dos Dados do Hóspede</strong>.
+        Como ainda não temos o contato direto do hóspede na reserva, disponibilizamos abaixo o nosso <strong>Link Seguro para Preenchimento dos Dados do Hóspede</strong>.
       </p>`;
 
   const contentHtml = `
@@ -1816,7 +1821,7 @@ export function renderB2bAgencyCredentialRequestEmail({
         ⚠️ IMPORTANTE: LIBERAÇÃO ANTECIPADA OBRIGATÓRIA NA RECEPÇÃO / PORTARIA 24H
       </div>
       <p style="color: #78350F; font-size: 13.5px; margin: 0; line-height: 1.55;">
-        O preenchimento antecipado pelo link abaixo (informando <strong>Nome Completo, CPF/Passaporte, WhatsApp e E-mail do hóspede</strong>) é <strong>indispensável para gerar a autorização de entrada na portaria do edifício</strong>.<br/><br/>
+        O preenchimento antecipado pelo link abaixo (informando pelo menos <strong>Nome Completo e WhatsApp do hóspede</strong> — CPF e E-mail são opcionais) é <strong>indispensável para gerar a autorização de entrada na portaria do edifício e enviarmos o Pré-Check-in diretamente ao hóspede</strong>.<br/><br/>
         Ressaltamos gentilmente que <strong>esses dados não podem ser informados apenas na hora no balcão</strong>, pois nossa operação é digital e, sem o cadastro prévio pelo link, o sistema da recepção/portaria não conseguirá localizar a reserva nem autorizar a entrada do hóspede no condomínio.
       </p>
     </div>
@@ -1873,7 +1878,7 @@ export function renderB2bAgencyCredentialRequestEmail({
   const bodyText = [
     `Olá, ${agentName || agencyName}!`,
     textIntro,
-    `IMPORTANTE: Para gerar a liberação de entrada na recepção/portaria do prédio, é obrigatório o preenchimento antecipado dos dados do hóspede (Nome Completo, CPF/Passaporte, WhatsApp e E-mail) através do nosso link seguro abaixo. Não é possível informar apenas na hora no balcão, pois sem o cadastro prévio pelo link a portaria não conseguirá localizar a reserva nem autorizar a entrada.`,
+    `IMPORTANTE: Para gerar a liberação de entrada na recepção/portaria do prédio e enviar o Pré-Check-in diretamente ao hóspede, é obrigatório o preenchimento antecipado de pelo menos Nome Completo e WhatsApp do hóspede (CPF e E-mail opcionais) através do nosso link seguro abaixo. Não é possível informar apenas na hora no balcão, pois sem o cadastro prévio pelo link a portaria não conseguirá localizar a reserva nem autorizar a entrada.`,
     `Link Seguro para Preenchimento dos Dados do Hóspede (sem exibição de valores financeiros): ${finalCredentialUrl}`,
     `Muito obrigado pela atenção! Equipe CorpFlats`
   ].join("\n\n");

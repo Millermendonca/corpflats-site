@@ -46,7 +46,9 @@ import {
   enrichCrmEntityWithCnpjData
 } from "./lookup.mjs";
 import {
+  isPendingGuestName,
   isMissingGuestDataForCredential,
+  cancelPendingCredentialReminders,
   getReservationRecipients,
   resolveValidRequesterWhatsApp,
   dispatchRequesterGuestCredentialRequest,
@@ -6118,7 +6120,14 @@ export function ingestB2bVoucherIntoDb(
       preCheckinUnlocked: true,
       accessUnlocked: true,
       credentialToken: `B2B-${resNum}`,
-      credentialStatus: guest.phone && guest.cpf ? "completed" : "pending_agency",
+      guestPending: isPendingGuestName(guest.fullName),
+      credentialStatus:
+        !isPendingGuestName(guest.fullName) && String(guest.phone || "").replace(/\D/g, "").length >= 10
+          ? "completed"
+          : "pending_agency",
+      ...(!isPendingGuestName(guest.fullName) && String(guest.phone || "").replace(/\D/g, "").length >= 10
+        ? { b2bCredentialCompletedAt: new Date().toISOString() }
+        : {}),
       createdAt: new Date().toISOString()
     };
     db.reservations.push(reservation);
@@ -6310,16 +6319,20 @@ export function ingestB2bVoucherIntoDb(
     if (!reservation.credentialToken) {
       reservation.credentialToken = `B2B-${resNum}`;
     }
-    if (!reservation.credentialStatus) {
-      reservation.credentialStatus =
-        reservation.guestPhone && reservation.guestDocument ? "completed" : "pending_agency";
+    if (!isMissingGuestDataForCredential(reservation, db)) {
+      reservation.guestPending = false;
+      reservation.credentialStatus = "completed";
+      reservation.b2bCredentialCompletedAt = reservation.b2bCredentialCompletedAt || new Date().toISOString();
+      cancelPendingCredentialReminders(db, reservation);
+    } else if (!reservation.credentialStatus) {
+      reservation.credentialStatus = "pending_agency";
     }
     reservation.updatedAt = new Date().toISOString();
   }
 
   // Trava Anti-Erro (Decisão 3): Alerta imediato ao WhatsApp do gestor se faltar e-mail do solicitante ou de NFS-e (sem inventar e-mails!)
   const missingCriticalEmails = [];
-  if (isMissingGuestDataForCredential(reservation) && !resolveB2bCredentialTargetEmail(reservation, db)) {
+  if (isMissingGuestDataForCredential(reservation, db) && !resolveB2bCredentialTargetEmail(reservation, db)) {
     missingCriticalEmails.push("E-mail do Solicitante (Reservado por)");
   }
   if (!Array.isArray(reservation.nfDeliveryEmails) || reservation.nfDeliveryEmails.length === 0) {
@@ -6365,7 +6378,7 @@ export function ingestB2bVoucherIntoDb(
   }
 
   // Disparo cordial automático (E-mail + WhatsApp validado) se a reserva B2B ainda estiver sem dados do hóspede
-  if (autoSendCredentialEmail && isMissingGuestDataForCredential(reservation)) {
+  if (autoSendCredentialEmail && isMissingGuestDataForCredential(reservation, db)) {
     if (!hasB2bCredentialEmailAlreadyBeenSent(db, reservation, "initial")) {
       dispatchB2bAgencyCredentialEmail(db, saveDatabase, reservation, {
         trigger: "b2b_auto_credential_request",
@@ -6759,6 +6772,22 @@ export async function dispatchB2bAgencyCredentialEmail(
     stageKey || (isReminder ? `reminder_${reminderKind || reminderNumber}` : "initial")
   ).trim();
 
+  if (!force && (reservation.b2bCredentialCompletedAt || reservation.credentialStatus === "completed" || !isMissingGuestDataForCredential(reservation, db))) {
+    if (!isMissingGuestDataForCredential(reservation, db)) {
+      reservation.guestPending = false;
+      reservation.credentialStatus = "completed";
+      reservation.b2bCredentialCompletedAt = reservation.b2bCredentialCompletedAt || nowIsoOverride || new Date().toISOString();
+      cancelPendingCredentialReminders(db, reservation);
+    }
+    return {
+      ok: true,
+      skipped: true,
+      alreadyCompleted: true,
+      stageKey: resolvedStageKey,
+      sentTo: reservation.b2bCredentialEmailRecipient || ""
+    };
+  }
+
   const lockKeys = getB2bReservationLockKeys(reservation);
   if (lockKeys.some(k => inFlightB2bCredentialLocks.has(k))) {
     return {
@@ -6956,16 +6985,30 @@ export function getBrtDateParts(dateInput = new Date()) {
 }
 
 /**
- * Avalia deterministicamente qual ação da régua de credenciamento do hóspede deve ocorrer agora (em BRT):
- *  - Envio inicial imediato (`stageKey: "initial"`)
- *  - Antes do dia do check-in (`hoje < checkinDate`): 1 lembrete a cada 24h após o envio anterior (`reminder_24h_N`)
- *  - No dia do check-in (`D0`, reserva criada antes de `D0`): lembrete às 08:00 BRT (`reminder_checkin_morning`),
- *    lembrete às 12:00 BRT (`reminder_checkin_noon`) e alerta urgente ao gestor às 13:00 BRT se continuar pendente
- *  - Reserva same-day (`D0`): envio inicial imediato; se inicial < 11:00 BRT -> lembrete às 12:00 BRT + alerta às 13:00 BRT;
- *    se inicial >= 11:00 BRT -> lembrete +2h (`reminder_sameday_2h`) + alerta +1h após o lembrete.
+ * Avalia deterministicamente qual ação da régua reduzida de credenciamento do hóspede deve ocorrer agora (em BRT):
+ *  - Trava soberana: se já houver Nome válido + Telefone/WhatsApp do hóspede titular (ou credentialStatus === "completed"), retorna "none".
+ *  - Etapa 1 (`stageKey: "initial"`): Envio inicial imediato na criação/confirmação da reserva (E-mail + WhatsApp).
+ *  - Etapa 2 (`stageKey: "reminder_d_minus_1"`): 1 único lembrete na véspera do check-in (`D-1`) a partir das 09:00 BRT,
+ *    SOMENTE se a reserva foi criada antes de `D-1` (nunca cobra 2x no mesmo dia).
+ *  - Etapa 3 (`stageKey: "reminder_checkin_morning"`): 1 único lembrete na manhã do check-in (`D0`) a partir das 09:00 BRT,
+ *    SOMENTE se a reserva foi criada antes de `D0` (nunca cobra 2x no mesmo dia).
+ *  - Contingência Interna: Alerta exclusivo para o WhatsApp do Gestor às 12:00 BRT no `D0` (ou +2h após a criação em reservas
+ *    same-day criadas a partir das 10:00 BRT), sem disparar nova cobrança para a agência.
  */
-export function evaluateCredentialScheduleDecision(reservation, nowInput = new Date()) {
+export function evaluateCredentialScheduleDecision(reservation, nowInput = new Date(), db = null) {
   if (!reservation) return { action: "none", reason: "no_reservation" };
+  if (reservation.b2bCredentialCompletedAt || reservation.credentialStatus === "completed") {
+    return { action: "none", reason: "already_completed" };
+  }
+  const hasExplicitGuestFields =
+    reservation.guestName !== undefined ||
+    reservation.guestPhone !== undefined ||
+    reservation.guestPending !== undefined ||
+    Array.isArray(reservation.guests);
+  if (hasExplicitGuestFields && !isMissingGuestDataForCredential(reservation, db)) {
+    return { action: "none", reason: "minimum_guest_data_present" };
+  }
+
   const nowDate = nowInput instanceof Date ? nowInput : new Date(nowInput);
   const nowMs = nowDate.getTime();
   const nowBrt = getBrtDateParts(nowDate);
@@ -7003,55 +7046,70 @@ export function evaluateCredentialScheduleDecision(reservation, nowInput = new D
   const initialMs = initialDate.getTime();
   const initialBrt = getBrtDateParts(initialDate);
   const isSameDayBooking = Boolean(checkinIso && initialBrt.dateIso >= checkinIso);
+  const dMinus1Iso = checkinIso
+    ? new Date(new Date(`${checkinIso}T12:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10)
+    : "";
 
-  const stage24hEntries = Object.entries(sentStages)
-    .filter(([k, v]) => k.startsWith("reminder_24h_") && (v?.sentAt || v?.emailSentAt || v?.whatsappSentAt))
-    .map(([k, v]) => ({
-      key: k,
-      num: Number(k.replace("reminder_24h_", "")) || 1,
-      ms: new Date(v.sentAt || v.emailSentAt || v.whatsappSentAt).getTime()
-    }))
-    .sort((a, b) => a.num - b.num);
-
-  const totalRemindersSent = Object.entries(sentStages).filter(
+  const nonInitialStages = Object.entries(sentStages).filter(
     ([k, v]) => k !== "initial" && (v?.sentAt || v?.emailSentAt || v?.whatsappSentAt)
-  ).length;
+  );
+  const totalRemindersSent = nonInitialStages.length;
 
-  // 1. Antes do dia do check-in: 1 lembrete a cada 24h após o envio anterior até D-1
-  if (checkinIso && nowBrt.dateIso < checkinIso) {
-    const last24h = stage24hEntries.length > 0 ? stage24hEntries[stage24hEntries.length - 1] : null;
-    const referenceMs = last24h ? last24h.ms : initialMs;
-    if (nowMs - referenceMs >= 24 * 60 * 60 * 1000) {
-      const nextNum = (last24h ? last24h.num : 0) + 1;
-      return {
-        action: "send_stage",
-        stageKey: `reminder_24h_${nextNum}`,
-        isReminder: true,
-        reminderKind: "24h",
-        reminderNumber: nextNum
-      };
-    }
+  const hasAnyReminderOnBrtDate = (targetDateIso) =>
+    nonInitialStages.some(([, v]) => {
+      const ts = v?.sentAt || v?.emailSentAt || v?.whatsappSentAt;
+      if (!ts) return false;
+      return getBrtDateParts(new Date(ts)).dateIso === targetDateIso;
+    });
+
+  // 1. Antes da véspera do check-in (hoje < D-1): silêncio total após o envio inicial (sem loop diário de 24h)
+  if (checkinIso && dMinus1Iso && nowBrt.dateIso < dMinus1Iso) {
     if (!reservation.b2bCredentialWhatsappSentAt && !reservation.credentialInitialWaEvaluatedAt) {
       return { action: "catchup_initial_whatsapp", stageKey: "initial" };
     }
-    return { action: "none", reason: "waiting_next_24h_window" };
+    return { action: "none", reason: "waiting_d_minus_1" };
   }
 
-  // 2. Dia do check-in (D0)
+  // 2. Véspera do check-in (D-1): 1 único lembrete às 09:00 BRT, somente se a reserva foi criada antes de D-1
+  if (checkinIso && dMinus1Iso && nowBrt.dateIso === dMinus1Iso) {
+    const createdBeforeDMinus1 = initialBrt.dateIso < dMinus1Iso;
+    const hasDMinus1 = Boolean(
+      sentStages.reminder_d_minus_1?.sentAt ||
+      sentStages.reminder_d_minus_1?.emailSentAt ||
+      sentStages.reminder_d_minus_1?.whatsappSentAt ||
+      hasAnyReminderOnBrtDate(dMinus1Iso)
+    );
+
+    if (createdBeforeDMinus1 && nowBrt.minutesOfDay >= 9 * 60 && !hasDMinus1) {
+      return {
+        action: "send_stage",
+        stageKey: "reminder_d_minus_1",
+        isReminder: true,
+        reminderKind: "d_minus_1",
+        reminderNumber: totalRemindersSent + 1
+      };
+    }
+
+    if (!reservation.b2bCredentialWhatsappSentAt && !reservation.credentialInitialWaEvaluatedAt) {
+      return { action: "catchup_initial_whatsapp", stageKey: "initial" };
+    }
+    return {
+      action: "none",
+      reason: createdBeforeDMinus1 ? "waiting_d_minus_1_09h" : "created_on_d_minus_1_no_same_day_reminder"
+    };
+  }
+
+  // 3. Dia do check-in (D0): 1 único lembrete às 09:00 BRT (apenas se criada antes de D0) + Alerta ao Gestor às 12:00 BRT
   if (checkinIso && nowBrt.dateIso === checkinIso) {
     if (!isSameDayBooking) {
       const hasMorning = Boolean(
         sentStages.reminder_checkin_morning?.sentAt ||
         sentStages.reminder_checkin_morning?.emailSentAt ||
-        sentStages.reminder_checkin_morning?.whatsappSentAt
-      );
-      const hasNoon = Boolean(
-        sentStages.reminder_checkin_noon?.sentAt ||
-        sentStages.reminder_checkin_noon?.emailSentAt ||
-        sentStages.reminder_checkin_noon?.whatsappSentAt
+        sentStages.reminder_checkin_morning?.whatsappSentAt ||
+        hasAnyReminderOnBrtDate(checkinIso)
       );
 
-      if (nowBrt.minutesOfDay >= 8 * 60 && nowBrt.minutesOfDay < 12 * 60 && !hasMorning) {
+      if (nowBrt.minutesOfDay >= 9 * 60 && !hasMorning) {
         return {
           action: "send_stage",
           stageKey: "reminder_checkin_morning",
@@ -7061,18 +7119,8 @@ export function evaluateCredentialScheduleDecision(reservation, nowInput = new D
         };
       }
 
-      if (nowBrt.minutesOfDay >= 12 * 60 && !hasNoon) {
-        return {
-          action: "send_stage",
-          stageKey: "reminder_checkin_noon",
-          isReminder: true,
-          reminderKind: "checkin_noon",
-          reminderNumber: totalRemindersSent + 1
-        };
-      }
-
-      if (nowBrt.minutesOfDay >= 13 * 60 && hasNoon && !reservation.credentialCheckinUrgentAlertSentAt) {
-        return { action: "manager_overdue_alert", reason: "checkin_13h_overdue" };
+      if (nowBrt.minutesOfDay >= 12 * 60 && !reservation.credentialCheckinUrgentAlertSentAt) {
+        return { action: "manager_overdue_alert", reason: "checkin_12h_overdue" };
       }
 
       if (!reservation.b2bCredentialWhatsappSentAt && !reservation.credentialInitialWaEvaluatedAt) {
@@ -7081,56 +7129,25 @@ export function evaluateCredentialScheduleDecision(reservation, nowInput = new D
       return { action: "none", reason: "waiting_checkin_day_slot" };
     }
 
-    // Reserva criada no próprio dia do check-in (Same-Day D0)
-    if (initialBrt.minutesOfDay < 11 * 60) {
-      const hasNoon = Boolean(
-        sentStages.reminder_checkin_noon?.sentAt ||
-        sentStages.reminder_checkin_noon?.emailSentAt ||
-        sentStages.reminder_checkin_noon?.whatsappSentAt
-      );
-      if (nowBrt.minutesOfDay >= 12 * 60 && !hasNoon) {
-        return {
-          action: "send_stage",
-          stageKey: "reminder_checkin_noon",
-          isReminder: true,
-          reminderKind: "checkin_noon",
-          reminderNumber: totalRemindersSent + 1
-        };
-      }
-      if (nowBrt.minutesOfDay >= 13 * 60 && hasNoon && !reservation.credentialCheckinUrgentAlertSentAt) {
-        return { action: "manager_overdue_alert", reason: "sameday_13h_overdue" };
-      }
-    } else {
-      const samedayStage = sentStages.reminder_sameday_2h;
-      const hasSameday2h = Boolean(
-        samedayStage?.sentAt || samedayStage?.emailSentAt || samedayStage?.whatsappSentAt
-      );
-      if (!hasSameday2h && nowMs - initialMs >= 2 * 60 * 60 * 1000) {
-        return {
-          action: "send_stage",
-          stageKey: "reminder_sameday_2h",
-          isReminder: true,
-          reminderKind: "sameday_2h",
-          reminderNumber: totalRemindersSent + 1
-        };
-      }
-      if (hasSameday2h && !reservation.credentialCheckinUrgentAlertSentAt) {
-        const remSentMs = new Date(
-          samedayStage.sentAt || samedayStage.emailSentAt || samedayStage.whatsappSentAt
-        ).getTime();
-        if (nowMs - remSentMs >= 60 * 60 * 1000) {
-          return { action: "manager_overdue_alert", reason: "sameday_post_reminder_1h_overdue" };
+    // Reserva criada no próprio dia do check-in (Same-Day D0): não envia 2ª cobrança à agência no mesmo dia;
+    // apenas alerta o Gestor às 12:00 BRT (se criada antes das 10h) ou 2h após a criação (se criada >= 10h)
+    if (!reservation.credentialCheckinUrgentAlertSentAt) {
+      if (initialBrt.minutesOfDay < 10 * 60) {
+        if (nowBrt.minutesOfDay >= 12 * 60) {
+          return { action: "manager_overdue_alert", reason: "sameday_12h_overdue" };
         }
+      } else if (nowMs - initialMs >= 2 * 60 * 60 * 1000) {
+        return { action: "manager_overdue_alert", reason: "sameday_2h_overdue" };
       }
     }
 
     if (!reservation.b2bCredentialWhatsappSentAt && !reservation.credentialInitialWaEvaluatedAt) {
       return { action: "catchup_initial_whatsapp", stageKey: "initial" };
     }
-    return { action: "none", reason: "waiting_sameday_slot" };
+    return { action: "none", reason: "waiting_sameday_manager_window" };
   }
 
-  // 3. Após o dia do check-in (estadia em andamento ainda sem credenciamento)
+  // 4. Após o dia do check-in (estadia em andamento ainda sem credenciamento)
   if (!reservation.credentialCheckinUrgentAlertSentAt) {
     return { action: "manager_overdue_alert", reason: "post_checkin_overdue" };
   }
@@ -7211,7 +7228,28 @@ export async function ensurePendingB2bAgencyCredentialDispatches(
 
       if (r.checkoutDate && String(r.checkoutDate).slice(0, 10) < todayBrIso) continue;
       if (r.b2bCredentialCompletedAt || r.credentialStatus === "completed") continue;
-      if (!isMissingGuestDataForCredential(r)) continue;
+
+      // Hidrata eventual telefone já existente no CRM de hóspedes (db.guests) e aplica trava retroativa imediata
+      // sempre que a reserva já possuir pelo menos Nome válido + Telefone/WhatsApp do hóspede titular
+      if (r.guestId && !r.guestPhone && Array.isArray(db.guests)) {
+        const crmGuest = db.guests.find(g => g && String(g.id) === String(r.guestId));
+        const crmPhone = String(crmGuest?.whatsapp || crmGuest?.phone || "").trim();
+        if (crmPhone && !isPendingGuestName(crmGuest?.fullName || crmGuest?.name || "")) {
+          r.guestPhone = crmPhone;
+          didMutateState = true;
+        }
+      }
+
+      if (!isMissingGuestDataForCredential(r, db)) {
+        if (r.credentialStatus !== "completed" || !r.b2bCredentialCompletedAt || r.guestPending) {
+          r.guestPending = false;
+          r.credentialStatus = "completed";
+          r.b2bCredentialCompletedAt = r.b2bCredentialCompletedAt || evalIso;
+          cancelPendingCredentialReminders(db, r);
+          didMutateState = true;
+        }
+        continue;
+      }
 
       const isB2b =
         String(r.channel || "").toLowerCase().includes("b2b") ||
@@ -7232,7 +7270,7 @@ export async function ensurePendingB2bAgencyCredentialDispatches(
         didMutateState = true;
       }
 
-      const decision = evaluateCredentialScheduleDecision(r, evalDate);
+      const decision = evaluateCredentialScheduleDecision(r, evalDate, db);
       if (decision.action === "none") continue;
 
       if (decision.action === "catchup_initial_whatsapp") {

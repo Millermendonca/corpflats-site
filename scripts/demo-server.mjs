@@ -8596,6 +8596,31 @@ export async function reconcileFromAuditLogs(db, pgPool) {
             merged.fnhrCompleted = existing.fnhrCompleted;
             merged.preCheckinCompleted = existing.preCheckinCompleted || existing.fnhrCompleted;
           }
+          if (existing.credentialStatus === "completed" || existing.b2bCredentialCompletedAt) {
+            merged.credentialStatus = "completed";
+            merged.b2bCredentialCompletedAt = merged.b2bCredentialCompletedAt || existing.b2bCredentialCompletedAt;
+            merged.guestPending = false;
+            if (!merged.guestPhone && existing.guestPhone) merged.guestPhone = existing.guestPhone;
+            if (!merged.guestDocument && existing.guestDocument) merged.guestDocument = existing.guestDocument;
+            if (!merged.guestEmail && existing.guestEmail) merged.guestEmail = existing.guestEmail;
+          }
+          for (const credKey of [
+            "credentialSentStages",
+            "credentialFirstRequestSentAt",
+            "credentialLastRequestSentAt",
+            "b2bCredentialEmailSentAt",
+            "b2bCredentialEmailRecipient",
+            "b2bCredentialWhatsappSentAt",
+            "b2bCredentialWhatsappLastReminderAt",
+            "b2bCredentialWhatsappRecipient",
+            "credentialInitialWaEvaluatedAt",
+            "credentialCheckinUrgentAlertSentAt",
+            "credentialMissingContactAlertSentAt"
+          ]) {
+            if (!merged[credKey] && existing[credKey]) {
+              merged[credKey] = existing[credKey];
+            }
+          }
           merged.updatedAt = logDate;
           merged.status = r.status || existing.status;
           merged.checkinDate = r.checkinDate || existing.checkinDate;
@@ -33497,7 +33522,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
               cpf: reqDocClean
             },
             credentialStatus:
-              !isGuestPendingDirect && cleanPhone.length >= 10 && cleanDoc.length >= 5
+              !isGuestPendingDirect && cleanPhone.length >= 10
                 ? "completed"
                 : "pending_agency"
           }
@@ -41035,7 +41060,8 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
   }
 
-  if (!isMissingGuestDataForCredential(r)) {
+  if (!isMissingGuestDataForCredential(r, db)) {
+    r.guestPending = false;
     r.credentialStatus = "completed";
     r.b2bCredentialCompletedAt = r.b2bCredentialCompletedAt || new Date().toISOString();
     cancelPendingCredentialReminders(db, r);
@@ -42960,6 +42986,12 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
       reservation.guestPhone = String(overridePhone).trim();
     }
   }
+  if (!isMissingGuestDataForCredential(reservation, db)) {
+    reservation.guestPending = false;
+    reservation.credentialStatus = "completed";
+    reservation.b2bCredentialCompletedAt = reservation.b2bCredentialCompletedAt || new Date().toISOString();
+    cancelPendingCredentialReminders(db, reservation);
+  }
 
   const template = (db.whatsappTemplates || []).find(t => t.id === "tpl_pre_checkin_reminder");
   let msgText = "";
@@ -43372,14 +43404,15 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
 
     const fallbackExistingName = !isPendingGuestName(r.guestName) ? r.guestName : "";
     const cleanName = String(guestName !== undefined ? guestName : fallbackExistingName).trim();
-    const rawDocInput = String(guestDocument || cpf || r.guestDocument || "").trim();
+    const explicitDocInput = guestDocument !== undefined ? String(guestDocument).trim() : (cpf !== undefined ? String(cpf).trim() : "");
+    const rawDocInput = explicitDocInput || String(r.guestDocument || "").trim();
     const isPassportDoc =
       String(docType || r.guestDocType || "").toLowerCase().includes("pass") ||
       /[a-zA-Z]/.test(rawDocInput);
     const cleanPassport = isPassportDoc
       ? rawDocInput.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 20)
       : "";
-    const cleanDoc = isPassportDoc ? cleanPassport : rawDocInput.replace(/\D/g, "");
+    const cleanDoc = rawDocInput ? (isPassportDoc ? cleanPassport : rawDocInput.replace(/\D/g, "")) : "";
 
     const rawPhoneInput = String(guestPhone || whatsapp || r.guestPhone || "").trim();
     const isIntlPhone = rawPhoneInput.startsWith("+") && !rawPhoneInput.slice(1).replace(/\D/g, "").startsWith("55");
@@ -43392,23 +43425,27 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
     const cleanSecPhone = isIntlSecPhone
       ? `+${rawSecPhoneInput.slice(1).replace(/\D/g, "")}`
       : rawSecPhoneInput.replace(/\D/g, "");
-    const cleanEmail = String(guestEmail || r.guestEmail || "").trim();
+    const explicitEmailInput = guestEmail !== undefined ? String(guestEmail).trim() : "";
+    const cleanEmail = explicitEmailInput || String(r.guestEmail || "").trim();
 
     if (!cleanName || isPendingGuestName(cleanName) || cleanName.split(/\s+/).filter(Boolean).length < 2) {
       return res.status(400).json({ error: "O nome completo (nome e sobrenome) do hóspede é obrigatório." });
     }
-    if (isPassportDoc) {
-      if (!cleanPassport || cleanPassport.replace(/[^A-Z0-9]/g, "").length < 5) {
+    // CPF/Passaporte opcional para a agência: valida apenas se preenchido
+    if (explicitDocInput) {
+      if (isPassportDoc) {
+        if (!cleanPassport || cleanPassport.replace(/[^A-Z0-9]/g, "").length < 5) {
+          return res.status(400).json({
+            error: "O número do Passaporte informado é inválido (mínimo de 5 caracteres).",
+            invalidPassport: true
+          });
+        }
+      } else if (!cleanDoc || !isValidBrazilianCpf(cleanDoc)) {
         return res.status(400).json({
-          error: "O número do Passaporte informado é inválido (mínimo de 5 caracteres).",
-          invalidPassport: true
+          error: "O CPF informado é inválido. Verifique os 11 dígitos ou deixe em branco para o próprio hóspede preencher no Pré-Check-in.",
+          invalidCpf: true
         });
       }
-    } else if (!cleanDoc || !isValidBrazilianCpf(cleanDoc)) {
-      return res.status(400).json({
-        error: "O CPF informado é inválido. Por favor, verifique os 11 dígitos do CPF do hóspede (ou selecione Passaporte se for estrangeiro).",
-        invalidCpf: true
-      });
     }
     if (!cleanPhoneDigits || cleanPhoneDigits.length < (isIntlPhone ? 8 : 10)) {
       return res.status(400).json({ error: "O telefone / WhatsApp do hóspede com DDD é obrigatório." });
@@ -43427,9 +43464,10 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       console.warn("[AgencyGuestCredential] Falha ao consultar phone-exists na Z-API (prosseguindo):", waErr?.message);
     }
 
-    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    // E-mail opcional para a agência: valida apenas se preenchido
+    if (explicitEmailInput && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(explicitEmailInput)) {
       return res.status(400).json({
-        error: "O e-mail válido do hóspede é obrigatório.",
+        error: "O e-mail informado é inválido. Corrija o formato ou deixe em branco.",
         invalidEmail: true
       });
     }
@@ -43443,14 +43481,16 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       finalDocUrl = await uploadImageToStorage(normalizedDocBase64, `b2b_cred_${r.code}`, db, "guests");
     }
 
-    const resolvedDocType = isPassportDoc ? "Passaporte" : "CPF";
+    const resolvedDocType = cleanDoc ? (isPassportDoc ? "Passaporte" : "CPF") : (r.guestDocType || "CPF");
     r.guestName = cleanName;
     r.guestPending = false;
-    r.guestDocument = cleanDoc;
-    r.guestDocType = resolvedDocType;
+    if (cleanDoc) {
+      r.guestDocument = cleanDoc;
+      r.guestDocType = resolvedDocType;
+    }
     r.guestPhone = cleanPhone;
     if (cleanSecPhone) r.guestSecondaryPhone = cleanSecPhone;
-    r.guestEmail = cleanEmail;
+    if (cleanEmail) r.guestEmail = cleanEmail;
     if (finalDocUrl) r.docPhotoUrl = finalDocUrl;
     if (notes) {
       const labelPrefix = sourceMode === "guest" ? "Identificação Hóspede" : "Credenciamento Solicitante";
@@ -43469,11 +43509,11 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
         index: 1,
         isMain: true,
         name: cleanName,
-        cpf: r.guestDocument,
-        document: r.guestDocument,
+        cpf: r.guestDocument || "",
+        document: r.guestDocument || "",
         docType: resolvedDocType,
         phone: cleanPhone,
-        email: cleanEmail,
+        email: r.guestEmail || "",
         docPhotoUrl: finalDocUrl,
         hasCompletedCheckin: Boolean(r.guestDocument && cleanPhone)
       }];
@@ -43481,13 +43521,13 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       r.guests[0] = {
         ...r.guests[0],
         name: cleanName,
-        cpf: r.guestDocument,
-        document: r.guestDocument,
-        docType: resolvedDocType,
+        cpf: r.guestDocument || r.guests[0].cpf || "",
+        document: r.guestDocument || r.guests[0].document || "",
+        docType: resolvedDocType || r.guests[0].docType || "CPF",
         phone: cleanPhone,
-        email: cleanEmail || r.guests[0].email || "",
+        email: r.guestEmail || r.guests[0].email || "",
         docPhotoUrl: finalDocUrl || r.guests[0].docPhotoUrl || null,
-        hasCompletedCheckin: Boolean(r.guestDocument && cleanPhone)
+        hasCompletedCheckin: Boolean((r.guestDocument || r.guests[0].document) && cleanPhone)
       };
     }
 
@@ -43501,22 +43541,30 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
     let guestRecord = r.guestId
       ? db.guests.find(g => String(g.id) === String(r.guestId) && areGuestNamesCompatible(cleanName, g.fullName || g.name))
       : null;
-    if (!guestRecord) {
+    if (!guestRecord && cleanDoc) {
       guestRecord = db.guests.find(g => {
-        if (!areGuestNamesCompatible(cleanName, g.fullName || g.name) || !cleanDoc) return false;
+        if (!areGuestNamesCompatible(cleanName, g.fullName || g.name)) return false;
         const existingDoc = String(g.cpf || g.document || g.documentNumber || "").trim();
         return isPassportDoc
           ? existingDoc.toUpperCase().replace(/[^A-Z0-9-]/g, "") === cleanDoc
           : existingDoc.replace(/\D/g, "") === cleanDoc;
       });
     }
+    if (!guestRecord) {
+      guestRecord = db.guests.find(g =>
+        areGuestNamesCompatible(cleanName, g.fullName || g.name) &&
+        String(g.whatsapp || g.phone || "").replace(/\D/g, "") === cleanPhoneDigits
+      );
+    }
     if (guestRecord) {
       guestRecord.name = cleanName;
       guestRecord.fullName = cleanName;
-      guestRecord.cpf = r.guestDocument;
-      guestRecord.document = r.guestDocument;
-      guestRecord.documentNumber = r.guestDocument;
-      guestRecord.docType = resolvedDocType;
+      if (r.guestDocument) {
+        guestRecord.cpf = r.guestDocument;
+        guestRecord.document = r.guestDocument;
+        guestRecord.documentNumber = r.guestDocument;
+        guestRecord.docType = resolvedDocType;
+      }
       guestRecord.phone = cleanPhone;
       guestRecord.whatsapp = cleanPhone;
       if (cleanSecPhone) guestRecord.secondaryPhone = cleanSecPhone;
@@ -43533,14 +43581,14 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
         guestCode: `HOSP-${String(nextGId).padStart(5, "0")}`,
         name: cleanName,
         fullName: cleanName,
-        cpf: r.guestDocument,
-        document: r.guestDocument,
-        documentNumber: r.guestDocument,
+        cpf: r.guestDocument || "",
+        document: r.guestDocument || "",
+        documentNumber: r.guestDocument || "",
         docType: resolvedDocType,
         phone: cleanPhone,
         whatsapp: cleanPhone,
         secondaryPhone: cleanSecPhone,
-        email: cleanEmail,
+        email: r.guestEmail || "",
         docPhotoUrl: finalDocUrl,
         companyId: r.companyId || null,
         companyName: r.companyName || "",
@@ -55777,6 +55825,12 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     r.hasPreCheckin = true;
     r.hadCompletedCheckinBefore = true;
     r.preCheckinCompleted = true;
+  }
+  if (Number(guestIndex) === 1 || !isMissingGuestDataForCredential(r, db)) {
+    r.guestPending = false;
+    r.credentialStatus = "completed";
+    r.b2bCredentialCompletedAt = r.b2bCredentialCompletedAt || now;
+    cancelPendingCredentialReminders(db, r);
   }
   const hasPendingGuestsReSign = Array.isArray(r.guests) && r.guests.some(g => g.needsReSignature);
   if (!hasPendingGuestsReSign) {
