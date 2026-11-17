@@ -592,10 +592,15 @@ app.use(serverMonitorMiddleware);
 
 const staticUploadsOpts = {
   setHeaders: (res, filePath) => {
-    if (typeof filePath === "string" && filePath.toLowerCase().endsWith(".pdf")) {
-      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-      res.setHeader("Pragma", "no-cache");
-      res.setHeader("Expires", "0");
+    if (typeof filePath === "string") {
+      const lower = filePath.toLowerCase();
+      if (lower.endsWith(".pdf")) {
+        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+        res.setHeader("Pragma", "no-cache");
+        res.setHeader("Expires", "0");
+      } else if (/\.(avif|webp|jpg|jpeg|png|gif|svg)$/i.test(lower)) {
+        res.setHeader("Cache-Control", "public, max-age=604800, stale-while-revalidate=86400");
+      }
     }
   }
 };
@@ -81112,8 +81117,11 @@ export function setSmartAssetCacheHeaders(res, filePath) {
     return;
   }
 
-  // 2.1 Fotos otimizadas da galeria pública (/photos/*.avif, .webp, .jpg): cache público de 30 dias com revalidação suave
-  if (normalized.includes("/photos/") && /\.(avif|webp|jpg|jpeg|png)$/i.test(fileName)) {
+  // 2.1 Fotos otimizadas da galeria pública e do cardápio (/photos/* e /images/*): cache público de 30 dias com revalidação suave
+  if (
+    (normalized.includes("/photos/") || normalized.includes("/images/")) &&
+    /\.(avif|webp|jpg|jpeg|png)$/i.test(fileName)
+  ) {
     res.setHeader("Cache-Control", "public, max-age=2592000, stale-while-revalidate=86400");
     return;
   }
