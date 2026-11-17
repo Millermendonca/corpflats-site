@@ -659,7 +659,7 @@ Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 {{instrucao_saldo}}
 
 🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*
-Como você reservou diretamente conosco, você tem direito à entrada antecipada a partir das 10:00, *ESTRITAMENTE MEDIANTE DISPONIBILIDADE* (depende da desocupação do hóspede anterior e da conclusão da limpeza). Assim que o flat estiver pronto pela governança, você receberá a notificação por aqui!
+Lembramos que o nosso check-in oficial é *a partir das {{horario_checkin}}*. Como você reservou diretamente conosco, oferecemos o check-in antecipado a partir das 10:00 como uma *cortesia ESTRITAMENTE MEDIANTE DISPONIBILIDADE* — não é uma regra fixa, pois depende da desocupação do hóspede anterior e da conclusão da limpeza. Assim que o flat estiver pronto pela governança, você receberá a notificação por aqui!
 
 📍 *Endereço:*
 {{endereco_hotel}}
@@ -4026,7 +4026,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     const isSameDayCheckin = checkinDate === todayStr;
     const isFutureCheckin = checkinDate > todayStr;
 
-    const earlyCheckinText = `🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*\nComo você reservou diretamente conosco, você tem direito à entrada antecipada a partir das 10:00, *ESTRITAMENTE MEDIANTE DISPONIBILIDADE* (depende da desocupação do hóspede anterior e da conclusão da limpeza). Assim que o flat estiver pronto pela governança, você receberá a notificação por aqui!`;
+    const earlyCheckinText = `🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*\nLembramos que o nosso check-in oficial é *a partir das ${checkinTime}*. Como você reservou diretamente conosco, oferecemos o check-in antecipado a partir das 10:00 como uma *cortesia ESTRITAMENTE MEDIANTE DISPONIBILIDADE* — não é uma regra fixa, pois depende da desocupação do hóspede anterior e da conclusão da limpeza. Assim que o flat estiver pronto pela governança, você receberá a notificação por aqui!`;
 
     if (isFutureCheckin) {
       earlyCheckinBeneficio = earlyCheckinText;
@@ -4088,9 +4088,9 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
       const normChan = normalizeReservationChannel(reservation.channel || reservation.source || "site");
       const isOtaOrB2bChan = normChan === "booking" || normChan === "airbnb" || normChan === "b2b";
       if (!isOtaOrB2bChan) {
-        statusLiberacaoFlatHoje += `\n\n🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*\nComo você reservou diretamente conosco, você tem direito à entrada antecipada a partir das 10:00, *ESTRITAMENTE MEDIANTE DISPONIBILIDADE* (depende da desocupação do hóspede anterior e da conclusão da limpeza). Assim que o flat estiver pronto pela governança, você receberá a notificação por aqui!`;
+        statusLiberacaoFlatHoje += `\n\n🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*\nLembramos que o nosso check-in oficial é *a partir das ${checkinTime}*. Como você reservou diretamente conosco, oferecemos o check-in antecipado a partir das 10:00 como uma *cortesia ESTRITAMENTE MEDIANTE DISPONIBILIDADE* — não é uma regra fixa, pois depende da desocupação do hóspede anterior e da conclusão da limpeza. Assim que o flat estiver pronto pela governança, você receberá a notificação por aqui!`;
       } else {
-        statusLiberacaoFlatHoje += `\n\n🔑 *Cortesia de Early Check-in (a partir das 12:00):*\nO horário padrão de check-in é a partir das ${checkinTime}, mas caso a higienização seja concluída antes, liberaremos sua entrada antecipada como cortesia a partir das 12:00 (mediante disponibilidade de limpeza) e avisaremos por aqui!`;
+        statusLiberacaoFlatHoje += `\n\n🔑 *Cortesia de Early Check-in (a partir das 12:00):*\nLembramos que o nosso check-in oficial é *a partir das ${checkinTime}*, e o check-in antecipado a partir das 12:00 é uma *cortesia mediante disponibilidade* (não é uma regra fixa, pois depende da saída do hóspede anterior e da conclusão da limpeza). Assim que o flat estiver pronto, avisaremos por aqui!`;
       }
     }
   } else {
@@ -4131,13 +4131,27 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     : isTitularDone;
 
   // Tag: {{instrucao_checkin_ou_chegada}}
+  const selfCheckinEligForTag = evaluateSelfCheckinEligibility(db, reservation, refNowForTags);
+  const isSamedayContextForTag = templateId === "tpl_sameday_reservation_instructions" || triggerEvent === "sameday_reservation";
+  const lembreteCheckinCortesia = `⏰ *Lembrete Importante:* O nosso check-in oficial é *a partir das ${checkinTime}*. O check-in antecipado é uma *cortesia mediante disponibilidade* — não é uma regra fixa, pois dependemos da desocupação do hóspede anterior e da conclusão da limpeza. Assim que a camareira finalizar a preparação do seu flat, avisaremos você imediatamente por aqui!`;
+
   let instrucaoCheckinOuChegada = "";
   if (hasEnteredFlat) {
     instrucaoCheckinOuChegada = `🏡 *Check-in Concluído:* Sua entrada já foi confirmada! Acesse todos os detalhes da sua estadia pelo botão abaixo:`;
   } else if (isPreCheckinDone) {
-    instrucaoCheckinOuChegada = `✅ *Pré-Check-in Concluído:* Seus dados já foram enviados à portaria! Ao chegar no condomínio, clique no botão abaixo para autodeclarar sua entrada no flat:`;
+    if (selfCheckinEligForTag.allowed) {
+      instrucaoCheckinOuChegada = `✅ *Pré-Check-in Concluído:* Seus dados já foram enviados à portaria! Ao chegar no condomínio, clique no botão abaixo para autodeclarar sua entrada no flat:`;
+    } else if (isSamedayContextForTag) {
+      instrucaoCheckinOuChegada = `✅ *Pré-Check-in Concluído:* Seus dados já foram enviados à portaria! Assim que enviarmos a confirmação de que o flat está limpo e liberado, sua entrada estará autorizada na recepção.`;
+    } else {
+      instrucaoCheckinOuChegada = `✅ *Pré-Check-in Concluído:* Seus dados já foram enviados à portaria!\n\n${lembreteCheckinCortesia}`;
+    }
   } else {
-    instrucaoCheckinOuChegada = `👉 *Pré-Check-in Digital Obrigatório:*\nPara liberação imediata na portaria do condomínio, preencha sua ficha rápida pelo botão abaixo:`;
+    if (isSamedayContextForTag || selfCheckinEligForTag.allowed) {
+      instrucaoCheckinOuChegada = `👉 *Pré-Check-in Digital Obrigatório:*\nPara liberação imediata na portaria do condomínio, preencha sua ficha rápida pelo botão abaixo:`;
+    } else {
+      instrucaoCheckinOuChegada = `👉 *Pré-Check-in Digital Obrigatório:*\nPara liberação na portaria do condomínio, preencha sua ficha rápida pelo botão abaixo.\n\n${lembreteCheckinCortesia}`;
+    }
   }
 
   // Tag: {{mensagem_pendencia_hospedes}} (Lógica de 1 vs 2 hóspedes)
@@ -4842,7 +4856,16 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     ]);
 
     const isPreCheckinCompletedTpl = templateId === "tpl_pre_checkin_completed" || triggerEvent === "pre_checkin_completed";
-    const shouldInjectCheguei = !isPreCheckinCompletedTpl && !isReservationUpdatedTpl && (
+    const isRoomReadyTplOrEvent =
+      templateId === "tpl_room_ready_direct" ||
+      templateId === "tpl_room_ready_ota" ||
+      templateId === "tpl_room_ready_regular" ||
+      ROOM_READY_GROUP_EVENTS.has(triggerEvent);
+    const selfCheckinEligBtn = isRoomReadyTplOrEvent
+      ? { allowed: true }
+      : evaluateSelfCheckinEligibility(db, reservation, reservation?._nowOverride || db?._nowOverride || null);
+
+    const shouldInjectCheguei = !isPreCheckinCompletedTpl && !isReservationUpdatedTpl && Boolean(selfCheckinEligBtn.allowed) && (
       hadCheckinOrChegueiInTemplate ||
       ALLOWED_TEMPLATES_FOR_CHEGUEI.has(templateId) ||
       ALLOWED_EVENTS_FOR_CHEGUEI.has(triggerEvent)
@@ -4863,6 +4886,16 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
       }
     } else {
       list = list.filter(b => !isChegueiBtn(b));
+      // Se removeu o botão "Já Cheguei" porque o flat ainda está em limpeza/antes do horário (ex.: mensagem das 07:00),
+      // garante que o Portal da Reserva permaneça acessível
+      if (hadCheckinOrChegueiInTemplate && !list.some(b => b.id === "btn_portal" || (b.url && String(b.url).includes("/minha-reserva")))) {
+        list.push({
+          id: "btn_portal",
+          type: "URL",
+          label: "🏨 Portal da Reserva",
+          url: linkPortalHospede
+        });
+      }
     }
   } else {
     // Pré-check-in PENDENTE (ou re-assinatura pendente):
@@ -9300,7 +9333,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             tpl.documentUrl = db?.zapiConfig?.guestGuidePdfUrl || defDir.documentUrl;
             tpl.documentName = db?.zapiConfig?.guestGuidePdfName || defDir.documentName;
             tpl.documentCaption = tpl.documentCaption || defDir.documentCaption;
-            if (!tpl.message.includes("status_cafe") || tpl.message.includes("sem filas") || !tpl.message.includes("ESTRITAMENTE MEDIANTE DISPONIBILIDADE") || !tpl.message.includes("{{num_hospedes}}") || !tpl.message.includes("{{canal_reserva}}")) {
+            if (!tpl.message.includes("status_cafe") || tpl.message.includes("sem filas") || !tpl.message.includes("ESTRITAMENTE MEDIANTE DISPONIBILIDADE") || tpl.message.includes("você tem direito à entrada antecipada") || !tpl.message.includes("{{num_hospedes}}") || !tpl.message.includes("{{canal_reserva}}")) {
               tpl.message = defDir.message;
               tpl.description = defDir.description;
               tpl.buttons = defDir.buttons;
@@ -18108,6 +18141,156 @@ export function getSameDayFlatReleaseState(db, reservation, nowOverride = null) 
     releaseTimeStr,
     isAtOrAfterRelease,
     isFlatReadyNow
+  };
+}
+
+/**
+ * Avalia se a autodeclaração de entrada no flat ("Já Cheguei no Flat" / `/self-checkin`)
+ * já está liberada neste instante para a reserva.
+ * - Bloqueia em datas anteriores ao check-in (`future_checkin_date`);
+ * - No dia do check-in, bloqueia enquanto o flat ainda estiver ocupado pelo hóspede anterior ou em limpeza (`flat_not_clean`),
+ *   e antes do horário mínimo permitido pelo canal/autorização (`before_release_time`);
+ * - Em dias posteriores ao check-in dentro da estadia ativa (`todayStr > checkinDate`), libera normalmente (`ok`).
+ */
+export function evaluateSelfCheckinEligibility(db, reservation, nowOverride = null) {
+  const now = nowOverride instanceof Date ? nowOverride : (nowOverride ? new Date(nowOverride) : new Date());
+  const { todayStr, hour: brHour, minute: brMinute } = getBrasiliaDateParts(now);
+  const standardCheckinTime = db?.settings?.checkinTime || "14:00";
+
+  if (!reservation || typeof reservation !== "object") {
+    return {
+      allowed: false,
+      reason: "invalid_status",
+      todayStr,
+      isCheckinToday: false,
+      isFlatClean: false,
+      standardCheckinTime,
+      effectiveReleaseTime: standardCheckinTime,
+      isOtaOrB2b: false
+    };
+  }
+
+  const stLower = String(reservation.status || "").toLowerCase().trim();
+  if (
+    stLower === "cancelada" ||
+    stLower === "cancelled" ||
+    stLower === "cancelado" ||
+    stLower === "no_show" ||
+    stLower === "pre_reserva" ||
+    stLower === "pendente" ||
+    stLower === "expirada" ||
+    stLower === "completed" ||
+    stLower === "checked_out" ||
+    stLower === "checkout" ||
+    reservation.checkoutDone === true
+  ) {
+    return {
+      allowed: false,
+      reason: "invalid_status",
+      todayStr,
+      isCheckinToday: reservation.checkinDate === todayStr,
+      isFlatClean: false,
+      standardCheckinTime,
+      effectiveReleaseTime: standardCheckinTime,
+      isOtaOrB2b: false
+    };
+  }
+
+  const normHHMM = (raw) => {
+    const s = String(raw || "").trim();
+    const m = s.match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return null;
+    const hh = Number(m[1]);
+    const mm = Number(m[2]);
+    if (isNaN(hh) || isNaN(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+    return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+  };
+
+  const resvChannel = normalizeReservationChannel(reservation.channel || reservation.source || "site");
+  const isOtaOrB2b = resvChannel === "booking" || resvChannel === "airbnb" || resvChannel === "b2b";
+  const freeEarlyTime = isOtaOrB2b ? "12:00" : "10:00";
+
+  const isPaidEarly = Boolean(reservation.pendingEarlyCheckin && reservation.pendingEarlyCheckin.status === "paid");
+  const isEarlyAuthorized = Boolean(reservation.earlyCheckinAuthorized || isPaidEarly);
+  const validAdminEarlyTime = isEarlyAuthorized ? (normHHMM(reservation.earlyCheckinTime) || "00:00") : null;
+  const stdHHMM = normHHMM(standardCheckinTime) || "14:00";
+  const rawResHHMM = normHHMM(reservation.checkinTime);
+  const customResCheckinTime = (rawResHHMM && rawResHHMM !== stdHHMM && rawResHHMM !== "14:00") ? rawResHHMM : null;
+
+  let effectiveReleaseTime = freeEarlyTime;
+  if (validAdminEarlyTime !== null && validAdminEarlyTime < effectiveReleaseTime) {
+    effectiveReleaseTime = validAdminEarlyTime;
+  }
+  if (customResCheckinTime && customResCheckinTime < effectiveReleaseTime) {
+    effectiveReleaseTime = customResCheckinTime;
+  }
+
+  const currentHHMM = `${String(brHour).padStart(2, "0")}:${String(brMinute).padStart(2, "0")}`;
+
+  if (reservation.checkinDate && todayStr < reservation.checkinDate) {
+    return {
+      allowed: false,
+      reason: "future_checkin_date",
+      todayStr,
+      isCheckinToday: false,
+      isFlatClean: false,
+      standardCheckinTime: stdHHMM,
+      effectiveReleaseTime,
+      isOtaOrB2b
+    };
+  }
+
+  if (reservation.checkinDate && todayStr > reservation.checkinDate) {
+    return {
+      allowed: true,
+      reason: "ok",
+      todayStr,
+      isCheckinToday: false,
+      isFlatClean: true,
+      standardCheckinTime: stdHHMM,
+      effectiveReleaseTime,
+      isOtaOrB2b
+    };
+  }
+
+  const isCheckinToday = Boolean(reservation.checkinDate === todayStr);
+  const isFlatClean = !isFlatStillBeingCleanedOnCheckinDay(db, reservation, todayStr);
+
+  if (!isFlatClean) {
+    return {
+      allowed: false,
+      reason: "flat_not_clean",
+      todayStr,
+      isCheckinToday,
+      isFlatClean: false,
+      standardCheckinTime: stdHHMM,
+      effectiveReleaseTime,
+      isOtaOrB2b
+    };
+  }
+
+  if (isCheckinToday && currentHHMM < effectiveReleaseTime) {
+    return {
+      allowed: false,
+      reason: "before_release_time",
+      todayStr,
+      isCheckinToday: true,
+      isFlatClean: true,
+      standardCheckinTime: stdHHMM,
+      effectiveReleaseTime,
+      isOtaOrB2b
+    };
+  }
+
+  return {
+    allowed: true,
+    reason: "ok",
+    todayStr,
+    isCheckinToday,
+    isFlatClean: true,
+    standardCheckinTime: stdHHMM,
+    effectiveReleaseTime,
+    isOtaOrB2b
   };
 }
 

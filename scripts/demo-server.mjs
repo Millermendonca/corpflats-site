@@ -135,6 +135,7 @@ import {
   dispatchCatchUpGuestRulerMessages,
   reservationHasAnyContact,
   isFlatStillBeingCleanedOnCheckinDay,
+  evaluateSelfCheckinEligibility,
   checkZapiPhoneExists,
   extractPixPayloadAmount,
   isPixPayloadStaleForAmount,
@@ -25497,6 +25498,15 @@ app.post("/api/cleaning/assignments/:requestId/resolve-issue", (req, res) => {
   const flat = db.flats.find(f => f.id === item.flatId);
   const assignedUser = db.users.find(u => u.id === item.assignedUserId);
 
+  const isStayoverResolve = Boolean(item.source === "stayover" || item.cleaningType === "stayover");
+  if (!isStayoverResolve) {
+    const flatNum = flat ? flat.number : (item.flatNumber || String(item.flatId));
+    const reqBaseUrl = `${req.protocol}://${req.get("host")}`;
+    triggerRoomReadyWhatsApp(db, saveDatabase, item.flatId, flatNum, reqBaseUrl).catch(e =>
+      console.warn("[Room Ready WhatsApp - Resolve Issue] Erro ao notificar:", e.message)
+    );
+  }
+
   res.json({
     ...item,
     flatNumber: flat ? flat.number : String(item.flatId),
@@ -42960,6 +42970,10 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     isFlatClean,
     hasEarlyCheckinBenefit,
     canDoEarlyCheckin,
+    canConfirmSelfCheckin: Boolean(isPortalUnlocked && !isPreReservationBlocked(r) && evaluateSelfCheckinEligibility(db, r).allowed),
+    selfCheckinBlockReason: (!isPortalUnlocked || isPreReservationBlocked(r))
+      ? "payment_pending"
+      : (evaluateSelfCheckinEligibility(db, r).allowed ? null : evaluateSelfCheckinEligibility(db, r).reason),
     isPastOrExact14h,
     currentHour,
     brasilia: bNow,
@@ -44523,6 +44537,136 @@ app.all(["/api/pms/guest-portal/:code/self-checkin", "/api/pms/reservations/by-c
   }
 
   const now = new Date();
+  const guestParam = req.query.guest || req.query.guestIndex || "";
+  const guestQuery = guestParam ? `&guest=${encodeURIComponent(guestParam)}` : "";
+  const alreadyPhysicallyEntered = Boolean(r.guestSelfCheckin || r.actualCheckinAt || r.status === "in_house");
+  const eligibility = evaluateSelfCheckinEligibility(db, r, now);
+
+  if (!alreadyPhysicallyEntered && !eligibility.allowed) {
+    const stdTime = eligibility.standardCheckinTime || db.settings?.checkinTime || "14:00";
+    const rawGuestName = String(r.guestName || r.guests?.[0]?.name || "Hóspede").trim();
+    const firstName = rawGuestName.split(/\s+/)[0] || "Hóspede";
+
+    let holdPortalMessage = `Recebemos sua sinalização! Lembramos que nosso check-in oficial é a partir das ${stdTime} — o check-in antecipado é uma cortesia mediante disponibilidade, e não uma regra fixa. Assim que seu flat estiver limpo e liberado pela governança, avisaremos você imediatamente no WhatsApp!`;
+
+    if (eligibility.reason === "future_checkin_date") {
+      holdPortalMessage = `Sua data de check-in ainda não chegou. Lembramos que no dia da chegada o nosso check-in oficial é a partir das ${stdTime}, e o check-in antecipado é uma cortesia mediante disponibilidade (não é uma regra fixa).`;
+    } else if (eligibility.isCheckinToday && !eligibility.isFlatClean) {
+      holdPortalMessage = `Recebemos sua sinalização e já pedimos prioridade para a governança! Lembramos que nosso check-in oficial é a partir das ${stdTime} — o check-in antecipado é uma cortesia mediante disponibilidade (não é uma regra fixa, pois dependemos da saída do hóspede anterior e da limpeza completa). Assim que a camareira finalizar, avisaremos você imediatamente no WhatsApp!`;
+
+      // Prioriza na governança, mas NÃO marca guestSelfCheckin nem status="checkin",
+      // preservando intacto o disparo automático de "Flat Pronto" quando a limpeza concluir!
+      r.isPriority = true;
+      r.priorityReason = r.priorityReason || "Hóspede sinalizou chegada e aguarda liberação";
+      r.updatedAt = now.toISOString();
+
+      if (Array.isArray(db.cleaningRequests)) {
+        for (const c of db.cleaningRequests) {
+          if (
+            c && !c.isDeleted && c.status !== "deleted" &&
+            c.status !== "clean" && c.status !== "completed" &&
+            !c.isInstructionOnly && c.source !== "manual_instruction" &&
+            (Number(c.flatId) === Number(r.flatId) || String(c.flatNumber) === String(r.flatNumber)) &&
+            (c.requestDate === eligibility.todayStr || c.effectiveDate === eligibility.todayStr)
+          ) {
+            c.isPriority = true;
+            c.priorityReason = c.priorityReason || "Hóspede sinalizou chegada e aguarda liberação";
+            c.updatedAt = now.toISOString();
+          }
+        }
+      }
+
+      if (r.earlySelfCheckinHoldNotifiedDate !== eligibility.todayStr) {
+        r.earlySelfCheckinHoldNotifiedDate = eligibility.todayStr;
+        r.earlySelfCheckinHoldNotifiedAt = now.toISOString();
+
+        createNotification({
+          category: "checkin",
+          title: `⏳ Hóspede Aguardando Liberação - Flat ${r.flatNumber}`,
+          message: `O hóspede ${r.guestName} clicou em "Já cheguei", mas o Flat ${r.flatNumber} ainda está em preparação. Limpeza priorizada; o aviso de Flat Pronto será enviado automaticamente ao concluir.`,
+          severity: "warning",
+          metadata: { reservationId: r.id, flatNumber: r.flatNumber, guestName: r.guestName, pendingRelease: true },
+          targetUrl: "/dashboard"
+        });
+
+        const recips = getReservationRecipients(r, db);
+        const targetPhone = cleanWhatsAppPhone(recips.guest?.phone || r.guestPhone || "");
+        if (db?.zapiConfig?.enabled && targetPhone) {
+          const waHoldText =
+            `Olá, *${firstName}*! Recebemos a sua sinalização de chegada! 🙌\n\n` +
+            `No momento, o seu *Flat ${r.flatNumber}* ainda está em processo de desocupação/higienização pela nossa equipe de governança.\n\n` +
+            `⏰ *Importante lembrar:* O nosso check-in oficial é *a partir das ${stdTime}*. O check-in antecipado é uma *cortesia mediante disponibilidade*, e não uma regra fixa, pois dependemos da saída do hóspede anterior e do tempo de limpeza completa do flat.\n\n` +
+            `✨ Já sinalizamos *prioridade* para a nossa equipe e, *assim que a camareira finalizar a limpeza*, enviaremos uma mensagem aqui no WhatsApp avisando na hora que o seu flat está pronto para o check-in!`;
+
+          const policy = evaluateZapiChannelPolicy(db.zapiConfig, {
+            channelId: "guest_schedule",
+            phone: targetPhone,
+            message: waHoldText,
+            db
+          });
+          if (policy.allowed) {
+            sendZapiMessage(db.zapiConfig, {
+              phone: targetPhone,
+              message: waHoldText,
+              channelId: "guest_schedule",
+              recipientRole: "guest",
+              triggerEvent: "self_checkin_pending_cleaning",
+              db
+            }).then(waRes => {
+              const sentIso = new Date().toISOString();
+              if (!Array.isArray(db.whatsappHistory)) db.whatsappHistory = [];
+              db.whatsappHistory.push({
+                id: `hold_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                reservationCode: r.code,
+                reservationId: r.id || null,
+                title: "Aguardando Liberação do Flat • Lembrete Check-in 14:00",
+                guestName: r.guestName,
+                guestPhone: targetPhone,
+                recipientType: "guest",
+                recipientName: r.guestName,
+                triggerEvent: "self_checkin_pending_cleaning",
+                message: waHoldText,
+                status: waRes?.success ? "sent" : "failed",
+                method: waRes?.method || "instant_trigger",
+                error: waRes?.error || null,
+                sentAt: sentIso
+              });
+              appendMessageToConversation(db, {
+                phone: targetPhone,
+                senderName: "CorpFlats",
+                senderPhone: db?.zapiConfig?.instanceId || "",
+                fromMe: true,
+                text: waHoldText,
+                type: "text",
+                triggerEvent: "self_checkin_pending_cleaning",
+                reservationCode: r.code,
+                status: waRes?.success ? "read" : "failed",
+                timestamp: sentIso,
+                messageId: waRes?.messageId || `msg_hold_${Date.now()}`
+              });
+              saveDatabase();
+            }).catch(err => console.warn("[Self-Checkin Hold WhatsApp Error]:", err?.message));
+          }
+        }
+      }
+      saveDatabase();
+    } else if (eligibility.reason === "before_release_time") {
+      holdPortalMessage = `Recebemos sua sinalização! Lembramos que nosso check-in oficial é a partir das ${stdTime}, e o check-in antecipado (a partir das ${eligibility.effectiveReleaseTime}) é uma cortesia mediante disponibilidade, não uma regra fixa. Assim que liberado no horário, enviaremos a confirmação no seu WhatsApp!`;
+    }
+
+    if (req.method === "GET") {
+      return res.redirect(`/minha-reserva/${r.code}?self_checkin=pending_release&reason=${encodeURIComponent(eligibility.reason)}${guestQuery}`);
+    }
+    return res.json({
+      success: false,
+      pendingRelease: true,
+      reason: eligibility.reason,
+      message: holdPortalMessage,
+      flatNumber: r.flatNumber,
+      status: r.status
+    });
+  }
+
   r.guestSelfCheckin = true;
   r.guestSelfCheckinAt = now.toISOString();
   if (r.status !== "checkin" && r.status !== "checkout") {
@@ -44552,8 +44696,6 @@ app.all(["/api/pms/guest-portal/:code/self-checkin", "/api/pms/reservations/by-c
   triggerImmediateWhatsApp(db, saveDatabase, "checkin_completed", r).catch(() => {});
 
   if (req.method === "GET") {
-    const guestParam = req.query.guest || req.query.guestIndex || "";
-    const guestQuery = guestParam ? `&guest=${encodeURIComponent(guestParam)}` : "";
     return res.redirect(`/minha-reserva/${r.code}?self_checkin=success${guestQuery}`);
   }
 

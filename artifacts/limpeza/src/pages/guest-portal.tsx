@@ -557,6 +557,7 @@ export default function GuestPortal() {
   const [editingArrival, setEditingArrival] = useState(false)
   const [arrivalSuccessNotice, setArrivalSuccessNotice] = useState(false)
   const [selfCheckinNotice, setSelfCheckinNotice] = useState(false)
+  const [selfCheckinPendingMessage, setSelfCheckinPendingMessage] = useState<string | null>(null)
   const [confirmingSelfCheckin, setConfirmingSelfCheckin] = useState(false)
   const [copiedGuestLinkIndex, setCopiedGuestLinkIndex] = useState<number | null>(null)
 
@@ -700,15 +701,33 @@ export default function GuestPortal() {
 
       if (typeof window !== "undefined") {
         const sp = new URLSearchParams(window.location.search)
-        if (sp.get("self_checkin") === "success" || sp.get("action") === "self_checkin") {
+        if (sp.get("self_checkin") === "pending_release") {
+          const reasonParam = sp.get("reason") || ""
+          const msg = reasonParam === "future_checkin_date"
+            ? "Sua data de check-in ainda não chegou. Lembramos que no dia da chegada nosso check-in oficial é a partir das 14:00, e o check-in antecipado é uma cortesia mediante disponibilidade (não é uma regra fixa)."
+            : reasonParam === "before_release_time"
+              ? "Recebemos sua sinalização! Lembramos que nosso check-in oficial é a partir das 14:00, e o check-in antecipado é uma cortesia mediante disponibilidade (não é uma regra fixa). Assim que o horário de liberação iniciar, avisaremos você no WhatsApp!"
+              : "Recebemos sua sinalização e já priorizamos a preparação do seu flat! Lembramos que nosso check-in oficial é a partir das 14:00 — o check-in antecipado é uma cortesia mediante disponibilidade (não é uma regra fixa, pois dependemos da saída do hóspede anterior e da limpeza completa). Assim que a camareira finalizar, avisaremos você imediatamente no WhatsApp!"
+          setSelfCheckinPendingMessage(msg)
+        } else if (sp.get("self_checkin") === "success") {
           setSelfCheckinNotice(true)
-          if (sp.get("action") === "self_checkin") {
-            fetch(`/api/pms/guest-portal/${encodeURIComponent(rawCode)}/self-checkin`, { method: "POST" })
-              .then(res => res.json())
-              .then(() => fetchPortalData(rawCode))
-              .catch(() => {})
-          }
           setTimeout(() => setSelfCheckinNotice(false), 10000)
+        } else if (sp.get("action") === "self_checkin") {
+          fetch(`/api/pms/guest-portal/${encodeURIComponent(rawCode)}/self-checkin`, { method: "POST" })
+            .then(res => res.json())
+            .then(json => {
+              if (json?.pendingRelease) {
+                setSelfCheckinPendingMessage(
+                  json.message ||
+                  "Seu flat ainda está em preparação! Lembramos que nosso check-in oficial é a partir das 14:00 e o check-in antecipado é uma cortesia mediante disponibilidade (não é uma regra). Avisaremos você no WhatsApp assim que a camareira finalizar!"
+                )
+              } else if (json?.success) {
+                setSelfCheckinNotice(true)
+                setTimeout(() => setSelfCheckinNotice(false), 10000)
+              }
+              return fetchPortalData(rawCode)
+            })
+            .catch(() => {})
         }
       }
     } else {
@@ -720,6 +739,30 @@ export default function GuestPortal() {
       }
     }
   }, [rawCode])
+
+  const handleConfirmSelfCheckin = async (targetCode?: string) => {
+    const resolvedCode = targetCode || code || data?.reservation?.code
+    if (!resolvedCode) return
+    try {
+      setConfirmingSelfCheckin(true)
+      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(resolvedCode)}/self-checkin`, { method: "POST" })
+      const json = await res.json().catch(() => ({}))
+      if (json?.pendingRelease) {
+        setSelfCheckinNotice(false)
+        setSelfCheckinPendingMessage(
+          json.message ||
+          "Seu flat ainda está em preparação! Lembramos que nosso check-in oficial é a partir das 14:00 e o check-in antecipado é uma cortesia mediante disponibilidade (não é uma regra). Avisaremos você no WhatsApp assim que a camareira finalizar!"
+        )
+      } else if (res.ok && json?.success !== false) {
+        setSelfCheckinPendingMessage(null)
+        setSelfCheckinNotice(true)
+      }
+      await fetchPortalData(resolvedCode)
+    } catch {}
+    finally {
+      setConfirmingSelfCheckin(false)
+    }
+  }
 
   const handleClaimEarlyCheckin = async () => {
     try {
@@ -1586,6 +1629,11 @@ export default function GuestPortal() {
 
   const currentHour = data?.currentHour ?? data?.brasilia?.hour ?? (typeof window !== "undefined" ? new Date().getHours() : 14)
   const isPastOrExact14h = Boolean(data?.isPastOrExact14h ?? (currentHour >= 14))
+  const canConfirmSelfCheckin = Boolean(
+    data?.canConfirmSelfCheckin !== undefined
+      ? data.canConfirmSelfCheckin
+      : (data?.isCheckinToday && isFlatClean && (canDoEarlyCheckin || isPastOrExact14h))
+  )
 
   const checkinFormatted = reservation.checkinDate ? format(parseISO(reservation.checkinDate), "dd 'de' MMMM 'de' yyyy", { locale: ptBR }) : ""
   const checkoutFormatted = reservation.checkoutDate ? format(parseISO(reservation.checkoutDate), "dd 'de' MMMM 'de' yyyy", { locale: ptBR }) : ""
@@ -2549,25 +2597,13 @@ export default function GuestPortal() {
                 <span>Pré-Check-in</span>
               </Button>
             )}
-            {!hasEnteredFlat && isPreCheckinDone && (
+            {!hasEnteredFlat && isPreCheckinDone && canConfirmSelfCheckin && (
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 disabled={confirmingSelfCheckin}
-                onClick={async () => {
-                  try {
-                    setConfirmingSelfCheckin(true)
-                    const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(code || reservation.code)}/self-checkin`, { method: "POST" })
-                    if (res.ok) {
-                      setSelfCheckinNotice(true)
-                      await fetchPortalData(code || reservation.code)
-                    }
-                  } catch {}
-                  finally {
-                    setConfirmingSelfCheckin(false)
-                  }
-                }}
+                onClick={() => handleConfirmSelfCheckin(code || reservation.code)}
                 className="hidden md:inline-flex h-9 px-3 rounded-xl border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs items-center gap-2 shadow-2xs"
               >
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -2647,21 +2683,9 @@ export default function GuestPortal() {
                       <span>Pré-Check-in Digital</span>
                     </DropdownMenuItem>
                   )}
-                  {!hasEnteredFlat && isPreCheckinDone && (
+                  {!hasEnteredFlat && isPreCheckinDone && canConfirmSelfCheckin && (
                     <DropdownMenuItem
-                      onClick={async () => {
-                        try {
-                          setConfirmingSelfCheckin(true)
-                          const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(code || reservation.code)}/self-checkin`, { method: "POST" })
-                          if (res.ok) {
-                            setSelfCheckinNotice(true)
-                            await fetchPortalData(code || reservation.code)
-                          }
-                        } catch {}
-                        finally {
-                          setConfirmingSelfCheckin(false)
-                        }
-                      }}
+                      onClick={() => handleConfirmSelfCheckin(code || reservation.code)}
                       className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-emerald-50 text-emerald-800"
                     >
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -3116,6 +3140,31 @@ export default function GuestPortal() {
           </div>
         )}
 
+        {/* Banner de Aviso quando o Flat ainda está em preparação / antes do horário */}
+        {selfCheckinPendingMessage && (
+          <div className="p-4 sm:p-5 rounded-3xl bg-amber-50 border border-amber-300 text-amber-950 shadow-md flex items-start justify-between gap-4 animate-in fade-in slide-in-from-top-2">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-100 border border-amber-200 flex items-center justify-center shrink-0 mt-0.5">
+                <Clock className="w-5 h-5 text-amber-700" />
+              </div>
+              <div>
+                <h3 className="text-sm sm:text-base font-black tracking-tight text-amber-950">
+                  ⏳ Acomodação ainda em preparação
+                </h3>
+                <p className="text-xs sm:text-sm text-amber-900 leading-relaxed mt-1">
+                  {selfCheckinPendingMessage}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setSelfCheckinPendingMessage(null)}
+              className="text-amber-700 hover:text-amber-950 text-xs font-bold px-2 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 shrink-0"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* ── 1. Hero / Saudação e Resumo da Estadia ─────────────────────── */}
         <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-6 sm:p-8 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
@@ -3273,7 +3322,7 @@ export default function GuestPortal() {
                 </span>
                 <span className="text-[11px] text-emerald-700 font-semibold flex items-center gap-1">
                   <Clock className="w-3.5 h-3.5 shrink-0" />
-                  <span>A partir das {data?.checkinTime || "14:00"} (antecipado assim que limpo)</span>
+                  <span>A partir das {data?.checkinTime || "14:00"} (antecipado por cortesia mediante disponibilidade)</span>
                 </span>
               </div>
 
@@ -3338,27 +3387,27 @@ export default function GuestPortal() {
                 </div>
               ) : isPreCheckinDone ? (
                 <div className="space-y-1.5 mt-2">
-                  <Button
-                    type="button"
-                    disabled={confirmingSelfCheckin}
-                    onClick={async () => {
-                      try {
-                        setConfirmingSelfCheckin(true)
-                        const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(code || reservation.code)}/self-checkin`, { method: "POST" })
-                        if (res.ok) {
-                          setSelfCheckinNotice(true)
-                          await fetchPortalData(code || reservation.code)
-                        }
-                      } catch {}
-                      finally {
-                        setConfirmingSelfCheckin(false)
-                      }
-                    }}
-                    className="w-full h-auto min-h-10 py-2 px-3 whitespace-normal leading-tight text-center text-xs sm:text-sm font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2"
-                  >
-                    <CheckCircle2 className="w-4 h-4 shrink-0" />
-                    <span>{confirmingSelfCheckin ? "Confirmando..." : "📍 Já Cheguei no Flat (Confirmar Entrada)"}</span>
-                  </Button>
+                  {canConfirmSelfCheckin ? (
+                    <Button
+                      type="button"
+                      disabled={confirmingSelfCheckin}
+                      onClick={() => handleConfirmSelfCheckin(code || reservation.code)}
+                      className="w-full h-auto min-h-10 py-2 px-3 whitespace-normal leading-tight text-center text-xs sm:text-sm font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2"
+                    >
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>{confirmingSelfCheckin ? "Confirmando..." : "📍 Já Cheguei no Flat (Confirmar Entrada)"}</span>
+                    </Button>
+                  ) : data?.isCheckinToday ? (
+                    <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px] leading-snug">
+                      <strong className="block font-bold text-amber-950 mb-0.5">🧹 Aguardando Liberação do Flat</strong>
+                      Seu pré-check-in já está concluído! Lembramos que nosso check-in oficial é <strong>a partir das {data?.checkinTime || "14:00"}</strong> — o check-in antecipado é uma <strong>cortesia mediante disponibilidade</strong> (não é uma regra fixa). Assim que a camareira finalizar a limpeza, você receberá o aviso no WhatsApp!
+                    </div>
+                  ) : (
+                    <div className="p-2.5 rounded-xl bg-sky-50 border border-sky-200 text-sky-900 text-[11px] leading-snug">
+                      <strong className="block font-bold text-sky-950 mb-0.5">✓ Pré-Check-in Digital Concluído</strong>
+                      Seus dados já estão prontos para a recepção! No dia da chegada, nosso check-in oficial é <strong>a partir das {data?.checkinTime || "14:00"}</strong> (com check-in antecipado como cortesia mediante disponibilidade).
+                    </div>
+                  )}
                   <button
                     type="button"
                     onClick={() => setLocation(getCheckinPath(true))}
