@@ -956,11 +956,22 @@ export default function GuestBreakfast() {
       {/* ── Hero Section (Capa) ────────────────────── */}
       <header className="relative min-h-[140px] sm:min-h-[165px] flex items-center justify-center px-4 sm:px-8 py-6 text-center overflow-hidden">
         <div className="absolute inset-0 z-0">
-          <img
-            src="/photos/soho/cafe-mesa-quarto.jpg"
-            alt="Café da Manhã CorpFlats no Edifício Soho Residence"
-            className="w-full h-full object-cover object-center"
-          />
+          <picture className="contents">
+            <source
+              type="image/webp"
+              srcSet="/photos/soho/cafe-mesa-quarto-640w.webp 640w, /photos/soho/cafe-mesa-quarto-1024w.webp 1024w, /photos/soho/cafe-mesa-quarto-1600w.webp 1600w"
+              sizes="100vw"
+            />
+            <img
+              src="/photos/soho/cafe-mesa-quarto.jpg"
+              alt="Café da Manhã CorpFlats no Edifício Soho Residence"
+              width={1600}
+              height={1067}
+              {...({ fetchpriority: "high" } as any)}
+              decoding="async"
+              className="w-full h-full object-cover object-center"
+            />
+          </picture>
           <div className="absolute inset-0 bg-gradient-to-b from-[#091E26]/60 via-[#091E26]/65 to-[#091E26]/80" />
         </div>
 

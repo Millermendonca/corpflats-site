@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Shell } from "@/components/layout";
 import { MinibarEcosystemNav } from "@/components/minibar-ecosystem-nav";
+import { FrigobarPicture } from "@/components/frigobar-picture";
 import { useGetMe } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -2696,7 +2697,15 @@ export default function MinibarAdminPage() {
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-center gap-3 min-w-0">
                             {p.imageUrl ? (
-                              <img src={p.imageUrl} alt={p.name} className="w-12 h-12 rounded-2xl object-cover shrink-0" />
+                              <FrigobarPicture
+                                src={p.imageUrl}
+                                alt={p.name}
+                                width={48}
+                                height={48}
+                                sizes="48px"
+                                loading="lazy"
+                                className="w-12 h-12 rounded-2xl object-cover shrink-0"
+                              />
                             ) : (
                               <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center font-black text-sm shrink-0">
                                 🧊
@@ -2795,7 +2804,15 @@ export default function MinibarAdminPage() {
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
                           {prod.imageUrl ? (
-                            <img src={prod.imageUrl} alt={prod.name} className="w-9 h-9 rounded-xl object-cover shrink-0" />
+                            <FrigobarPicture
+                              src={prod.imageUrl}
+                              alt={prod.name}
+                              width={36}
+                              height={36}
+                              sizes="36px"
+                              loading="lazy"
+                              className="w-9 h-9 rounded-xl object-cover shrink-0"
+                            />
                           ) : (
                             <div className="w-9 h-9 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold text-xs shrink-0">
                               🧊
@@ -3082,9 +3099,13 @@ export default function MinibarAdminPage() {
                               </div>
 
                               <div className="w-full aspect-square rounded-xl bg-white border border-border/50 flex items-center justify-center p-2 overflow-hidden shadow-inner">
-                                <img
+                                <FrigobarPicture
                                   src={item.currentImageUrl}
                                   alt={`Legado ${item.productName}`}
+                                  width={512}
+                                  height={512}
+                                  sizes="(max-width: 640px) 45vw, 260px"
+                                  loading="lazy"
                                   className="w-full h-full object-contain"
                                 />
                               </div>
@@ -3115,9 +3136,13 @@ export default function MinibarAdminPage() {
                                 className="w-full aspect-square rounded-xl bg-white border border-emerald-500/20 flex items-center justify-center p-2 overflow-hidden shadow-xs relative group cursor-pointer"
                                 onClick={() => setZoomModalItem(item)}
                               >
-                                <img
+                                <FrigobarPicture
                                   src={activeBrand.imageUrl}
                                   alt={activeBrand.brandName}
+                                  width={512}
+                                  height={512}
+                                  sizes="(max-width: 640px) 45vw, 260px"
+                                  loading="lazy"
                                   className="w-full h-full object-contain"
                                 />
                                 <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-xl">
@@ -4049,9 +4074,13 @@ export default function MinibarAdminPage() {
                         <span className="text-[10px] text-muted-foreground">Resolução 1024x1024</span>
                       </div>
                       <div className="w-full aspect-square rounded-2xl bg-white border border-border p-3 flex items-center justify-center shadow-inner">
-                        <img
+                        <FrigobarPicture
                           src={zoomModalItem.currentImageUrl}
                           alt="Legado"
+                          width={1024}
+                          height={1024}
+                          sizes="(max-width: 768px) 90vw, 480px"
+                          loading="eager"
                           className="w-full h-full object-contain"
                         />
                       </div>
@@ -4071,9 +4100,13 @@ export default function MinibarAdminPage() {
                         </Badge>
                       </div>
                       <div className="w-full aspect-square rounded-2xl bg-white border-2 border-emerald-500/30 p-3 flex items-center justify-center shadow-sm">
-                        <img
+                        <FrigobarPicture
                           src={activeBrand.imageUrl}
                           alt={activeBrand.brandName}
+                          width={1024}
+                          height={1024}
+                          sizes="(max-width: 768px) 90vw, 480px"
+                          loading="eager"
                           className="w-full h-full object-contain"
                         />
                       </div>
@@ -4203,9 +4236,13 @@ export default function MinibarAdminPage() {
                       }`}
                     >
                       <div className="flex items-center gap-3">
-                        <img
+                        <FrigobarPicture
                           src={swapModalItem.proposedBrand.imageUrl}
                           alt={swapModalItem.proposedBrand.brandName}
+                          width={40}
+                          height={40}
+                          sizes="40px"
+                          loading="lazy"
                           className="w-10 h-10 rounded-xl bg-white object-contain border p-1"
                         />
                         <div>
@@ -4234,9 +4271,13 @@ export default function MinibarAdminPage() {
                         }`}
                       >
                         <div className="flex items-center gap-3">
-                          <img
+                          <FrigobarPicture
                             src={alt.imageUrl}
                             alt={alt.brandName}
+                            width={40}
+                            height={40}
+                            sizes="40px"
+                            loading="lazy"
                             className="w-10 h-10 rounded-xl bg-white object-contain border p-1"
                           />
                           <div>

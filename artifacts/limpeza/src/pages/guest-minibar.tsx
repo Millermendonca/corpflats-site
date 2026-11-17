@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo";
 import { DirectBookingPerkCard } from "@/components/direct-booking-perk-card";
+import { FrigobarPicture, warmFrigobarThumbnailsIdle } from "@/components/frigobar-picture";
 import { formatSmartPhone } from "@/lib/phone-mask";
 import {
   Refrigerator,
@@ -946,6 +947,17 @@ export default function GuestMinibar() {
       }
     };
   }, []);
+
+  // Pré-aquece silenciosamente as miniaturas otimizadas (160w, ~2 KB) quando ocioso,
+  // garantindo abertura instantânea do Cardápio Digital do Frigobar ao toque do hóspede
+  useEffect(() => {
+    if (step !== "catalog" || catalog.length === 0) return;
+    warmFrigobarThumbnailsIdle([
+      "/images/frigobar/agua_mineral_copo.png",
+      "/images/frigobar/amendoim_mendorato.png",
+      ...catalog.map((p) => p.imageUrl),
+    ]);
+  }, [step, catalog]);
 
   // Polling de Pagamento (dá baixa automática no saldo pendente do extrato)
   const startPaymentPolling = (orderId: string) => {
@@ -2272,16 +2284,18 @@ export default function GuestMinibar() {
                     <div className="p-3 rounded-2xl bg-slate-950/80 border border-emerald-500/25 flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0">
                         <div className="w-12 h-12 rounded-xl bg-white border border-slate-700/60 flex items-center justify-center shrink-0 overflow-hidden p-1">
-                          <img
+                          <FrigobarPicture
                             src={
                               catalog.find((p) => p.id === "prod_agua_mineral_copo")?.imageUrl ||
                               "/images/frigobar/agua_mineral_copo.png"
                             }
                             alt="Copo d'Água Mineral"
+                            width={48}
+                            height={48}
+                            sizes="48px"
+                            loading="lazy"
+                            hideOnError
                             className="w-full h-full object-contain"
-                            onError={(e) => {
-                              (e.target as HTMLElement).style.display = "none";
-                            }}
                           />
                         </div>
                         <div className="min-w-0">
@@ -2302,16 +2316,18 @@ export default function GuestMinibar() {
                     <div className="p-3 rounded-2xl bg-slate-950/80 border border-emerald-500/25 flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0">
                         <div className="w-12 h-12 rounded-xl bg-white border border-slate-700/60 flex items-center justify-center shrink-0 overflow-hidden p-1">
-                          <img
+                          <FrigobarPicture
                             src={
                               catalog.find((p) => p.id === "prod_amendoim_mendorato")?.imageUrl ||
                               "/images/frigobar/amendoim_mendorato.png"
                             }
                             alt="Amendoim Mendorato 27g"
+                            width={48}
+                            height={48}
+                            sizes="48px"
+                            loading="lazy"
+                            hideOnError
                             className="w-full h-full object-contain"
-                            onError={(e) => {
-                              (e.target as HTMLElement).style.display = "none";
-                            }}
                           />
                         </div>
                         <div className="min-w-0">
@@ -2447,13 +2463,15 @@ export default function GuestMinibar() {
                               }`}
                             >
                               {prod.imageUrl ? (
-                                <img
+                                <FrigobarPicture
                                   src={prod.imageUrl}
                                   alt={prod.name}
+                                  width={48}
+                                  height={48}
+                                  sizes="48px"
+                                  loading="lazy"
+                                  hideOnError
                                   className="w-full h-full object-contain p-0.5"
-                                  onError={(e) => {
-                                    (e.target as HTMLElement).style.display = "none";
-                                  }}
                                 />
                               ) : prod.category === "cafe" || prod.category === "cafe_capsulas" || isCourtesyItem ? (
                                 <Coffee className="w-5 h-5 text-amber-400" />
