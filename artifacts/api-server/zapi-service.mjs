@@ -1016,7 +1016,7 @@ Escolha seus itens favoritos clicando no botão abaixo:`,
     id: "tpl_checkout_reminder",
     triggerEvent: "checkout_reminder",
     title: "Dia do Check-out • Orientações de Saída",
-    description: "Enviado no dia de saída às 09:30 relembrando o horário limite das 12:00.",
+    description: "Enviado no dia de saída às 09:30 relembrando o horário limite e orientando a clicar no botão para informar o check-out.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
@@ -1025,15 +1025,43 @@ Escolha seus itens favoritos clicando no botão abaixo:`,
     offsetUnit: "hours",
     fixedTime: "09:30",
     message: `Bom dia, *{{primeiro_nome}}*! ☀️
-Lembramos que hoje é a data de encerramento da sua estadia no *Flat {{quarto}}*.
 
-⏰ *Horário limite de saída:* Até às *{{horario_checkout}}*.
+Esperamos que sua estadia no *Flat {{quarto}}* tenha sido excelente! Lembramos que hoje seu check-out é até às *{{horario_checkout}}*.
 
-Ao sair, por favor certifique-se de desligar luzes e ar-condicionado e entregue as chaves/cartão na portaria.
-Caso necessite estender o horário (Late Check-out), solicite diretamente à administração.`,
+Ao sair, pedimos a gentileza de:
+• Conferir seus pertences e carregadores;
+• Desligar luzes e ar-condicionado;
+• Devolver o *cartão de acesso na recepção*.
+
+🚪 *Quando desocupar o flat, clique no botão abaixo para informar seu check-out ou nos informe por aqui mesmo!* Caso precise estender o horário ou a estadia, é só nos chamar por aqui para verificar disponibilidade e valores.`,
     footer: "CorpFlats • Agradecemos a visita",
     buttons: [
-      { id: "btn_out", type: "URL", label: "🚪 Check-out Expresso", url: "{{link_checkout}}" }
+      { id: "btn_out", type: "URL", label: "🚪 Informar Check-out", url: "{{link_checkout}}" }
+    ]
+  },
+  {
+    id: "tpl_checkout_not_detected",
+    triggerEvent: "checkout_not_detected",
+    title: "Dia do Check-out (12:00) • Check-out Não Detectado",
+    description: "Enviado às 12:00 (ou no horário aprovado de Late Check-out) apenas para hóspedes com saída hoje que ainda não informaram check-out por nenhum canal.",
+    enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
+    recipientTarget: "guest",
+    sendEmail: false,
+    triggerTiming: "fixed_time_day_of",
+    offsetValue: 0,
+    offsetUnit: "hours",
+    fixedTime: "12:00",
+    message: `Olá, *{{primeiro_nome}}*! Tudo bem?
+
+Já são *{{horario_checkout}}* e ainda *não detectamos o registro do seu check-out* no *Flat {{quarto}}*.
+
+👇 *Se você já saiu*, por favor clique no botão abaixo para confirmar sua saída e liberarmos o flat para a limpeza.
+
+Caso ainda esteja no apartamento ou precise de algum suporte, responda esta mensagem!`,
+    footer: "CorpFlats • Check-out Expresso",
+    buttons: [
+      { id: "btn_out", type: "URL", label: "🚪 Informar Check-out", url: "{{link_checkout}}" }
     ]
   },
   {
@@ -1656,14 +1684,19 @@ Desejamos uma ótima estadia! Se precisar de algo, estamos à disposição.`,
     category: "Saída",
     recipientTarget: "guest",
     enabled: true,
-    message: `Olá, *{{primeiro_nome}}*! ☀️
-Lembramos que o check-out do *Flat {{quarto}}* é hoje até às *{{horario_checkout}}*.
+    message: `Bom dia, *{{primeiro_nome}}*! ☀️
 
-Ao sair, por favor desligue luzes e ar-condicionado e entregue o cartão na portaria.
-Agradecemos muito por sua hospedagem no *{{nome_hotel}}*! Tenha uma excelente viagem de retorno!`,
-    footer: "CorpFlats • Agradecemos sua preferência",
+Esperamos que sua estadia no *Flat {{quarto}}* tenha sido excelente! Lembramos que hoje seu check-out é até às *{{horario_checkout}}*.
+
+Ao sair, pedimos a gentileza de:
+• Conferir seus pertences e carregadores;
+• Desligar luzes e ar-condicionado;
+• Devolver o *cartão de acesso na recepção*.
+
+🚪 *Quando desocupar o flat, clique no botão abaixo para informar seu check-out ou nos informe por aqui mesmo!* Caso precise estender o horário ou a estadia, é só nos chamar por aqui para verificar disponibilidade e valores.`,
+    footer: "CorpFlats • Agradecemos a visita",
     buttons: [
-      { id: "btn_out", type: "URL", label: "🚪 Check-out Expresso", url: "{{link_checkout}}" }
+      { id: "btn_out", type: "URL", label: "🚪 Informar Check-out", url: "{{link_checkout}}" }
     ]
   },
   {
@@ -2121,6 +2154,7 @@ export const DEFAULT_ZAPI_CHANNELS = {
       "Boas-vindas ao Quarto (Check-in Concluído)",
       "Lembrete de Escolha do Café da Manhã (18:00 da véspera)",
       "Lembrete de Check-out e orientações de saída (09:30)",
+      "Aviso de Check-out não detectado às 12:00 (ou no horário aprovado de Late Check-out)",
       "Check-out Concluído & Agradecimento",
       "Pesquisa de Satisfação NPS (24h pós-saída)",
       "Convite de Avaliação no Google (apenas hóspedes nota 5)",
@@ -3256,6 +3290,7 @@ export const GUEST_ONLY_STAY_AND_POST_EVENTS = new Set([
   "checkin_cleaning_delay",
   "checkin_completed",
   "checkout_reminder",
+  "checkout_not_detected",
   "checkout_completed",
   "on_checkout",
   "late_checkout_approved",
@@ -3288,6 +3323,7 @@ export const GUEST_ONLY_TEMPLATE_IDS = new Set([
   "tpl_checkin_cleaning_delay",
   "tpl_checkin_completed",
   "tpl_checkout_reminder",
+  "tpl_checkout_not_detected",
   "tpl_checkout_completed",
   "tpl_late_checkout_approved",
   "tpl_nps_satisfaction_check",
@@ -3508,6 +3544,7 @@ const EMAIL_SUBJECT_BY_EVENT = {
   checkin_completed: "Boas-vindas ao seu flat",
   breakfast_reminder: "Escolha seu café da manhã",
   checkout_reminder: "Lembrete de check-out",
+  checkout_not_detected: "Confirmação de check-out pendente",
   checkout_completed: "Check-out realizado • Obrigado pela estadia",
   on_checkout: "Check-out realizado • Obrigado pela estadia",
   post_checkout_review: "Como foi sua estadia?",
@@ -3629,6 +3666,37 @@ export function sendMirrorEmail(db, saveDatabase, {
   }
 }
 
+/**
+ * Resolve o horário efetivo de check-out aprovado para a reserva (respeitando Late Check-out aprovado/pago).
+ * Ignora solicitações de Late Check-out pago que ainda estejam com status "pending_payment".
+ */
+export function resolveApprovedReservationCheckoutTime(reservation = {}, db = {}) {
+  const defaultCheckoutTime = String(db?.settings?.checkoutTime || "12:00").trim() || "12:00";
+  if (!reservation || typeof reservation !== "object") return defaultCheckoutTime;
+
+  const hasUnpaidPendingLateCheckout = Boolean(
+    reservation.pendingLateCheckout &&
+    reservation.pendingLateCheckout.status === "pending_payment" &&
+    !reservation.lateCheckout &&
+    !reservation.lateCheckoutApprovedAt
+  );
+  if (hasUnpaidPendingLateCheckout) {
+    return defaultCheckoutTime;
+  }
+
+  const candidate = String(
+    (reservation.lateCheckout && reservation.lateCheckoutTime) ||
+    reservation.checkoutTime ||
+    (reservation.lateCheckoutApprovedAt && reservation.lateCheckoutTime) ||
+    ""
+  ).trim();
+
+  if (/^([01]\d|2[0-3]):[0-5]\d$/.test(candidate)) {
+    return candidate;
+  }
+  return defaultCheckoutTime;
+}
+
 // ── Motor de Resolução de Tags Dinâmicas ───────────────────────────────────────
 export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "", targetRecipient = "guest", templateOrEvent = null) {
   if (!text) return "";
@@ -3663,7 +3731,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const checkoutBr = formatDateBr(reservation.checkoutDate);
   
   const checkinTime = db.settings?.checkinTime || "14:00";
-  const checkoutTime = db.settings?.checkoutTime || "12:00";
+  const checkoutTime = resolveApprovedReservationCheckoutTime(reservation, db);
   
   const guestCount = resolveReservationGuestCount(reservation);
   const chanLower = String(reservation.channel || "").toLowerCase();
@@ -4515,6 +4583,7 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
   const isCheckoutOrReviewContext =
     isCheckoutCompletedTrigger ||
     templateId === "tpl_checkout_reminder" ||
+    templateId === "tpl_checkout_not_detected" ||
     templateId === "tpl_late_checkout_approved" ||
     templateId === "tpl_post_checkout_review" ||
     templateId === "qm_review_request" ||
@@ -4527,6 +4596,7 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     templateId === "tpl_nps_feedback_thanks" ||
     templateId === "tpl_lost_item" ||
     triggerEvent === "checkout_reminder" ||
+    triggerEvent === "checkout_not_detected" ||
     triggerEvent === "late_checkout_approved" ||
     triggerEvent === "post_checkout_review" ||
     triggerEvent === "nps_approved" ||
@@ -6862,7 +6932,16 @@ export function calculateScheduledTime(template, reservation, db, options = {}) 
   }
 
   if (timing === "fixed_time_day_of") {
-    const targetHour = template.fixedTime || "09:00";
+    let targetHour = template.fixedTime || "09:00";
+    if (
+      template.triggerEvent === "checkout_not_detected" ||
+      template.id === "tpl_checkout_not_detected"
+    ) {
+      const approvedCoHour = resolveApprovedReservationCheckoutTime(reservation, db);
+      if (approvedCoHour > targetHour) {
+        targetHour = approvedCoHour;
+      }
+    }
     const eventDate = template.triggerEvent.includes("checkout") ? checkoutDateStr : checkinDateStr;
     return new Date(`${eventDate}T${targetHour}:00-03:00`).toISOString();
   }
@@ -8970,6 +9049,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         if (!db.whatsappTemplates.some(t => t.id === defTpl.id)) {
           if (defTpl.id === "tpl_corpflats_intro") {
             db.whatsappTemplates.unshift(JSON.parse(JSON.stringify(defTpl)));
+          } else if (defTpl.id === "tpl_checkout_not_detected") {
+            const coRemIdx = db.whatsappTemplates.findIndex(t => t && t.id === "tpl_checkout_reminder");
+            if (coRemIdx >= 0) {
+              db.whatsappTemplates.splice(coRemIdx + 1, 0, JSON.parse(JSON.stringify(defTpl)));
+            } else {
+              db.whatsappTemplates.push(JSON.parse(JSON.stringify(defTpl)));
+            }
           } else {
             db.whatsappTemplates.push(JSON.parse(JSON.stringify(defTpl)));
           }
@@ -9371,6 +9457,31 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             tpl.message = defSun.message;
           }
         }
+        if (tpl.id === "tpl_checkout_reminder") {
+          const defCoRem = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_checkout_reminder");
+          if (defCoRem) {
+            if (
+              tpl.message?.includes("Lembramos que hoje é a data de encerramento da sua estadia") ||
+              tpl.message?.includes("Ao sair, por favor certifique-se de desligar luzes")
+            ) {
+              tpl.description = defCoRem.description;
+              tpl.message = defCoRem.message;
+              tpl.buttons = JSON.parse(JSON.stringify(defCoRem.buttons));
+            } else if (Array.isArray(tpl.buttons)) {
+              for (const b of tpl.buttons) {
+                if (b && (b.id === "btn_out" || String(b.url || "").includes("link_checkout")) && b.label === "🚪 Check-out Expresso") {
+                  b.label = "🚪 Informar Check-out";
+                }
+              }
+            }
+          }
+        }
+        if (tpl.id === "tpl_checkout_not_detected") {
+          tpl.recipientTarget = "guest";
+          if (tpl.sendEmail === undefined) {
+            tpl.sendEmail = false;
+          }
+        }
       }
     }
 
@@ -9415,6 +9526,18 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
               qm.footer = defBreakfast.footer;
               qm.buttons = [];
             }
+          }
+        }
+        if (qm.id === "qm_checkout_reminder") {
+          const defCoQm = DEFAULT_WHATSAPP_QUICK_MESSAGES.find(q => q.id === "qm_checkout_reminder");
+          if (
+            defCoQm &&
+            (qm.message?.includes("Lembramos que o check-out do *Flat {{quarto}}* é hoje") ||
+              qm.message?.includes("Ao sair, por favor desligue luzes e ar-condicionado e entregue o cartão na portaria"))
+          ) {
+            qm.message = defCoQm.message;
+            qm.footer = defCoQm.footer;
+            qm.buttons = JSON.parse(JSON.stringify(defCoQm.buttons));
           }
         }
         if (qm.id === "qm_review_request") {
@@ -10434,6 +10557,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_access_wifi") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_checkin_day_instructions");
       } else if (templateId === "tpl_checkout_reminder" || templateId === "qm_checkout_reminder") {
         template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_checkout_reminder") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_checkout_reminder");
+      } else if (templateId === "tpl_checkout_not_detected") {
+        template = (db?.whatsappTemplates || []).find(t => t.id === "tpl_checkout_not_detected") || DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_checkout_not_detected");
       } else if (templateId === "tpl_post_checkout_review" || templateId === "qm_review_request" || templateId === "qm_review") {
         template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_review_request" || t.id === "qm_review") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_post_checkout_review");
       } else if (templateId === "qm_guest_manual") {
@@ -13200,6 +13325,57 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           }
         }
 
+        // Checagem dinâmica: aviso de check-out não detectado (12:00 ou horário aprovado de Late Check-out)
+        if (item.triggerEvent === "checkout_not_detected" || item.templateId === "tpl_checkout_not_detected") {
+          if (!resv) {
+            item.status = "cancelled";
+            item.error = "Cancelado: reserva não localizada";
+            item.updatedAt = nowIso;
+            saveDatabase();
+            continue;
+          }
+          if (resv.checkoutDate > todayStr && resv.earlyCheckoutDate !== todayStr) {
+            const liveCoTpl =
+              (db.whatsappTemplates || []).find(t => t.id === item.templateId || t.triggerEvent === "checkout_not_detected") ||
+              DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_checkout_not_detected");
+            if (liveCoTpl) {
+              const nextSched = calculateScheduledTime(liveCoTpl, resv, db, { nowOverride: now });
+              const appOriginForQueue = process.env.APP_BASE_URL || db?.settings?.baseUrl || "https://corpflats.com.br";
+              const targetTypeForRender = item.recipientType || "guest";
+              item.scheduledFor = nextSched;
+              item.renderedMessage = resolveWhatsAppTags(liveCoTpl.message, resv, db, appOriginForQueue, targetTypeForRender, liveCoTpl);
+              item.renderedButtons = renderTemplateButtons(liveCoTpl.buttons, resv, db, appOriginForQueue, targetTypeForRender, liveCoTpl);
+              item.updatedAt = nowIso;
+              saveDatabase();
+              continue;
+            }
+          }
+          if (resv.checkoutDate < todayStr && resv.earlyCheckoutDate !== todayStr) {
+            item.status = "cancelled";
+            item.error = "Cancelado: data de check-out já encerrada";
+            item.updatedAt = nowIso;
+            saveDatabase();
+            continue;
+          }
+          const approvedCoHour = resolveApprovedReservationCheckoutTime(resv, db);
+          const approvedTargetDate = new Date(`${todayStr}T${approvedCoHour}:00-03:00`);
+          if (!isNaN(approvedTargetDate.getTime()) && approvedTargetDate.getTime() > now.getTime() + 60 * 1000) {
+            const liveCoTpl =
+              (db.whatsappTemplates || []).find(t => t.id === item.templateId || t.triggerEvent === "checkout_not_detected") ||
+              DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_checkout_not_detected");
+            item.scheduledFor = approvedTargetDate.toISOString();
+            if (liveCoTpl) {
+              const appOriginForQueue = process.env.APP_BASE_URL || db?.settings?.baseUrl || "https://corpflats.com.br";
+              const targetTypeForRender = item.recipientType || "guest";
+              item.renderedMessage = resolveWhatsAppTags(liveCoTpl.message, resv, db, appOriginForQueue, targetTypeForRender, liveCoTpl);
+              item.renderedButtons = renderTemplateButtons(liveCoTpl.buttons, resv, db, appOriginForQueue, targetTypeForRender, liveCoTpl);
+            }
+            item.updatedAt = nowIso;
+            saveDatabase();
+            continue;
+          }
+        }
+
         // Trava de Segurança: Política do Canal guest_schedule (bloqueia apenas o WhatsApp; o e-mail espelho segue)
         const queuePolicy = item.guestPhone
           ? evaluateZapiChannelPolicy(db.zapiConfig, {
@@ -13824,7 +14000,7 @@ export function cancelPendingStayRemindersForCheckout(dbOrGetter, saveDatabase =
       const qId = qItem.reservationId !== undefined && qItem.reservationId !== null ? String(qItem.reservationId) : "";
       let isMatch = (qCode && matchedCodes.has(qCode)) || (qId && (matchedIds.has(qId) || matchedCodes.has(qId)));
 
-      if (!isMatch && !qCode && !qId && (ev === "checkout_reminder" || tplId === "tpl_checkout_reminder" || ev === "breakfast_reminder")) {
+      if (!isMatch && !qCode && !qId && (ev === "checkout_reminder" || tplId === "tpl_checkout_reminder" || ev === "checkout_not_detected" || tplId === "tpl_checkout_not_detected" || ev === "breakfast_reminder")) {
         const qPhoneDigits = String(qItem.guestPhone || "").replace(/\D/g, "");
         const qSchedDate = String(qItem.scheduledFor || "").substring(0, 10);
         if (qPhoneDigits.length >= 8 && matchedPhonesLast8.has(qPhoneDigits.slice(-8)) && (!qSchedDate || qSchedDate === todayStr)) {
@@ -13943,7 +14119,81 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
         const appOriginForQueue = process.env.APP_BASE_URL || db?.settings?.baseUrl || "https://corpflats.com.br";
         item.renderedMessage = resolveWhatsAppTags(tplForRender.message, resv, db, appOriginForQueue, targetTypeForRender, tplForRender);
         item.renderedButtons = renderTemplateButtons(tplForRender.buttons, resv, db, appOriginForQueue, targetTypeForRender, tplForRender);
-        if (!buttons) {
+        if (!buttons || method === "automated") {
+          sendButtons = item.renderedButtons || [];
+        }
+      }
+    }
+  }
+
+  // Trava final em tempo real para lembrete de saída (09:30) e check-out não detectado (12:00 / Late Check-out):
+  // garante horário aprovado de Late Check-out, data de saída ativa hoje e renderização atualizada
+  if (
+    item.triggerEvent === "checkout_reminder" ||
+    item.templateId === "tpl_checkout_reminder" ||
+    item.triggerEvent === "checkout_not_detected" ||
+    item.templateId === "tpl_checkout_not_detected"
+  ) {
+    const nowRef = nowOverride instanceof Date
+      ? nowOverride
+      : (nowOverride
+        ? new Date(nowOverride)
+        : (item?._nowOverride instanceof Date
+          ? item._nowOverride
+          : (item?._nowOverride
+            ? new Date(item._nowOverride)
+            : (db?._nowOverride instanceof Date
+              ? db._nowOverride
+              : (db?._nowOverride ? new Date(db._nowOverride) : new Date())))));
+    const { todayStr } = getBrasiliaDateParts(nowRef);
+    const isNotDetectedTrigger = item.triggerEvent === "checkout_not_detected" || item.templateId === "tpl_checkout_not_detected";
+
+    if (isNotDetectedTrigger && method !== "manual_send_now") {
+      if (!resv || (resv.checkoutDate !== todayStr && resv.earlyCheckoutDate !== todayStr)) {
+        if (resv && resv.checkoutDate > todayStr) {
+          const liveCoTpl =
+            (db.whatsappTemplates || []).find(t => t.id === item.templateId || t.triggerEvent === "checkout_not_detected") ||
+            DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_checkout_not_detected");
+          if (liveCoTpl) {
+            const nextSched = calculateScheduledTime(liveCoTpl, resv, db, { nowOverride: nowRef });
+            item.scheduledFor = nextSched;
+            item.status = "scheduled";
+            item.updatedAt = new Date().toISOString();
+            if (typeof saveDatabase === "function") saveDatabase();
+            return { waResult: null, emailLog: null, success: false, deferred: true };
+          }
+        }
+        item.status = "cancelled";
+        item.error = "Cancelado: reserva sem check-out programado para hoje";
+        item.updatedAt = new Date().toISOString();
+        if (typeof saveDatabase === "function") saveDatabase();
+        return { waResult: null, emailLog: null, success: false, cancelled: true };
+      }
+
+      const approvedCoHour = resolveApprovedReservationCheckoutTime(resv, db);
+      const approvedTargetDate = new Date(`${todayStr}T${approvedCoHour}:00-03:00`);
+      if (!isNaN(approvedTargetDate.getTime()) && approvedTargetDate.getTime() > nowRef.getTime() + 60 * 1000) {
+        item.scheduledFor = approvedTargetDate.toISOString();
+        item.status = "scheduled";
+        item.updatedAt = new Date().toISOString();
+        if (typeof saveDatabase === "function") saveDatabase();
+        return { waResult: null, emailLog: null, success: false, deferred: true };
+      }
+    }
+
+    if (resv) {
+      const liveCheckoutTpl =
+        (item.templateId && (db.whatsappTemplates || []).find(t => t.id === item.templateId)) ||
+        (db.whatsappTemplates || []).find(t => t.triggerEvent === item.triggerEvent) ||
+        (item.templateId && DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === item.templateId)) ||
+        DEFAULT_WHATSAPP_TEMPLATES.find(t => t.triggerEvent === item.triggerEvent);
+      if (liveCheckoutTpl) {
+        const targetTypeForRender = item.recipientType || "guest";
+        const tplForRender = { ...liveCheckoutTpl, triggerEvent: item.triggerEvent || liveCheckoutTpl.triggerEvent };
+        const appOriginForQueue = process.env.APP_BASE_URL || db?.settings?.baseUrl || "https://corpflats.com.br";
+        item.renderedMessage = resolveWhatsAppTags(tplForRender.message, resv, db, appOriginForQueue, targetTypeForRender, tplForRender);
+        item.renderedButtons = renderTemplateButtons(tplForRender.buttons, resv, db, appOriginForQueue, targetTypeForRender, tplForRender);
+        if (!buttons || method === "automated") {
           sendButtons = item.renderedButtons || [];
         }
       }
@@ -14618,6 +14868,20 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
           if (scheduledDate <= now && (tpl.triggerEvent === "breakfast_reminder" || tpl.id === "tpl_breakfast_reminder") && brHour >= 18 && brHour < 20) {
             scheduledDate = new Date(now.getTime() + 30 * 1000);
             scheduledTime = scheduledDate.toISOString();
+          }
+
+          // Se o horário limite de check-out (12:00 ou Late Check-out aprovado) acabou de chegar hoje (até 60 min atrás)
+          // e a reserva ainda não teve check-out informado por nenhum canal, agenda para o próximo ciclo (30s)
+          if (
+            scheduledDate <= now &&
+            (tpl.triggerEvent === "checkout_not_detected" || tpl.id === "tpl_checkout_not_detected") &&
+            resv.checkoutDate === todayStr
+          ) {
+            const diffMinutes = (now.getTime() - scheduledDate.getTime()) / (60 * 1000);
+            if (diffMinutes >= 0 && diffMinutes <= 60) {
+              scheduledDate = new Date(now.getTime() + 30 * 1000);
+              scheduledTime = scheduledDate.toISOString();
+            }
           }
 
           // Apenas agenda se for no futuro (> now)

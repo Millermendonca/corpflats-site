@@ -52957,6 +52957,7 @@ function formatTriggerTitle(trigger) {
     checkin_completed: "Check-in Realizado • Boas-Vindas",
     checkout_completed: "Check-out Realizado • Agradecimento",
     checkout_reminder: "Lembrete de Check-out",
+    checkout_not_detected: "Aviso de Check-out Não Detectado (12:00)",
     post_checkout_review: "Avaliação Pós-Hospedagem",
     breakfast_order: "Pedido de Café da Manhã",
     manual_dispatch: "Mensagem Manual",

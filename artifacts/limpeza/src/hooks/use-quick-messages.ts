@@ -466,14 +466,19 @@ Desejamos uma ótima estadia! Se precisar de algo, estamos à disposição.`,
     category: "Saída",
     recipientTarget: "guest",
     enabled: true,
-    message: `Olá, *{{primeiro_nome}}*! ☀️
-Lembramos que o check-out do *Flat {{quarto}}* é hoje até às *{{horario_checkout}}*.
+    message: `Bom dia, *{{primeiro_nome}}*! ☀️
 
-Ao sair, por favor desligue luzes e ar-condicionado e entregue o cartão na portaria.
-Agradecemos muito por sua hospedagem no *{{nome_hotel}}*! Tenha uma excelente viagem de retorno!`,
-    footer: "CorpFlats • Agradecemos sua preferência",
+Esperamos que sua estadia no *Flat {{quarto}}* tenha sido excelente! Lembramos que hoje seu check-out é até às *{{horario_checkout}}*.
+
+Ao sair, pedimos a gentileza de:
+• Conferir seus pertences e carregadores;
+• Desligar luzes e ar-condicionado;
+• Devolver o *cartão de acesso na recepção*.
+
+🚪 *Quando desocupar o flat, clique no botão abaixo para informar seu check-out ou nos informe por aqui mesmo!* Caso precise estender o horário ou a estadia, é só nos chamar por aqui para verificar disponibilidade e valores.`,
+    footer: "CorpFlats • Agradecemos a visita",
     buttons: [
-      { id: "btn_out", type: "URL", label: "🚪 Check-out Expresso", url: "{{link_checkout}}" }
+      { id: "btn_out", type: "URL", label: "🚪 Informar Check-out", url: "{{link_checkout}}" }
     ]
   },
   {

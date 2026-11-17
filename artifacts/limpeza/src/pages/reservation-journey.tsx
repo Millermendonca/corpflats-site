@@ -762,26 +762,55 @@ Escolha seus itens favoritos clicando no botão abaixo:`,
     id: "node_checkout_reminder",
     stageNumber: 7,
     stageName: "7. Dia do Check-out (Manhã)",
-    title: "Lembrete de Saída • Horário Limite 12:00 & Check-out Expresso (09:30)",
+    title: "Lembrete de Saída • Orientações & Botão de Check-out (09:30)",
     subtitle: "Disparado pontualmente às 09:30 do dia do checkout",
     triggerEvent: "checkout_reminder",
     channelType: "whatsapp",
     recipients: ["hospede"],
     timingLabel: "Dia do Check-out às 09:30",
-    condition: "Reserva com saída hoje",
-    channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    description: "Relembra o encerramento da diária às 12:00, orienta a desligar ar-condicionado e luzes e fornece o link de Check-out Expresso pelo celular.",
+    condition: "Reserva com saída hoje (ainda sem check-out informado)",
+    channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
+    description: "Relembra o horário limite da reserva, orienta a conferir pertences, desligar luzes/ar-condicionado, devolver o cartão na recepção e clicar no botão para informar o check-out.",
     messagePreview: `Bom dia, *{{primeiro_nome}}*! ☀️
-Lembramos que hoje é a data de encerramento da sua estadia no *Flat {{quarto}}*.
 
-⏰ *Horário limite de saída:* Até às *{{horario_checkout}}*.
+Esperamos que sua estadia no *Flat {{quarto}}* tenha sido excelente! Lembramos que hoje seu check-out é até às *{{horario_checkout}}*.
 
-Ao sair, por favor certifique-se de desligar luzes e ar-condicionado e entregue as chaves/cartão na portaria.
-Caso necessite estender o horário (Late Check-out), solicite diretamente à administração.`,
+Ao sair, pedimos a gentileza de:
+• Conferir seus pertences e carregadores;
+• Desligar luzes e ar-condicionado;
+• Devolver o *cartão de acesso na recepção*.
+
+🚪 *Quando desocupar o flat, clique no botão abaixo para informar seu check-out ou nos informe por aqui mesmo!* Caso precise estender o horário ou a estadia, é só nos chamar por aqui para verificar disponibilidade e valores.`,
     buttons: [
-      { label: "🚪 Check-out Expresso", type: "URL", url: "{{link_checkout}}" }
+      { label: "🚪 Informar Check-out", type: "URL", url: "{{link_checkout}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_checkout_reminder",
+    category: "checkout"
+  },
+  {
+    id: "node_checkout_not_detected",
+    stageNumber: 7,
+    stageName: "7. Dia do Check-out (Manhã)",
+    title: "Check-out Não Detectado • Solicitação de Confirmação (12:00)",
+    subtitle: "Disparado às 12:00 (ou no horário aprovado de Late Check-out) se a saída ainda não foi registrada",
+    triggerEvent: "checkout_not_detected",
+    channelType: "whatsapp",
+    recipients: ["hospede"],
+    timingLabel: "Dia do Check-out às 12:00 (ou Late Check-out)",
+    condition: "Check-out ainda não informado por nenhum canal até o horário limite",
+    channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
+    description: "Avisa educadamente que o check-out ainda não foi detectado por nenhum canal (link, WhatsApp, portaria, recepção ou governança) e pede para confirmar no botão caso já tenha saído.",
+    messagePreview: `Olá, *{{primeiro_nome}}*! Tudo bem?
+
+Já são *{{horario_checkout}}* e ainda *não detectamos o registro do seu check-out* no *Flat {{quarto}}*.
+
+👇 *Se você já saiu*, por favor clique no botão abaixo para confirmar sua saída e liberarmos o flat para a limpeza.
+
+Caso ainda esteja no apartamento ou precise de algum suporte, responda esta mensagem!`,
+    buttons: [
+      { label: "🚪 Informar Check-out", type: "URL", url: "{{link_checkout}}" }
+    ],
+    editUrl: "/whatsapp?tab=rules&tpl=tpl_checkout_not_detected",
     category: "checkout"
   },
   {
@@ -998,6 +1027,7 @@ const SIMULATION_SCENARIOS: Scenario[] = [
       "node_checkin_completed",
       "node_breakfast_reminder",
       "node_checkout_reminder",
+      "node_checkout_not_detected",
       "node_checkout_completed",
       "node_maid_cleaning_trigger",
       "node_post_checkout_review",
@@ -1023,6 +1053,7 @@ const SIMULATION_SCENARIOS: Scenario[] = [
       "node_room_ready_ota",
       "node_checkin_completed",
       "node_checkout_reminder",
+      "node_checkout_not_detected",
       "node_checkout_completed",
       "node_maid_cleaning_trigger",
       "node_post_checkout_review",
@@ -1045,6 +1076,7 @@ const SIMULATION_SCENARIOS: Scenario[] = [
       "node_morning_checkin_email",
       "node_checkin_completed",
       "node_checkout_reminder",
+      "node_checkout_not_detected",
       "node_checkout_completed",
       "node_post_checkout_review"
     ],
@@ -1093,6 +1125,7 @@ const SIMULATION_SCENARIOS: Scenario[] = [
     currentStage: "Pós-Estadia",
     activeNodeIds: [
       "node_checkout_reminder",
+      "node_checkout_not_detected",
       "node_checkout_completed",
       "node_maid_cleaning_trigger",
       "node_post_checkout_review",
@@ -1267,6 +1300,7 @@ export default function ReservationJourney() {
         "node_checkin_completed",
         "node_breakfast_reminder",
         "node_checkout_reminder",
+        "node_checkout_not_detected",
         "node_checkout_completed",
         "node_maid_cleaning_trigger",
         "node_post_checkout_review",
@@ -1302,6 +1336,7 @@ export default function ReservationJourney() {
         "node_checkin_completed",
         "node_breakfast_reminder",
         "node_checkout_reminder",
+        "node_checkout_not_detected",
         "node_checkout_completed",
         "node_maid_cleaning_trigger",
         "node_post_checkout_review",
@@ -1333,6 +1368,7 @@ export default function ReservationJourney() {
         "node_checkin_cleaning_delay",
         "node_checkin_completed",
         "node_checkout_reminder",
+        "node_checkout_not_detected",
         "node_checkout_completed",
         "node_maid_cleaning_trigger",
         "node_post_checkout_review",
