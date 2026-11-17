@@ -24,6 +24,9 @@ import {
   Volume2,
   Radio,
   BellRing,
+  BellOff,
+  Ban,
+  RotateCcw,
   Maximize2,
   Minimize2,
   Lock,
@@ -106,6 +109,19 @@ export interface FlatStatusItem {
   status: "checkout_hoje" | "ocupado" | "livre";
   isCheckedOut?: boolean;
   checkoutTime?: string;
+  guestDoNotDisturb?: boolean;
+  guestDoNotDisturbMode?: "today" | "stay" | null;
+  guestDoNotDisturbScope?: "all" | "anserve_only" | null;
+  guestDoNotDisturbUpdatedAt?: string | null;
+  todaySkipStatus?: "nq" | "np" | null;
+  todaySkipInspection?: {
+    id: string;
+    status: "nq" | "np";
+    inspectorName?: string;
+    inspectedAt?: string;
+    notes?: string;
+  } | null;
+  hasRealInspectionToday?: boolean;
   currentReservation?: {
     code: string;
     guestName: string;
@@ -323,6 +339,11 @@ export default function AnserveRestockPage() {
   // Modals state
   const [semConsumoModalFlat, setSemConsumoModalFlat] = useState<FlatStatusItem | null>(null);
   const [launchModalFlat, setLaunchModalFlat] = useState<FlatStatusItem | null>(null);
+  const [confirmSkipTarget, setConfirmSkipTarget] = useState<{
+    flat: FlatStatusItem;
+    type: "nq" | "np";
+  } | null>(null);
+  const [undoingSkipFlat, setUndoingSkipFlat] = useState<string | null>(null);
   const [submittingInspection, setSubmittingInspection] = useState(false);
 
   // Inspector & "Sem Consumo" form state
@@ -626,9 +647,11 @@ export default function AnserveRestockPage() {
   }, [user]);
 
   // Load flats, checkout summary, and products
-  const fetchData = async () => {
+  const fetchData = async (opts?: { silent?: boolean }) => {
     try {
-      setRefreshing(true);
+      if (!opts?.silent) {
+        setRefreshing(true);
+      }
       const headers: Record<string, string> = {};
       if (localToken) {
         headers["x-anserve-token"] = localToken;
@@ -636,7 +659,7 @@ export default function AnserveRestockPage() {
 
       const [resFlats, resProducts] = await Promise.all([
         fetch("/api/minibar/inspections/flats-status", { credentials: "include", headers }),
-        fetch("/api/minibar/products", { credentials: "include", headers })
+        opts?.silent ? Promise.resolve(null) : fetch("/api/minibar/products", { credentials: "include", headers })
       ]);
 
       if (resFlats.ok) {
@@ -649,28 +672,47 @@ export default function AnserveRestockPage() {
         }
       }
 
-      if (resProducts.ok) {
+      if (resProducts && resProducts.ok) {
         const jsonProducts = await resProducts.json();
         if (jsonProducts.success && Array.isArray(jsonProducts.products)) {
           setProducts(jsonProducts.products);
         }
       }
     } catch (err) {
-      console.error("[AnserveRestock] Erro ao carregar dados:", err);
-      toast({
-        title: "Erro de conexão",
-        description: "Não foi possível sincronizar o status dos flats.",
-        variant: "destructive"
-      });
+      if (!opts?.silent) {
+        console.error("[AnserveRestock] Erro ao carregar dados:", err);
+        toast({
+          title: "Erro de conexão",
+          description: "Não foi possível sincronizar o status dos flats.",
+          variant: "destructive"
+        });
+      }
     } finally {
       setLoading(false);
-      setRefreshing(false);
+      if (!opts?.silent) {
+        setRefreshing(false);
+      }
     }
   };
 
   useEffect(() => {
     if (isAuthenticated) {
       fetchData();
+      const pollId = setInterval(() => {
+        if (typeof document === "undefined" || document.visibilityState === "visible") {
+          fetchData({ silent: true });
+        }
+      }, 15000);
+      const onVis = () => {
+        if (document.visibilityState === "visible") {
+          fetchData({ silent: true });
+        }
+      };
+      document.addEventListener("visibilitychange", onVis);
+      return () => {
+        clearInterval(pollId);
+        document.removeEventListener("visibilitychange", onVis);
+      };
     } else {
       setLoading(false);
     }
@@ -816,11 +858,39 @@ export default function AnserveRestockPage() {
     setPinError(null);
   };
 
-  const isInspectedToday = (f: FlatStatusItem): boolean => {
-    if (f.lastInspection?.launchDate === todayYmd) return true;
-    if (f.lastInspection?.inspectedAt && f.lastInspection.inspectedAt.slice(0, 10) === todayYmd) return true;
+  const isRealInspectedToday = (f: FlatStatusItem): boolean => {
+    if (f.hasRealInspectionToday) return true;
+    const isSkip = f.lastInspection?.status === "nq" || f.lastInspection?.status === "np";
+    if (!isSkip && f.lastInspection?.launchDate === todayYmd) return true;
+    if (!isSkip && f.lastInspection?.inspectedAt && f.lastInspection.inspectedAt.slice(0, 10) === todayYmd) return true;
     if (Array.isArray(f.dailyLaunches) && f.dailyLaunches.some((g) => g.dateYmd === todayYmd)) return true;
     return false;
+  };
+
+  const isSkippedToday = (f: FlatStatusItem): boolean => {
+    if (f.isCheckedOut) return false;
+    return f.todaySkipStatus === "nq" || f.todaySkipStatus === "np";
+  };
+
+  const isGuestDndLocked = (f: FlatStatusItem): boolean => {
+    if (f.isCheckedOut) return false;
+    return Boolean(f.guestDoNotDisturb);
+  };
+
+  // Flat atendido/conferido no turno (conferência real OU NQ/NP enquanto o hóspede ainda não saiu)
+  const isInspectedToday = (f: FlatStatusItem): boolean => {
+    if (f.isCheckedOut) {
+      return isRealInspectedToday(f);
+    }
+    return isRealInspectedToday(f) || isSkippedToday(f);
+  };
+
+  // Flat resolvido para não cobrar pendência na fila "Pendentes Hoje" (inclui Não Perturbe ativado pelo hóspede)
+  const isResolvedForTodayQueue = (f: FlatStatusItem): boolean => {
+    if (f.isCheckedOut) {
+      return isRealInspectedToday(f);
+    }
+    return isInspectedToday(f) || isGuestDndLocked(f);
   };
 
   // Metrics calculation
@@ -831,32 +901,36 @@ export default function AnserveRestockPage() {
     const livres = flats.filter((f) => f.status === "livre").length;
     const activeFlats = flats.filter((f) => f.status !== "livre");
     const conferidosHoje = flats.filter((f) => isInspectedToday(f)).length;
-    const pendentesHoje = activeFlats.filter((f) => !isInspectedToday(f)).length;
-    return { total, checkoutHoje, ocupados, livres, conferidosHoje, pendentesHoje };
+    const pendentesHoje = activeFlats.filter((f) => !isResolvedForTodayQueue(f)).length;
+    const naoPerturbeHoje = activeFlats.filter((f) => isGuestDndLocked(f)).length;
+    return { total, checkoutHoje, ocupados, livres, conferidosHoje, pendentesHoje, naoPerturbeHoje };
   }, [flats, todayYmd]);
 
   // Filtered flats list sorted by daily work priority
   const filteredFlats = useMemo(() => {
     const getPriorityRank = (f: FlatStatusItem): number => {
       const doneToday = isInspectedToday(f);
-      // 0: Checked out today & awaiting final inspection
+      const dndLocked = isGuestDndLocked(f);
+      // 0: Checked out today & awaiting final inspection (sempre máxima prioridade!)
       if (f.isCheckedOut && !doneToday) return 0;
-      // 1: Scheduled checkout today & not yet inspected today
-      if (f.status === "checkout_hoje" && !doneToday) return 1;
+      // 1: Scheduled checkout today & not yet resolved today
+      if (f.status === "checkout_hoje" && !doneToday && !dndLocked) return 1;
       // 2: Occupied & awaiting daily pass today
-      if (f.status === "ocupado" && !doneToday) return 2;
-      // 3: Checked out today & already inspected today
-      if (f.isCheckedOut && doneToday) return 3;
-      // 4: Checkout today or Occupied & already inspected today
-      if ((f.status === "checkout_hoje" || f.status === "ocupado") && doneToday) return 4;
-      // 5: Vacant
-      return 5;
+      if (f.status === "ocupado" && !doneToday && !dndLocked) return 2;
+      // 3: Guest DND Active (visível mas dispensado de entrada hoje)
+      if (dndLocked) return 3;
+      // 4: Checked out today & already inspected today
+      if (f.isCheckedOut && doneToday) return 4;
+      // 5: Checkout today or Occupied & already inspected/NQ/NP today
+      if ((f.status === "checkout_hoje" || f.status === "ocupado") && doneToday) return 5;
+      // 6: Vacant
+      return 6;
     };
 
     return flats
       .filter((f) => {
         if (statusFilter === "pendentes_hoje") {
-          if (f.status === "livre" || isInspectedToday(f)) return false;
+          if (f.status === "livre" || isResolvedForTodayQueue(f)) return false;
         } else if (statusFilter === "conferidos_hoje") {
           if (!isInspectedToday(f)) return false;
         } else if (statusFilter !== "todos" && f.status !== statusFilter) {
@@ -946,6 +1020,109 @@ export default function AnserveRestockPage() {
       totalAmount: Number(totalAmount.toFixed(2))
     };
   }, [products, launchedQuantities]);
+
+  // Submit NQ (Não Quis Reposição) or NP (Plaquinha Não Perturbe)
+  const handleConfirmSkipMark = async () => {
+    if (!confirmSkipTarget) return;
+    const { flat, type } = confirmSkipTarget;
+    setSubmittingInspection(true);
+
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (localToken) headers["x-anserve-token"] = localToken;
+
+      const res = await fetch("/api/minibar/inspections", {
+        method: "POST",
+        headers,
+        credentials: "include",
+        body: JSON.stringify({
+          flatNumber: flat.flatNumber,
+          reservationCode: flat.currentReservation?.code || "",
+          inspectedBy: inspectorName || user?.name || "Repositora Anserve",
+          inspectorId: selectedRestockerId || user?.id || undefined,
+          status: type,
+          isDailyLaunch: false,
+          isFinalCheckoutInspection: false,
+          launchDate: getTodayYmdBr(),
+          notes:
+            type === "nq"
+              ? "NQ — Hóspede informou que não quer reposição hoje"
+              : "NP — Quarto com plaquinha/aviso de Não Perturbe na porta"
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast({
+          title:
+            type === "nq"
+              ? `🚫 Flat ${flat.flatNumber} marcado como NQ (Não Quis)!`
+              : `🔕 Flat ${flat.flatNumber} marcado como NP (Não Perturbe)!`,
+          description: "Retirado de Pendentes Hoje (nenhuma mensagem enviada ao hóspede)."
+        });
+        setConfirmSkipTarget(null);
+        fetchData();
+      } else if (res.status === 401 || data?.code === "SHIFT_EXPIRED") {
+        setConfirmSkipTarget(null);
+        await handleSwitchRestocker({ expired: true });
+      } else {
+        toast({
+          title: "Não foi possível registrar",
+          description: data.error || "Tente novamente.",
+          variant: "destructive"
+        });
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro de comunicação",
+        description: err.message || "Falha na conexão com o servidor.",
+        variant: "destructive"
+      });
+    } finally {
+      setSubmittingInspection(false);
+    }
+  };
+
+  // Desfazer NQ / NP marcado hoje
+  const handleUndoSkipMark = async (flat: FlatStatusItem) => {
+    setUndoingSkipFlat(flat.flatNumber);
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (localToken) headers["x-anserve-token"] = localToken;
+
+      const res = await fetch("/api/minibar/inspections/undo-skip", {
+        method: "POST",
+        headers,
+        credentials: "include",
+        body: JSON.stringify({
+          flatNumber: flat.flatNumber,
+          inspectionId: flat.todaySkipInspection?.id
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast({
+          title: `Marcação desfeita no Flat ${flat.flatNumber}`,
+          description: "O apartamento voltou para Pendentes Hoje."
+        });
+        fetchData();
+      } else {
+        toast({
+          title: "Erro ao desfazer",
+          description: data.error || "Não foi possível desfazer.",
+          variant: "destructive"
+        });
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro de comunicação",
+        description: err.message || "Falha ao comunicar com o servidor.",
+        variant: "destructive"
+      });
+    } finally {
+      setUndoingSkipFlat(null);
+    }
+  };
 
   // Submit "Sem Consumo / Repor Cortesias"
   const handleSubmitSemConsumo = async () => {
@@ -1599,7 +1776,7 @@ export default function AnserveRestockPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={fetchData}
+            onClick={() => fetchData()}
             disabled={refreshing}
             className="rounded-xl text-xs font-bold h-9"
           >
@@ -1779,16 +1956,24 @@ export default function AnserveRestockPage() {
               const pendingVal = Number(flat.pendingBalance) || 0;
               const paidVal = Number(flat.totalPaidAmount || flat.declaredAmount) || 0;
               const doneToday = isInspectedToday(flat);
+              const realDoneToday = isRealInspectedToday(flat);
+              const skippedToday = isSkippedToday(flat);
+              const guestDndLocked = isGuestDndLocked(flat);
+              const skipStatus = skippedToday ? flat.todaySkipStatus : null;
               const isExpanded = Boolean(expandedFlatHistory[flat.flatNumber]);
 
               return (
                 <Card
                   key={flat.flatNumber}
                   className={`rounded-3xl border transition-all duration-200 overflow-hidden ${
-                    flat.isCheckedOut && !doneToday
+                    guestDndLocked
+                      ? "border-2 border-rose-600 bg-rose-500/10 shadow-md shadow-rose-500/15"
+                      : flat.isCheckedOut && !doneToday
                       ? "border-rose-500/60 bg-rose-500/5 shadow-md shadow-rose-500/10"
                       : flat.isCheckedOut && doneToday
                       ? "border-emerald-500/40 bg-emerald-500/5"
+                      : skippedToday
+                      ? "border-amber-500/50 bg-amber-500/5"
                       : isCheckout
                       ? "border-red-500/40 bg-red-500/5 shadow-xs"
                       : isOcupado
@@ -1820,8 +2005,20 @@ export default function AnserveRestockPage() {
                           </Badge>
                         )}
 
-                        {/* Indicador claro se já foi conferido hoje */}
-                        {doneToday ? (
+                        {/* Indicador claro se está com Não Perturbe do hóspede, NQ, NP ou conferido hoje */}
+                        {guestDndLocked ? (
+                          <Badge className="bg-rose-600 text-white border-none text-[10px] font-black animate-pulse">
+                            🔕 NÃO PERTURBE
+                          </Badge>
+                        ) : skipStatus === "nq" ? (
+                          <Badge className="bg-amber-600 text-white border-none text-[10px] font-black">
+                            🚫 NQ Hoje
+                          </Badge>
+                        ) : skipStatus === "np" ? (
+                          <Badge className="bg-rose-600 text-white border-none text-[10px] font-black">
+                            🔕 NP Hoje
+                          </Badge>
+                        ) : realDoneToday ? (
                           <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px] font-black">
                             ✓ Conferido Hoje
                           </Badge>
@@ -1867,6 +2064,78 @@ export default function AnserveRestockPage() {
                   </CardHeader>
 
                   <CardContent className="p-3.5 pt-1.5 space-y-2.5">
+                    {/* AVISO GIGANTE DE NÃO PERTURBE ATIVADO PELO HÓSPEDE NO PORTAL */}
+                    {guestDndLocked && (
+                      <div className="p-4 rounded-2xl bg-rose-600 text-white border-2 border-rose-800 shadow-lg space-y-1.5 text-center">
+                        <div className="flex items-center justify-center gap-2 text-sm sm:text-base font-black uppercase tracking-wide">
+                          <BellOff className="w-6 h-6 shrink-0 animate-bounce" />
+                          <span>🔕 NÃO PERTURBE ATIVO</span>
+                        </div>
+                        <p className="text-xs sm:text-sm font-black leading-snug bg-rose-950/40 rounded-xl py-1.5 px-2">
+                          NÃO BATER E NÃO ENTRAR NO QUARTO!
+                        </p>
+                        <p className="text-[11px] font-semibold text-rose-100 leading-tight">
+                          Hóspede ativou pelo portal ({flat.guestDoNotDisturbMode === "today" ? "Apenas Hoje" : "Toda a Estadia"}).
+                          {isCheckout ? " Será liberado automaticamente assim que fizer check-out." : " Dispensado da fila de hoje."}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* SELO VISÍVEL QUANDO A REPOSITORA MARCOU NQ OU NP HOJE */}
+                    {!guestDndLocked && skippedToday && flat.todaySkipInspection && (
+                      <div
+                        className={`p-3 rounded-2xl border flex items-center justify-between gap-2 ${
+                          skipStatus === "nq"
+                            ? "bg-amber-500/15 border-amber-500/40 text-amber-950 dark:text-amber-200"
+                            : "bg-rose-500/15 border-rose-500/40 text-rose-950 dark:text-rose-200"
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs font-black flex items-center gap-1.5">
+                            {skipStatus === "nq" ? (
+                              <>
+                                <Ban className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                                <span>🚫 NQ — Hóspede Não Quis Reposição</span>
+                              </>
+                            ) : (
+                              <>
+                                <BellOff className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+                                <span>🔕 NP — Plaquinha Não Perturbe</span>
+                              </>
+                            )}
+                          </div>
+                          <span className="text-[10px] opacity-85 block mt-0.5">
+                            Marcado hoje
+                            {flat.todaySkipInspection.inspectedAt
+                              ? ` às ${new Date(flat.todaySkipInspection.inspectedAt).toLocaleTimeString("pt-BR", {
+                                  hour: "2-digit",
+                                  minute: "2-digit"
+                                })}`
+                              : ""}
+                            {flat.todaySkipInspection.inspectorName
+                              ? ` por ${flat.todaySkipInspection.inspectorName.split(" ")[0]}`
+                              : ""}
+                          </span>
+                        </div>
+
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={undoingSkipFlat === flat.flatNumber}
+                          onClick={() => handleUndoSkipMark(flat)}
+                          className="h-7 px-2.5 rounded-xl text-[11px] font-bold shrink-0 gap-1 bg-background/80"
+                        >
+                          {undoingSkipFlat === flat.flatNumber ? (
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <RotateCcw className="w-3 h-3" />
+                          )}
+                          <span>Desfazer</span>
+                        </Button>
+                      </div>
+                    )}
+
                     {/* Resumo Compacto de Lançamentos da Estadia (Expansível no celular) */}
                     <div className="p-2.5 rounded-2xl bg-muted/40 border border-border text-xs space-y-1.5">
                       <div className="flex items-center justify-between text-[11px]">
@@ -1942,26 +2211,76 @@ export default function AnserveRestockPage() {
                     </div>
 
                     {/* Botões de Ação da Repositora */}
-                    <div className="grid grid-cols-2 gap-2">
-                      <Button
-                        size="sm"
-                        onClick={() => handleOpenLaunchConsumo(flat)}
-                        className="rounded-2xl text-xs font-bold bg-sky-600 hover:bg-sky-700 text-white h-9 shadow-xs"
-                      >
-                        <Plus className="w-3.5 h-3.5 mr-1" />
-                        Lançar Consumo
-                      </Button>
+                    {guestDndLocked ? (
+                      <div className="p-2.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-center text-[11px] font-bold text-rose-700 dark:text-rose-300 flex items-center justify-center gap-1.5">
+                        <Lock className="w-3.5 h-3.5 shrink-0" />
+                        <span>Ações bloqueadas enquanto Não Perturbe estiver ativo</span>
+                      </div>
+                    ) : isLivre ? (
+                      <div className="p-2 rounded-2xl bg-muted/40 border border-border text-center text-[11px] text-muted-foreground font-medium">
+                        Flat livre • Sem reposição pendente
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => handleOpenLaunchConsumo(flat)}
+                            className="rounded-2xl text-xs font-bold bg-sky-600 hover:bg-sky-700 text-white h-9 shadow-xs"
+                          >
+                            <Plus className="w-3.5 h-3.5 mr-1" />
+                            Lançar Consumo
+                          </Button>
 
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleOpenSemConsumo(flat)}
-                        className="rounded-2xl text-xs font-bold border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 h-9"
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-                        Sem Consumo
-                      </Button>
-                    </div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleOpenSemConsumo(flat)}
+                            className="rounded-2xl text-xs font-bold border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 h-9"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                            Sem Consumo
+                          </Button>
+                        </div>
+
+                        {/* Botões NQ e NP: exibidos apenas quando há hóspede no quarto (antes do check-out) */}
+                        {!flat.isCheckedOut && (
+                          <div className="grid grid-cols-2 gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={skipStatus === "nq" ? "default" : "outline"}
+                              onClick={() => setConfirmSkipTarget({ flat, type: "nq" })}
+                              className={`rounded-2xl text-xs font-black h-9 gap-1.5 ${
+                                skipStatus === "nq"
+                                  ? "bg-amber-600 hover:bg-amber-700 text-white"
+                                  : "border-amber-500/45 text-amber-800 dark:text-amber-300 hover:bg-amber-500/15"
+                              }`}
+                              title="Marcar que o hóspede não quis reposição/conferência hoje"
+                            >
+                              <Ban className="w-3.5 h-3.5 shrink-0" />
+                              <span>NQ (Não Quis)</span>
+                            </Button>
+
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={skipStatus === "np" ? "default" : "outline"}
+                              onClick={() => setConfirmSkipTarget({ flat, type: "np" })}
+                              className={`rounded-2xl text-xs font-black h-9 gap-1.5 ${
+                                skipStatus === "np"
+                                  ? "bg-rose-600 hover:bg-rose-700 text-white"
+                                  : "border-rose-500/45 text-rose-700 dark:text-rose-300 hover:bg-rose-500/15"
+                              }`}
+                              title="Marcar que o quarto está com plaquinha de Não Perturbe"
+                            >
+                              <BellOff className="w-3.5 h-3.5 shrink-0" />
+                              <span>NP (Não Perturbe)</span>
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               );
@@ -2371,6 +2690,65 @@ export default function AnserveRestockPage() {
                 {submittingInspection
                   ? "Salvando Lançamento..."
                   : `Salvar Lançamento do Dia (R$ ${dailyLaunchCalculation.totalAmount.toFixed(2)})`}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal 3: Confirmação Rápida Anti-Toque Acidental para NQ / NP */}
+        <Dialog open={Boolean(confirmSkipTarget)} onOpenChange={() => setConfirmSkipTarget(null)}>
+          <DialogContent className="sm:max-w-sm rounded-3xl p-5">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black flex items-center gap-2">
+                {confirmSkipTarget?.type === "nq" ? (
+                  <>
+                    <Ban className="w-5 h-5 text-amber-600" />
+                    <span>Confirmar NQ — Flat {confirmSkipTarget?.flat.flatNumber}?</span>
+                  </>
+                ) : (
+                  <>
+                    <BellOff className="w-5 h-5 text-rose-600" />
+                    <span>Confirmar NP — Flat {confirmSkipTarget?.flat.flatNumber}?</span>
+                  </>
+                )}
+              </DialogTitle>
+              <DialogDescription className="text-xs leading-relaxed pt-1">
+                {confirmSkipTarget?.type === "nq"
+                  ? "Registra que o hóspede informou que não quer reposição/conferência hoje."
+                  : "Registra que o apartamento está com plaquinha/aviso de Não Perturbe na porta."}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="p-3 rounded-2xl bg-muted/50 border border-border text-[11px] text-muted-foreground space-y-1">
+              <p>• Retira o Flat {confirmSkipTarget?.flat.flatNumber} da fila <strong>Pendentes Hoje</strong>.</p>
+              <p>• <strong>Não envia</strong> nenhuma mensagem no WhatsApp do hóspede.</p>
+              <p>• Você pode <strong>Desfazer</strong> ou <strong>Lançar Consumo</strong> depois caso o hóspede libere o quarto.</p>
+            </div>
+
+            <DialogFooter className="grid grid-cols-2 gap-2 pt-1">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setConfirmSkipTarget(null)}
+                className="rounded-xl text-xs font-bold h-10"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                disabled={submittingInspection}
+                onClick={handleConfirmSkipMark}
+                className={`rounded-xl text-xs font-black h-10 text-white ${
+                  confirmSkipTarget?.type === "nq"
+                    ? "bg-amber-600 hover:bg-amber-700"
+                    : "bg-rose-600 hover:bg-rose-700"
+                }`}
+              >
+                {submittingInspection
+                  ? "Salvando..."
+                  : confirmSkipTarget?.type === "nq"
+                  ? "Confirmar NQ"
+                  : "Confirmar NP"}
               </Button>
             </DialogFooter>
           </DialogContent>

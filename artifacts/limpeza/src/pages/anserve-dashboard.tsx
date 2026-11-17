@@ -132,6 +132,8 @@ export interface StaffProductivityMetrics {
   inspectionsCount: number;
   conformeCount: number;
   discrepancyCount: number;
+  nqCount?: number;
+  npCount?: number;
   conformityRatePct: number;
   discrepancyAmountDetected: number;
   discrepancyAmountRecovered: number;
@@ -850,6 +852,8 @@ export default function AnserveDashboardPage() {
       "PIN Mobile",
       "Total de Passagens",
       "Flats Atendidos",
+      "NQ (Não Quis)",
+      "NP (Não Perturbe)",
       "Unidades Pagas Lançadas/Repostas",
       "Cortesias Repostas",
       "Total Itens Repostos",
@@ -866,6 +870,8 @@ export default function AnserveDashboardPage() {
         st.pin || "Padrão",
         p?.inspectionsCount || 0,
         p?.flatsVisitedCount || 0,
+        p?.nqCount || 0,
+        p?.npCount || 0,
         p?.paidItemsRestockedQty || 0,
         p?.courtesyItemsRestockedQty || 0,
         p?.totalItemsRestockedQty || 0,
@@ -1548,6 +1554,13 @@ export default function AnserveDashboardPage() {
                               <div className="text-[10px] text-muted-foreground">
                                 {p?.flatsVisitedCount || 0} flats atendidos
                               </div>
+                              {((p?.nqCount || 0) > 0 || (p?.npCount || 0) > 0) && (
+                                <div className="text-[10px] font-semibold text-amber-700 dark:text-amber-400 mt-0.5">
+                                  {p?.nqCount ? `${p.nqCount} NQ` : ""}
+                                  {p?.nqCount && p?.npCount ? " • " : ""}
+                                  {p?.npCount ? `${p.npCount} NP` : ""}
+                                </div>
+                              )}
                             </td>
 
                             <td className="p-3.5 text-center">
@@ -1720,7 +1733,15 @@ export default function AnserveDashboardPage() {
                               {insp.inspectorName || "Repositora Anserve"}
                             </td>
                             <td className="p-3.5">
-                              {launchedVal > 0 || insp.status === "lancamento_diario" ? (
+                              {insp.status === "nq" ? (
+                                <Badge className="bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/30 text-[10px]">
+                                  🚫 NQ — Hóspede Não Quis
+                                </Badge>
+                              ) : insp.status === "np" ? (
+                                <Badge className="bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30 text-[10px]">
+                                  🔕 NP — Placa Não Perturbe
+                                </Badge>
+                              ) : launchedVal > 0 || insp.status === "lancamento_diario" ? (
                                 <Badge className="bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30 text-[10px]">
                                   Consumo Lançado {launchedVal > 0 ? `(R$ ${launchedVal.toFixed(2)})` : ""}
                                 </Badge>
@@ -2009,7 +2030,15 @@ export default function AnserveDashboardPage() {
                               </td>
                               <td className="p-2.5 font-bold">Flat {insp.flatNumber}</td>
                               <td className="p-2.5">
-                                {launchedVal > 0 || insp.status === "lancamento_diario" ? (
+                                {insp.status === "nq" ? (
+                                  <Badge className="bg-amber-500/15 text-amber-800 text-[10px]">
+                                    🚫 NQ — Não Quis
+                                  </Badge>
+                                ) : insp.status === "np" ? (
+                                  <Badge className="bg-rose-500/15 text-rose-700 text-[10px]">
+                                    🔕 NP — Não Perturbe
+                                  </Badge>
+                                ) : launchedVal > 0 || insp.status === "lancamento_diario" ? (
                                   <Badge className="bg-sky-500/15 text-sky-700 text-[10px]">
                                     Consumo Lançado {launchedVal > 0 ? `(R$ ${launchedVal.toFixed(2)})` : ""}
                                   </Badge>

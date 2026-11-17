@@ -37,7 +37,9 @@ import {
   Edit3,
   ChevronDown,
   ChevronUp,
-  Gift
+  Gift,
+  Bell,
+  BellOff
 } from "lucide-react";
 
 export interface MinibarProduct {
@@ -213,6 +215,16 @@ export default function GuestMinibar() {
   const [paidItems, setPaidItems] = useState<MinibarOrderItem[]>([]);
   const [paidOrdersHistory, setPaidOrdersHistory] = useState<any[]>([]);
   const [courtesyConsumed, setCourtesyConsumed] = useState(false);
+  const [anserveDnd, setAnserveDnd] = useState<{
+    eligible: boolean;
+    stayNights: number;
+    isB2b: boolean;
+    scope: "all" | "anserve_only";
+    active: boolean;
+    mode: "today" | "stay" | null;
+  } | null>(null);
+  const [dndToggling, setDndToggling] = useState(false);
+  const [dndFeedback, setDndFeedback] = useState<string | null>(null);
 
   // Novo Modo Operacional: Extrato Diário Lançado pela Repositora + Trava de Pagamento Pré-Checkout
   const [, setIsCheckedOut] = useState<boolean>(false);
@@ -457,6 +469,9 @@ export default function GuestMinibar() {
     setPaidItems(data.paidItems || []);
     setPaidOrdersHistory(data.paidOrdersHistory || []);
     setCourtesyConsumed(Boolean(data.courtesyConsumed));
+    if (data.anserveDnd) {
+      setAnserveDnd(data.anserveDnd);
+    }
 
     applyStatementData(data);
 
@@ -806,6 +821,35 @@ export default function GuestMinibar() {
       setOtpError("Falha na conexão ao validar os dígitos. Verifique sua internet.");
     } finally {
       setOtpLoading(false);
+    }
+  };
+
+  const handleToggleMinibarDnd = async (enable: boolean, mode: "today" | "stay" = "today") => {
+    const targetCode = reservation?.reservationCode || codeFromUrl;
+    if (!targetCode) return;
+    setDndToggling(true);
+    setDndFeedback(null);
+    try {
+      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(targetCode)}/anserve-do-not-disturb`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ doNotDisturb: enable, mode })
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        if (json.anserveDnd) {
+          setAnserveDnd(json.anserveDnd);
+        }
+        setDndFeedback(json.message || (enable ? "Modo Não Perturbe ativado." : "Modo Não Perturbe desativado."));
+        setTimeout(() => setDndFeedback(null), 5000);
+        refreshCurrentContextSilently();
+      } else {
+        setOrderError(json.error || "Não foi possível atualizar o Não Perturbe.");
+      }
+    } catch {
+      setOrderError("Erro de conexão ao atualizar o modo Não Perturbe.");
+    } finally {
+      setDndToggling(false);
     }
   };
 
@@ -1449,6 +1493,97 @@ export default function GuestMinibar() {
               <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
               <span>{orderError}</span>
             </div>
+          )}
+
+          {/* ── 0. Controle de Privacidade: Modo Não Perturbe (Anserve / Estadias > 1 diária ou B2B) ── */}
+          {anserveDnd?.eligible && !isCheckedOut && (
+            <Card
+              className={`rounded-3xl p-4 sm:p-5 space-y-3 shadow-lg border ${
+                anserveDnd.active
+                  ? "bg-rose-950/40 border-rose-500/60"
+                  : "bg-slate-900 border-slate-800"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2.5">
+                  <div
+                    className={`w-9 h-9 rounded-2xl flex items-center justify-center shrink-0 border ${
+                      anserveDnd.active
+                        ? "bg-rose-500/20 border-rose-500/40 text-rose-300"
+                        : "bg-cyan-500/15 border-cyan-500/30 text-cyan-300"
+                    }`}
+                  >
+                    {anserveDnd.active ? <BellOff className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h2 className="text-xs sm:text-sm font-black text-white">
+                        Modo Não Perturbe — Reposição
+                      </h2>
+                      {anserveDnd.active && (
+                        <Badge className="bg-rose-600 text-white border-none text-[10px] font-bold">
+                          {anserveDnd.mode === "today" ? "🔕 Ativo Hoje" : "🔕 Toda a Estadia"}
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-300 leading-relaxed mt-0.5">
+                      {anserveDnd.active
+                        ? anserveDnd.mode === "today"
+                          ? "A equipe Anserve foi avisada para não entrar no quarto hoje (desativa automaticamente à meia-noite)."
+                          : "A equipe Anserve não entrará para reposição durante sua estadia até você desativar."
+                        : anserveDnd.isB2b
+                        ? "Ative caso não queira entrada de governança e da equipe Anserve no seu flat."
+                        : "Ative caso não queira que a equipe Anserve entre no flat para conferência/reposição diária do frigobar."}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {anserveDnd.active ? (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  disabled={dndToggling}
+                  onClick={() => handleToggleMinibarDnd(false)}
+                  className="w-full h-9 rounded-2xl text-xs font-bold gap-1.5"
+                >
+                  {dndToggling ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Bell className="w-3.5 h-3.5" />}
+                  <span>Desativar Não Perturbe</span>
+                </Button>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={dndToggling}
+                    onClick={() => handleToggleMinibarDnd(true, "today")}
+                    className="h-9 rounded-2xl text-[11px] sm:text-xs font-bold gap-1.5 bg-rose-950/30 border-rose-500/40 text-rose-200 hover:bg-rose-900/50 hover:text-white"
+                  >
+                    {dndToggling ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <BellOff className="w-3.5 h-3.5" />}
+                    <span>Apenas Hoje</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={dndToggling}
+                    onClick={() => handleToggleMinibarDnd(true, "stay")}
+                    className="h-9 rounded-2xl text-[11px] sm:text-xs font-bold gap-1.5 bg-slate-950 border-slate-700 text-slate-200 hover:bg-slate-800 hover:text-white"
+                  >
+                    {dndToggling ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <BellOff className="w-3.5 h-3.5" />}
+                    <span>Toda a Estadia</span>
+                  </Button>
+                </div>
+              )}
+
+              {dndFeedback && (
+                <div className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-[11px] text-emerald-300 font-semibold">
+                  {dndFeedback}
+                </div>
+              )}
+            </Card>
           )}
 
           {/* ── 1. Resumo Único do Consumo do Quarto + Status de Pagamento ── */}

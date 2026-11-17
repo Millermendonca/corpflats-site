@@ -23136,6 +23136,119 @@ function isB2bReservation(r) {
 }
 const isB2BReservation = isB2bReservation;
 
+function getReservationStayNightsCount(r) {
+  if (!r || !r.checkinDate || !r.checkoutDate) return 1;
+  const ci = String(r.checkinDate).substring(0, 10);
+  const co = String(r.checkoutDate).substring(0, 10);
+  const ciMs = new Date(`${ci}T12:00:00Z`).getTime();
+  const coMs = new Date(`${co}T12:00:00Z`).getTime();
+  if (!Number.isFinite(ciMs) || !Number.isFinite(coMs)) return 1;
+  return Math.max(1, Math.round((coMs - ciMs) / 86400000));
+}
+
+function isReservationCheckedOutForDnd(r) {
+  if (!r) return true;
+  if (
+    r.checkoutDone ||
+    r.actualCheckoutAt ||
+    r.earlyCheckoutReleasedAt ||
+    r.status === "completed" ||
+    r.status === "checked_out" ||
+    r.status === "cancelada" ||
+    r.status === "cancelado" ||
+    r.status === "cancelled" ||
+    r.status === "expirada" ||
+    r.status === "no_show"
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function isReservationB2bDndActiveForDate(r, dateStr) {
+  if (!r || !r.doNotDisturb || isReservationCheckedOutForDnd(r)) return false;
+  const targetDate = String(dateStr || getBrasiliaNow().date).substring(0, 10);
+  if (r.doNotDisturbMode === "today") {
+    return String(r.doNotDisturbDate || "").substring(0, 10) === targetDate;
+  }
+  return true;
+}
+
+function isReservationAnserveDndActiveForDate(r, dateStr) {
+  if (!r || isReservationCheckedOutForDnd(r)) return false;
+  const targetDate = String(dateStr || getBrasiliaNow().date).substring(0, 10);
+  if (isB2bReservation(r)) {
+    return isReservationB2bDndActiveForDate(r, targetDate);
+  }
+  if (!r.anserveDoNotDisturb) return false;
+  if (r.anserveDoNotDisturbMode === "today") {
+    return String(r.anserveDoNotDisturbDate || "").substring(0, 10) === targetDate;
+  }
+  return true;
+}
+
+function buildGuestAnserveDndPayload(r, dateStr) {
+  if (!r) return null;
+  const targetDate = String(dateStr || getBrasiliaNow().date).substring(0, 10);
+  const isB2b = isB2bReservation(r);
+  const stayNights = getReservationStayNightsCount(r);
+  const checkedOutOrClosed = isReservationCheckedOutForDnd(r) || isPreReservationBlocked(r);
+  const eligible = !checkedOutOrClosed && (isB2b ? true : stayNights > 1);
+  const active = eligible && isReservationAnserveDndActiveForDate(r, targetDate);
+  const rawMode = isB2b ? (r.doNotDisturbMode || "stay") : (r.anserveDoNotDisturbMode || "today");
+  const rawDate = isB2b ? (r.doNotDisturbDate || null) : (r.anserveDoNotDisturbDate || null);
+  const updatedAt = isB2b ? (r.doNotDisturbUpdatedAt || null) : (r.anserveDoNotDisturbUpdatedAt || null);
+
+  return {
+    eligible,
+    stayNights,
+    isB2b,
+    scope: isB2b ? "all" : "anserve_only",
+    active,
+    mode: active ? rawMode : null,
+    targetDate: active ? rawDate : null,
+    updatedAt
+  };
+}
+
+function notifyRestockersAboutGuestDnd(r, isActive, mode, isB2b) {
+  if (!r) return;
+  try {
+    const flatNum = String(r.flatNumber || r.flatId || "").trim() || "S/N";
+    const guestFirst = String(r.guestName || "Hóspede").trim().split(" ")[0];
+    const modeLabel = mode === "today" ? "Apenas Hoje" : "Durante toda a estadia";
+    const notif = {
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      category: "minibar",
+      severity: isActive ? "warning" : "info",
+      title: isActive
+        ? `🔕 Flat ${flatNum} ativou Não Perturbe`
+        : `🔔 Flat ${flatNum} desativou Não Perturbe`,
+      message: isActive
+        ? `${guestFirst} ativou Não Perturbe (${modeLabel}). Não entre no Flat ${flatNum} para reposição${isB2b ? " ou governança" : ""}.`
+        : `${guestFirst} desativou o modo Não Perturbe no Flat ${flatNum}. Reposição liberada.`,
+      targetUrl: "/frigobar-reposicao",
+      read: false,
+      metadata: {
+        flatNumber: flatNum,
+        reservationCode: r.code || null,
+        dndActive: Boolean(isActive),
+        dndMode: mode || null,
+        dndScope: isB2b ? "all" : "anserve_only"
+      },
+      createdAt: new Date().toISOString()
+    };
+    if (!Array.isArray(db.notifications)) db.notifications = [];
+    db.notifications.unshift(notif);
+    if (db.notifications.length > 500) db.notifications = db.notifications.slice(0, 500);
+    if (typeof dispatchWebPushForNotification === "function") {
+      dispatchWebPushForNotification(db, saveDatabase, notif).catch(() => {});
+    }
+  } catch (err) {
+    console.warn("[Anserve DND Push] Falha ao notificar repositoras:", err?.message);
+  }
+}
+
 function computeLinenTracking(reservation, dateStr, db) {
   if (!reservation || !reservation.checkinDate || !reservation.checkoutDate) {
     return null;
@@ -23222,7 +23335,7 @@ function computeLinenTracking(reservation, dateStr, db) {
   const guestRequestedBedding = Boolean(activeLinenRequest && (activeLinenRequest.type === "bedding" || activeLinenRequest.type === "both"));
   const guestRequestedTowels = Boolean(activeLinenRequest && (activeLinenRequest.type === "towels" || activeLinenRequest.type === "both"));
 
-  const doNotDisturb = Boolean(reservation.doNotDisturb);
+  const doNotDisturb = isReservationB2bDndActiveForDate(reservation, targetDate);
 
   return {
     stayDayNumber,
@@ -23234,7 +23347,9 @@ function computeLinenTracking(reservation, dateStr, db) {
     daysSinceTowelsChange,
     guestRequestedBedding,
     guestRequestedTowels,
-    doNotDisturb
+    doNotDisturb,
+    doNotDisturbMode: doNotDisturb ? (reservation.doNotDisturbMode || "stay") : null,
+    doNotDisturbDate: doNotDisturb ? (reservation.doNotDisturbDate || null) : null
   };
 }
 
@@ -23398,7 +23513,7 @@ function getRequestsForDate(dateStr, isNested = false) {
       card.autoReservationCode = b2bRes.code || null;
       card.currentGuest = b2bRes.guestName || b2bRes.title || "Hóspede";
       card.guestName = b2bRes.guestName || b2bRes.title || "Hóspede";
-      card.doNotDisturb = Boolean(b2bRes.doNotDisturb);
+      card.doNotDisturb = isReservationB2bDndActiveForDate(b2bRes, dateStr);
       card.isVacant = false;
       if (card.status === "clean" && (card.isPriority || card.priorityReason)) {
         card.isPriority = false;
@@ -23434,7 +23549,7 @@ function getRequestsForDate(dateStr, isNested = false) {
         guestName: b2bRes.guestName || b2bRes.title || "Hóspede",
         arrivingGuest: null,
         pendingObservation: null,
-        doNotDisturb: Boolean(b2bRes.doNotDisturb),
+        doNotDisturb: isReservationB2bDndActiveForDate(b2bRes, dateStr),
         towelsChanged: false,
         beddingChanged: false,
         smokedInRoom: false,
@@ -24387,7 +24502,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
       : null;
 
     const doNotDisturb = isStayover
-      ? Boolean(stayoverRes?.doNotDisturb || req_.doNotDisturb)
+      ? (stayoverRes ? isReservationB2bDndActiveForDate(stayoverRes, dateStr) : Boolean(req_.doNotDisturb))
       : false;
 
     return {
@@ -25698,7 +25813,10 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
   ) : null;
 
   // Trava de Não Perturbe (DND) para camareiras
-  if (isStayover && (stayoverActiveRes?.doNotDisturb || item.doNotDisturb) && (status === "cleaning_now" || status === "clean") && userAuth?.role !== "admin" && userAuth?.role !== "dev") {
+  const isStayoverB2bDndActive = stayoverActiveRes
+    ? isReservationB2bDndActiveForDate(stayoverActiveRes, targetDate)
+    : Boolean(item.doNotDisturb);
+  if (isStayover && isStayoverB2bDndActive && (status === "cleaning_now" || status === "clean") && userAuth?.role !== "admin" && userAuth?.role !== "dev") {
     return res.status(422).json({
       error: "Não é possível iniciar ou concluir a limpeza. Hóspede ativou o modo Não Perturbe."
     });
@@ -42581,7 +42699,10 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       checkedInAt: r.checkedInAt || null,
       actualCheckinAt: r.actualCheckinAt || null,
       guestSelfCheckin: Boolean(r.guestSelfCheckin),
-      doNotDisturb: Boolean(r.doNotDisturb),
+      doNotDisturb: isReservationB2bDndActiveForDate(r, todayStr),
+      doNotDisturbMode: r.doNotDisturb ? (r.doNotDisturbMode || "stay") : null,
+      anserveDoNotDisturb: isReservationAnserveDndActiveForDate(r, todayStr),
+      anserveDoNotDisturbMode: r.anserveDoNotDisturb ? (r.anserveDoNotDisturbMode || "today") : null,
       minibarOrders: getVisibleReservationMinibarOrders(r)
     },
     hasBreakfast,
@@ -42636,9 +42757,12 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     adminWhatsApp: db.settings.adminWhatsApp || "5522997124021",
     minibarOrders: getVisibleReservationMinibarOrders(r),
     minibarUrl: `/minha-reserva/${r.code}/frigobar`,
+    anserveDnd: buildGuestAnserveDndPayload(r, todayStr),
     b2bHousekeeping: isB2b ? {
       isB2b: true,
-      doNotDisturb: Boolean(r.doNotDisturb),
+      doNotDisturb: isReservationB2bDndActiveForDate(r, todayStr),
+      doNotDisturbMode: isReservationB2bDndActiveForDate(r, todayStr) ? (r.doNotDisturbMode || "stay") : null,
+      doNotDisturbDate: isReservationB2bDndActiveForDate(r, todayStr) ? (r.doNotDisturbDate || null) : null,
       linenTracking: computeLinenTracking(r, todayStr, db),
       pendingLinenRequests: (r.linenRequests || []).filter(lr => lr.status === "pending"),
       linenRequestsHistory: r.linenRequests || []
@@ -42697,7 +42821,7 @@ app.post("/api/pms/guest-portal/:code/claim-early-checkin", (req, res) => {
   });
 });
 
-// Endpoint: Guest Portal - Alternar Modo Não Perturbe (DND) para Hóspedes B2B
+// Endpoint: Guest Portal - Alternar Modo Não Perturbe (DND) para Hóspedes B2B (Governança + Anserve)
 app.post("/api/pms/guest-portal/:code/do-not-disturb", (req, res) => {
   const code = (req.params.code || "").trim();
   if (!db.reservations) db.reservations = [];
@@ -42707,20 +42831,27 @@ app.post("/api/pms/guest-portal/:code/do-not-disturb", (req, res) => {
   }
 
   if (!isB2bReservation(r)) {
-    return res.status(403).json({ error: "Opção de Não Perturbe disponível apenas para reservas corporativas B2B." });
+    return res.status(403).json({ error: "Opção de Não Perturbe de governança disponível apenas para reservas corporativas B2B." });
   }
 
-  const { doNotDisturb } = req.body || {};
+  const { doNotDisturb, mode } = req.body || {};
   if (typeof doNotDisturb !== "boolean") {
     return res.status(400).json({ error: "Campo 'doNotDisturb' booleano é obrigatório." });
   }
 
+  const todayStr = getBrasiliaNow().date;
+  // Retrocompatibilidade: se mode não for enviado por cliente legado, mantém "stay"; quando enviado pela UI ("today" | "stay"), respeita
+  const resolvedMode = doNotDisturb ? (mode === "today" ? "today" : "stay") : null;
+
   r.doNotDisturb = doNotDisturb;
+  r.doNotDisturbMode = resolvedMode;
+  r.doNotDisturbDate = doNotDisturb ? todayStr : null;
   r.doNotDisturbUpdatedAt = new Date().toISOString();
   r.updatedAt = new Date().toISOString();
 
+  const effectiveToday = isReservationB2bDndActiveForDate(r, todayStr);
+
   // Replicar imediatamente no card de stayover de hoje, se existir
-  const todayStr = getBrasiliaNow().date;
   if (!db.cleaningRequests) db.cleaningRequests = [];
   const todayStayover = db.cleaningRequests.find(c =>
     (c.reservationId === r.id || String(c.flatNumber) === String(r.flatNumber)) &&
@@ -42728,17 +42859,112 @@ app.post("/api/pms/guest-portal/:code/do-not-disturb", (req, res) => {
     (c.source === "stayover" || c.cleaningType === "stayover")
   );
   if (todayStayover) {
-    todayStayover.doNotDisturb = doNotDisturb;
+    todayStayover.doNotDisturb = effectiveToday;
   }
+  invalidateRequestsForDateCache();
 
   saveDatabase("guest_portal_do_not_disturb");
+  notifyRestockersAboutGuestDnd(r, effectiveToday, resolvedMode, true);
 
   res.json({
     success: true,
-    doNotDisturb: r.doNotDisturb,
-    message: r.doNotDisturb
-      ? "Modo Não Perturbe ativado. A equipe de governança não entrará no apartamento hoje."
-      : "Modo Não Perturbe desativado. A equipe de governança poderá realizar a limpeza normalmente."
+    doNotDisturb: effectiveToday,
+    mode: resolvedMode,
+    anserveDnd: buildGuestAnserveDndPayload(r, todayStr),
+    message: effectiveToday
+      ? resolvedMode === "today"
+        ? "Modo Não Perturbe ativado para hoje. Governança e reposição de frigobar não entrarão no seu flat hoje."
+        : "Modo Não Perturbe ativado para toda a estadia. Governança e reposição de frigobar não entrarão até você desativar."
+      : "Modo Não Perturbe desativado. Governança e reposição de frigobar liberadas normalmente."
+  });
+});
+
+// Endpoint: Guest Portal & Frigobar - Alternar Modo Não Perturbe (Exclusivo Equipe Anserve para Airbnb/Booking/Site/WhatsApp com > 1 diária, ou B2B)
+app.post("/api/pms/guest-portal/:code/anserve-do-not-disturb", (req, res) => {
+  const code = (req.params.code || "").trim();
+  if (!db.reservations) db.reservations = [];
+  const r = findReservationByLocatorOrContact(code);
+  if (!r || isReservationCheckedOutForDnd(r)) {
+    return res.status(404).json({ error: "Reserva ativa não encontrada ou estadia já encerrada." });
+  }
+
+  if (isPreReservationBlocked(r)) {
+    return res.status(403).json({
+      error: "Confirme o pagamento da pré-reserva primeiro para utilizar as preferências do quarto."
+    });
+  }
+
+  const { doNotDisturb, mode } = req.body || {};
+  if (typeof doNotDisturb !== "boolean") {
+    return res.status(400).json({ error: "Campo 'doNotDisturb' booleano é obrigatório." });
+  }
+
+  const todayStr = getBrasiliaNow().date;
+  const isB2b = isB2bReservation(r);
+
+  if (isB2b) {
+    const resolvedMode = doNotDisturb ? (mode === "stay" ? "stay" : "today") : null;
+    r.doNotDisturb = doNotDisturb;
+    r.doNotDisturbMode = resolvedMode;
+    r.doNotDisturbDate = doNotDisturb ? todayStr : null;
+    r.doNotDisturbUpdatedAt = new Date().toISOString();
+    r.updatedAt = new Date().toISOString();
+
+    const effectiveToday = isReservationB2bDndActiveForDate(r, todayStr);
+    if (!db.cleaningRequests) db.cleaningRequests = [];
+    const todayStayover = db.cleaningRequests.find(c =>
+      (c.reservationId === r.id || String(c.flatNumber) === String(r.flatNumber)) &&
+      c.requestDate === todayStr &&
+      (c.source === "stayover" || c.cleaningType === "stayover")
+    );
+    if (todayStayover) {
+      todayStayover.doNotDisturb = effectiveToday;
+    }
+    invalidateRequestsForDateCache();
+    saveDatabase("guest_portal_b2b_dnd_from_anserve");
+    notifyRestockersAboutGuestDnd(r, effectiveToday, resolvedMode, true);
+
+    return res.json({
+      success: true,
+      doNotDisturb: effectiveToday,
+      mode: resolvedMode,
+      anserveDnd: buildGuestAnserveDndPayload(r, todayStr),
+      message: effectiveToday
+        ? resolvedMode === "today"
+          ? "Modo Não Perturbe ativado para hoje (governança e reposição de frigobar suspensas hoje)."
+          : "Modo Não Perturbe ativado para toda a estadia (governança e reposição de frigobar suspensas)."
+        : "Modo Não Perturbe desativado."
+    });
+  }
+
+  const stayNights = getReservationStayNightsCount(r);
+  if (stayNights <= 1) {
+    return res.status(400).json({
+      error: "O Modo Não Perturbe de reposição diária está disponível apenas em reservas com mais de 1 diária."
+    });
+  }
+
+  const resolvedMode = doNotDisturb ? (mode === "stay" ? "stay" : "today") : null;
+  r.anserveDoNotDisturb = doNotDisturb;
+  r.anserveDoNotDisturbMode = resolvedMode;
+  r.anserveDoNotDisturbDate = doNotDisturb ? todayStr : null;
+  r.anserveDoNotDisturbUpdatedAt = new Date().toISOString();
+  r.updatedAt = new Date().toISOString();
+
+  const effectiveToday = isReservationAnserveDndActiveForDate(r, todayStr);
+  saveDatabase("guest_portal_anserve_do_not_disturb");
+  notifyRestockersAboutGuestDnd(r, effectiveToday, resolvedMode, false);
+
+  res.json({
+    success: true,
+    doNotDisturb: effectiveToday,
+    mode: resolvedMode,
+    anserveDnd: buildGuestAnserveDndPayload(r, todayStr),
+    message: effectiveToday
+      ? resolvedMode === "today"
+        ? "Modo Não Perturbe ativado para hoje! A equipe do frigobar (Anserve) não entrará no seu flat hoje."
+        : "Modo Não Perturbe ativado para toda a estadia! A equipe do frigobar (Anserve) não entrará até você desativar (exceto conferência após seu check-out)."
+      : "Modo Não Perturbe desativado! A reposição diária do frigobar poderá ocorrer normalmente."
   });
 });
 
@@ -85280,7 +85506,8 @@ app.post("/api/minibar/flat-context", (req, res) => {
       paidOrdersHistory,
       minibarOrders: getVisibleReservationMinibarOrders(reservation),
       pendingDiscrepancyOrder,
-      courtesyConsumed
+      courtesyConsumed,
+      anserveDnd: buildGuestAnserveDndPayload(reservation, getBrasiliaNow().date)
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -85418,7 +85645,8 @@ app.get("/api/minibar/reservation-context/:code", (req, res) => {
       paidOrdersHistory,
       minibarOrders: getVisibleReservationMinibarOrders(reservation),
       pendingDiscrepancyOrder,
-      courtesyConsumed
+      courtesyConsumed,
+      anserveDnd: buildGuestAnserveDndPayload(reservation, getBrasiliaNow().date)
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -86878,6 +87106,58 @@ app.post("/api/minibar/inspections", async (req, res) => {
     const launchDateStr = String(bodyLaunchDate || todayStr).slice(0, 10);
     const launchDateBr = formatMinibarDateBr(launchDateStr);
 
+    const normalizedReqStatus = String(status || "").trim().toLowerCase();
+    const isSkipMark = normalizedReqStatus === "nq" || normalizedReqStatus === "np";
+
+    // Checagem antecipada se o flat/reserva já realizou check-out real no PMS
+    const earlyCheckActuallyCheckedOut = reservation
+      ? isReservationOrFlatCheckedOut(db, reservation, reservation.flatId, flatStr) ||
+        Boolean(
+          reservation.checkoutDone ||
+          reservation.actualCheckoutAt ||
+          reservation.earlyCheckoutReleasedAt
+        )
+      : false;
+    const earlyResCheckedOut =
+      earlyCheckActuallyCheckedOut ||
+      Boolean(req.body?.isFinalCheckoutInspection || reservation?.finalMinibarInspectionAt);
+
+    // Trava determinística: se o hóspede ativou Não Perturbe pelo Portal e ainda NÃO fez check-out,
+    // bloqueia lançamentos/passagens das repositoras (exceto override administrativo explícito)
+    const isAdminOverrideCaller = Boolean(
+      user && (user.role === "admin" || user.role === "dev") && req.body?.adminOverrideDnd === true
+    );
+    if (
+      reservation &&
+      !earlyResCheckedOut &&
+      isReservationAnserveDndActiveForDate(reservation, launchDateStr) &&
+      !isAdminOverrideCaller
+    ) {
+      return res.status(422).json({
+        success: false,
+        code: "GUEST_DND_ACTIVE",
+        error:
+          "Bloqueado: O hóspede ativou o modo Não Perturbe no portal. Não entre no quarto (a conferência final será liberada automaticamente após o check-out)."
+      });
+    }
+
+    // Trava determinística para NQ / NP: permitido apenas quando há hóspede hospedado (proibido em flat livre ou já com check-out feito)
+    if (isSkipMark) {
+      if (!reservation) {
+        return res.status(400).json({
+          success: false,
+          error: "Não é permitido marcar NQ ou NP em um flat livre sem reserva ativa."
+        });
+      }
+      if (earlyResCheckedOut) {
+        return res.status(422).json({
+          success: false,
+          error:
+            "O hóspede já realizou check-out neste flat. Realize a conferência final pós-checkout em vez de marcar NQ/NP."
+        });
+      }
+    }
+
     const resolvedInspectorUser =
       user ||
       matchedPinUser ||
@@ -87445,6 +87725,49 @@ app.post("/api/minibar/inspections", async (req, res) => {
       }
     }
 
+    const resolvedInspectionStatus = isSkipMark
+      ? normalizedReqStatus
+      : hasDiscrepancy
+      ? "divergencia"
+      : "conforme";
+
+    const defaultSkipNote =
+      normalizedReqStatus === "nq"
+        ? "NQ — Hóspede informou que não quer reposição/conferência hoje"
+        : normalizedReqStatus === "np"
+        ? "NP — Quarto com plaquinha/aviso de Não Perturbe na porta"
+        : "";
+
+    if (!Array.isArray(db.minibarInspections)) db.minibarInspections = [];
+
+    // Se já existia um NQ/NP anterior hoje para este mesmo flat/reserva:
+    // - Se está trocando NQ <-> NP hoje, substitui o anterior para não duplicar contadores do turno
+    // - Se agora está fazendo uma conferência REAL (Sem Consumo / Lançar Consumo / Pós-Checkout), marca o NQ/NP anterior como superado
+    if (isSkipMark) {
+      db.minibarInspections = db.minibarInspections.filter(
+        prev =>
+          !(
+            prev &&
+            String(prev.flatNumber) === flatStr &&
+            String(prev.launchDate || String(prev.inspectedAt || "").slice(0, 10)) === launchDateStr &&
+            (prev.status === "nq" || prev.status === "np") &&
+            (!finalResCode || !prev.reservationCode || prev.reservationCode === finalResCode)
+          )
+      );
+    } else {
+      for (const prev of db.minibarInspections) {
+        if (
+          prev &&
+          String(prev.flatNumber) === flatStr &&
+          String(prev.launchDate || String(prev.inspectedAt || "").slice(0, 10)) === launchDateStr &&
+          (prev.status === "nq" || prev.status === "np") &&
+          (!finalResCode || !prev.reservationCode || prev.reservationCode === finalResCode)
+        ) {
+          prev.supersededByRealInspection = true;
+        }
+      }
+    }
+
     const inspection = {
       id: `INSP-MB-${Date.now()}`,
       flatNumber: flatStr,
@@ -87458,33 +87781,33 @@ app.post("/api/minibar/inspections", async (req, res) => {
       inspectedAt: new Date().toISOString(),
       launchDate: launchDateStr,
       launchDateBr,
-      isFinalCheckoutInspection: Boolean(resCheckedOut),
-      postCheckoutNotificationType,
+      isFinalCheckoutInspection: isSkipMark ? false : Boolean(resCheckedOut),
+      postCheckoutNotificationType: isSkipMark ? "none_needed" : postCheckoutNotificationType,
       pendingBalanceAtInspection: totalPendingNow,
       totalPaidAtInspection: totalPaidPreviously,
-      status: hasDiscrepancy ? "divergencia" : "conforme",
-      hasDiscrepancy,
+      status: resolvedInspectionStatus,
+      isSkipMark,
+      hasDiscrepancy: isSkipMark ? false : hasDiscrepancy,
       discrepancyPaid: false,
-      discrepancyResolved: !hasDiscrepancy,
-      missingItems: effectiveCountedList,
-      discrepancyItems,
-      discrepancyTotalAmount,
-      restockedItems: processedRestocked,
-      restockedCourtesyTotalCost,
-      restockedPaidItemsTotalCost,
+      discrepancyResolved: isSkipMark ? true : !hasDiscrepancy,
+      missingItems: isSkipMark ? [] : effectiveCountedList,
+      discrepancyItems: isSkipMark ? [] : discrepancyItems,
+      discrepancyTotalAmount: isSkipMark ? 0 : discrepancyTotalAmount,
+      restockedItems: isSkipMark ? [] : processedRestocked,
+      restockedCourtesyTotalCost: isSkipMark ? 0 : restockedCourtesyTotalCost,
+      restockedPaidItemsTotalCost: isSkipMark ? 0 : restockedPaidItemsTotalCost,
       photos: Array.isArray(photos) ? photos : [],
-      notes: notes || "",
-      welcomeKitConsumption: welcomeKitRecord,
-      chargeOrderId: chargeOrderId || updatedStatement?.primaryPendingOrder?.id || null,
-      autoSplitOrderIds: autoSplitOrders.map(o => o.id),
-      whatsappSofiaAlertSent,
-      notifiedPhones,
-      whatsappMessagesSent,
+      notes: notes || defaultSkipNote,
+      welcomeKitConsumption: isSkipMark ? null : welcomeKitRecord,
+      chargeOrderId: isSkipMark ? null : (chargeOrderId || updatedStatement?.primaryPendingOrder?.id || null),
+      autoSplitOrderIds: isSkipMark ? [] : autoSplitOrders.map(o => o.id),
+      whatsappSofiaAlertSent: isSkipMark ? false : whatsappSofiaAlertSent,
+      notifiedPhones: isSkipMark ? [] : notifiedPhones,
+      whatsappMessagesSent: isSkipMark ? [] : whatsappMessagesSent,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
 
-    if (!Array.isArray(db.minibarInspections)) db.minibarInspections = [];
     db.minibarInspections.push(inspection);
     saveDatabase("minibar_inspection_recorded");
 
@@ -87493,16 +87816,82 @@ app.post("/api/minibar/inspections", async (req, res) => {
       inspectionId: inspection.id,
       launchDate: launchDateStr,
       launchDateBr,
-      hasDiscrepancy,
+      hasDiscrepancy: inspection.hasDiscrepancy,
       chargeOrderId: inspection.chargeOrderId,
-      autoSplitOrders,
+      autoSplitOrders: isSkipMark ? [] : autoSplitOrders,
       splitBreakdown: updatedStatement?.splitBreakdown || null,
-      whatsappSofiaAlertSent,
-      postCheckoutNotificationType,
-      notifiedPhones,
-      whatsappMessagesSent,
+      whatsappSofiaAlertSent: inspection.whatsappSofiaAlertSent,
+      postCheckoutNotificationType: inspection.postCheckoutNotificationType,
+      notifiedPhones: inspection.notifiedPhones,
+      whatsappMessagesSent: inspection.whatsappMessagesSent,
       statement: updatedStatement,
       inspection
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Desfazer marcação rápida de NQ / NP do dia atual pela repositora ou supervisão
+app.post("/api/minibar/inspections/undo-skip", (req, res) => {
+  try {
+    const user = getAuthUser(req);
+    const pinHeader = req.headers["x-anserve-pin"];
+    const tokenHeader = req.headers["x-anserve-token"];
+    const pinStr = pinHeader ? String(pinHeader).trim() : "";
+    const matchedPinUser = pinStr
+      ? (db.users || []).find(
+          u =>
+            u.active !== false &&
+            (u.role === "anserve_repositora" || u.role === "anserve_gestor") &&
+            u.pin &&
+            String(u.pin).trim() === pinStr
+        )
+      : null;
+    const isPinValid = Boolean(matchedPinUser) || (pinStr && pinStr === String(db.minibarSettings?.anservePin || "1234"));
+    const testToken = req.headers["x-test-token"] || req.headers["authorization"];
+    const isTestAuthorized = testToken === "test-token" || testToken === "Bearer test-token";
+    const todayStr = getBrasiliaNow().date;
+    const decodedAnsToken = tokenHeader ? verifyAuthToken(String(tokenHeader).trim()) : null;
+    const isAnsTokenShiftExpired = Boolean(
+      decodedAnsToken &&
+      decodedAnsToken.role === "anserve_repositora" &&
+      decodedAnsToken.shiftDate &&
+      String(decodedAnsToken.shiftDate) !== String(todayStr)
+    );
+    const isValidAnsToken = Boolean(tokenHeader) && !isAnsTokenShiftExpired;
+    const isStaff = isMinibarStaff(user) || isPinValid || isValidAnsToken || isTestAuthorized;
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+
+    if (!isStaff && !isTestBypass) {
+      return res.status(401).json({ success: false, error: "Autenticação obrigatória para desfazer NQ/NP." });
+    }
+
+    const { flatNumber, inspectionId } = req.body || {};
+    const flatStr = String(flatNumber || "").trim();
+    if (!flatStr && !inspectionId) {
+      return res.status(400).json({ success: false, error: "Informe flatNumber ou inspectionId." });
+    }
+
+    if (!Array.isArray(db.minibarInspections)) db.minibarInspections = [];
+    const beforeLen = db.minibarInspections.length;
+    db.minibarInspections = db.minibarInspections.filter(insp => {
+      if (!insp) return false;
+      if (insp.status !== "nq" && insp.status !== "np") return true;
+      if (inspectionId && insp.id === inspectionId) return false;
+      const inspDate = String(insp.launchDate || String(insp.inspectedAt || "").slice(0, 10));
+      if (flatStr && String(insp.flatNumber) === flatStr && inspDate === todayStr) return false;
+      return true;
+    });
+
+    const removedCount = beforeLen - db.minibarInspections.length;
+    if (removedCount > 0) {
+      saveDatabase("minibar_inspection_undo_skip");
+    }
+
+    res.json({
+      success: true,
+      removedCount
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -87596,10 +87985,39 @@ app.get("/api/minibar/inspections/flats-status", (req, res) => {
 
       const pendingDiscrepancyOrder = statement?.primaryPendingOrder || null;
 
-      // Última inspeção
-      const lastInsp = (db.minibarInspections || [])
-        .filter(i => String(i.flatNumber) === flatNum)
-        .sort((a, b) => String(b.inspectedAt || "").localeCompare(String(a.inspectedAt || "")))[0] || null;
+      // Inspeções do flat (ordenadas da mais recente para a mais antiga)
+      const flatInspectionsSorted = (db.minibarInspections || [])
+        .filter(i => i && String(i.flatNumber) === flatNum)
+        .sort((a, b) => String(b.inspectedAt || "").localeCompare(String(a.inspectedAt || "")));
+
+      const lastInsp = flatInspectionsSorted[0] || null;
+
+      // Inspeções registradas HOJE para a reserva ativa
+      const todayFlatInspections = flatInspectionsSorted.filter(i => {
+        const iDate = String(i.launchDate || String(i.inspectedAt || "").slice(0, 10));
+        if (iDate !== todayStr) return false;
+        if (resActive && i.reservationCode && resActive.code && i.reservationCode !== resActive.code) {
+          return false;
+        }
+        return true;
+      });
+
+      const realInspectionToday = todayFlatInspections.find(
+        i => i.status !== "nq" && i.status !== "np"
+      ) || null;
+
+      const skipInspectionToday = !realInspectionToday
+        ? todayFlatInspections.find(
+            i => (i.status === "nq" || i.status === "np") && !i.supersededByRealInspection
+          ) || null
+        : null;
+
+      // Regra de Ouro do Check-out:
+      // 1) Se o hóspede já fez check-out hoje (isCheckedOutToday === true), qualquer Não Perturbe do portal
+      //    destrava automaticamente e qualquer NQ/NP marcado cedo antes de sair deixa de valer como conferência final!
+      const guestDndPayload = resActive ? buildGuestAnserveDndPayload(resActive, todayStr) : null;
+      const guestDoNotDisturb = Boolean(!isCheckedOutToday && guestDndPayload?.active);
+      const activeSkipToday = !isCheckedOutToday ? skipInspectionToday : null;
 
       // Gabarito padrão
       const defaultTemplate = db.minibarDefaultStock?.flatOverrides?.[flatNum] || db.minibarDefaultStock?.globalTemplate || [];
@@ -87611,6 +88029,21 @@ app.get("/api/minibar/inspections/flats-status", (req, res) => {
         status,
         isCheckedOut: isCheckedOutToday,
         checkoutTime: resolvedCheckoutTime,
+        guestDoNotDisturb,
+        guestDoNotDisturbMode: guestDoNotDisturb ? (guestDndPayload?.mode || "stay") : null,
+        guestDoNotDisturbScope: guestDoNotDisturb ? (guestDndPayload?.scope || "anserve_only") : null,
+        guestDoNotDisturbUpdatedAt: guestDoNotDisturb ? (guestDndPayload?.updatedAt || null) : null,
+        todaySkipStatus: activeSkipToday ? activeSkipToday.status : null,
+        todaySkipInspection: activeSkipToday
+          ? {
+              id: activeSkipToday.id,
+              status: activeSkipToday.status,
+              inspectorName: activeSkipToday.inspectorName || "Repositora Anserve",
+              inspectedAt: activeSkipToday.inspectedAt,
+              notes: activeSkipToday.notes || ""
+            }
+          : null,
+        hasRealInspectionToday: Boolean(realInspectionToday),
         dailyLaunches: statement ? statement.dailyLaunches : [],
         pendingBalance: statement ? statement.pendingBalance : 0,
         totalLaunchedAmount: statement ? statement.totalLaunchedAmount : 0,
@@ -88593,6 +89026,8 @@ function computeAnserveStaffMetrics(staffUser, inspectionsList, ordersList) {
 
   let conformeCount = 0;
   let discrepancyCount = 0;
+  let nqCount = 0;
+  let npCount = 0;
   let discrepancyAmountDetected = 0;
   let discrepancyAmountRecovered = 0;
   let paidItemsRestockedQty = 0;
@@ -88603,6 +89038,14 @@ function computeAnserveStaffMetrics(staffUser, inspectionsList, ordersList) {
 
   for (const insp of matchingInspections) {
     if (insp.flatNumber) flatsSet.add(String(insp.flatNumber));
+    if (insp.status === "nq") {
+      nqCount += 1;
+      continue;
+    }
+    if (insp.status === "np") {
+      npCount += 1;
+      continue;
+    }
     const isDiv = insp.hasDiscrepancy || insp.status === "divergencia";
     if (isDiv) {
       discrepancyCount += 1;
@@ -88635,13 +89078,17 @@ function computeAnserveStaffMetrics(staffUser, inspectionsList, ordersList) {
     String(b.inspectedAt || b.createdAt || "").localeCompare(String(a.inspectedAt || a.createdAt || ""))
   );
 
+  const enteredInspectionsCount = conformeCount + discrepancyCount;
+
   return {
     inspectionsCount: matchingInspections.length,
     conformeCount,
     discrepancyCount,
+    nqCount,
+    npCount,
     conformityRatePct:
-      matchingInspections.length > 0
-        ? Number(((conformeCount / matchingInspections.length) * 100).toFixed(1))
+      enteredInspectionsCount > 0
+        ? Number(((conformeCount / enteredInspectionsCount) * 100).toFixed(1))
         : 100,
     discrepancyAmountDetected: Number(discrepancyAmountDetected.toFixed(2)),
     discrepancyAmountRecovered: Number(discrepancyAmountRecovered.toFixed(2)),
@@ -89165,8 +89612,12 @@ app.get("/api/minibar/anserve-reports", (req, res) => {
     }).sort((a, b) => b.inspectionsCount - a.inspectionsCount);
 
     const totalInspections = filteredInspections.length;
-    const totalDiscrepancies = filteredInspections.filter(i => i.hasDiscrepancy || i.status === "divergencia").length;
-    const totalConforme = totalInspections - totalDiscrepancies;
+    const totalNq = filteredInspections.filter(i => i.status === "nq").length;
+    const totalNp = filteredInspections.filter(i => i.status === "np").length;
+    const totalDiscrepancies = filteredInspections.filter(
+      i => i.status !== "nq" && i.status !== "np" && (i.hasDiscrepancy || i.status === "divergencia")
+    ).length;
+    const totalConforme = Math.max(0, totalInspections - totalDiscrepancies - totalNq - totalNp);
 
     let totalCourtesyWaterCups = 0;
     let totalCourtesyMendoratoPeanuts = 0;
@@ -89221,7 +89672,12 @@ app.get("/api/minibar/anserve-reports", (req, res) => {
         totalInspections,
         totalConforme,
         totalDiscrepancies,
-        conformityRatePct: totalInspections > 0 ? Number(((totalConforme / totalInspections) * 100).toFixed(1)) : 100,
+        totalNq,
+        totalNp,
+        conformityRatePct:
+          totalConforme + totalDiscrepancies > 0
+            ? Number(((totalConforme / (totalConforme + totalDiscrepancies)) * 100).toFixed(1))
+            : 100,
         byStaff: staffProductivity,
         inspections: filteredInspections.sort((a, b) => String(b.inspectedAt || "").localeCompare(String(a.inspectedAt || "")))
       }

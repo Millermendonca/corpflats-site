@@ -451,7 +451,7 @@ export default function GuestPortal() {
   const [claimingEarly, setClaimingEarly] = useState(false)
   const [reminderSaved, setReminderSaved] = useState(false)
 
-  // ── Governança Diária & Enxoval B2B States (M3) ───────────────────
+  // ── Governança Diária & Enxoval B2B + Não Perturbe Anserve States (M3) ───
   const [dndLoading, setDndLoading] = useState(false)
   const [linenRequestType, setLinenRequestType] = useState<"bedding" | "towels" | "both">("both")
   const [linenRequestNotes, setLinenRequestNotes] = useState("")
@@ -947,17 +947,26 @@ export default function GuestPortal() {
     }
   }
 
-  // ── Governança Diária & Enxoval B2B Handlers (M3) ──────────────────
-  const handleToggleDnd = async (newDnd: boolean) => {
+  // ── Governança Diária & Enxoval B2B + Não Perturbe Anserve Handlers (M3) ──
+  const handleToggleDnd = async (
+    newDnd: boolean,
+    chosenMode: "today" | "stay" = "today",
+    forceAnserveOnlyEndpoint = false
+  ) => {
     const targetCode = data?.reservation?.code || code
     if (!targetCode) return
     setDndLoading(true)
     setDndSuccessNotice(null)
+    const isB2bRes = Boolean(data?.reservation?.isB2b || data?.b2bHousekeeping?.isB2b)
+    const endpoint =
+      isB2bRes && !forceAnserveOnlyEndpoint
+        ? `/api/pms/guest-portal/${encodeURIComponent(targetCode)}/do-not-disturb`
+        : `/api/pms/guest-portal/${encodeURIComponent(targetCode)}/anserve-do-not-disturb`
     try {
-      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(targetCode)}/do-not-disturb`, {
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ doNotDisturb: newDnd })
+        body: JSON.stringify({ doNotDisturb: newDnd, mode: chosenMode })
       })
       const json = await res.json()
       if (res.ok) {
@@ -4312,52 +4321,93 @@ export default function GuestPortal() {
                 </div>
               )}
 
-              {/* Seção Não Perturbe */}
-              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    {isDndActive ? (
-                      <BellOff className="w-5 h-5 text-rose-600 shrink-0" />
-                    ) : (
-                      <Bell className="w-5 h-5 text-indigo-600 shrink-0" />
-                    )}
-                    <div>
-                      <span className="font-bold text-slate-900 text-xs sm:text-sm block">
-                        Modo Não Perturbe (DND)
-                      </span>
-                      <span className="text-[11px] text-slate-600">
-                        {isDndActive
-                          ? "🔕 Ativo: A governança não entrará no seu flat hoje"
-                          : "🔔 Desativado: A governança realizará a arrumação padrão"}
-                      </span>
+              {/* Seção Não Perturbe (B2B: Governança + Anserve) */}
+              {(() => {
+                const activeB2bDndMode = b2bHk.doNotDisturbMode || (data as any)?.anserveDnd?.mode || "stay"
+                return (
+                  <div className={`p-4 rounded-2xl border space-y-3 ${isDndActive ? "bg-rose-50/90 border-rose-300" : "bg-slate-50 border-slate-200/80"}`}>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-start gap-2.5">
+                        {isDndActive ? (
+                          <BellOff className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                        ) : (
+                          <Bell className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
+                        )}
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-slate-900 text-xs sm:text-sm">
+                              Modo Não Perturbe (DND)
+                            </span>
+                            {isDndActive && (
+                              <Badge className="bg-rose-600 text-white border-none text-[10px] font-bold">
+                                {activeB2bDndMode === "today" ? "Ativo Hoje" : "Toda a Estadia"}
+                              </Badge>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-slate-600 block mt-0.5 leading-relaxed">
+                            {isDndActive
+                              ? activeB2bDndMode === "today"
+                                ? "🔕 Ativo hoje: Camareira e equipe do frigobar (Anserve) não entrarão no seu flat hoje (desativa automaticamente à meia-noite)."
+                                : "🔕 Ativo para toda a estadia: Camareira e equipe do frigobar (Anserve) não entrarão até você desativar."
+                              : "🔔 Desativado: Governança e reposição de frigobar realizadas normalmente."}
+                          </span>
+                        </div>
+                      </div>
+
+                      {isDndActive && (
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="sm"
+                          disabled={dndLoading}
+                          onClick={() => handleToggleDnd(false)}
+                          className="h-9 px-3.5 rounded-xl text-xs font-bold shrink-0 gap-1.5"
+                        >
+                          {dndLoading ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Bell className="w-3.5 h-3.5" />
+                          )}
+                          <span>Desativar Não Perturbe</span>
+                        </Button>
+                      )}
                     </div>
-                  </div>
 
-                  <Button
-                    type="button"
-                    variant={isDndActive ? "destructive" : "outline"}
-                    size="sm"
-                    disabled={dndLoading}
-                    onClick={() => handleToggleDnd(!isDndActive)}
-                    className="h-8 px-3 rounded-xl text-xs font-bold shrink-0 gap-1.5"
-                  >
-                    {dndLoading ? (
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    ) : isDndActive ? (
-                      <Bell className="w-3.5 h-3.5" />
-                    ) : (
-                      <BellOff className="w-3.5 h-3.5" />
+                    {!isDndActive && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={dndLoading}
+                          onClick={() => handleToggleDnd(true, "today")}
+                          className="h-9 px-3 rounded-xl text-xs font-bold gap-1.5 bg-white border-rose-200 text-rose-700 hover:bg-rose-50"
+                        >
+                          {dndLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <BellOff className="w-3.5 h-3.5" />}
+                          <span>Não Perturbe Apenas Hoje</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={dndLoading}
+                          onClick={() => handleToggleDnd(true, "stay")}
+                          className="h-9 px-3 rounded-xl text-xs font-bold gap-1.5 bg-white border-slate-300 text-slate-800 hover:bg-slate-100"
+                        >
+                          {dndLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <BellOff className="w-3.5 h-3.5" />}
+                          <span>Durante Toda a Estadia</span>
+                        </Button>
+                      </div>
                     )}
-                    <span>{isDndActive ? "Desativar Não Perturbe" : "Não Perturbe Hoje"}</span>
-                  </Button>
-                </div>
 
-                {dndSuccessNotice && (
-                  <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl p-2 font-medium">
-                    {dndSuccessNotice}
-                  </p>
-                )}
-              </div>
+                    {dndSuccessNotice && (
+                      <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl p-2 font-medium">
+                        {dndSuccessNotice}
+                      </p>
+                    )}
+                  </div>
+                )
+              })()}
 
               {/* Seção Solicitação de Troca de Enxoval */}
               <div className="p-4 bg-white rounded-2xl border border-indigo-100 space-y-3.5 shadow-2xs">
@@ -4630,6 +4680,121 @@ export default function GuestPortal() {
             )}
           </Card>
         )}
+
+        {/* ── Card Próprio: Modo Não Perturbe — Reposição do Frigobar (Canais Airbnb, Booking, Site e WhatsApp com > 1 diária) ── */}
+        {!isB2b &&
+          Boolean((data as any)?.anserveDnd?.eligible) &&
+          Number((data as any)?.anserveDnd?.stayNights || nights || 1) > 1 &&
+          !isCancelled &&
+          !isExpiredPreReservation &&
+          !isPreReservaUnpaid && (() => {
+            const anserveDnd = (data as any)?.anserveDnd || {}
+            const isAnserveDndActive = Boolean(anserveDnd.active)
+            const activeMode = anserveDnd.mode || "today"
+
+            return (
+              <Card
+                className={`rounded-3xl p-5 sm:p-6 shadow-md space-y-4 border ${
+                  isAnserveDndActive
+                    ? "bg-gradient-to-b from-rose-50/90 via-white to-rose-50/40 border-rose-300"
+                    : "bg-gradient-to-b from-slate-50/80 via-white to-cyan-50/20 border-slate-200/90"
+                }`}
+              >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/70 pb-3.5">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`w-11 h-11 rounded-2xl border flex items-center justify-center shrink-0 shadow-2xs ${
+                        isAnserveDndActive
+                          ? "bg-rose-100 text-rose-700 border-rose-300"
+                          : "bg-cyan-100/70 text-cyan-800 border-cyan-200"
+                      }`}
+                    >
+                      {isAnserveDndActive ? <BellOff className="w-5 h-5" /> : <Bell className="w-5 h-5" />}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h2 className="text-base sm:text-lg font-black text-slate-900 leading-snug">
+                          Modo Não Perturbe — Frigobar
+                        </h2>
+                        {isAnserveDndActive && (
+                          <Badge className="bg-rose-600 text-white border-none text-[10px] font-bold">
+                            {activeMode === "today" ? "🔕 Ativo Hoje" : "🔕 Toda a Estadia"}
+                          </Badge>
+                        )}
+                      </div>
+                      <span className="text-xs text-slate-600 font-medium block mt-0.5">
+                        Controle de privacidade para visitas diárias de reposição da equipe Anserve
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Sua reserva não possui entrada diária de camareira durante a estadia — apenas a equipe parceira{" "}
+                  <strong>Anserve</strong> passa diariamente para conferência e reposição de itens do frigobar. Ative abaixo caso prefira que ninguém bata ou entre no seu flat.
+                </p>
+
+                {isAnserveDndActive ? (
+                  <div className="p-4 rounded-2xl bg-rose-100/70 border border-rose-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="text-xs text-rose-950 space-y-0.5">
+                      <strong className="font-black block text-rose-900">
+                        {activeMode === "today"
+                          ? "🔕 Não Perturbe ativado para hoje!"
+                          : "🔕 Não Perturbe ativado para toda a sua estadia!"}
+                      </strong>
+                      <span className="text-[11px] text-rose-800 block leading-relaxed">
+                        {activeMode === "today"
+                          ? "A equipe Anserve foi avisada para não entrar no seu flat hoje. O aviso desativa automaticamente à meia-noite."
+                          : "A equipe Anserve não entrará no seu flat até você desativar (a conferência final ocorrerá somente após seu check-out)."}
+                      </span>
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      disabled={dndLoading}
+                      onClick={() => handleToggleDnd(false, "today", true)}
+                      className="h-9 px-4 rounded-xl text-xs font-bold shrink-0 gap-1.5"
+                    >
+                      {dndLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Bell className="w-3.5 h-3.5" />}
+                      <span>Desativar Não Perturbe</span>
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={dndLoading}
+                      onClick={() => handleToggleDnd(true, "today", true)}
+                      className="h-10 rounded-2xl text-xs font-bold gap-2 bg-rose-50/70 hover:bg-rose-100 border-rose-200 text-rose-800"
+                    >
+                      {dndLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <BellOff className="w-4 h-4" />}
+                      <span>Não Perturbe Apenas Hoje</span>
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={dndLoading}
+                      onClick={() => handleToggleDnd(true, "stay", true)}
+                      className="h-10 rounded-2xl text-xs font-bold gap-2 bg-slate-50 hover:bg-slate-100 border-slate-300 text-slate-800"
+                    >
+                      {dndLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <BellOff className="w-4 h-4" />}
+                      <span>Durante Toda a Estadia</span>
+                    </Button>
+                  </div>
+                )}
+
+                {dndSuccessNotice && (
+                  <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 font-medium">
+                    {dndSuccessNotice}
+                  </p>
+                )}
+              </Card>
+            )
+          })()}
 
         {/* ── Card: Cardápio Digital & Extrato do Frigobar no Flat ── */}
         <Card className="bg-gradient-to-b from-cyan-50/60 via-white to-cyan-50/30 border border-cyan-200/80 rounded-3xl p-5 sm:p-6 shadow-md space-y-4">

@@ -87106,6 +87106,58 @@ app.post("/api/minibar/inspections", async (req, res) => {
     const launchDateStr = String(bodyLaunchDate || todayStr).slice(0, 10);
     const launchDateBr = formatMinibarDateBr(launchDateStr);
 
+    const normalizedReqStatus = String(status || "").trim().toLowerCase();
+    const isSkipMark = normalizedReqStatus === "nq" || normalizedReqStatus === "np";
+
+    // Checagem antecipada se o flat/reserva já realizou check-out real no PMS
+    const earlyCheckActuallyCheckedOut = reservation
+      ? isReservationOrFlatCheckedOut(db, reservation, reservation.flatId, flatStr) ||
+        Boolean(
+          reservation.checkoutDone ||
+          reservation.actualCheckoutAt ||
+          reservation.earlyCheckoutReleasedAt
+        )
+      : false;
+    const earlyResCheckedOut =
+      earlyCheckActuallyCheckedOut ||
+      Boolean(req.body?.isFinalCheckoutInspection || reservation?.finalMinibarInspectionAt);
+
+    // Trava determinística: se o hóspede ativou Não Perturbe pelo Portal e ainda NÃO fez check-out,
+    // bloqueia lançamentos/passagens das repositoras (exceto override administrativo explícito)
+    const isAdminOverrideCaller = Boolean(
+      user && (user.role === "admin" || user.role === "dev") && req.body?.adminOverrideDnd === true
+    );
+    if (
+      reservation &&
+      !earlyResCheckedOut &&
+      isReservationAnserveDndActiveForDate(reservation, launchDateStr) &&
+      !isAdminOverrideCaller
+    ) {
+      return res.status(422).json({
+        success: false,
+        code: "GUEST_DND_ACTIVE",
+        error:
+          "Bloqueado: O hóspede ativou o modo Não Perturbe no portal. Não entre no quarto (a conferência final será liberada automaticamente após o check-out)."
+      });
+    }
+
+    // Trava determinística para NQ / NP: permitido apenas quando há hóspede hospedado (proibido em flat livre ou já com check-out feito)
+    if (isSkipMark) {
+      if (!reservation) {
+        return res.status(400).json({
+          success: false,
+          error: "Não é permitido marcar NQ ou NP em um flat livre sem reserva ativa."
+        });
+      }
+      if (earlyResCheckedOut) {
+        return res.status(422).json({
+          success: false,
+          error:
+            "O hóspede já realizou check-out neste flat. Realize a conferência final pós-checkout em vez de marcar NQ/NP."
+        });
+      }
+    }
+
     const resolvedInspectorUser =
       user ||
       matchedPinUser ||
@@ -87673,6 +87725,49 @@ app.post("/api/minibar/inspections", async (req, res) => {
       }
     }
 
+    const resolvedInspectionStatus = isSkipMark
+      ? normalizedReqStatus
+      : hasDiscrepancy
+      ? "divergencia"
+      : "conforme";
+
+    const defaultSkipNote =
+      normalizedReqStatus === "nq"
+        ? "NQ — Hóspede informou que não quer reposição/conferência hoje"
+        : normalizedReqStatus === "np"
+        ? "NP — Quarto com plaquinha/aviso de Não Perturbe na porta"
+        : "";
+
+    if (!Array.isArray(db.minibarInspections)) db.minibarInspections = [];
+
+    // Se já existia um NQ/NP anterior hoje para este mesmo flat/reserva:
+    // - Se está trocando NQ <-> NP hoje, substitui o anterior para não duplicar contadores do turno
+    // - Se agora está fazendo uma conferência REAL (Sem Consumo / Lançar Consumo / Pós-Checkout), marca o NQ/NP anterior como superado
+    if (isSkipMark) {
+      db.minibarInspections = db.minibarInspections.filter(
+        prev =>
+          !(
+            prev &&
+            String(prev.flatNumber) === flatStr &&
+            String(prev.launchDate || String(prev.inspectedAt || "").slice(0, 10)) === launchDateStr &&
+            (prev.status === "nq" || prev.status === "np") &&
+            (!finalResCode || !prev.reservationCode || prev.reservationCode === finalResCode)
+          )
+      );
+    } else {
+      for (const prev of db.minibarInspections) {
+        if (
+          prev &&
+          String(prev.flatNumber) === flatStr &&
+          String(prev.launchDate || String(prev.inspectedAt || "").slice(0, 10)) === launchDateStr &&
+          (prev.status === "nq" || prev.status === "np") &&
+          (!finalResCode || !prev.reservationCode || prev.reservationCode === finalResCode)
+        ) {
+          prev.supersededByRealInspection = true;
+        }
+      }
+    }
+
     const inspection = {
       id: `INSP-MB-${Date.now()}`,
       flatNumber: flatStr,
@@ -87686,33 +87781,33 @@ app.post("/api/minibar/inspections", async (req, res) => {
       inspectedAt: new Date().toISOString(),
       launchDate: launchDateStr,
       launchDateBr,
-      isFinalCheckoutInspection: Boolean(resCheckedOut),
-      postCheckoutNotificationType,
+      isFinalCheckoutInspection: isSkipMark ? false : Boolean(resCheckedOut),
+      postCheckoutNotificationType: isSkipMark ? "none_needed" : postCheckoutNotificationType,
       pendingBalanceAtInspection: totalPendingNow,
       totalPaidAtInspection: totalPaidPreviously,
-      status: hasDiscrepancy ? "divergencia" : "conforme",
-      hasDiscrepancy,
+      status: resolvedInspectionStatus,
+      isSkipMark,
+      hasDiscrepancy: isSkipMark ? false : hasDiscrepancy,
       discrepancyPaid: false,
-      discrepancyResolved: !hasDiscrepancy,
-      missingItems: effectiveCountedList,
-      discrepancyItems,
-      discrepancyTotalAmount,
-      restockedItems: processedRestocked,
-      restockedCourtesyTotalCost,
-      restockedPaidItemsTotalCost,
+      discrepancyResolved: isSkipMark ? true : !hasDiscrepancy,
+      missingItems: isSkipMark ? [] : effectiveCountedList,
+      discrepancyItems: isSkipMark ? [] : discrepancyItems,
+      discrepancyTotalAmount: isSkipMark ? 0 : discrepancyTotalAmount,
+      restockedItems: isSkipMark ? [] : processedRestocked,
+      restockedCourtesyTotalCost: isSkipMark ? 0 : restockedCourtesyTotalCost,
+      restockedPaidItemsTotalCost: isSkipMark ? 0 : restockedPaidItemsTotalCost,
       photos: Array.isArray(photos) ? photos : [],
-      notes: notes || "",
-      welcomeKitConsumption: welcomeKitRecord,
-      chargeOrderId: chargeOrderId || updatedStatement?.primaryPendingOrder?.id || null,
-      autoSplitOrderIds: autoSplitOrders.map(o => o.id),
-      whatsappSofiaAlertSent,
-      notifiedPhones,
-      whatsappMessagesSent,
+      notes: notes || defaultSkipNote,
+      welcomeKitConsumption: isSkipMark ? null : welcomeKitRecord,
+      chargeOrderId: isSkipMark ? null : (chargeOrderId || updatedStatement?.primaryPendingOrder?.id || null),
+      autoSplitOrderIds: isSkipMark ? [] : autoSplitOrders.map(o => o.id),
+      whatsappSofiaAlertSent: isSkipMark ? false : whatsappSofiaAlertSent,
+      notifiedPhones: isSkipMark ? [] : notifiedPhones,
+      whatsappMessagesSent: isSkipMark ? [] : whatsappMessagesSent,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
 
-    if (!Array.isArray(db.minibarInspections)) db.minibarInspections = [];
     db.minibarInspections.push(inspection);
     saveDatabase("minibar_inspection_recorded");
 
@@ -87721,16 +87816,82 @@ app.post("/api/minibar/inspections", async (req, res) => {
       inspectionId: inspection.id,
       launchDate: launchDateStr,
       launchDateBr,
-      hasDiscrepancy,
+      hasDiscrepancy: inspection.hasDiscrepancy,
       chargeOrderId: inspection.chargeOrderId,
-      autoSplitOrders,
+      autoSplitOrders: isSkipMark ? [] : autoSplitOrders,
       splitBreakdown: updatedStatement?.splitBreakdown || null,
-      whatsappSofiaAlertSent,
-      postCheckoutNotificationType,
-      notifiedPhones,
-      whatsappMessagesSent,
+      whatsappSofiaAlertSent: inspection.whatsappSofiaAlertSent,
+      postCheckoutNotificationType: inspection.postCheckoutNotificationType,
+      notifiedPhones: inspection.notifiedPhones,
+      whatsappMessagesSent: inspection.whatsappMessagesSent,
       statement: updatedStatement,
       inspection
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Desfazer marcação rápida de NQ / NP do dia atual pela repositora ou supervisão
+app.post("/api/minibar/inspections/undo-skip", (req, res) => {
+  try {
+    const user = getAuthUser(req);
+    const pinHeader = req.headers["x-anserve-pin"];
+    const tokenHeader = req.headers["x-anserve-token"];
+    const pinStr = pinHeader ? String(pinHeader).trim() : "";
+    const matchedPinUser = pinStr
+      ? (db.users || []).find(
+          u =>
+            u.active !== false &&
+            (u.role === "anserve_repositora" || u.role === "anserve_gestor") &&
+            u.pin &&
+            String(u.pin).trim() === pinStr
+        )
+      : null;
+    const isPinValid = Boolean(matchedPinUser) || (pinStr && pinStr === String(db.minibarSettings?.anservePin || "1234"));
+    const testToken = req.headers["x-test-token"] || req.headers["authorization"];
+    const isTestAuthorized = testToken === "test-token" || testToken === "Bearer test-token";
+    const todayStr = getBrasiliaNow().date;
+    const decodedAnsToken = tokenHeader ? verifyAuthToken(String(tokenHeader).trim()) : null;
+    const isAnsTokenShiftExpired = Boolean(
+      decodedAnsToken &&
+      decodedAnsToken.role === "anserve_repositora" &&
+      decodedAnsToken.shiftDate &&
+      String(decodedAnsToken.shiftDate) !== String(todayStr)
+    );
+    const isValidAnsToken = Boolean(tokenHeader) && !isAnsTokenShiftExpired;
+    const isStaff = isMinibarStaff(user) || isPinValid || isValidAnsToken || isTestAuthorized;
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+
+    if (!isStaff && !isTestBypass) {
+      return res.status(401).json({ success: false, error: "Autenticação obrigatória para desfazer NQ/NP." });
+    }
+
+    const { flatNumber, inspectionId } = req.body || {};
+    const flatStr = String(flatNumber || "").trim();
+    if (!flatStr && !inspectionId) {
+      return res.status(400).json({ success: false, error: "Informe flatNumber ou inspectionId." });
+    }
+
+    if (!Array.isArray(db.minibarInspections)) db.minibarInspections = [];
+    const beforeLen = db.minibarInspections.length;
+    db.minibarInspections = db.minibarInspections.filter(insp => {
+      if (!insp) return false;
+      if (insp.status !== "nq" && insp.status !== "np") return true;
+      if (inspectionId && insp.id === inspectionId) return false;
+      const inspDate = String(insp.launchDate || String(insp.inspectedAt || "").slice(0, 10));
+      if (flatStr && String(insp.flatNumber) === flatStr && inspDate === todayStr) return false;
+      return true;
+    });
+
+    const removedCount = beforeLen - db.minibarInspections.length;
+    if (removedCount > 0) {
+      saveDatabase("minibar_inspection_undo_skip");
+    }
+
+    res.json({
+      success: true,
+      removedCount
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -87824,10 +87985,39 @@ app.get("/api/minibar/inspections/flats-status", (req, res) => {
 
       const pendingDiscrepancyOrder = statement?.primaryPendingOrder || null;
 
-      // Última inspeção
-      const lastInsp = (db.minibarInspections || [])
-        .filter(i => String(i.flatNumber) === flatNum)
-        .sort((a, b) => String(b.inspectedAt || "").localeCompare(String(a.inspectedAt || "")))[0] || null;
+      // Inspeções do flat (ordenadas da mais recente para a mais antiga)
+      const flatInspectionsSorted = (db.minibarInspections || [])
+        .filter(i => i && String(i.flatNumber) === flatNum)
+        .sort((a, b) => String(b.inspectedAt || "").localeCompare(String(a.inspectedAt || "")));
+
+      const lastInsp = flatInspectionsSorted[0] || null;
+
+      // Inspeções registradas HOJE para a reserva ativa
+      const todayFlatInspections = flatInspectionsSorted.filter(i => {
+        const iDate = String(i.launchDate || String(i.inspectedAt || "").slice(0, 10));
+        if (iDate !== todayStr) return false;
+        if (resActive && i.reservationCode && resActive.code && i.reservationCode !== resActive.code) {
+          return false;
+        }
+        return true;
+      });
+
+      const realInspectionToday = todayFlatInspections.find(
+        i => i.status !== "nq" && i.status !== "np"
+      ) || null;
+
+      const skipInspectionToday = !realInspectionToday
+        ? todayFlatInspections.find(
+            i => (i.status === "nq" || i.status === "np") && !i.supersededByRealInspection
+          ) || null
+        : null;
+
+      // Regra de Ouro do Check-out:
+      // 1) Se o hóspede já fez check-out hoje (isCheckedOutToday === true), qualquer Não Perturbe do portal
+      //    destrava automaticamente e qualquer NQ/NP marcado cedo antes de sair deixa de valer como conferência final!
+      const guestDndPayload = resActive ? buildGuestAnserveDndPayload(resActive, todayStr) : null;
+      const guestDoNotDisturb = Boolean(!isCheckedOutToday && guestDndPayload?.active);
+      const activeSkipToday = !isCheckedOutToday ? skipInspectionToday : null;
 
       // Gabarito padrão
       const defaultTemplate = db.minibarDefaultStock?.flatOverrides?.[flatNum] || db.minibarDefaultStock?.globalTemplate || [];
@@ -87839,6 +88029,21 @@ app.get("/api/minibar/inspections/flats-status", (req, res) => {
         status,
         isCheckedOut: isCheckedOutToday,
         checkoutTime: resolvedCheckoutTime,
+        guestDoNotDisturb,
+        guestDoNotDisturbMode: guestDoNotDisturb ? (guestDndPayload?.mode || "stay") : null,
+        guestDoNotDisturbScope: guestDoNotDisturb ? (guestDndPayload?.scope || "anserve_only") : null,
+        guestDoNotDisturbUpdatedAt: guestDoNotDisturb ? (guestDndPayload?.updatedAt || null) : null,
+        todaySkipStatus: activeSkipToday ? activeSkipToday.status : null,
+        todaySkipInspection: activeSkipToday
+          ? {
+              id: activeSkipToday.id,
+              status: activeSkipToday.status,
+              inspectorName: activeSkipToday.inspectorName || "Repositora Anserve",
+              inspectedAt: activeSkipToday.inspectedAt,
+              notes: activeSkipToday.notes || ""
+            }
+          : null,
+        hasRealInspectionToday: Boolean(realInspectionToday),
         dailyLaunches: statement ? statement.dailyLaunches : [],
         pendingBalance: statement ? statement.pendingBalance : 0,
         totalLaunchedAmount: statement ? statement.totalLaunchedAmount : 0,
@@ -88821,6 +89026,8 @@ function computeAnserveStaffMetrics(staffUser, inspectionsList, ordersList) {
 
   let conformeCount = 0;
   let discrepancyCount = 0;
+  let nqCount = 0;
+  let npCount = 0;
   let discrepancyAmountDetected = 0;
   let discrepancyAmountRecovered = 0;
   let paidItemsRestockedQty = 0;
@@ -88831,6 +89038,14 @@ function computeAnserveStaffMetrics(staffUser, inspectionsList, ordersList) {
 
   for (const insp of matchingInspections) {
     if (insp.flatNumber) flatsSet.add(String(insp.flatNumber));
+    if (insp.status === "nq") {
+      nqCount += 1;
+      continue;
+    }
+    if (insp.status === "np") {
+      npCount += 1;
+      continue;
+    }
     const isDiv = insp.hasDiscrepancy || insp.status === "divergencia";
     if (isDiv) {
       discrepancyCount += 1;
@@ -88863,13 +89078,17 @@ function computeAnserveStaffMetrics(staffUser, inspectionsList, ordersList) {
     String(b.inspectedAt || b.createdAt || "").localeCompare(String(a.inspectedAt || a.createdAt || ""))
   );
 
+  const enteredInspectionsCount = conformeCount + discrepancyCount;
+
   return {
     inspectionsCount: matchingInspections.length,
     conformeCount,
     discrepancyCount,
+    nqCount,
+    npCount,
     conformityRatePct:
-      matchingInspections.length > 0
-        ? Number(((conformeCount / matchingInspections.length) * 100).toFixed(1))
+      enteredInspectionsCount > 0
+        ? Number(((conformeCount / enteredInspectionsCount) * 100).toFixed(1))
         : 100,
     discrepancyAmountDetected: Number(discrepancyAmountDetected.toFixed(2)),
     discrepancyAmountRecovered: Number(discrepancyAmountRecovered.toFixed(2)),
@@ -89393,8 +89612,12 @@ app.get("/api/minibar/anserve-reports", (req, res) => {
     }).sort((a, b) => b.inspectionsCount - a.inspectionsCount);
 
     const totalInspections = filteredInspections.length;
-    const totalDiscrepancies = filteredInspections.filter(i => i.hasDiscrepancy || i.status === "divergencia").length;
-    const totalConforme = totalInspections - totalDiscrepancies;
+    const totalNq = filteredInspections.filter(i => i.status === "nq").length;
+    const totalNp = filteredInspections.filter(i => i.status === "np").length;
+    const totalDiscrepancies = filteredInspections.filter(
+      i => i.status !== "nq" && i.status !== "np" && (i.hasDiscrepancy || i.status === "divergencia")
+    ).length;
+    const totalConforme = Math.max(0, totalInspections - totalDiscrepancies - totalNq - totalNp);
 
     let totalCourtesyWaterCups = 0;
     let totalCourtesyMendoratoPeanuts = 0;
@@ -89449,7 +89672,12 @@ app.get("/api/minibar/anserve-reports", (req, res) => {
         totalInspections,
         totalConforme,
         totalDiscrepancies,
-        conformityRatePct: totalInspections > 0 ? Number(((totalConforme / totalInspections) * 100).toFixed(1)) : 100,
+        totalNq,
+        totalNp,
+        conformityRatePct:
+          totalConforme + totalDiscrepancies > 0
+            ? Number(((totalConforme / (totalConforme + totalDiscrepancies)) * 100).toFixed(1))
+            : 100,
         byStaff: staffProductivity,
         inspections: filteredInspections.sort((a, b) => String(b.inspectedAt || "").localeCompare(String(a.inspectedAt || "")))
       }
