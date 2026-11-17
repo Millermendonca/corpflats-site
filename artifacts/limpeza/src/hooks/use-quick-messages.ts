@@ -470,10 +470,12 @@ Desejamos uma ótima estadia! Se precisar de algo, estamos à disposição.`,
 
 Esperamos que sua estadia no *Flat {{quarto}}* tenha sido excelente! Lembramos que hoje seu check-out é até às *{{horario_checkout}}*.
 
-Ao sair, pedimos a gentileza de:
+⚠️🔑 *ATENÇÃO — CARTÃO DE ACESSO:*
+Na saída, *entregue o cartão na RECEPÇÃO* — *NÃO deixe o cartão dentro do flat!*
+
+Antes de sair, pedimos também a gentileza de:
 • Conferir seus pertences e carregadores;
-• Desligar luzes e ar-condicionado;
-• Devolver o *cartão de acesso na recepção*.
+• Desligar luzes e ar-condicionado.
 
 🚪 *Quando desocupar o flat, clique no botão abaixo para informar seu check-out ou nos informe por aqui mesmo!* Caso precise estender o horário ou a estadia, é só nos chamar por aqui para verificar disponibilidade e valores.`,
     footer: "CorpFlats • Agradecemos a visita",

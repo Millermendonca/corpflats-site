@@ -329,7 +329,7 @@ export default function GuestCheckout() {
                     <span>Lembrete Importante na Saída</span>
                   </div>
                   <p className="text-xs text-amber-900/90 dark:text-amber-200 leading-relaxed font-medium">
-                    Por favor, <strong>não se esqueça de devolver o cartão de acesso na recepção</strong> ao sair do edifício.
+                    Por favor, <strong>entregue o cartão de acesso na recepção</strong> na saída — <strong>NÃO deixe o cartão dentro do flat</strong>.
                   </p>
                 </div>
               </div>
@@ -422,7 +422,7 @@ export default function GuestCheckout() {
                 <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-start gap-2.5 text-left">
                   <KeyRound className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                   <div className="text-xs text-amber-900 dark:text-amber-200 font-medium">
-                    Lembre-se de <strong>devolver o cartão na recepção</strong> na saída.
+                    Na saída, <strong>entregue o cartão na recepção</strong> — <strong>NÃO deixe dentro do flat</strong>.
                   </div>
                 </div>
 

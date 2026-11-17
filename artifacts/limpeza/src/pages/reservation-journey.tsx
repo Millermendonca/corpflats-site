@@ -775,10 +775,12 @@ Escolha seus itens favoritos clicando no botão abaixo:`,
 
 Esperamos que sua estadia no *Flat {{quarto}}* tenha sido excelente! Lembramos que hoje seu check-out é até às *{{horario_checkout}}*.
 
-Ao sair, pedimos a gentileza de:
+⚠️🔑 *ATENÇÃO — CARTÃO DE ACESSO:*
+Na saída, *entregue o cartão na RECEPÇÃO* — *NÃO deixe o cartão dentro do flat!*
+
+Antes de sair, pedimos também a gentileza de:
 • Conferir seus pertences e carregadores;
-• Desligar luzes e ar-condicionado;
-• Devolver o *cartão de acesso na recepção*.
+• Desligar luzes e ar-condicionado.
 
 🚪 *Quando desocupar o flat, clique no botão abaixo para informar seu check-out ou nos informe por aqui mesmo!* Caso precise estender o horário ou a estadia, é só nos chamar por aqui para verificar disponibilidade e valores.`,
     buttons: [
@@ -799,12 +801,15 @@ Ao sair, pedimos a gentileza de:
     timingLabel: "Dia do Check-out às 12:00 (ou Late Check-out)",
     condition: "Check-out ainda não informado por nenhum canal até o horário limite",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
-    description: "Avisa educadamente que o check-out ainda não foi detectado por nenhum canal (link, WhatsApp, portaria, recepção ou governança) e pede para confirmar no botão caso já tenha saído.",
+    description: "Avisa educadamente que o check-out ainda não foi detectado por nenhum canal, destaca para entregar o cartão na recepção (e não deixar dentro do flat) e pede confirmação no botão.",
     messagePreview: `Olá, *{{primeiro_nome}}*! Tudo bem?
 
 Já são *{{horario_checkout}}* e ainda *não detectamos o registro do seu check-out* no *Flat {{quarto}}*.
 
-👇 *Se você já saiu*, por favor clique no botão abaixo para confirmar sua saída e liberarmos o flat para a limpeza.
+⚠️🔑 *ATENÇÃO — CARTÃO DE ACESSO:*
+Na saída, *entregue o cartão na RECEPÇÃO* — *NÃO deixe o cartão dentro do flat!*
+
+👇 *Se você já saiu* (ou assim que sair), por favor clique no botão abaixo para confirmar sua saída e liberarmos o flat para a limpeza.
 
 Caso ainda esteja no apartamento ou precise de algum suporte, responda esta mensagem!`,
     buttons: [

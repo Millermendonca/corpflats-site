@@ -1016,7 +1016,7 @@ Escolha seus itens favoritos clicando no botão abaixo:`,
     id: "tpl_checkout_reminder",
     triggerEvent: "checkout_reminder",
     title: "Dia do Check-out • Orientações de Saída",
-    description: "Enviado no dia de saída às 09:30 relembrando o horário limite e orientando a clicar no botão para informar o check-out.",
+    description: "Enviado no dia de saída às 09:30 relembrando o horário limite, destacando a entrega do cartão na recepção e orientando a clicar no botão para informar o check-out.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
@@ -1028,10 +1028,12 @@ Escolha seus itens favoritos clicando no botão abaixo:`,
 
 Esperamos que sua estadia no *Flat {{quarto}}* tenha sido excelente! Lembramos que hoje seu check-out é até às *{{horario_checkout}}*.
 
-Ao sair, pedimos a gentileza de:
+⚠️🔑 *ATENÇÃO — CARTÃO DE ACESSO:*
+Na saída, *entregue o cartão na RECEPÇÃO* — *NÃO deixe o cartão dentro do flat!*
+
+Antes de sair, pedimos também a gentileza de:
 • Conferir seus pertences e carregadores;
-• Desligar luzes e ar-condicionado;
-• Devolver o *cartão de acesso na recepção*.
+• Desligar luzes e ar-condicionado.
 
 🚪 *Quando desocupar o flat, clique no botão abaixo para informar seu check-out ou nos informe por aqui mesmo!* Caso precise estender o horário ou a estadia, é só nos chamar por aqui para verificar disponibilidade e valores.`,
     footer: "CorpFlats • Agradecemos a visita",
@@ -1056,7 +1058,10 @@ Ao sair, pedimos a gentileza de:
 
 Já são *{{horario_checkout}}* e ainda *não detectamos o registro do seu check-out* no *Flat {{quarto}}*.
 
-👇 *Se você já saiu*, por favor clique no botão abaixo para confirmar sua saída e liberarmos o flat para a limpeza.
+⚠️🔑 *ATENÇÃO — CARTÃO DE ACESSO:*
+Na saída, *entregue o cartão na RECEPÇÃO* — *NÃO deixe o cartão dentro do flat!*
+
+👇 *Se você já saiu* (ou assim que sair), por favor clique no botão abaixo para confirmar sua saída e liberarmos o flat para a limpeza.
 
 Caso ainda esteja no apartamento ou precise de algum suporte, responda esta mensagem!`,
     footer: "CorpFlats • Check-out Expresso",
@@ -1688,10 +1693,12 @@ Desejamos uma ótima estadia! Se precisar de algo, estamos à disposição.`,
 
 Esperamos que sua estadia no *Flat {{quarto}}* tenha sido excelente! Lembramos que hoje seu check-out é até às *{{horario_checkout}}*.
 
-Ao sair, pedimos a gentileza de:
+⚠️🔑 *ATENÇÃO — CARTÃO DE ACESSO:*
+Na saída, *entregue o cartão na RECEPÇÃO* — *NÃO deixe o cartão dentro do flat!*
+
+Antes de sair, pedimos também a gentileza de:
 • Conferir seus pertences e carregadores;
-• Desligar luzes e ar-condicionado;
-• Devolver o *cartão de acesso na recepção*.
+• Desligar luzes e ar-condicionado.
 
 🚪 *Quando desocupar o flat, clique no botão abaixo para informar seu check-out ou nos informe por aqui mesmo!* Caso precise estender o horário ou a estadia, é só nos chamar por aqui para verificar disponibilidade e valores.`,
     footer: "CorpFlats • Agradecemos a visita",
@@ -9462,7 +9469,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           if (defCoRem) {
             if (
               tpl.message?.includes("Lembramos que hoje é a data de encerramento da sua estadia") ||
-              tpl.message?.includes("Ao sair, por favor certifique-se de desligar luzes")
+              tpl.message?.includes("Ao sair, por favor certifique-se de desligar luzes") ||
+              !String(tpl.message || "").toLowerCase().includes("dentro do flat")
             ) {
               tpl.description = defCoRem.description;
               tpl.message = defCoRem.message;
@@ -9480,6 +9488,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.recipientTarget = "guest";
           if (tpl.sendEmail === undefined) {
             tpl.sendEmail = false;
+          }
+          const defCoNotDet = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_checkout_not_detected");
+          if (defCoNotDet && !String(tpl.message || "").toLowerCase().includes("dentro do flat")) {
+            tpl.message = defCoNotDet.message;
+            tpl.buttons = JSON.parse(JSON.stringify(defCoNotDet.buttons));
           }
         }
       }
@@ -9533,7 +9546,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           if (
             defCoQm &&
             (qm.message?.includes("Lembramos que o check-out do *Flat {{quarto}}* é hoje") ||
-              qm.message?.includes("Ao sair, por favor desligue luzes e ar-condicionado e entregue o cartão na portaria"))
+              qm.message?.includes("Ao sair, por favor desligue luzes e ar-condicionado e entregue o cartão na portaria") ||
+              !String(qm.message || "").toLowerCase().includes("dentro do flat"))
           ) {
             qm.message = defCoQm.message;
             qm.footer = defCoQm.footer;
