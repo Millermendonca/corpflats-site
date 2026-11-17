@@ -145,11 +145,21 @@ export interface UnifiedReservationRow {
   notes: string;
   receptionNotes: string;
   specialRequests: string;
+  packageId?: string | null;
+  packageCode?: string | null;
+  packageIndex?: number | null;
+  packageTotalFlats?: number | null;
+  requesterName?: string | null;
+  requesterPhone?: string | null;
+  hideFinancialForGuest?: boolean;
+  needsGuestCredential?: boolean;
   quarantineReason?: string | null;
   quarantineDiagnostic?: string | null;
   rawReservation?: any;
   rawQuarantineItem?: any;
 }
+
+export type CentralReservationRow = UnifiedReservationRow;
 
 export const DEFAULT_RESERVATION_FILTERS: ReservationListFilters = {
   tab: "all",

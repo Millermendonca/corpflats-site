@@ -95,6 +95,9 @@ interface ReservationsDataTableProps {
   onTriggerQuickMessage: (row: UnifiedReservationRow, qm: WhatsAppQuickMessage) => void;
   activeQuickMessages: WhatsAppQuickMessage[];
   onCopyPortalLink: (row: UnifiedReservationRow) => void;
+  onCopyPaymentLink?: (row: UnifiedReservationRow) => void;
+  onCopyPackageCredentialLink?: (row: UnifiedReservationRow) => void;
+  onFilterByPackage?: (packageCode: string) => void;
   onCopyPreCheckinLink: (row: UnifiedReservationRow) => void;
   onCopyBreakfastLink: (row: UnifiedReservationRow) => void;
   onOpenPortalNewTab: (row: UnifiedReservationRow) => void;
@@ -136,6 +139,9 @@ export const ReservationsDataTable: React.FC<ReservationsDataTableProps> = ({
   onTriggerQuickMessage,
   activeQuickMessages,
   onCopyPortalLink,
+  onCopyPaymentLink,
+  onCopyPackageCredentialLink,
+  onFilterByPackage,
   onCopyPreCheckinLink,
   onCopyBreakfastLink,
   onOpenPortalNewTab,
@@ -298,10 +304,14 @@ export const ReservationsDataTable: React.FC<ReservationsDataTableProps> = ({
           variant="outline"
           onClick={(e) => {
             e.stopPropagation();
-            onCopyPortalLink(row);
+            (onCopyPaymentLink || onCopyPortalLink)(row);
           }}
           className="h-7 px-2 text-[11px] font-bold border-amber-400/90 bg-amber-50/70 dark:bg-amber-950/30 text-amber-900 dark:text-amber-300 hover:bg-amber-100/80 rounded-lg gap-1"
-          title="Copiar link de pagamento PIX/Cartão do Portal Minha Reserva"
+          title={
+            row.packageCode
+              ? `Copiar link único de pagamento/recibo do Pacote ${row.packageCode} (/minha-reserva/${row.packageCode}?requester=1)`
+              : "Copiar link de pagamento PIX/Cartão do Portal Minha Reserva"
+          }
         >
           <CreditCard className="w-3 h-3" />
           <span>PIX / Cobrar</span>
@@ -643,6 +653,26 @@ export const ReservationsDataTable: React.FC<ReservationsDataTableProps> = ({
                           <Copy className="w-2.5 h-2.5 opacity-0 group-hover:opacity-70" />
                         </button>
                       </div>
+                      {row.packageCode && (
+                        <div className="mt-1">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onFilterByPackage?.(row.packageCode!);
+                            }}
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-black bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:text-indigo-300 dark:border-indigo-800 transition-colors cursor-pointer"
+                            title={`Clique para filtrar e ver todos os flats do pacote ${row.packageCode} juntos`}
+                          >
+                            <span>
+                              📦 {row.packageCode}
+                              {row.packageIndex && row.packageTotalFlats
+                                ? ` (${row.packageIndex}/${row.packageTotalFlats})`
+                                : ""}
+                            </span>
+                          </button>
+                        </div>
+                      )}
                     </td>
 
                     {/* 2. Canal */}
@@ -668,6 +698,11 @@ export const ReservationsDataTable: React.FC<ReservationsDataTableProps> = ({
                         <span className="font-bold text-foreground truncate">
                           {row.guestName}
                         </span>
+                        {row.needsGuestCredential && (
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-amber-400 text-amber-700 dark:text-amber-300 shrink-0">
+                            Cad. Hóspede
+                          </Badge>
+                        )}
                         {row.isMonthlyGuest && (
                           <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-indigo-400 text-indigo-600 shrink-0">
                             Mensalista
@@ -689,12 +724,19 @@ export const ReservationsDataTable: React.FC<ReservationsDataTableProps> = ({
                           <Users className="w-2.5 h-2.5" />
                           {row.guestCount}
                         </span>
-                        {row.guestPhone && (
+                        {row.guestPhone ? (
                           <>
                             <span>•</span>
                             <span className="truncate">{row.guestPhone}</span>
                           </>
-                        )}
+                        ) : row.requesterPhone ? (
+                          <>
+                            <span>•</span>
+                            <span className="truncate text-indigo-700 dark:text-indigo-300 font-semibold" title="WhatsApp do Solicitante">
+                              👥 {row.requesterName ? `${row.requesterName}: ` : ""}{row.requesterPhone}
+                            </span>
+                          </>
+                        ) : null}
                         {!showCol("company") && row.companyName && (
                           <>
                             <span>•</span>
@@ -962,14 +1004,18 @@ export const ReservationsDataTable: React.FC<ReservationsDataTableProps> = ({
                               className="text-xs font-semibold gap-2 cursor-pointer"
                             >
                               <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
-                              Abrir no WhatsApp Web Interno
+                              {!row.guestPhone && row.requesterPhone
+                                ? "Abrir Chat do Solicitante (Interno)"
+                                : "Abrir no WhatsApp Web Interno"}
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={() => onOpenExternalWa(row)}
                               className="text-xs gap-2 cursor-pointer"
                             >
                               <ExternalLink className="w-3.5 h-3.5 text-muted-foreground" />
-                              Abrir no WhatsApp Externo (wa.me)
+                              {!row.guestPhone && row.requesterPhone
+                                ? "Abrir WhatsApp do Solicitante (wa.me)"
+                                : "Abrir no WhatsApp Externo (wa.me)"}
                             </DropdownMenuItem>
 
                             {row.sourceType === "pms" && activeQuickMessages.length > 0 && (
@@ -995,7 +1041,7 @@ export const ReservationsDataTable: React.FC<ReservationsDataTableProps> = ({
                           </DropdownMenuContent>
                         </DropdownMenu>
 
-                        {/* 🔗 Copiar Links do Hóspede */}
+                        {/* 🔗 Copiar Links do Hóspede / Pacote */}
                         {row.sourceType === "pms" && (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
@@ -1003,22 +1049,49 @@ export const ReservationsDataTable: React.FC<ReservationsDataTableProps> = ({
                                 variant="outline"
                                 size="icon"
                                 className="h-7 w-7 rounded-lg"
-                                title="Copiar links do Portal do Hóspede / Pré-Check-in / FNRH"
+                                title="Copiar links do Portal do Hóspede / Pacote / Pré-Check-in / FNRH"
                               >
                                 <Link2 className="w-3.5 h-3.5 text-sky-600" />
                               </Button>
                             </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-60">
+                            <DropdownMenuContent align="end" className="w-72">
                               <DropdownMenuLabel className="text-[11px]">
-                                🔗 Links do Hóspede ({row.code})
+                                🔗 Links {row.packageCode ? `do Pacote ${row.packageCode} / ${row.code}` : `do Hóspede (${row.code})`}
                               </DropdownMenuLabel>
-                              <DropdownMenuItem
-                                onClick={() => onCopyPortalLink(row)}
-                                className="text-xs font-semibold gap-2 cursor-pointer"
-                              >
-                                <Copy className="w-3.5 h-3.5 text-primary" />
-                                Copiar Portal Minha Reserva
-                              </DropdownMenuItem>
+                              {row.packageCode ? (
+                                <>
+                                  <DropdownMenuItem
+                                    onClick={() => (onCopyPaymentLink || onCopyPortalLink)(row)}
+                                    className="text-xs font-semibold gap-2 cursor-pointer text-indigo-700 dark:text-indigo-300"
+                                  >
+                                    <CreditCard className="w-3.5 h-3.5 shrink-0" />
+                                    <span>💳 Link Pagamento / Recibo do Pacote (Solicitante)</span>
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() => onCopyPackageCredentialLink?.(row)}
+                                    className="text-xs font-semibold gap-2 cursor-pointer text-amber-800 dark:text-amber-300"
+                                  >
+                                    <Users className="w-3.5 h-3.5 shrink-0" />
+                                    <span>👥 Link Único Cadastro Hóspedes</span>
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() => onCopyPortalLink(row)}
+                                    className="text-xs font-semibold gap-2 cursor-pointer"
+                                  >
+                                    <Copy className="w-3.5 h-3.5 text-primary shrink-0" />
+                                    <span>🔑 Portal Individual deste Flat (s/ valores)</span>
+                                  </DropdownMenuItem>
+                                </>
+                              ) : (
+                                <DropdownMenuItem
+                                  onClick={() => onCopyPortalLink(row)}
+                                  className="text-xs font-semibold gap-2 cursor-pointer"
+                                >
+                                  <Copy className="w-3.5 h-3.5 text-primary" />
+                                  Copiar Portal Minha Reserva
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuSeparator />
                               <DropdownMenuItem
                                 onClick={() => onCopyPreCheckinLink(row)}
                                 className="text-xs gap-2 cursor-pointer"
@@ -1039,7 +1112,7 @@ export const ReservationsDataTable: React.FC<ReservationsDataTableProps> = ({
                                 className="text-xs gap-2 cursor-pointer"
                               >
                                 <ExternalLink className="w-3.5 h-3.5" />
-                                Abrir Portal em Nova Guia
+                                Abrir Portal Individual em Nova Guia
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>

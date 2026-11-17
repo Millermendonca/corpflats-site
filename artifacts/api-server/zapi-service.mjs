@@ -4420,6 +4420,19 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
       .replace(/^[ \t]*•[ \t]*\*?(Pagamento|Valor Total[^\n:]*|Valor no Cartão[^\n:]*|Valor com Desconto[^\n:]*|Quanto foi Pago|Valor Pago|Saldo a Quitar|Saldo Restante|Quanto Falta[^\n:]*|Situação do Pagamento|Chave PIX|Favorecido|Forma de Pagamento)\*?:[^\n]*\n?/gim, "");
   }
 
+  if (
+    (triggerEvent === "pre_reservation_expired" || templateId === "tpl_pre_reserva_expirada") &&
+    (reservation.packageId || reservation.packageCode) &&
+    !hideFinancialForGuest &&
+    totalAmount > 0 &&
+    !rendered.includes("{{valor_total}}")
+  ) {
+    rendered = rendered.replace(
+      "• Canal: *{{canal_reserva}}*",
+      `• Valor Total do Pacote: *{{valor_total}}* • Canal: *{{canal_reserva}}*`
+    );
+  }
+
   for (const [tag, val] of Object.entries(tagsMap)) {
     rendered = rendered.split(tag).join(val !== undefined && val !== null ? String(val) : "");
   }
@@ -8439,7 +8452,7 @@ export function appendMessageToConversation(db, {
   const matchedResv = isReceptionBuilding
     ? null
     : (reservationCode
-      ? (db.reservations || []).find(r => r.code === reservationCode)
+      ? (db.reservations || []).find(r => r.code === reservationCode || r.packageCode === reservationCode)
       : findReservationByPhone(db, cleanPhone));
 
   let nowIso = new Date().toISOString();
@@ -10622,22 +10635,46 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     const searchTarget = String(reservationCode || reservationId || req.body.code || req.body.id || "").trim();
     const cleanSearchDigits = searchTarget.replace(/\D/g, "");
+    const isPkgSearch = /^PKG-/i.test(searchTarget);
 
-    let reservation = (db?.reservations || []).find(r => {
-      if (!r) return false;
-      const rCode = String(r.code || "").trim();
-      const rResCode = String(r.reservationCode || "").trim();
-      const rId = String(r.id || "").trim();
-      const rLoc = String(r.localizador || "").trim();
-      const rPhone = String(r.guestPhone || "").replace(/\D/g, "");
+    let reservation = isPkgSearch
+      ? (
+          (db?.reservations || []).find(
+            (r) =>
+              r &&
+              String(r.packageCode || r.packageId || "").trim().toUpperCase() === searchTarget.toUpperCase() &&
+              r.status !== "cancelada" &&
+              r.status !== "cancelled" &&
+              r.isPackagePrimary
+          ) ||
+          (db?.reservations || []).find(
+            (r) =>
+              r &&
+              String(r.packageCode || r.packageId || "").trim().toUpperCase() === searchTarget.toUpperCase() &&
+              r.status !== "cancelada" &&
+              r.status !== "cancelled"
+          ) ||
+          (db?.reservations || []).find(
+            (r) => r && String(r.packageCode || r.packageId || "").trim().toUpperCase() === searchTarget.toUpperCase()
+          )
+        )
+      : (db?.reservations || []).find(r => {
+          if (!r) return false;
+          const rCode = String(r.code || "").trim();
+          const rResCode = String(r.reservationCode || "").trim();
+          const rPkgCode = String(r.packageCode || "").trim();
+          const rId = String(r.id || "").trim();
+          const rLoc = String(r.localizador || "").trim();
+          const rPhone = String(r.guestPhone || r.requesterPhone || "").replace(/\D/g, "");
 
-      if (searchTarget && rCode.toUpperCase() === searchTarget.toUpperCase()) return true;
-      if (searchTarget && rResCode.toUpperCase() === searchTarget.toUpperCase()) return true;
-      if (searchTarget && rId === searchTarget) return true;
-      if (searchTarget && rLoc.toUpperCase() === searchTarget.toUpperCase()) return true;
-      if (cleanSearchDigits && cleanSearchDigits.length >= 8 && rPhone && rPhone === cleanSearchDigits) return true;
-      return false;
-    });
+          if (searchTarget && rCode.toUpperCase() === searchTarget.toUpperCase()) return true;
+          if (searchTarget && rResCode.toUpperCase() === searchTarget.toUpperCase()) return true;
+          if (searchTarget && rPkgCode && rPkgCode.toUpperCase() === searchTarget.toUpperCase()) return true;
+          if (searchTarget && rId === searchTarget) return true;
+          if (searchTarget && rLoc.toUpperCase() === searchTarget.toUpperCase()) return true;
+          if (cleanSearchDigits && cleanSearchDigits.length >= 8 && rPhone && rPhone === cleanSearchDigits) return true;
+          return false;
+        });
 
     if (!reservation) {
       if (req.body.reservation) {
@@ -10653,6 +10690,33 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         ...req.body.reservation,
         guests: bodyGuests.length >= dbGuests.length ? bodyGuests : dbGuests
       };
+    }
+
+    // Se for um disparo financeiro/pré-reserva para um pacote multi-flat (ou busca explícita por PKG-...), consolida os flats e o valor total do pacote
+    const pkgKeyForDispatch = String(reservation.packageCode || reservation.packageId || "").trim();
+    if (pkgKeyForDispatch && (isPkgSearch || isPureBillingTemplateOrEvent(template))) {
+      const pkgSibs = (db?.reservations || []).filter(
+        (s) =>
+          s &&
+          String(s.packageCode || s.packageId || "").trim().toUpperCase() === pkgKeyForDispatch.toUpperCase() &&
+          s.status !== "cancelada" &&
+          s.status !== "cancelled"
+      );
+      if (pkgSibs.length > 0) {
+        const pkgTotal = Math.round(pkgSibs.reduce((acc, s) => acc + (Number(s.totalAmount) || 0), 0) * 100) / 100;
+        const pkgPaid = Math.round(pkgSibs.reduce((acc, s) => acc + (Number(s.paidAmount) || 0), 0) * 100) / 100;
+        const pkgFlats = pkgSibs.map((s) => s.flatNumber).filter(Boolean).join(", ");
+        const pkgGuestsSum = pkgSibs.reduce((acc, s) => acc + Math.max(1, Number(s.guestCount || s.adults) || 1), 0);
+        reservation = {
+          ...reservation,
+          code: pkgKeyForDispatch.toUpperCase(),
+          flatNumber: pkgFlats || reservation.flatNumber,
+          totalAmount: pkgTotal,
+          paidAmount: pkgPaid,
+          guestCount: pkgGuestsSum || reservation.guestCount,
+          pixCopiaECola: reservation.packagePixCopiaECola || reservation.pixCopiaECola || ""
+        };
+      }
     }
 
     const reqProto = req.headers["x-forwarded-proto"]
@@ -14431,7 +14495,16 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
     markReservationRoomReadySent(db, resv, todayStr, new Date().toISOString(), item.triggerEvent);
   }
   if (anySuccess && resv && (item.triggerEvent === "pre_reservation_expiring_soon" || item.templateId === "tpl_pre_reserva_lembrete")) {
-    resv.preReservationReminderSentAt = new Date().toISOString();
+    const sentRemIso = new Date().toISOString();
+    resv.preReservationReminderSentAt = sentRemIso;
+    const pkgKeyRem = String(resv.packageCode || resv.packageId || "").trim();
+    if (pkgKeyRem && Array.isArray(db.reservations)) {
+      for (const sib of db.reservations) {
+        if (sib && String(sib.packageCode || sib.packageId || "").trim().toUpperCase() === pkgKeyRem.toUpperCase()) {
+          sib.preReservationReminderSentAt = sentRemIso;
+        }
+      }
+    }
   }
   item.whatsappStatus = waResult ? (waSuccess ? "sent" : "failed") : (item.guestPhone ? "skipped" : "no_phone");
   if (item.guestEmail) item.emailStatus = emailLog ? "sent" : "skipped";
@@ -14761,10 +14834,14 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
     const resvStatusLower = String(resv.status || "").toLowerCase().trim();
     const isPreReservationStatus = resvStatusLower === "pre_reserva" || resvStatusLower === "pendente" || resvStatusLower === "pending_payment";
     if (!isPreReservationStatus && Array.isArray(db.whatsappQueue)) {
+      const rPkgUpper = String(resv.packageCode || resv.packageId || "").trim().toUpperCase();
       for (const qItem of db.whatsappQueue) {
         if (!qItem || (qItem.status !== "scheduled" && qItem.status !== "pending")) continue;
         if (qItem.triggerEvent !== "payment_pending" && qItem.triggerEvent !== "pre_reservation_expiring_soon") continue;
-        const sameRes = (qItem.reservationCode && resv.code && qItem.reservationCode === resv.code) || (qItem.reservationId && resv.id && qItem.reservationId === resv.id);
+        const sameRes =
+          (qItem.reservationCode && resv.code && qItem.reservationCode === resv.code) ||
+          (rPkgUpper && qItem.reservationCode && String(qItem.reservationCode).trim().toUpperCase() === rPkgUpper) ||
+          (qItem.reservationId && resv.id && qItem.reservationId === resv.id);
         if (sameRes) {
           qItem.status = "cancelled";
           qItem.error = resvStatusLower === "expirada" ? "Cancelado: pré-reserva expirada" : "Cancelado: reserva já confirmada";
@@ -14789,6 +14866,7 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
       if (resvStatusLower === "expirada") {
         continue;
       }
+      let resvForTpl = resv;
       if (isPreReservationStatus) {
         const isEligiblePreResReminder =
           (tpl.triggerEvent === "pre_reservation_expiring_soon" || tpl.id === "tpl_pre_reserva_lembrete") &&
@@ -14797,6 +14875,38 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
           Boolean(resv.reminderAt);
         if (tpl.triggerEvent !== "payment_pending" && !isEligiblePreResReminder) {
           continue;
+        }
+        const pkgKeyPre = String(resv.packageCode || resv.packageId || "").trim();
+        if (pkgKeyPre) {
+          const activePkgSibs = (db?.reservations || []).filter(
+            (s) =>
+              s &&
+              String(s.packageCode || s.packageId || "").trim().toUpperCase() === pkgKeyPre.toUpperCase() &&
+              s.status !== "cancelada" &&
+              s.status !== "cancelled" &&
+              s.status !== "expirada"
+          );
+          if (
+            (tpl.triggerEvent === "pre_reservation_expiring_soon" || tpl.id === "tpl_pre_reserva_lembrete") &&
+            activePkgSibs.some((s) => Boolean(s.preReservationReminderSentAt))
+          ) {
+            continue;
+          }
+          if (activePkgSibs.length > 0 && activePkgSibs[0].id !== resv.id) {
+            continue;
+          }
+          if (activePkgSibs.length > 1) {
+            const pkgTotal = Math.round(activePkgSibs.reduce((acc, s) => acc + (Number(s.totalAmount) || 0), 0) * 100) / 100;
+            const pkgPaid = Math.round(activePkgSibs.reduce((acc, s) => acc + (Number(s.paidAmount) || 0), 0) * 100) / 100;
+            resvForTpl = {
+              ...resv,
+              code: pkgKeyPre.toUpperCase(),
+              flatNumber: activePkgSibs.map((s) => s.flatNumber).filter(Boolean).join(", "),
+              totalAmount: pkgTotal,
+              paidAmount: pkgPaid,
+              pixCopiaECola: resv.packagePixCopiaECola || resv.pixCopiaECola || ""
+            };
+          }
         }
       } else {
         // Se a reserva já está confirmada/ativa, nunca agendar payment_pending nem pre_reservation_expiring_soon
@@ -14869,7 +14979,10 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
         // Para breakfast_reminder (gatilho diário por noite de estadia), a desduplicação é feita por dia (todayStr em Brasília).
         const isDailyBreakfastTrigger = tpl.triggerEvent === "breakfast_reminder" || tpl.id === "tpl_breakfast_reminder";
         const existingQueuedItem = (db.whatsappQueue || []).find(q => {
-          const sameRes = (q.reservationCode && resv.code && q.reservationCode === resv.code) || (q.reservationId && resv.id && q.reservationId === resv.id);
+          const sameRes =
+            (q.reservationCode && resv.code && q.reservationCode === resv.code) ||
+            (q.reservationCode && resvForTpl.code && q.reservationCode === resvForTpl.code) ||
+            (q.reservationId && resv.id && q.reservationId === resv.id);
           if (!sameRes) return false;
           const isQBreakfast = q.triggerEvent === "breakfast_reminder" || q.templateId === "tpl_breakfast_reminder";
           if (isDailyBreakfastTrigger ? !isQBreakfast : q.triggerEvent !== tpl.triggerEvent) return false;
@@ -14883,7 +14996,11 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
         });
 
         const alreadySentInHistory = (db.whatsappHistory || []).some(h => {
-          const sameRes = (h.reservationCode && resv.code && h.reservationCode === resv.code) || (h.reservationId && resv.id && h.reservationId === resv.id);
+          const sameRes =
+            (h.reservationCode && resv.code && h.reservationCode === resv.code) ||
+            (h.reservationCode && resvForTpl.code && h.reservationCode === resvForTpl.code) ||
+            (h.packageCode && resvForTpl.code && String(h.packageCode).toUpperCase() === String(resvForTpl.code).toUpperCase()) ||
+            (h.reservationId && resv.id && h.reservationId === resv.id);
           if (!sameRes) return false;
           const isHBreakfast = h.triggerEvent === "breakfast_reminder" || h.templateId === "tpl_breakfast_reminder";
           if (isDailyBreakfastTrigger ? !isHBreakfast : h.triggerEvent !== tpl.triggerEvent) return false;
@@ -14936,7 +15053,7 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
             if (!db.whatsappQueue) db.whatsappQueue = [];
             db.whatsappQueue.push(buildQueueItemForTarget(db, {
               tpl,
-              resv,
+              resv: resvForTpl,
               target: targetItem,
               scheduledFor: scheduledTime,
               channel: resvChannel,
@@ -14954,7 +15071,7 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
           if (new Date(nextScheduledFor) > now || (!existingQueuedItem.guestPhone && targetItem.phone)) {
             const rebuilt = buildQueueItemForTarget(db, {
               tpl,
-              resv,
+              resv: resvForTpl,
               target: targetItem,
               scheduledFor: nextScheduledFor,
               channel: resvChannel,

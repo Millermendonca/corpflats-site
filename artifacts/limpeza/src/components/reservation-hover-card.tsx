@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import { 
   MessageCircle, MessageSquare, Phone, ExternalLink, Copy, Check, Coffee, DoorOpen, FileText,
-  Users, Calendar, Eye, Building2, X, Zap, SlidersHorizontal, RefreshCw, RotateCcw
+  Users, Calendar, Eye, Building2, X, Zap, SlidersHorizontal, RefreshCw, RotateCcw, CreditCard
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -88,6 +88,8 @@ export function ReservationHoverCard({
   const [undoingEarly, setUndoingEarly] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
   const [copiedCheckinLink, setCopiedCheckinLink] = useState(false)
+  const [copiedPkgPayment, setCopiedPkgPayment] = useState(false)
+  const [copiedPkgCred, setCopiedPkgCred] = useState(false)
 
   // Mensagens Rápidas (Manuais) e Janelinha Flutuante de Prévia
   const { activeQuickMessages, dispatchQuickMessage } = useQuickMessages()
@@ -190,10 +192,15 @@ export function ReservationHoverCard({
   // Dados sanitizados da reserva
   const resCode = resItem.code || `RES-${resItem.flatNumber || flat?.number}-${String(resItem.id).padStart(4, "0")}`
   const guestName = resItem.guestName || resItem.guests?.[0]?.name || "Hóspede Sem Nome"
-  const rawPhone = resItem.guestPhone || resItem.guests?.[0]?.phone || ""
-  const cleanPhone = rawPhone.replace(/\D/g, "")
-  const finalWaPhone = cleanWhatsAppPhone(rawPhone)
+  const rawGuestPhone = resItem.guestPhone || resItem.guests?.[0]?.phone || ""
+  const guestWaPhone = cleanWhatsAppPhone(rawGuestPhone)
   const recipients = getReservationRecipients(resItem)
+  const rawRequesterPhone = recipients.requester.phone || resItem.requesterInfo?.phone || resItem.requesterPhone || ""
+  const requesterWaPhone = cleanWhatsAppPhone(rawRequesterPhone)
+  const isUsingRequesterFallback = !guestWaPhone && Boolean(requesterWaPhone)
+  const rawPhone = guestWaPhone ? rawGuestPhone : rawRequesterPhone
+  const cleanPhone = rawPhone.replace(/\D/g, "")
+  const finalWaPhone = guestWaPhone || requesterWaPhone
   const hoverCompanionsWithPhone = (recipients.companions || []).filter(
     (c) => c.cleanDigits && c.cleanDigits.length >= 8 && c.cleanDigits !== recipients.guest.cleanDigits && c.cleanDigits !== recipients.requester.cleanDigits
   )
@@ -307,11 +314,22 @@ export function ReservationHoverCard({
     : (STATUS_MAP[resItem.status] || STATUS_MAP.confirmada)
   const originUrl = typeof window !== "undefined" ? window.location.origin : "https://corpflats.com.br"
   const portalUrl = `${originUrl}/minha-reserva/${resItem.code || resItem.id}`
+  const pkgPaymentUrl = resItem.packageCode
+    ? `${originUrl}/minha-reserva/${encodeURIComponent(resItem.packageCode)}?requester=1`
+    : null
+  const pkgCredentialUrl = resItem.packageCode
+    ? `${originUrl}/credenciamento/${encodeURIComponent(resItem.packageCode)}`
+    : null
   const breakfastUrl = `${originUrl}/minha-reserva/${resItem.code || resItem.id}/cafe`
   const checkoutUrl = `${originUrl}/checkout/${resItem.code || resItem.id}`
   const preCheckinUrl = getCheckinUrl(resItem, 1, originUrl, settings)
 
-  const waMessage = `Olá ${guestName}, tudo bem? Falamos da CorpFlats a respeito da sua estadia no Flat ${flatNumber} (${checkinStr} a ${checkoutStr}). Como podemos ajudar?`
+  const chatTargetName = isUsingRequesterFallback
+    ? (recipients.requester.name || requesterDisplayName || "Solicitante")
+    : guestName
+  const waMessage = isUsingRequesterFallback
+    ? `Olá ${chatTargetName}, tudo bem? Falamos da CorpFlats a respeito da reserva no Flat ${flatNumber} (${checkinStr} a ${checkoutStr})${resItem.packageCode ? ` — Pacote ${resItem.packageCode}` : ""}. Como podemos ajudar?`
+    : `Olá ${guestName}, tudo bem? Falamos da CorpFlats a respeito da sua estadia no Flat ${flatNumber} (${checkinStr} a ${checkoutStr}). Como podemos ajudar?`
   const waLink = finalWaPhone ? `https://wa.me/${finalWaPhone}?text=${encodeURIComponent(waMessage)}` : null
 
   const handleCopyLink = (e: React.MouseEvent) => {
@@ -319,10 +337,36 @@ export function ReservationHoverCard({
     navigator.clipboard.writeText(portalUrl)
     setCopiedLink(true)
     toast({
-      title: "Link copiado! 📋",
-      description: "Link da página do hóspede copiado para a área de transferência."
+      title: resItem.packageCode ? "Portal Individual (s/ valores) copiado! 📋" : "Link copiado! 📋",
+      description: resItem.packageCode
+        ? "Link individual deste flat (sem valores financeiros) copiado."
+        : "Link da página do hóspede copiado para a área de transferência."
     })
     setTimeout(() => setCopiedLink(false), 2000)
+  }
+
+  const handleCopyPkgPaymentLink = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!pkgPaymentUrl) return
+    navigator.clipboard.writeText(pkgPaymentUrl)
+    setCopiedPkgPayment(true)
+    toast({
+      title: "PIX / Recibo do Pacote copiado! 💳",
+      description: `Link único do Solicitante (${resItem.packageCode}) copiado.`
+    })
+    setTimeout(() => setCopiedPkgPayment(false), 2000)
+  }
+
+  const handleCopyPkgCredLink = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!pkgCredentialUrl) return
+    navigator.clipboard.writeText(pkgCredentialUrl)
+    setCopiedPkgCred(true)
+    toast({
+      title: "Link Cadastro Hóspedes 1 e 2 copiado! 👥",
+      description: `Formulário único do pacote ${resItem.packageCode} copiado.`
+    })
+    setTimeout(() => setCopiedPkgCred(false), 2000)
   }
 
   const handleCopyCheckinLink = (e: React.MouseEvent) => {
@@ -534,6 +578,17 @@ export function ReservationHoverCard({
               #{resCode}
             </span>
             <div className="flex items-center gap-1.5 flex-wrap justify-end">
+              {resItem.packageCode && (
+                <span
+                  className="text-[9.5px] font-black px-1.5 py-0.5 rounded border bg-indigo-50 text-indigo-700 border-indigo-300 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-700 shadow-2xs"
+                  title={`Pacote Multi-Flat ${resItem.packageCode}`}
+                >
+                  📦 {resItem.packageCode}
+                  {resItem.packageIndex && resItem.packageTotalFlats
+                    ? ` (${resItem.packageIndex}/${resItem.packageTotalFlats})`
+                    : ""}
+                </span>
+              )}
               {isMensalista && (
                 <span className="text-[9px] uppercase font-black px-1.5 py-0.5 bg-amber-400 text-slate-950 rounded shadow-2xs">
                   👑 Mensalista
@@ -547,7 +602,7 @@ export function ReservationHoverCard({
                   return l || "whatsapp"
                 }
                 if (Array.isArray(resItem.dailyRates) && resItem.dailyRates.length > 0) {
-                  const uniqueChannels = Array.from(new Set(resItem.dailyRates.map((d: any) => normHoverChan(d.channel || resItem.channel))));
+                  const uniqueChannels = Array.from(new Set<string>(resItem.dailyRates.map((d: any) => normHoverChan(d.channel || resItem.channel))));
                   if (uniqueChannels.length > 1) {
                     return uniqueChannels.map(ch => {
                       const label = ch.includes("b2b") ? "B2B" : ch.includes("booking") ? "Booking" : ch.includes("airbnb") ? "Airbnb" : ch.includes("site") ? "Site" : "WhatsApp";
@@ -1041,17 +1096,25 @@ export function ReservationHoverCard({
                 <a
                   href={`/whatsapp-chat?phone=${finalWaPhone}`}
                   className="inline-flex items-center justify-center gap-1.5 h-8 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold text-xs shadow-xs transition-all group shrink-0"
-                  title="Abrir WhatsApp integrado dentro do sistema"
+                  title={
+                    isUsingRequesterFallback
+                      ? `Abrir WhatsApp do Solicitante (${chatTargetName}) dentro do sistema`
+                      : "Abrir WhatsApp integrado dentro do sistema"
+                  }
                 >
                   <MessageSquare className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" />
-                  <span>Chat PMS</span>
+                  <span>{isUsingRequesterFallback ? "Chat Solicitante" : "Chat PMS"}</span>
                 </a>
                 <a
                   href={waLink}
                   target="_blank"
                   rel="noreferrer"
                   className="h-8 w-8 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 flex items-center justify-center transition-colors shrink-0 shadow-2xs"
-                  title="Abrir WhatsApp Web Externo (wa.me)"
+                  title={
+                    isUsingRequesterFallback
+                      ? `Abrir WhatsApp Web Externo do Solicitante (${chatTargetName})`
+                      : "Abrir WhatsApp Web Externo (wa.me)"
+                  }
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>
@@ -1072,12 +1135,45 @@ export function ReservationHoverCard({
               <a
                 href={`tel:+${finalWaPhone}`}
                 className="h-8 w-8 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center justify-center transition-colors shrink-0 shadow-2xs"
-                title={`Ligar para ${rawPhone}`}
+                title={`Ligar para ${rawPhone}${isUsingRequesterFallback ? " (Solicitante)" : ""}`}
               >
                 <Phone className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300" />
               </a>
             )}
           </div>
+
+          {/* Linha 1.5: Atalhos 1-Clique do Pacote Multi-Flat (quando pertencente a pacote) */}
+          {resItem.packageCode && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+              <button
+                type="button"
+                onClick={handleCopyPkgPaymentLink}
+                className="inline-flex items-center gap-1 h-7 px-2 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/85 hover:bg-indigo-100 dark:bg-indigo-950/45 text-indigo-800 dark:text-indigo-300 font-bold text-[11px] transition-colors shadow-2xs cursor-pointer"
+                title={`Copiar link único de PIX / Pagamento / Recibo do Pacote (${pkgPaymentUrl})`}
+              >
+                {copiedPkgPayment ? (
+                  <Check className="w-3 h-3 text-emerald-600" />
+                ) : (
+                  <CreditCard className="w-3 h-3 text-indigo-600" />
+                )}
+                <span>PIX/Recibo Pacote</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCopyPkgCredLink}
+                className="inline-flex items-center gap-1 h-7 px-2 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/85 hover:bg-amber-100 dark:bg-amber-950/45 text-amber-900 dark:text-amber-300 font-bold text-[11px] transition-colors shadow-2xs cursor-pointer"
+                title={`Copiar link único de Cadastro de Hóspedes 1 e 2 (${pkgCredentialUrl})`}
+              >
+                {copiedPkgCred ? (
+                  <Check className="w-3 h-3 text-emerald-600" />
+                ) : (
+                  <Users className="w-3 h-3 text-amber-600" />
+                )}
+                <span>Cadastro Hóspedes 1 e 2</span>
+              </button>
+            </div>
+          )}
 
           {/* Linha 2: Links Públicos de Autoatendimento com quebra fluida (flex-wrap) */}
           <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
@@ -1088,17 +1184,25 @@ export function ReservationHoverCard({
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center gap-1 h-7 px-2 hover:bg-sky-100 dark:hover:bg-sky-900/60 text-sky-700 dark:text-sky-300 font-bold text-[11px] transition-colors"
-                title="Abrir Portal do Hóspede"
+                title={
+                  resItem.packageCode
+                    ? "Abrir Portal Individual deste Flat (sem valores)"
+                    : "Abrir Portal do Hóspede"
+                }
               >
                 <ExternalLink className="w-3 h-3" />
-                <span>Portal</span>
+                <span>{resItem.packageCode ? "Portal Flat (s/ val.)" : "Portal"}</span>
               </a>
               <div className="w-[1px] h-4 bg-sky-200 dark:bg-sky-800" />
               <button
                 type="button"
                 onClick={handleCopyLink}
                 className="h-7 px-1.5 hover:bg-sky-100 dark:hover:bg-sky-900/60 text-sky-700 dark:text-sky-300 transition-colors"
-                title="Copiar Link da Reserva"
+                title={
+                  resItem.packageCode
+                    ? "Copiar Portal Individual deste Flat (sem valores financeiros)"
+                    : "Copiar Link da Reserva"
+                }
               >
                 {copiedLink ? (
                   <Check className="w-3 h-3 text-emerald-600" />

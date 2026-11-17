@@ -132,6 +132,8 @@ export interface StaffProductivityMetrics {
   inspectionsCount: number;
   conformeCount: number;
   discrepancyCount: number;
+  internalAdjustmentCount?: number;
+  internalAdjustmentAmount?: number;
   nqCount?: number;
   npCount?: number;
   conformityRatePct: number;
@@ -889,6 +891,9 @@ export default function AnserveDashboardPage() {
       "PIN Mobile",
       "Total de Passagens",
       "Flats Atendidos",
+      "Passagens Conformes",
+      "Passagens c/ Consumo",
+      "Ajustes Internos",
       "NQ (Não Quis)",
       "NP (Não Perturbe)",
       "Unidades Pagas Lançadas/Repostas",
@@ -907,6 +912,9 @@ export default function AnserveDashboardPage() {
         st.pin || "Padrão",
         p?.inspectionsCount || 0,
         p?.flatsVisitedCount || 0,
+        p?.conformeCount || 0,
+        p?.discrepancyCount || 0,
+        p?.internalAdjustmentCount || 0,
         p?.nqCount || 0,
         p?.npCount || 0,
         p?.paidItemsRestockedQty || 0,
@@ -1094,7 +1102,13 @@ export default function AnserveDashboardPage() {
                 </div>
                 <span className="text-[10px] text-emerald-800/80 dark:text-emerald-300/80 block">
                   Já descontadas taxas (-R$ {Number(settlement?.totalFees || 0).toFixed(2)}) + cortesias (+R${" "}
-                  {Number(settlement?.courtesyRestockCost || 0).toFixed(2)})
+                  {Number(
+                    settlement?.totalCourtesyReimbursement ??
+                      settlement?.courtesyWaterTotalCost ??
+                      settlement?.courtesyRestockCost ??
+                      0
+                  ).toFixed(2)}
+                  )
                 </span>
               </Card>
 
@@ -1606,6 +1620,11 @@ export default function AnserveDashboardPage() {
                               <div className="text-[10px] text-muted-foreground">
                                 {p?.flatsVisitedCount || 0} flats atendidos
                               </div>
+                              {(p?.internalAdjustmentCount || 0) > 0 && (
+                                <div className="text-[10px] font-semibold text-purple-700 dark:text-purple-400 mt-0.5">
+                                  🛠️ {p?.internalAdjustmentCount} {p?.internalAdjustmentCount === 1 ? "ajuste int." : "ajustes int."}
+                                </div>
+                              )}
                               {((p?.nqCount || 0) > 0 || (p?.npCount || 0) > 0) && (
                                 <div className="text-[10px] font-semibold text-amber-700 dark:text-amber-400 mt-0.5">
                                   {p?.nqCount ? `${p.nqCount} NQ` : ""}
@@ -1744,9 +1763,19 @@ export default function AnserveDashboardPage() {
                     Registro de todas as conferências diárias e finais pós-checkout feitas pelas repositoras no período
                   </CardDescription>
                 </div>
-                <Badge variant="outline" className="text-xs font-bold shrink-0">
-                  {(reportsData?.productivitySummary?.inspections || []).length} passagens
-                </Badge>
+                <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                  <Badge variant="outline" className="text-xs font-bold">
+                    {(reportsData?.productivitySummary?.inspections || []).length} passagens
+                  </Badge>
+                  <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px] font-bold">
+                    ✓ {reportsData?.productivitySummary?.totalConforme ?? 0} conformes
+                  </Badge>
+                  {(reportsData?.productivitySummary?.totalInternalAdjustments || 0) > 0 && (
+                    <Badge className="bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-500/30 text-[10px] font-bold">
+                      🛠️ {reportsData?.productivitySummary?.totalInternalAdjustments} ajustes int.
+                    </Badge>
+                  )}
+                </div>
               </CardHeader>
 
               <div className="w-full overflow-x-auto">
@@ -1771,6 +1800,28 @@ export default function AnserveDashboardPage() {
                     ) : (
                       (reportsData?.productivitySummary?.inspections || []).map((insp: any) => {
                         const launchedVal = Number(insp.discrepancyTotalAmount || 0);
+                        const courtesyWater = Number(insp.welcomeKitConsumption?.waterCups ?? insp.welcomeKitConsumption?.waterCupsConsumed) || 0;
+                        const courtesyPeanuts = Number(insp.welcomeKitConsumption?.mendoratoPeanuts ?? insp.welcomeKitConsumption?.peanutsConsumed) || 0;
+                        const hasCourtesy = courtesyWater > 0 || courtesyPeanuts > 0;
+                        const isInternalAdj = insp.status === "ocorrencia_interna" || insp.unoccupiedLaunchMode === "internal_adjustment";
+                        const isLinkedLastRes = insp.unoccupiedLaunchMode === "link_last_reservation";
+
+                        const itemSummaryParts: string[] = [];
+                        for (const it of insp.restockedItems || []) {
+                          itemSummaryParts.push(`${it.quantity}x ${it.productName || it.productId}`);
+                        }
+                        if (itemSummaryParts.length === 0 && Array.isArray(insp.internalAdjustmentItems)) {
+                          for (const adj of insp.internalAdjustmentItems) {
+                            itemSummaryParts.push(`${adj.quantity}x ${adj.productName || adj.productId} (Ajuste)`);
+                          }
+                        }
+                        if (courtesyWater > 0) {
+                          itemSummaryParts.push(`💧 ${courtesyWater}x Água (Cortesia)`);
+                        }
+                        if (courtesyPeanuts > 0) {
+                          itemSummaryParts.push(`🥜 ${courtesyPeanuts}x Amendoim (Cortesia)`);
+                        }
+
                         return (
                           <tr key={insp.id} className="hover:bg-muted/20">
                             <td className="p-3.5 font-mono text-[11px]">
@@ -1793,9 +1844,21 @@ export default function AnserveDashboardPage() {
                                 <Badge className="bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30 text-[10px]">
                                   🔕 NP — Placa Não Perturbe
                                 </Badge>
-                              ) : launchedVal > 0 || insp.status === "lancamento_diario" ? (
+                              ) : insp.status === "ocorrencia_interna" || (isInternalAdj && (itemSummaryParts.length > 0)) ? (
+                                <Badge className="bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-500/30 text-[10px]">
+                                  🛠️ Ocorrência / Ajuste Interno
+                                </Badge>
+                              ) : isLinkedLastRes ? (
+                                <Badge className="bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-500/30 text-[10px]">
+                                  🔄 Correção Últ. Reserva {insp.reservationCode ? `(${insp.reservationCode})` : ""} {launchedVal > 0 ? `• R$ ${launchedVal.toFixed(2)}` : ""}
+                                </Badge>
+                              ) : launchedVal > 0 ? (
                                 <Badge className="bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30 text-[10px]">
-                                  Consumo Lançado {launchedVal > 0 ? `(R$ ${launchedVal.toFixed(2)})` : ""}
+                                  Consumo Lançado (R$ {launchedVal.toFixed(2)}){hasCourtesy ? " + Cortesia" : ""}
+                                </Badge>
+                              ) : hasCourtesy ? (
+                                <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[10px]">
+                                  🎁 Cortesia Consumida (R$ 0,00)
                                 </Badge>
                               ) : (
                                 <Badge className="bg-emerald-500/15 text-emerald-700 border-emerald-500/30 text-[10px]">
@@ -1804,13 +1867,9 @@ export default function AnserveDashboardPage() {
                               )}
                             </td>
                             <td className="p-3.5">
-                              {(insp.restockedItems || []).length > 0
-                                ? (insp.restockedItems || [])
-                                    .map((it: any) => `${it.quantity}x ${it.productName || it.productId}`)
-                                    .join(", ")
-                                : "Sem reposição"}
+                              {itemSummaryParts.length > 0 ? itemSummaryParts.join(", ") : "Sem reposição"}
                             </td>
-                            <td className="p-3.5 text-muted-foreground max-w-xs truncate">
+                            <td className="p-3.5 text-muted-foreground max-w-xs truncate" title={insp.notes || ""}>
                               {insp.notes || "-"}
                             </td>
                           </tr>
@@ -2075,6 +2134,23 @@ export default function AnserveDashboardPage() {
                       ) : (
                         (historyModalStaff.productivity?.recentInspections || []).map((insp: any) => {
                           const launchedVal = Number(insp.discrepancyTotalAmount || 0);
+                          const courtesyWater = Number(insp.welcomeKitConsumption?.waterCups ?? insp.welcomeKitConsumption?.waterCupsConsumed) || 0;
+                          const courtesyPeanuts = Number(insp.welcomeKitConsumption?.mendoratoPeanuts ?? insp.welcomeKitConsumption?.peanutsConsumed) || 0;
+                          const hasCourtesy = courtesyWater > 0 || courtesyPeanuts > 0;
+                          const isInternalAdj = insp.status === "ocorrencia_interna" || insp.unoccupiedLaunchMode === "internal_adjustment";
+                          const isLinkedLastRes = insp.unoccupiedLaunchMode === "link_last_reservation";
+                          const itemParts: string[] = [];
+                          for (const it of insp.restockedItems || []) {
+                            itemParts.push(`${it.quantity}x ${it.productName || it.productId}`);
+                          }
+                          if (itemParts.length === 0 && Array.isArray(insp.internalAdjustmentItems)) {
+                            for (const adj of insp.internalAdjustmentItems) {
+                              itemParts.push(`${adj.quantity}x ${adj.productName || adj.productId} (Ajuste)`);
+                            }
+                          }
+                          if (courtesyWater > 0) itemParts.push(`💧 ${courtesyWater}x Água (Cortesia)`);
+                          if (courtesyPeanuts > 0) itemParts.push(`🥜 ${courtesyPeanuts}x Amendoim (Cortesia)`);
+
                           return (
                             <tr key={insp.id}>
                               <td className="p-2.5 font-mono text-[11px]">
@@ -2090,9 +2166,21 @@ export default function AnserveDashboardPage() {
                                   <Badge className="bg-rose-500/15 text-rose-700 text-[10px]">
                                     🔕 NP — Não Perturbe
                                   </Badge>
-                                ) : launchedVal > 0 || insp.status === "lancamento_diario" ? (
+                                ) : insp.status === "ocorrencia_interna" || (isInternalAdj && itemParts.length > 0) ? (
+                                  <Badge className="bg-purple-500/15 text-purple-700 text-[10px]">
+                                    🛠️ Ajuste Interno
+                                  </Badge>
+                                ) : isLinkedLastRes ? (
+                                  <Badge className="bg-indigo-500/15 text-indigo-700 text-[10px]">
+                                    🔄 Correção Últ. Reserva
+                                  </Badge>
+                                ) : launchedVal > 0 ? (
                                   <Badge className="bg-sky-500/15 text-sky-700 text-[10px]">
-                                    Consumo Lançado {launchedVal > 0 ? `(R$ ${launchedVal.toFixed(2)})` : ""}
+                                    Consumo Lançado (R$ {launchedVal.toFixed(2)}){hasCourtesy ? " + Cortesia" : ""}
+                                  </Badge>
+                                ) : hasCourtesy ? (
+                                  <Badge className="bg-amber-500/15 text-amber-700 text-[10px]">
+                                    🎁 Cortesia (R$ 0,00)
                                   </Badge>
                                 ) : (
                                   <Badge className="bg-emerald-500/15 text-emerald-700 text-[10px]">
@@ -2101,9 +2189,7 @@ export default function AnserveDashboardPage() {
                                 )}
                               </td>
                               <td className="p-2.5">
-                                {(insp.restockedItems || [])
-                                  .map((it: any) => `${it.quantity}x ${it.productName || it.productId}`)
-                                  .join(", ") || "-"}
+                                {itemParts.join(", ") || "-"}
                               </td>
                             </tr>
                           );

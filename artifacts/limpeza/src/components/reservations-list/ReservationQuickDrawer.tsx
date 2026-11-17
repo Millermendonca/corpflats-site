@@ -24,6 +24,8 @@ import {
   RefreshCw,
   Clock,
   BedDouble,
+  Users,
+  Link2,
 } from "lucide-react";
 import {
   Sheet,
@@ -66,6 +68,9 @@ interface ReservationQuickDrawerProps {
   onTriggerQuickMessage: (row: UnifiedReservationRow, qm: WhatsAppQuickMessage) => void;
   activeQuickMessages: WhatsAppQuickMessage[];
   onCopyPortalLink: (row: UnifiedReservationRow) => void;
+  onCopyPaymentLink?: (row: UnifiedReservationRow) => void;
+  onCopyPackageCredentialLink?: (row: UnifiedReservationRow) => void;
+  onFilterByPackage?: (packageCode: string) => void;
   onCopyPreCheckinLink: (row: UnifiedReservationRow) => void;
   onOpenPortalNewTab: (row: UnifiedReservationRow) => void;
   onOpenNfseHub: (row: UnifiedReservationRow) => void;
@@ -92,6 +97,9 @@ export const ReservationQuickDrawer: React.FC<ReservationQuickDrawerProps> = ({
   onTriggerQuickMessage,
   activeQuickMessages,
   onCopyPortalLink,
+  onCopyPaymentLink,
+  onCopyPackageCredentialLink,
+  onFilterByPackage,
   onCopyPreCheckinLink,
   onOpenPortalNewTab,
   onOpenNfseHub,
@@ -247,6 +255,21 @@ export const ReservationQuickDrawer: React.FC<ReservationQuickDrawerProps> = ({
                   Flat {row.flatNumber}
                 </Badge>
               )}
+              {row.packageCode && (
+                <button
+                  type="button"
+                  onClick={() => onFilterByPackage?.(row.packageCode!)}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-black bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:text-indigo-300 dark:border-indigo-800 transition-colors cursor-pointer"
+                  title={`Clique para filtrar e ver todos os flats do pacote ${row.packageCode} juntos`}
+                >
+                  <span>
+                    📦 {row.packageCode}
+                    {row.packageIndex && row.packageTotalFlats
+                      ? ` (${row.packageIndex}/${row.packageTotalFlats})`
+                      : ""}
+                  </span>
+                </button>
+              )}
             </SheetTitle>
             <SheetDescription className="text-xs flex flex-wrap items-center gap-1.5">
               <span className="font-mono font-semibold text-foreground">{row.code}</span>
@@ -266,18 +289,53 @@ export const ReservationQuickDrawer: React.FC<ReservationQuickDrawerProps> = ({
               className="h-7 text-xs font-bold gap-1 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 rounded-lg"
             >
               <MessageCircle className="w-3.5 h-3.5" />
-              Chat WhatsApp
+              {!row.guestPhone && row.requesterPhone ? "Chat Solicitante" : "Chat WhatsApp"}
             </Button>
 
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onCopyPortalLink(row)}
-              className="h-7 text-xs font-semibold gap-1 rounded-lg"
-            >
-              <Copy className="w-3 h-3 text-primary" />
-              Portal Hóspede
-            </Button>
+            {row.packageCode ? (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => (onCopyPaymentLink || onCopyPortalLink)(row)}
+                  className="h-7 text-xs font-semibold gap-1 rounded-lg border-indigo-300 text-indigo-700 dark:border-indigo-800 dark:text-indigo-300"
+                  title={`/minha-reserva/${row.packageCode}?requester=1`}
+                >
+                  <CreditCard className="w-3 h-3" />
+                  💳 Link Pagamento / Recibo do Pacote (Solicitante)
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onCopyPackageCredentialLink?.(row)}
+                  className="h-7 text-xs font-semibold gap-1 rounded-lg border-amber-300 text-amber-800 dark:border-amber-800 dark:text-amber-300"
+                  title={`/credenciamento/${row.packageCode}`}
+                >
+                  <Users className="w-3 h-3" />
+                  👥 Link Único Cadastro Hóspedes
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onCopyPortalLink(row)}
+                  className="h-7 text-xs font-semibold gap-1 rounded-lg"
+                  title={`/minha-reserva/${row.code}`}
+                >
+                  <Link2 className="w-3 h-3 text-primary" />
+                  🔑 Portal Individual deste Flat (s/ valores)
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onCopyPortalLink(row)}
+                className="h-7 text-xs font-semibold gap-1 rounded-lg"
+              >
+                <Copy className="w-3 h-3 text-primary" />
+                Portal Hóspede
+              </Button>
+            )}
 
             <Button
               variant="outline"
@@ -438,6 +496,15 @@ export const ReservationQuickDrawer: React.FC<ReservationQuickDrawerProps> = ({
                     <span className="font-mono">{row.guestDocument || "CPF não informado"}</span>
                   </div>
                 </div>
+                {(row.requesterName || row.requesterPhone) && (
+                  <div className="pt-2 border-t flex flex-wrap items-center gap-2 text-indigo-700 dark:text-indigo-300 font-semibold">
+                    <Users className="w-3.5 h-3.5 shrink-0" />
+                    <span>
+                      Solicitante: <strong>{row.requesterName || "Titular do Pacote"}</strong>
+                      {row.requesterPhone ? ` • ${row.requesterPhone}` : ""}
+                    </span>
+                  </div>
+                )}
                 {(row.companyName || row.agencyName) && (
                   <div className="pt-2 border-t flex items-center gap-2 text-violet-700 dark:text-violet-300 font-bold">
                     <Building2 className="w-3.5 h-3.5 shrink-0" />

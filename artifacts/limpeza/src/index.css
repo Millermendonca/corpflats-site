@@ -221,6 +221,16 @@
     @apply font-sans antialiased bg-background text-foreground;
     font-size-adjust: from-font;
   }
+  dialog:modal {
+    overscroll-behavior: contain;
+  }
+  dialog::backdrop {
+    overflow: hidden;
+    overscroll-behavior: contain;
+  }
+  [role="dialog"] {
+    overscroll-behavior: contain;
+  }
 }
 
 @layer utilities {

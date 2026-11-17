@@ -3,11 +3,20 @@
 import { AgentToolDefinition, AgentToolResponse, ContextoSessaoInjetado } from '../types/tool-contract';
 import { notifyAdminWhatsApp } from '../services/admin-notifier';
 
+export interface FlatConsultaItem {
+  data_checkin?: string;
+  data_checkout?: string;
+  quantidade_hospedes?: number;
+  preferencia_cama?: 'casal' | 'solteiro' | 'indiferente';
+}
+
 export interface ConsultarDisponibilidadeArgs {
   data_checkin: string;
   data_checkout: string;
   quantidade_hospedes?: number;
+  quantidade_flats?: number;
   preferencia_cama?: 'casal' | 'solteiro' | 'indiferente';
+  flats?: FlatConsultaItem[];
 }
 
 function diffNights(checkin: string, checkout: string): number {
@@ -21,8 +30,8 @@ export const consultarDisponibilidadeTool: AgentToolDefinition<ConsultarDisponib
   name: 'consultar_disponibilidade',
 
   description:
-    'Consulta a disponibilidade real de flats na CorpFlats para um período de entrada (data_checkin) e saída (data_checkout) ' +
-    'e quantidade de hóspedes. Deve ser chamada sempre que um cliente perguntar se há vaga ou quiser cotar datas.',
+    'Consulta a disponibilidade real de 1 ou múltiplos flats na CorpFlats (inclusive com datas, ocupação e camas independentes por flat no mesmo pacote). ' +
+    'Deve ser chamada sempre que um cliente perguntar se há vaga para 1 ou vários flats ou quiser cotar datas.',
 
   allowedStates: ['COMERCIAL_VENDAS', 'PRE_CHECKIN', 'IN_STAY_CONCIERGE'],
 
@@ -31,20 +40,37 @@ export const consultarDisponibilidadeTool: AgentToolDefinition<ConsultarDisponib
     properties: {
       data_checkin: {
         type: 'string',
-        description: 'Data desejada de check-in no formato YYYY-MM-DD.',
+        description: 'Data principal de check-in no formato YYYY-MM-DD.',
       },
       data_checkout: {
         type: 'string',
-        description: 'Data desejada de check-out no formato YYYY-MM-DD.',
+        description: 'Data principal de check-out no formato YYYY-MM-DD.',
       },
       quantidade_hospedes: {
         type: 'number',
-        description: 'Quantidade total de hóspedes (padrão: 1).',
+        description: 'Quantidade de hóspedes (no flat único ou total do grupo se quantidade_flats > 1).',
+      },
+      quantidade_flats: {
+        type: 'number',
+        description: 'Quantidade de flats desejados no pacote (padrão: 1).',
       },
       preferencia_cama: {
         type: 'string',
         enum: ['casal', 'solteiro', 'indiferente'],
         description: 'Preferência opcional de configuração de cama.',
+      },
+      flats: {
+        type: 'array',
+        description: 'Lista opcional quando o cliente pedir múltiplos flats com datas, ocupação ou camas diferentes por flat.',
+        items: {
+          type: 'object',
+          properties: {
+            data_checkin: { type: 'string', description: 'Check-in deste flat (YYYY-MM-DD).' },
+            data_checkout: { type: 'string', description: 'Check-out deste flat (YYYY-MM-DD).' },
+            quantidade_hospedes: { type: 'number', description: 'Ocupação deste flat (1 ou 2 pessoas).' },
+            preferencia_cama: { type: 'string', enum: ['casal', 'solteiro', 'indiferente'] },
+          },
+        },
       },
     },
     required: ['data_checkin', 'data_checkout'],
@@ -55,6 +81,137 @@ export const consultarDisponibilidadeTool: AgentToolDefinition<ConsultarDisponib
     context: ContextoSessaoInjetado
   ): Promise<AgentToolResponse> {
     try {
+      const db = context.runtime?.db;
+      const extraBedEnabled = Boolean(db?.siteConfig?.extraBedConfig?.enabled);
+      const maxGuestsPerFlat = extraBedEnabled ? 3 : 2;
+
+      const requestedFlatsCount = Array.isArray(args.flats) && args.flats.length >= 2
+        ? args.flats.length
+        : Math.max(1, Number(args.quantidade_flats || 1));
+
+      if (requestedFlatsCount >= 2) {
+        const defaultIn = String(args.data_checkin || '').slice(0, 10);
+        const defaultOut = String(args.data_checkout || '').slice(0, 10);
+        const items: FlatConsultaItem[] = Array.isArray(args.flats) && args.flats.length >= 2
+          ? args.flats
+          : Array.from({ length: requestedFlatsCount }, (_, i) => {
+              const totalPax = Math.max(requestedFlatsCount, Number(args.quantidade_hospedes || requestedFlatsCount));
+              const basePax = Math.floor(totalPax / requestedFlatsCount);
+              const rem = totalPax % requestedFlatsCount;
+              return {
+                data_checkin: defaultIn,
+                data_checkout: defaultOut,
+                quantidade_hospedes: Math.min(maxGuestsPerFlat, basePax + (i < rem ? 1 : 0)),
+                preferencia_cama: args.preferencia_cama || 'casal',
+              };
+            });
+
+        const allFlats: any[] = Array.isArray(db?.flats) && db.flats.length > 0
+          ? db.flats.filter((f: any) => f && f.isActive !== false && f.status !== 'maintenance' && f.status !== 'manutencao_bloqueada')
+          : [{ number: '113' }, { number: '114' }, { number: '212' }, { number: '905' }];
+        const reservations: any[] = Array.isArray(db?.reservations) ? db.reservations : [];
+        const nowMs = Date.now() + Number((globalThis as any).__simulatedTimeOffsetMs || 0);
+        const bedCfg = db?.siteConfig?.bedConfig || {};
+        const twinAllowedFlats: string[] = (
+          Array.isArray(bedCfg.twinAllowedFlats) && bedCfg.twinAllowedFlats.length > 0
+            ? bedCfg.twinAllowedFlats
+            : ['113', '114', '115', '202', '905']
+        ).map((n: any) => String(n));
+
+        const allocatedBatch: Array<{ flatNumber: string; checkin: string; checkout: string; hospedes: number; cama: string }> = [];
+
+        for (let idx = 0; idx < items.length; idx++) {
+          const it = items[idx] || {};
+          const fIn = String(it.data_checkin || defaultIn).slice(0, 10);
+          const fOut = String(it.data_checkout || defaultOut).slice(0, 10);
+          const fNights = diffNights(fIn, fOut);
+          const fPax = Math.max(1, Number(it.quantidade_hospedes || 1));
+          if (!fIn || !fOut || fNights <= 0) {
+            const msg = `Peça ao cliente para confirmar as datas válidas de entrada e saída do Flat ${idx + 1}.`;
+            return {
+              status: 'BLOQUEADO_PELA_REGRA',
+              codigo_regra_bloqueio: 'DATAS_INVALIDAS',
+              instrucao_para_ia: msg,
+              instrucao_resposta_ia: msg,
+            };
+          }
+          if (fPax > maxGuestsPerFlat) {
+            const msg = `Explique ao cliente que cada flat comporta até ${maxGuestsPerFlat} hóspedes (o Flat ${idx + 1} foi solicitado para ${fPax}). Sugira redistribuir ou acrescentar mais 1 flat ao pacote.`;
+            return {
+              status: 'BLOQUEADO_PELA_REGRA',
+              codigo_regra_bloqueio: 'CAPACIDADE_MAXIMA_EXCEDIDA',
+              instrucao_para_ia: msg,
+              instrucao_resposta_ia: msg,
+            };
+          }
+          const wantsTwin = String(it.preferencia_cama || args.preferencia_cama || '').toLowerCase().includes('solteiro');
+          if (wantsTwin && bedCfg.allowTwinBeds === false) {
+            const msgTwinOff =
+              'Informe ao cliente que no momento todos os flats estão configurados com cama Queen de casal (a montagem com 2 camas de solteiro está indisponível). Pergunte se a cama Queen atende.';
+            return {
+              status: 'BLOQUEADO_PELA_REGRA',
+              codigo_regra_bloqueio: 'CAMAS_SOLTEIRO_INDISPONIVEIS',
+              instrucao_para_ia: msgTwinOff,
+              instrucao_resposta_ia: msgTwinOff,
+            };
+          }
+          const candidates = allFlats.filter((flat: any) => {
+            const fNum = String(flat.number || flat.id || '');
+            if (wantsTwin && !twinAllowedFlats.includes(fNum)) return false;
+            const usedInBatch = allocatedBatch.some(
+              (prev) => prev.flatNumber === fNum && fIn < prev.checkout && fOut > prev.checkin
+            );
+            if (usedInBatch) return false;
+            const hasConflict = reservations.some((r: any) => {
+              if (!r) return false;
+              const st = String(r.status || '').toLowerCase();
+              if (['cancelada', 'cancelado', 'cancelled', 'expirada', 'expired', 'no_show'].includes(st)) return false;
+              const holdExp = r.expiresAt || r.holdExpiresAt;
+              if ((st === 'pre_reserva' || st === 'pendente' || r.isPreReservation) && holdExp && new Date(holdExp).getTime() < nowMs && r.paymentStatus !== 'pago_total' && r.paymentStatus !== 'pago') return false;
+              if (String(r.flatNumber || r.flatId || '') !== fNum) return false;
+              return fIn < String(r.checkoutDate || '').slice(0, 10) && fOut > String(r.checkinDate || '').slice(0, 10);
+            });
+            return !hasConflict;
+          });
+
+          if (candidates.length === 0) {
+            const msg = `Informe com empatia que não há disponibilidade simultânea para o Flat ${idx + 1} no período ${fIn} a ${fOut} (conseguimos atender ${allocatedBatch.length} flat(s) nesse intervalo). Pergunte se deseja ajustar as datas ou quantidade de unidades.`;
+            return {
+              status: 'BLOQUEADO_PELA_REGRA',
+              codigo_regra_bloqueio: 'SEM_DISPONIBILIDADE_MULTI_FLAT',
+              dados: { flats_solicitados: items.length, flats_atendidos: allocatedBatch.length },
+              instrucao_para_ia: msg,
+              instrucao_resposta_ia: msg,
+            };
+          }
+
+          allocatedBatch.push({
+            flatNumber: String(candidates[0].number || candidates[0].id),
+            checkin: fIn,
+            checkout: fOut,
+            hospedes: fPax,
+            cama: wantsTwin ? 'solteiro' : 'casal',
+          });
+        }
+
+        const resumoFlats = allocatedBatch
+          .map((a, i) => `Flat ${i + 1} (Unid. ${a.flatNumber}: ${a.checkin} a ${a.checkout}, ${a.hospedes} pax, cama ${a.cama})`)
+          .join('; ');
+        const msg =
+          `Confirme com entusiasmo que temos disponibilidade para os *${allocatedBatch.length} flats* solicitados em pacote unificado (1 único pagamento PIX/Cartão para o solicitante): ${resumoFlats}. ` +
+          `Pergunte se prefere cotar com café da manhã servido no flat ou somente hospedagem para cada unidade.`;
+
+        return {
+          status: 'SUCESSO_EXECUTADO',
+          dados: {
+            quantidade_flats: allocatedBatch.length,
+            alocacao_sugerida: allocatedBatch,
+          },
+          instrucao_para_ia: msg,
+          instrucao_resposta_ia: msg,
+        };
+      }
+
       const checkin = String(args.data_checkin || '').slice(0, 10);
       const checkout = String(args.data_checkout || '').slice(0, 10);
       const hospedes = Math.max(1, Number(args.quantidade_hospedes || 1));
@@ -73,25 +230,23 @@ export const consultarDisponibilidadeTool: AgentToolDefinition<ConsultarDisponib
         };
       }
 
-      const db = context.runtime?.db;
-      const extraBedEnabled = Boolean(db?.siteConfig?.extraBedConfig?.enabled);
-      const maxGuestsPerFlat = extraBedEnabled ? 3 : 2;
-
-      // TRAVA 2: Capacidade máxima por flat (padrão 2 hóspedes; 3 hóspedes apenas quando habilitado pelo gestor)
+      // TRAVA 2: Capacidade máxima por flat -> orienta pacote multi-flat com 1 único PIX!
       if (hospedes > maxGuestsPerFlat) {
+        const flatsSugeridos = Math.ceil(hospedes / maxGuestsPerFlat);
         const msg =
           hospedes === 3 && !extraBedEnabled
-            ? 'Explique educadamente ao cliente que o padrão oficial dos nossos flats é para até 2 hóspedes. Pergunte se ele prefere cotar 2 apartamentos ou se deseja que você consulte diretamente a gerência para verificar a possibilidade de exceção com adicional para 3ª pessoa.'
+            ? 'Explique educadamente ao cliente que o padrão oficial dos nossos flats é para até 2 hóspedes. Pergunte se ele prefere que você já cote um pacote de 2 flats (com 1 único pagamento PIX/Cartão) ou se deseja consultar a gerência para verificar exceção de 3ª pessoa.'
             : `Explique ao cliente que cada flat comporta até ${maxGuestsPerFlat} hóspedes com conforto. ` +
-              `Para ${hospedes} pessoas, sugira reservar 2 apartamentos próximos e pergunte se ele gostaria de cotar dessa forma.`;
+              `Para ${hospedes} pessoas, ofereça montar um pacote unificado de *${flatsSugeridos} flats* (onde o solicitante paga 1 única vez no PIX ou Cartão e cadastra os hóspedes de cada flat) e pergunte se pode cotar assim.`;
         return {
           status: 'BLOQUEADO_PELA_REGRA',
           codigo_regra_bloqueio: hospedes === 3 && !extraBedEnabled ? 'TERCEIRO_HOSPEDE_REQUER_EXCECAO' : 'CAPACIDADE_MAXIMA_EXCEDIDA',
-          dados: { quantidade_solicitada: hospedes, capacidade_maxima_por_flat: maxGuestsPerFlat },
+          dados: { quantidade_solicitada: hospedes, capacidade_maxima_por_flat: maxGuestsPerFlat, flats_sugeridos_pacote: flatsSugeridos },
           instrucao_para_ia: msg,
           instrucao_resposta_ia: msg,
         };
       }
+
       const nowEffective = new Date(Date.now() + Number((globalThis as any).__simulatedTimeOffsetMs || 0));
       const nowMs = nowEffective.getTime();
       const brtDateStr = new Intl.DateTimeFormat('en-CA', {
@@ -171,8 +326,9 @@ export const consultarDisponibilidadeTool: AgentToolDefinition<ConsultarDisponib
         const hasConflict = reservations.some((r: any) => {
           if (!r) return false;
           const st = String(r.status || '').toLowerCase();
-          if (['cancelada', 'cancelled', 'expirada', 'no_show'].includes(st)) return false;
-          if ((st === 'pre_reserva' || st === 'pendente') && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== 'pago_total') {
+          if (['cancelada', 'cancelado', 'cancelled', 'expirada', 'expired', 'no_show'].includes(st)) return false;
+          const holdExp = r.expiresAt || r.holdExpiresAt;
+          if ((st === 'pre_reserva' || st === 'pendente' || r.isPreReservation) && holdExp && new Date(holdExp).getTime() < nowMs && r.paymentStatus !== 'pago_total' && r.paymentStatus !== 'pago') {
             return false;
           }
           if (String(r.flatNumber || r.flatId || '') !== flatNum) return false;

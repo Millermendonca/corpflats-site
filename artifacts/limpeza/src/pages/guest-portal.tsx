@@ -462,6 +462,13 @@ export default function GuestPortal() {
 
   // ── Modificar Reserva Multi-Step States (M3) ────────────────────────
   const [modifyModalOpen, setModifyModalOpen] = useState(false)
+  const [modTargetFlat, setModTargetFlat] = useState<{
+    code: string
+    flatNumber: string
+    checkinDate: string
+    checkoutDate: string
+    guestCount: number
+  } | null>(null)
   const [modStep, setModStep] = useState<"preview" | "checkout" | "success">("preview")
   const [modCheckinDate, setModCheckinDate] = useState("")
   const [modCheckoutDate, setModCheckoutDate] = useState("")
@@ -502,11 +509,24 @@ export default function GuestPortal() {
     if (!modPollingActive || !checkoutData?.pendingId || !modifyModalOpen) return
 
     const pendingId = checkoutData.pendingId
-    const currentCode = data?.reservation?.code || code
+    const targetModCode =
+      modTargetFlat?.code ||
+      data?.reservation?.primaryReservationCode ||
+      data?.reservation?.code ||
+      code
+    const pkgCodeForPoll = data?.packageSummary?.packageCode || data?.reservation?.packageCode || ""
+    const portalReloadCode =
+      code || pkgCodeForPoll || data?.reservation?.code || targetModCode
+    const authAmp =
+      data?.isRequesterView || data?.isPackageView || Boolean(pkgCodeForPoll)
+        ? `&requester=1${pkgCodeForPoll ? `&packageCode=${encodeURIComponent(pkgCodeForPoll)}` : ""}`
+        : ""
 
     const pollInterval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(currentCode)}/modify-status?pendingId=${encodeURIComponent(pendingId)}`)
+        const res = await fetch(
+          `/api/pms/guest-portal/${encodeURIComponent(targetModCode)}/modify-status?pendingId=${encodeURIComponent(pendingId)}${authAmp}`
+        )
         if (!res.ok) return
         const json = await res.json()
 
@@ -517,12 +537,12 @@ export default function GuestPortal() {
             message: json.message || "Pagamento confirmado! As datas da sua estadia foram atualizadas com sucesso.",
             newCheckinDate: json.newCheckinDate || checkoutData.newDates?.checkinDate,
             newCheckoutDate: json.newCheckoutDate || checkoutData.newDates?.checkoutDate,
-            newFlatNumber: json.flatNumber || checkoutData.newFlatNumber || data?.reservation?.flatNumber,
+            newFlatNumber: json.flatNumber || checkoutData.newFlatNumber || modTargetFlat?.flatNumber || data?.reservation?.flatNumber,
             needsReSignature: Boolean(json.needsReSignature),
-            reSignatureUrl: json.reSignatureUrl || `/pre-checkin/${encodeURIComponent(currentCode)}?resign=1`
+            reSignatureUrl: json.reSignatureUrl || `/pre-checkin/${encodeURIComponent(targetModCode)}?resign=1`
           })
           setModStep("success")
-          fetchPortalData(currentCode)
+          fetchPortalData(portalReloadCode, true)
         } else if (json.status === "expired") {
           clearInterval(pollInterval)
           setModPollingActive(false)
@@ -534,7 +554,20 @@ export default function GuestPortal() {
     }, 2500)
 
     return () => clearInterval(pollInterval)
-  }, [modPollingActive, checkoutData?.pendingId, modifyModalOpen, data?.reservation?.code, code])
+  }, [
+    modPollingActive,
+    checkoutData?.pendingId,
+    modifyModalOpen,
+    modTargetFlat?.code,
+    modTargetFlat?.flatNumber,
+    data?.reservation?.primaryReservationCode,
+    data?.reservation?.code,
+    data?.reservation?.packageCode,
+    data?.packageSummary?.packageCode,
+    data?.isRequesterView,
+    data?.isPackageView,
+    code,
+  ])
 
 
   // Cancelamento Self-Service States
@@ -560,13 +593,82 @@ export default function GuestPortal() {
   const [selfCheckinPendingMessage, setSelfCheckinPendingMessage] = useState<string | null>(null)
   const [confirmingSelfCheckin, setConfirmingSelfCheckin] = useState(false)
   const [copiedGuestLinkIndex, setCopiedGuestLinkIndex] = useState<number | null>(null)
+  const [copiedPkgCredLink, setCopiedPkgCredLink] = useState(false)
+  const [copiedPkgFlatCode, setCopiedPkgFlatCode] = useState<string | null>(null)
+  const [pkgNfseOpen, setPkgNfseOpen] = useState(false)
+  const [pkgNfseDoc, setPkgNfseDoc] = useState("")
+  const [pkgNfseName, setPkgNfseName] = useState("")
+  const [pkgNfseEmail, setPkgNfseEmail] = useState("")
+  const [emittingPkgNfse, setEmittingPkgNfse] = useState(false)
+  const [pkgNfseMessage, setPkgNfseMessage] = useState<string | null>(null)
+  const [removingPkgItemId, setRemovingPkgItemId] = useState<number | null>(null)
+
+  const handleEmitPackageConsolidatedNfse = async (pkgCode: string) => {
+    const cleanDoc = pkgNfseDoc.replace(/\D/g, "")
+    if (cleanDoc.length !== 11 && cleanDoc.length !== 14) {
+      setPkgNfseMessage("Informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido para emitir a NFS-e única.")
+      return
+    }
+    setEmittingPkgNfse(true)
+    setPkgNfseMessage(null)
+    try {
+      const res = await fetch("/api/nfse/emit-consolidated", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          packageId: pkgCode,
+          tomadorCpfCnpj: cleanDoc,
+          tomadorNome: pkgNfseName.trim() || undefined,
+          tomadorEmail: pkgNfseEmail.trim() || undefined
+        })
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        setPkgNfseMessage(json.error || "Não foi possível emitir a NFS-e única.")
+      } else {
+        setPkgNfseMessage(`✓ NFS-e Única Nº ${json.numeroNfse} emitida com sucesso para todo o pacote!`)
+        setPkgNfseOpen(false)
+        fetchPortalData(code || pkgCode, true)
+      }
+    } catch {
+      setPkgNfseMessage("Erro de conexão ao solicitar NFS-e.")
+    } finally {
+      setEmittingPkgNfse(false)
+    }
+  }
+
+  const handleCancelSingleFlatInPortal = async (item: any, pkgCode: string) => {
+    if (!confirm(`Deseja cancelar apenas o Flat ${item.flatNumber} (${item.code}) mantendo os demais apartamentos do pacote ativos?`)) {
+      return
+    }
+    setRemovingPkgItemId(item.id)
+    try {
+      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(pkgCode || item.code)}/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cancelWholePackage: false,
+          packageCode: pkgCode,
+          reservationId: item.id,
+          reason: "Cancelamento parcial de 1 flat pelo solicitante no Portal do Pacote"
+        })
+      })
+      if (res.ok) {
+        fetchPortalData(code || pkgCode, true)
+      }
+    } catch {}
+    finally {
+      setRemovingPkgItemId(null)
+    }
+  }
 
   const handleSaveEstimatedArrival = async () => {
     const timeVal = selectedArrivalTime || customArrivalTime.trim()
-    if (!timeVal || !code) return
+    const targetStayCode = data?.reservation?.primaryReservationCode || data?.reservation?.code || code
+    if (!timeVal || !targetStayCode) return
     setSavingArrival(true)
     try {
-      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(code)}/estimated-arrival`, {
+      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(targetStayCode)}/estimated-arrival`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ estimatedArrivalTime: timeVal })
@@ -574,7 +676,7 @@ export default function GuestPortal() {
       if (res.ok) {
         setArrivalSuccessNotice(true)
         setEditingArrival(false)
-        fetchPortalData()
+        fetchPortalData(code || data?.reservation?.code || targetStayCode, true)
         setTimeout(() => setArrivalSuccessNotice(false), 5000)
       }
     } catch {}
@@ -588,7 +690,7 @@ export default function GuestPortal() {
       setFavoriteTogglingId(orderId)
       const res = await fetch(`/api/breakfast/orders/${orderId}/favorite`, { method: "POST" })
       if (res.ok) {
-        fetchPortalData()
+        fetchPortalData(code, true)
       }
     } catch {}
     finally {
@@ -621,7 +723,7 @@ export default function GuestPortal() {
       })
       if (res.ok) {
         setRepeatModalOpen(false)
-        fetchPortalData()
+        fetchPortalData(code, true)
       }
     } catch {}
     finally {
@@ -629,17 +731,28 @@ export default function GuestPortal() {
     }
   }
 
-  const fetchPortalData = async (targetCode = code) => {
+  const fetchPortalData = async (targetCode = code, silent = false) => {
     const q = (targetCode || "").trim()
     if (!q) {
       setLoading(false)
       return
     }
     try {
-      setLoading(true)
+      if (!silent) setLoading(true)
       setError(null)
-      const isReqQuery = typeof window !== "undefined" && (new URLSearchParams(window.location.search).get("requester") === "1" || new URLSearchParams(window.location.search).get("view") === "requester")
-      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(q)}${isReqQuery ? "?requester=1" : ""}`)
+      const qsParams = new URLSearchParams()
+      if (typeof window !== "undefined") {
+        const sp = new URLSearchParams(window.location.search)
+        if (sp.get("requester") === "1" || sp.get("view") === "requester") {
+          qsParams.set("requester", "1")
+        }
+        const gParam = sp.get("guest") || sp.get("guestIndex") || sp.get("hospede")
+        if (gParam) {
+          qsParams.set("guest", gParam)
+        }
+      }
+      const qsSuffix = qsParams.toString() ? `?${qsParams.toString()}` : ""
+      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(q)}${qsSuffix}`)
       if (!res.ok) {
         const err = await res.json()
         setError(err.error || "Reserva não encontrada.")
@@ -741,7 +854,11 @@ export default function GuestPortal() {
   }, [rawCode])
 
   const handleConfirmSelfCheckin = async (targetCode?: string) => {
-    const resolvedCode = targetCode || code || data?.reservation?.code
+    const resolvedCode =
+      targetCode ||
+      data?.reservation?.primaryReservationCode ||
+      data?.reservation?.code ||
+      code
     if (!resolvedCode) return
     try {
       setConfirmingSelfCheckin(true)
@@ -757,7 +874,7 @@ export default function GuestPortal() {
         setSelfCheckinPendingMessage(null)
         setSelfCheckinNotice(true)
       }
-      await fetchPortalData(resolvedCode)
+      await fetchPortalData(code || data?.reservation?.code || resolvedCode, true)
     } catch {}
     finally {
       setConfirmingSelfCheckin(false)
@@ -765,13 +882,15 @@ export default function GuestPortal() {
   }
 
   const handleClaimEarlyCheckin = async () => {
+    const targetStayCode = data?.reservation?.primaryReservationCode || data?.reservation?.code || code
+    if (!targetStayCode) return
     try {
       setClaimingEarly(true)
-      const res = await fetch(`/api/pms/guest-portal/${code}/claim-early-checkin`, {
+      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(targetStayCode)}/claim-early-checkin`, {
         method: "POST"
       })
       if (res.ok) {
-        fetchPortalData()
+        fetchPortalData(code || data?.reservation?.code || targetStayCode, true)
       }
     } catch {}
     finally {
@@ -779,14 +898,41 @@ export default function GuestPortal() {
     }
   }
 
-  // Abertura do Modal e Inicialização
-  const handleOpenModifyModal = () => {
+  // Abertura do Modal e Inicialização (suporta modificação por flat específico em pacotes multi-flat)
+  const handleOpenModifyModal = (targetPkgItem?: any) => {
     if (!data?.reservation) return
     const r = data.reservation
+    const pkgActiveItems = Array.isArray(data?.packageSummary?.items)
+      ? data.packageSummary.items.filter((it: any) => it && !it.isCancelled && !it.isExpired)
+      : []
+    const chosenItem =
+      targetPkgItem && targetPkgItem.code
+        ? targetPkgItem
+        : pkgActiveItems.length > 0
+          ? pkgActiveItems[0]
+          : null
+
+    const initTarget = chosenItem
+      ? {
+          code: String(chosenItem.code),
+          flatNumber: String(chosenItem.flatNumber || r.flatNumber || ""),
+          checkinDate: String(chosenItem.checkinDate || r.checkinDate || ""),
+          checkoutDate: String(chosenItem.checkoutDate || r.checkoutDate || ""),
+          guestCount: Math.max(1, Number(chosenItem.guestCount || r.guestCount) || 1),
+        }
+      : {
+          code: String(r.primaryReservationCode || r.code || code || ""),
+          flatNumber: String(r.flatNumber || ""),
+          checkinDate: String(r.checkinDate || ""),
+          checkoutDate: String(r.checkoutDate || ""),
+          guestCount: Math.max(1, Number(r.guestCount) || 1),
+        }
+
+    setModTargetFlat(initTarget)
     setModStep("preview")
-    setModCheckinDate(r.checkinDate || "")
-    setModCheckoutDate(r.checkoutDate || "")
-    setModGuestCount(r.guestCount || 1)
+    setModCheckinDate(initTarget.checkinDate)
+    setModCheckoutDate(initTarget.checkoutDate)
+    setModGuestCount(initTarget.guestCount)
     setModReason("")
     setPreviewData(null)
     setPreviewError(null)
@@ -796,16 +942,28 @@ export default function GuestPortal() {
     setModifySuccessInfo(null)
     setModifyModalOpen(true)
 
-    // Dispara a primeira simulação com os dados atuais
-    if (r.checkinDate && r.checkoutDate) {
-      handleRunPreview(r.checkinDate, r.checkoutDate, r.guestCount || 1)
+    // Dispara a primeira simulação com os dados do flat selecionado
+    if (initTarget.checkinDate && initTarget.checkoutDate) {
+      handleRunPreview(initTarget.checkinDate, initTarget.checkoutDate, initTarget.guestCount, initTarget.code)
     }
   }
 
   // Executa Simulação no /modify-preview
-  const handleRunPreview = async (checkin = modCheckinDate, checkout = modCheckoutDate, guests = modGuestCount) => {
+  const handleRunPreview = async (
+    checkin = modCheckinDate,
+    checkout = modCheckoutDate,
+    guests = modGuestCount,
+    overrideFlatCode?: string
+  ) => {
     if (!data?.reservation || !checkin || !checkout) return
-    const currentCode = data.reservation.code || code
+    const targetModCode =
+      overrideFlatCode ||
+      modTargetFlat?.code ||
+      data.reservation.primaryReservationCode ||
+      data.reservation.code ||
+      code
+    const pkgCodeForMod = data?.packageSummary?.packageCode || data.reservation.packageCode || undefined
+    const modAuthQs = data?.isRequesterView || data?.isPackageView || pkgCodeForMod ? "?requester=1" : ""
 
     if (checkout <= checkin) {
       setPreviewError("A data de check-out deve ser posterior à data de check-in.")
@@ -817,16 +975,20 @@ export default function GuestPortal() {
     setPreviewError(null)
 
     try {
-      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(currentCode)}/modify-preview`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          newCheckinDate: checkin,
-          newCheckoutDate: checkout,
-          newGuestCount: guests,
-          reason: modReason
-        })
-      })
+      const res = await fetch(
+        `/api/pms/guest-portal/${encodeURIComponent(targetModCode)}/modify-preview${modAuthQs}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            newCheckinDate: checkin,
+            newCheckoutDate: checkout,
+            newGuestCount: guests,
+            reason: modReason,
+            ...(pkgCodeForMod ? { packageCode: pkgCodeForMod } : {}),
+          })
+        }
+      )
 
       const json = await res.json()
 
@@ -851,23 +1013,33 @@ export default function GuestPortal() {
   // Avançar para Etapa 2 (Checkout com Hold de 30 Minutos)
   const handleProceedToCheckout = async () => {
     if (!data?.reservation || !previewData?.available) return
-    const currentCode = data.reservation.code || code
+    const targetModCode =
+      modTargetFlat?.code ||
+      data.reservation.primaryReservationCode ||
+      data.reservation.code ||
+      code
+    const pkgCodeForMod = data?.packageSummary?.packageCode || data.reservation.packageCode || undefined
+    const modAuthQs = data?.isRequesterView || data?.isPackageView || pkgCodeForMod ? "?requester=1" : ""
 
     setCheckoutLoading(true)
     setCheckoutError(null)
 
     try {
-      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(currentCode)}/modify-checkout`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          newCheckinDate: modCheckinDate,
-          newCheckoutDate: modCheckoutDate,
-          newGuestCount: modGuestCount,
-          paymentMethod: modPaymentMethod === "card" ? "credit_card" : "pix",
-          reason: modReason
-        })
-      })
+      const res = await fetch(
+        `/api/pms/guest-portal/${encodeURIComponent(targetModCode)}/modify-checkout${modAuthQs}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            newCheckinDate: modCheckinDate,
+            newCheckoutDate: modCheckoutDate,
+            newGuestCount: modGuestCount,
+            paymentMethod: modPaymentMethod === "card" ? "credit_card" : "pix",
+            reason: modReason,
+            ...(pkgCodeForMod ? { packageCode: pkgCodeForMod } : {}),
+          })
+        }
+      )
 
       const json = await res.json()
 
@@ -888,20 +1060,33 @@ export default function GuestPortal() {
   // Cancelar Hold Provisório e Restaurar Datas Originais
   const handleCancelHold = async () => {
     if (!data?.reservation || !checkoutData?.pendingId) return
-    const currentCode = data.reservation.code || code
+    const targetModCode =
+      modTargetFlat?.code ||
+      data.reservation.primaryReservationCode ||
+      data.reservation.code ||
+      code
+    const pkgCodeForMod = data?.packageSummary?.packageCode || data.reservation.packageCode || undefined
+    const modAuthQs = data?.isRequesterView || data?.isPackageView || pkgCodeForMod ? "?requester=1" : ""
+    const portalReloadCode = code || pkgCodeForMod || data.reservation.code
 
     setCancellingHold(true)
     try {
-      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(currentCode)}/modify-cancel-pending`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pendingId: checkoutData.pendingId })
-      })
+      const res = await fetch(
+        `/api/pms/guest-portal/${encodeURIComponent(targetModCode)}/modify-cancel-pending${modAuthQs}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            pendingId: checkoutData.pendingId,
+            ...(pkgCodeForMod ? { packageCode: pkgCodeForMod } : {}),
+          })
+        }
+      )
       if (res.ok) {
         setModPollingActive(false)
         setCheckoutData(null)
         setModifyModalOpen(false)
-        fetchPortalData(currentCode)
+        fetchPortalData(portalReloadCode, true)
       }
     } catch (err) {
       console.error("Erro ao cancelar hold:", err)
@@ -913,22 +1098,33 @@ export default function GuestPortal() {
   // Confirmar Alteração com Custo Zero (Sem Pagamento)
   const handleConfirmZeroCostModify = async () => {
     if (!data?.reservation) return
-    const currentCode = data.reservation.code || code
+    const targetModCode =
+      modTargetFlat?.code ||
+      data.reservation.primaryReservationCode ||
+      data.reservation.code ||
+      code
+    const pkgCodeForMod = data?.packageSummary?.packageCode || data.reservation.packageCode || undefined
+    const modAuthQs = data?.isRequesterView || data?.isPackageView || pkgCodeForMod ? "?requester=1" : ""
+    const portalReloadCode = code || pkgCodeForMod || data.reservation.code
 
     setCheckoutLoading(true)
     setPreviewError(null)
 
     try {
-      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(currentCode)}/modify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          newCheckinDate: modCheckinDate,
-          newCheckoutDate: modCheckoutDate,
-          newGuestCount: modGuestCount,
-          reason: modReason
-        })
-      })
+      const res = await fetch(
+        `/api/pms/guest-portal/${encodeURIComponent(targetModCode)}/modify${modAuthQs}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            newCheckinDate: modCheckinDate,
+            newCheckoutDate: modCheckoutDate,
+            newGuestCount: modGuestCount,
+            reason: modReason,
+            ...(pkgCodeForMod ? { packageCode: pkgCodeForMod } : {}),
+          })
+        }
+      )
 
       const json = await res.json()
 
@@ -937,12 +1133,17 @@ export default function GuestPortal() {
           message: json.message || "Reserva modificada com sucesso!",
           newCheckinDate: json.newCheckinDate || modCheckinDate,
           newCheckoutDate: json.newCheckoutDate || modCheckoutDate,
-          newFlatNumber: json.reservation?.flatNumber || data.reservation.flatNumber,
+          newFlatNumber: json.reservation?.flatNumber || modTargetFlat?.flatNumber || data.reservation.flatNumber,
           needsReSignature: Boolean(json.needsReSignature),
-          reSignatureUrl: json.reSignatureUrl || `/pre-checkin/${encodeURIComponent(currentCode)}?resign=1`
+          reSignatureUrl: json.reSignatureUrl || `/pre-checkin/${encodeURIComponent(targetModCode)}?resign=1`
         })
+        if (json.packageSummary) {
+          setData((prev: any) =>
+            prev ? { ...prev, packageSummary: json.packageSummary } : prev
+          )
+        }
         setModStep("success")
-        fetchPortalData(currentCode)
+        fetchPortalData(portalReloadCode, true)
       } else {
         setPreviewError(json.error || json.message || "Não foi possível confirmar a alteração.")
       }
@@ -964,11 +1165,12 @@ export default function GuestPortal() {
 
   const handleSaveVehicle = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!portalPlate.trim() || !code) return
+    const targetStayCode = data?.reservation?.primaryReservationCode || data?.reservation?.code || code
+    if (!portalPlate.trim() || !targetStayCode) return
 
     setSavingCar(true)
     try {
-      const res = await fetch(`/api/pms/reservations/${code}/vehicle`, {
+      const res = await fetch(`/api/pms/reservations/${encodeURIComponent(targetStayCode)}/vehicle`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -981,7 +1183,7 @@ export default function GuestPortal() {
       if (res.ok) {
         setPortalCarSuccess(true)
         setPortalCarEditing(false)
-        fetchPortalData()
+        fetchPortalData(code || data?.reservation?.code || targetStayCode, true)
         setTimeout(() => setPortalCarSuccess(false), 5000)
       }
     } catch {}
@@ -996,7 +1198,7 @@ export default function GuestPortal() {
     chosenMode: "today" | "stay" = "today",
     forceAnserveOnlyEndpoint = false
   ) => {
-    const targetCode = data?.reservation?.code || code
+    const targetCode = data?.reservation?.primaryReservationCode || data?.reservation?.code || code
     if (!targetCode) return
     setDndLoading(true)
     setDndSuccessNotice(null)
@@ -1014,7 +1216,7 @@ export default function GuestPortal() {
       const json = await res.json()
       if (res.ok) {
         setDndSuccessNotice(json.message || (newDnd ? "Modo Não Perturbe ativado." : "Modo Não Perturbe desativado."))
-        await fetchPortalData(targetCode)
+        await fetchPortalData(code || data?.reservation?.code || targetCode, true)
         setTimeout(() => setDndSuccessNotice(null), 5000)
       } else {
         alert(json.error || "Erro ao atualizar Não Perturbe.")
@@ -1027,7 +1229,7 @@ export default function GuestPortal() {
   }
 
   const handleRequestLinen = async () => {
-    const targetCode = data?.reservation?.code || code
+    const targetCode = data?.reservation?.primaryReservationCode || data?.reservation?.code || code
     if (!targetCode) return
     setRequestingLinen(true)
     setLinenSuccessNotice(null)
@@ -1044,7 +1246,7 @@ export default function GuestPortal() {
       if (res.ok) {
         setLinenSuccessNotice(json.message || "Solicitação de troca agendada para amanhã com sucesso! 🎉")
         setLinenRequestNotes("")
-        await fetchPortalData(targetCode)
+        await fetchPortalData(code || data?.reservation?.code || targetCode, true)
         setTimeout(() => setLinenSuccessNotice(null), 6000)
       } else {
         alert(json.error || "Erro ao solicitar troca de enxoval.")
@@ -1057,7 +1259,7 @@ export default function GuestPortal() {
   }
 
   const handleCancelLinenRequest = async (requestId: string) => {
-    const targetCode = data?.reservation?.code || code
+    const targetCode = data?.reservation?.primaryReservationCode || data?.reservation?.code || code
     if (!targetCode || !requestId) return
     setCancellingLinenId(requestId)
     try {
@@ -1067,7 +1269,7 @@ export default function GuestPortal() {
       const json = await res.json()
       if (res.ok) {
         setLinenSuccessNotice("Solicitação de troca de enxoval cancelada.")
-        await fetchPortalData(targetCode)
+        await fetchPortalData(code || data?.reservation?.code || targetCode, true)
         setTimeout(() => setLinenSuccessNotice(null), 5000)
       } else {
         alert(json.error || "Erro ao cancelar solicitação.")
@@ -1080,6 +1282,13 @@ export default function GuestPortal() {
   }
 
   const reservation = data?.reservation
+  const individualStayCode = String(
+    reservation?.primaryReservationCode ||
+    data?.packageSummary?.primaryReservationCode ||
+    reservation?.code ||
+    code ||
+    ""
+  ).trim()
   const channelLower = String(reservation?.channel || "").toLowerCase()
   const isB2b = Boolean(channelLower === "b2b" || channelLower.includes("b2b") || reservation?.agencyId || reservation?.b2bReservationNumber || reservation?.b2bLocatorRloc)
   const isOta = channelLower.includes("booking") || channelLower.includes("airbnb") || isB2b
@@ -1248,73 +1457,139 @@ export default function GuestPortal() {
   }, [data?.minibarOrders])
 
   const portalFinancialSummary = useMemo(() => {
+    const isCompanionView =
+      activeGuestIndex > 1 ||
+      (typeof window !== "undefined" &&
+        ["2", "3"].includes(
+          String(
+            new URLSearchParams(window.location.search).get("guest") ||
+              new URLSearchParams(window.location.search).get("guestIndex") ||
+              new URLSearchParams(window.location.search).get("hospede") ||
+              ""
+          ).trim()
+        ))
     const isRequesterView =
-      typeof window !== "undefined" &&
-      (new URLSearchParams(window.location.search).get("requester") === "1" ||
-        new URLSearchParams(window.location.search).get("view") === "requester")
+      !isCompanionView &&
+      Boolean(
+        data?.isRequesterView ||
+          data?.isPackageView ||
+          (typeof window !== "undefined" &&
+            (new URLSearchParams(window.location.search).get("requester") === "1" ||
+              new URLSearchParams(window.location.search).get("view") === "requester"))
+      )
     const hideFinancial = Boolean(
       isB2b ||
+      isCompanionView ||
       (!isRequesterView &&
         (data?.hideFinancialForGuest ||
           reservation?.hideFinancialForGuest ||
           reservation?.nfHideFromGuest))
     )
+    const pkgSum = !hideFinancial && data?.packageSummary && Array.isArray(data.packageSummary.items)
+      ? data.packageSummary
+      : null
     const dailyRatesArr = (reservation as any)?.dailyRates
-    const ratesSub = Array.isArray(dailyRatesArr) && dailyRatesArr.length > 0
-      ? dailyRatesArr.reduce((acc: number, d: any) => acc + (Number(d?.rate ?? d?.amount) || 0), 0)
-      : 0
+    const ratesSub = pkgSum
+      ? 0
+      : (Array.isArray(dailyRatesArr) && dailyRatesArr.length > 0
+          ? dailyRatesArr.reduce((acc: number, d: any) => acc + (Number(d?.rate ?? d?.amount) || 0), 0)
+          : 0)
     const chargesArr = (reservation as any)?.charges
-    const chargesSub = Array.isArray(chargesArr) && chargesArr.length > 0
-      ? chargesArr.reduce((acc: number, c: any) => acc + (Number(c?.amount) || 0), 0)
-      : (Number((reservation as any)?.cleaningFee) || 0)
-    const rawTot = Number(reservation?.totalAmount) || 0
-    const resolvedTot = (!(reservation as any)?.earlyCheckout && chargesSub > 0 && ratesSub > 0 && Math.abs(rawTot - ratesSub) < 0.05)
+    const chargesSub = pkgSum
+      ? 0
+      : (Array.isArray(chargesArr) && chargesArr.length > 0
+          ? chargesArr.reduce((acc: number, c: any) => acc + (Number(c?.amount) || 0), 0)
+          : (Number((reservation as any)?.cleaningFee) || 0))
+    const rawTot = pkgSum ? Number(pkgSum.totalAmount) || 0 : (Number(reservation?.totalAmount) || 0)
+    const resolvedTot = (!pkgSum && !(reservation as any)?.earlyCheckout && chargesSub > 0 && ratesSub > 0 && Math.abs(rawTot - ratesSub) < 0.05)
       ? Math.round((ratesSub + chargesSub) * 100) / 100
       : rawTot
     const totAmt = hideFinancial ? 0 : resolvedTot
-    const rawPaid = hideFinancial ? 0 : (Number(reservation?.paidAmount) || 0)
+    const rawPaid = hideFinancial ? 0 : (pkgSum ? Number(pkgSum.paidAmount) || 0 : (Number(reservation?.paidAmount) || 0))
     const hasAmt = totAmt > 0 || (!isOta && rawPaid > 0)
     const paidAmt = isPaid ? (totAmt > 0 ? totAmt : (isOta ? 0 : rawPaid)) : rawPaid
     const pendingAmt = Math.max(0, totAmt - paidAmt)
     const calcCard = (pixAmt: number) => Math.round((Number(pixAmt) || 0) * 1.05 * 100) / 100
     const cardTot = hideFinancial
       ? 0
-      : (totAmt !== rawTot ? calcCard(totAmt) : (Number(reservation?.cardTotalAmount) || calcCard(totAmt)))
+      : (pkgSum
+          ? (Number(pkgSum.cardTotalAmount) || calcCard(totAmt))
+          : (totAmt !== rawTot ? calcCard(totAmt) : (Number(reservation?.cardTotalAmount) || calcCard(totAmt))))
     const cardPend = hideFinancial
       ? 0
-      : (totAmt !== rawTot ? calcCard(pendingAmt) : (Number(reservation?.cardPendingAmount) || calcCard(pendingAmt)))
+      : (pkgSum
+          ? (Number(pkgSum.cardPendingAmount) || calcCard(pendingAmt))
+          : (totAmt !== rawTot ? calcCard(pendingAmt) : (Number(reservation?.cardPendingAmount) || calcCard(pendingAmt))))
 
-    const packages = reservation
-      ? computeStayPackages(
-          dailyRatesArr,
-          chargesArr,
-          (reservation as any)?.cleaningFee,
-          reservation?.channel,
-          reservation?.checkinDate,
-          reservation?.checkoutDate,
-          totAmt
-        )
-      : []
+    const packages: StayPackageGroup[] = pkgSum
+      ? pkgSum.items
+          .filter((it: any) => it && !it.isCancelled)
+          .map((it: any, idx: number) => {
+            const itNights = it.checkinDate && it.checkoutDate
+              ? Math.max(1, differenceInDays(parseISO(it.checkoutDate), parseISO(it.checkinDate)))
+              : 1
+            const chLbl = formatChannelName(reservation?.channel || "direto")
+            return {
+              id: `pkg_flat_${it.id || idx}`,
+              title: `Flat ${it.flatNumber} (${it.code}) • ${it.guestCount || 1} pax • ${it.includeBreakfast ? "Com Café" : "Sem Café"}`,
+              channel: reservation?.channel || "direto",
+              channelLabel: chLbl,
+              startDate: it.checkinDate || reservation?.checkinDate || "",
+              endDate: it.checkoutDate || reservation?.checkoutDate || "",
+              nightsCount: itNights,
+              ratesSum: Number(it.totalAmount) || 0,
+              charges: [],
+              chargesSum: 0,
+              chargesDescription: "",
+              totalAmount: Number(it.totalAmount) || 0,
+              rates: [],
+              isExtra: false
+            }
+          })
+      : (reservation
+          ? computeStayPackages(
+              dailyRatesArr,
+              chargesArr,
+              (reservation as any)?.cleaningFee,
+              reservation?.channel,
+              reservation?.checkinDate,
+              reservation?.checkoutDate,
+              totAmt
+            )
+          : [])
 
     const rawPayments = (reservation as any)?.payments
-    const payments = Array.isArray(rawPayments) && rawPayments.length > 0
-      ? rawPayments
-      : (() => {
-          const fallbackMethod = String(reservation?.paymentMethod || reservation?.channel || "").toLowerCase()
-          const isFallbackOta = fallbackMethod === "booking" || fallbackMethod === "airbnb"
-          return [
-            {
-              id: "pay_fallback",
-              amount: paidAmt,
-              method: reservation?.paymentMethod || reservation?.channel,
-              date: reservation?.paidAt || "",
-              endToEndId: isFallbackOta ? undefined : reservation?.pixEndToEndId,
-              txId: isFallbackOta ? undefined : reservation?.pixTxId,
-              mpPaymentId: isFallbackOta ? undefined : reservation?.mpPaymentId,
-              notes: "Pagamento integral"
-            }
-          ]
-        })()
+    const payments = pkgSum
+      ? [
+          {
+            id: `pay_pkg_unified_${pkgSum.packageCode}`,
+            amount: paidAmt,
+            method: pkgSum.paymentMethod || reservation?.paymentMethod || "pix",
+            date: reservation?.paidAt || "",
+            endToEndId: reservation?.pixEndToEndId,
+            txId: pkgSum.pixTxId || reservation?.pixTxId,
+            mpPaymentId: reservation?.mpPaymentId,
+            notes: `Pagamento Único Consolidado — Pacote ${pkgSum.packageCode} (${pkgSum.activeFlatsCount} Flats)`
+          }
+        ]
+      : (Array.isArray(rawPayments) && rawPayments.length > 0
+          ? rawPayments
+          : (() => {
+              const fallbackMethod = String(reservation?.paymentMethod || reservation?.channel || "").toLowerCase()
+              const isFallbackOta = fallbackMethod === "booking" || fallbackMethod === "airbnb"
+              return [
+                {
+                  id: "pay_fallback",
+                  amount: paidAmt,
+                  method: reservation?.paymentMethod || reservation?.channel,
+                  date: reservation?.paidAt || "",
+                  endToEndId: isFallbackOta ? undefined : reservation?.pixEndToEndId,
+                  txId: isFallbackOta ? undefined : reservation?.pixTxId,
+                  mpPaymentId: isFallbackOta ? undefined : reservation?.mpPaymentId,
+                  notes: "Pagamento integral"
+                }
+              ]
+            })())
 
     return {
       isRequesterPortalView: isRequesterView,
@@ -1333,7 +1608,7 @@ export default function GuestPortal() {
       stayPackages: packages,
       resolvedPayments: payments,
     }
-  }, [data?.hideFinancialForGuest, reservation, isB2b, isOta, isPaid])
+  }, [data?.hideFinancialForGuest, data?.isRequesterView, data?.isPackageView, data?.packageSummary, activeGuestIndex, reservation, isB2b, isOta, isPaid])
 
   // Preserva needsReSignature apontando para a obrigação do hóspede atual
   const needsReSignature = currentGuestNeedsReSignature
@@ -1364,7 +1639,7 @@ export default function GuestPortal() {
       ))
 
   const getCheckinPath = (readonly = false, targetIdx?: number) => {
-    const c = code || reservation?.code || ""
+    const c = individualStayCode || code || reservation?.code || ""
     const idx = targetIdx ?? activeGuestIndex
     const targetG = guestsList.find((g: any) => Number(g.index) === Number(idx)) || (idx === 1 ? currentGuest : null)
     const targetNeedsResign = targetG?.needsReSignature !== undefined
@@ -1374,21 +1649,23 @@ export default function GuestPortal() {
     const roParam = readonly ? "readonly=true" : ""
     const resignParam = targetNeedsResign ? "resign=1" : ""
     const parts = [gParam, roParam, resignParam].filter(Boolean).join("&")
-    return `/pre-checkin/${c}${parts ? `?${parts}` : ""}`
+    return `/pre-checkin/${encodeURIComponent(c)}${parts ? `?${parts}` : ""}`
   }
 
   // Polling automático de status de pagamento a cada 6 segundos quando pendente
   useEffect(() => {
-    if (!reservation?.code || isPaid || isFaturadoBoleto || isCancelled || isExpiredPreReservation) return
+    if (!reservation?.code || portalFinancialSummary.hideFinancialForGuest || isPaid || isFaturadoBoleto || isCancelled || isExpiredPreReservation) return
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/pms/reservations/${encodeURIComponent(reservation.code)}/payment-status`)
+        const pollQs = portalFinancialSummary.isRequesterPortalView ? "?requester=1" : ""
+        const res = await fetch(`/api/pms/reservations/${encodeURIComponent(reservation.code)}/payment-status${pollQs}`)
         if (res.ok) {
           const json = await res.json()
           if (json.isExpiredPreReservation || json.status === "expirada") {
             setData((prev: any) => prev ? ({
               ...prev,
               isExpiredPreReservation: true,
+              packageSummary: json.packageSummary ?? prev.packageSummary,
               reservation: {
                 ...prev.reservation,
                 status: "expirada",
@@ -1403,6 +1680,7 @@ export default function GuestPortal() {
           if (json.stayExtensionExpired) {
             setData((prev: any) => prev ? ({
               ...prev,
+              packageSummary: json.packageSummary ?? prev.packageSummary,
               reservation: {
                 ...prev.reservation,
                 checkinDate: json.checkinDate || prev.reservation.checkinDate,
@@ -1423,36 +1701,50 @@ export default function GuestPortal() {
             setPaymentSuccessNotice(true)
             setData((prev: any) => prev ? ({
               ...prev,
+              preCheckinBlocked: false,
+              packageSummary: json.packageSummary ?? prev.packageSummary,
               reservation: {
                 ...prev.reservation,
+                status:
+                  prev.reservation.status === "pre_reserva" || prev.reservation.status === "pendente"
+                    ? "confirmada"
+                    : prev.reservation.status,
+                isPaid: true,
                 checkinDate: json.checkinDate || prev.reservation.checkinDate,
                 checkoutDate: json.checkoutDate || prev.reservation.checkoutDate,
                 dailyRates: Array.isArray(json.dailyRates) ? json.dailyRates : prev.reservation.dailyRates,
                 paymentStatus: "pago_total",
                 paymentMethod: json.paymentMethod || (json.mpPaymentId ? "cartao_credito" : prev.reservation.paymentMethod),
-                paidAmount: json.paidAmount,
+                paidAmount: json.paidAmount ?? prev.reservation.totalAmount,
                 totalAmount: json.totalAmount || prev.reservation.totalAmount,
                 paidAt: json.paidAt || prev.reservation.paidAt || new Date().toISOString(),
                 pendingStayExtension: null,
                 expiredStayExtension: null,
+                pixCopiaECola: null,
+                mpInitPoint: null,
                 pixTxId: (json.paymentMethod === "cartao_credito" || json.mpPaymentId) ? null : (json.pixTxId || prev.reservation.pixTxId),
                 pixEndToEndId: json.pixEndToEndId || prev.reservation.pixEndToEndId,
                 mpPaymentId: json.mpPaymentId || prev.reservation.mpPaymentId
               }
             }) : null)
-          } else if (json.pixCopiaECola || json.totalAmount || json.pendingStayExtension) {
+            fetchPortalData(code || reservation.code, true)
+          } else if (json.pixCopiaECola || json.totalAmount || json.pendingStayExtension || json.packageSummary) {
             setData((prev: any) => {
               if (!prev?.reservation) return prev
               if (
                 prev.reservation.pixCopiaECola === json.pixCopiaECola &&
                 Number(prev.reservation.totalAmount) === Number(json.totalAmount) &&
                 prev.reservation.mpInitPoint === json.mpInitPoint &&
-                prev.reservation.pendingStayExtension?.expiresAt === json.pendingStayExtension?.expiresAt
+                prev.reservation.pendingStayExtension?.expiresAt === json.pendingStayExtension?.expiresAt &&
+                prev.packageSummary?.activeFlatsCount === json.packageSummary?.activeFlatsCount &&
+                prev.packageSummary?.pendingAmount === json.packageSummary?.pendingAmount &&
+                prev.packageSummary?.isPaid === json.packageSummary?.isPaid
               ) {
                 return prev
               }
               return {
                 ...prev,
+                packageSummary: json.packageSummary ?? prev.packageSummary,
                 reservation: {
                   ...prev.reservation,
                   checkinDate: json.checkinDate || prev.reservation.checkinDate,
@@ -1474,7 +1766,7 @@ export default function GuestPortal() {
       } catch {}
     }, 6000)
     return () => clearInterval(interval)
-  }, [reservation?.code, isPaid, isCancelled])
+  }, [code, reservation?.code, portalFinancialSummary.hideFinancialForGuest, portalFinancialSummary.isRequesterPortalView, isPaid, isFaturadoBoleto, isCancelled, isExpiredPreReservation])
 
   useEffect(() => {
     if (isCardPayment) {
@@ -1698,11 +1990,24 @@ export default function GuestPortal() {
   }
 
   const handleCopyCafeLink = () => {
-    const url = `${window.location.origin}/minha-reserva/${reservation.code || code}/cafe`
+    const url = `${window.location.origin}/minha-reserva/${encodeURIComponent(individualStayCode)}/cafe`
     navigator.clipboard.writeText(url)
     setCopiedCafeLink(true)
     setTimeout(() => setCopiedCafeLink(false), 2500)
   }
+
+  const pkgReceiptSummary = !hideFinancialForGuest && data?.packageSummary ? data.packageSummary : null
+  const pkgActiveReceiptItems = pkgReceiptSummary && Array.isArray(pkgReceiptSummary.items)
+    ? pkgReceiptSummary.items.filter((it: any) => !it.isCancelled)
+    : []
+  const receiptLocatorCode = pkgReceiptSummary?.packageCode || reservation.code
+  const receiptHolderLabel = pkgReceiptSummary ? "Solicitante / Pagador" : "Hóspede Titular"
+  const receiptHolderName = pkgReceiptSummary?.requesterName || guestName
+  const receiptHolderDoc = pkgReceiptSummary?.requesterDocument || reservation.guestDocument || ""
+  const receiptHolderPhone = pkgReceiptSummary?.requesterPhone || reservation.guestPhone || ""
+  const receiptUnitsLabel = pkgActiveReceiptItems.length > 1
+    ? `Pacote Multi-Flat (${pkgActiveReceiptItems.map((it: any) => `Flat ${it.flatNumber}`).join(", ")})`
+    : `Apartamento ${reservation.flatNumber} (${reservation.roomCategory || "Studio Executivo"})`
 
   const handleCopyReceipt = () => {
     const packages = stayPackages
@@ -1710,12 +2015,14 @@ export default function GuestPortal() {
 
     const textLines = [
       `📄 RECIBO DE PAGAMENTO • CORPFLATS HOSPEDAGEM`,
-      `Localizador: ${reservation.code}`,
-      `Hóspede: ${guestName}`,
-      reservation.guestDocument ? `CPF / Documento: ${reservation.guestDocument}` : "",
-      reservation.guestPhone ? `Telefone / WhatsApp: ${formatPhoneDisplay(reservation.guestPhone)}` : "",
-      `Acomodação: Apartamento ${reservation.flatNumber} (${reservation.roomCategory || "Studio Executivo"})`,
-      `Período Contratado: ${checkinFormatted} até ${checkoutFormatted} (${nights} diária${nights > 1 ? "s" : ""})`,
+      `Localizador: ${receiptLocatorCode}`,
+      `${receiptHolderLabel}: ${receiptHolderName}`,
+      receiptHolderDoc ? `CPF / CNPJ: ${receiptHolderDoc}` : "",
+      receiptHolderPhone ? `Telefone / WhatsApp: ${formatPhoneDisplay(receiptHolderPhone)}` : "",
+      `Acomodação: ${receiptUnitsLabel}`,
+      pkgActiveReceiptItems.length > 1
+        ? `Quantidade de Unidades: ${pkgActiveReceiptItems.length} flats confirmados`
+        : `Período Contratado: ${checkinFormatted} até ${checkoutFormatted} (${nights} diária${nights > 1 ? "s" : ""})`,
       "",
       `📋 COMPOSIÇÃO DOS SERVIÇOS & DIÁRIAS:`
     ]
@@ -1725,7 +2032,7 @@ export default function GuestPortal() {
       textLines.push(`• ${pkg.title}: ${pkg.nightsCount} diária${pkg.nightsCount > 1 ? "s" : ""} (${formatDate(pkg.startDate)} a ${formatDate(pkg.endDate)} — R$ ${pkg.ratesSum.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}${chargeDesc}) = R$ ${pkg.totalAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`)
     })
 
-    if (Array.isArray((reservation as any)?.dailyRates) && (reservation as any).dailyRates.length > 0) {
+    if (!pkgReceiptSummary && Array.isArray((reservation as any)?.dailyRates) && (reservation as any).dailyRates.length > 0) {
       textLines.push("")
       textLines.push(`🗓️ DETALHAMENTO DIA A DIA DAS DIÁRIAS & TAXAS:`)
       ;(reservation as any).dailyRates.forEach((dr: any) => {
@@ -2110,7 +2417,7 @@ export default function GuestPortal() {
       <div class="receipt-info">
         <div class="status-badge">✓ PAGO & QUITADO</div>
         <div class="receipt-code-label">Recibo Oficial</div>
-        <div class="receipt-code">REC-${reservation?.code || ""}</div>
+        <div class="receipt-code">REC-${receiptLocatorCode}</div>
         <div class="receipt-date">Emissão: ${emissionDate}</div>
       </div>
     </div>
@@ -2119,23 +2426,23 @@ export default function GuestPortal() {
       <div class="section-heading">1. Identificação do Hóspede & Reserva</div>
       <div class="info-grid">
         <div class="info-item">
-          <span class="info-label">Hóspede Titular</span>
-          <span class="info-value">${guestName}</span>
+          <span class="info-label">${receiptHolderLabel}</span>
+          <span class="info-value">${receiptHolderName}</span>
         </div>
         <div class="info-item">
           <span class="info-label">Localizador da Reserva</span>
-          <span class="info-value font-mono" style="color: #0369a1;">${reservation?.code || ""}</span>
+          <span class="info-value font-mono" style="color: #0369a1;">${receiptLocatorCode}</span>
         </div>
-        ${reservation?.guestDocument ? `
+        ${receiptHolderDoc ? `
         <div class="info-item">
-          <span class="info-label">CPF / Documento</span>
-          <span class="info-value font-mono">${reservation.guestDocument}</span>
+          <span class="info-label">CPF / CNPJ</span>
+          <span class="info-value font-mono">${receiptHolderDoc}</span>
         </div>
         ` : ""}
-        ${reservation?.guestPhone ? `
+        ${receiptHolderPhone ? `
         <div class="info-item">
           <span class="info-label">Telefone / WhatsApp</span>
-          <span class="info-value">${formatPhoneDisplay(reservation.guestPhone)}</span>
+          <span class="info-value">${formatPhoneDisplay(receiptHolderPhone)}</span>
         </div>
         ` : ""}
         <div class="info-item">
@@ -2150,11 +2457,11 @@ export default function GuestPortal() {
       <div class="info-grid">
         <div class="info-item">
           <span class="info-label">Unidade / Apartamento</span>
-          <span class="info-value">Apartamento ${reservation?.flatNumber || ""} (${reservation?.roomCategory || "Studio Executivo"})</span>
+          <span class="info-value">${receiptUnitsLabel}</span>
         </div>
         <div class="info-item">
           <span class="info-label">Período Contratado</span>
-          <span class="info-value">${nights} diária${nights > 1 ? "s" : ""} • ${reservation?.guestCount || 1} hóspede${(reservation?.guestCount || 1) > 1 ? "s" : ""}</span>
+          <span class="info-value">${pkgActiveReceiptItems.length > 1 ? `${pkgActiveReceiptItems.length} flats confirmados no pacote` : `${nights} diária${nights > 1 ? "s" : ""} • ${reservation?.guestCount || 1} hóspede${(reservation?.guestCount || 1) > 1 ? "s" : ""}`}</span>
         </div>
         <div class="info-item">
           <span class="info-label">Check-in</span>
@@ -2189,7 +2496,7 @@ export default function GuestPortal() {
       </div>
 
       <!-- Detalhamento dia a dia das diárias e taxas -->
-      ${Array.isArray((reservation as any)?.dailyRates) && (reservation as any).dailyRates.length > 0 ? `
+      ${!pkgReceiptSummary && Array.isArray((reservation as any)?.dailyRates) && (reservation as any).dailyRates.length > 0 ? `
       <table class="items-table">
         <thead>
           <tr>
@@ -2370,15 +2677,20 @@ export default function GuestPortal() {
     setPaymentMethodTab(newMethod)
     setChangingMethod(true)
     try {
-      const res = await fetch(`/api/pms/reservations/${encodeURIComponent(reservation.code)}/change-payment-method`, {
+      const methodQs = isRequesterPortalView ? "?requester=1" : ""
+      const res = await fetch(`/api/pms/reservations/${encodeURIComponent(reservation.code)}/change-payment-method${methodQs}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ method: newMethod })
+        body: JSON.stringify({
+          method: newMethod,
+          ...(data?.packageSummary?.packageCode ? { packageCode: data.packageSummary.packageCode } : {}),
+        })
       })
       const json = await res.json()
       if (json.success && json.reservation) {
         setData((prev: any) => prev ? ({
           ...prev,
+          packageSummary: json.packageSummary ?? prev.packageSummary,
           reservation: {
             ...prev.reservation,
             ...json.reservation
@@ -2396,7 +2708,9 @@ export default function GuestPortal() {
     setCheckingPayment(true)
     setPaymentPendingFeedback(false)
     try {
-      const res = await fetch(`/api/pms/reservations/${encodeURIComponent(reservation.code)}/payment-status`)
+      const targetLocator = code || reservation.code
+      const statusQs = isRequesterPortalView ? "?requester=1" : ""
+      const res = await fetch(`/api/pms/reservations/${encodeURIComponent(targetLocator)}/payment-status${statusQs}`)
       if (res.ok) {
         const json = await res.json()
         if (json.paid) {
@@ -2404,23 +2718,34 @@ export default function GuestPortal() {
           setPaymentPendingFeedback(false)
           setData((prev: any) => prev ? ({
             ...prev,
+            preCheckinBlocked: false,
+            packageSummary: json.packageSummary ?? prev.packageSummary,
             reservation: {
               ...prev.reservation,
+              status:
+                prev.reservation.status === "pre_reserva" || prev.reservation.status === "pendente"
+                  ? "confirmada"
+                  : prev.reservation.status,
+              isPaid: true,
               paymentStatus: "pago_total",
               paymentMethod: json.paymentMethod || (json.mpPaymentId ? "cartao_credito" : prev.reservation.paymentMethod),
-              paidAmount: json.paidAmount || reservation.totalAmount,
+              paidAmount: json.paidAmount ?? reservation.totalAmount,
+              totalAmount: json.totalAmount || prev.reservation.totalAmount,
               paidAt: json.paidAt || prev.reservation.paidAt || new Date().toISOString(),
+              pixCopiaECola: null,
+              mpInitPoint: null,
               pixTxId: (json.paymentMethod === "cartao_credito" || json.mpPaymentId) ? null : (json.pixTxId || prev.reservation.pixTxId),
               pixEndToEndId: json.pixEndToEndId || prev.reservation.pixEndToEndId,
               mpPaymentId: json.mpPaymentId || prev.reservation.mpPaymentId
             }
           }) : null)
-          // Atualiza dados completos da reserva imediatamente
-          setTimeout(() => fetchPortalData(reservation.code), 400)
+          // Atualiza dados completos da reserva imediatamente preservando o localizador da rota (ex: PKG-...)
+          setTimeout(() => fetchPortalData(targetLocator, true), 300)
         } else {
-          if (json.pixCopiaECola || json.totalAmount !== undefined || json.mpInitPoint !== undefined) {
+          if (json.pixCopiaECola || json.totalAmount !== undefined || json.mpInitPoint !== undefined || json.packageSummary) {
             setData((prev: any) => prev ? ({
               ...prev,
+              packageSummary: json.packageSummary ?? prev.packageSummary,
               reservation: {
                 ...prev.reservation,
                 ...(json.pixCopiaECola ? { pixCopiaECola: json.pixCopiaECola } : {}),
@@ -2454,7 +2779,7 @@ export default function GuestPortal() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           templateId: "tpl_payment_confirmed",
-          reservationCode: reservation.code
+          reservationCode: data?.packageSummary?.packageCode || reservation.code
         })
       })
       const json = await res.json()
@@ -2511,6 +2836,15 @@ export default function GuestPortal() {
           selfCheckinNotice,
           confirmingSelfCheckin,
           copiedGuestLinkIndex,
+          copiedPkgCredLink,
+          copiedPkgFlatCode,
+          pkgNfseOpen,
+          pkgNfseDoc,
+          pkgNfseName,
+          pkgNfseEmail,
+          emittingPkgNfse,
+          pkgNfseMessage,
+          removingPkgItemId,
         ]}
         render={() => (
           <>
@@ -2603,7 +2937,7 @@ export default function GuestPortal() {
                 variant="outline"
                 size="sm"
                 disabled={confirmingSelfCheckin}
-                onClick={() => handleConfirmSelfCheckin(code || reservation.code)}
+                onClick={() => handleConfirmSelfCheckin(individualStayCode)}
                 className="hidden md:inline-flex h-9 px-3 rounded-xl border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs items-center gap-2 shadow-2xs"
               >
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -2620,7 +2954,7 @@ export default function GuestPortal() {
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => setLocation(`/checkout/${code || reservation.code}`)}
+              onClick={() => setLocation(`/checkout/${encodeURIComponent(individualStayCode)}`)}
               className="hidden md:inline-flex h-9 px-3 rounded-xl border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs items-center gap-2 shadow-2xs"
             >
               <DoorOpen className="w-4 h-4 text-slate-600 shrink-0" />
@@ -2685,7 +3019,7 @@ export default function GuestPortal() {
                   )}
                   {!hasEnteredFlat && isPreCheckinDone && canConfirmSelfCheckin && (
                     <DropdownMenuItem
-                      onClick={() => handleConfirmSelfCheckin(code || reservation.code)}
+                      onClick={() => handleConfirmSelfCheckin(individualStayCode)}
                       className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-emerald-50 text-emerald-800"
                     >
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -2702,7 +3036,7 @@ export default function GuestPortal() {
                     </DropdownMenuItem>
                   )}
                   <DropdownMenuItem
-                    onClick={() => setLocation(`/checkout/${code || reservation.code}`)}
+                    onClick={() => setLocation(`/checkout/${encodeURIComponent(individualStayCode)}`)}
                     className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-slate-100"
                   >
                     <DoorOpen className="w-4 h-4 text-slate-600 shrink-0" />
@@ -2710,7 +3044,7 @@ export default function GuestPortal() {
                   </DropdownMenuItem>
                   {hasBreakfast && !isPreReservaUnpaid && !isExpiredPreReservation && !isCancelled && (
                     <DropdownMenuItem
-                      onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/cafe`)}
+                      onClick={() => setLocation(`/minha-reserva/${encodeURIComponent(individualStayCode)}/cafe`)}
                       className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-slate-100"
                     >
                       <Coffee className="w-4 h-4 text-amber-600 shrink-0" />
@@ -2718,7 +3052,7 @@ export default function GuestPortal() {
                     </DropdownMenuItem>
                   )}
                   <DropdownMenuItem
-                    onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/frigobar`)}
+                    onClick={() => setLocation(`/minha-reserva/${encodeURIComponent(individualStayCode)}/frigobar`)}
                     className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-slate-100"
                   >
                     <Refrigerator className="w-4 h-4 text-cyan-600 shrink-0" />
@@ -2945,7 +3279,7 @@ export default function GuestPortal() {
                               size="sm"
                               onClick={() => {
                                 const origin = typeof window !== "undefined" ? window.location.origin : ""
-                                const url = `${origin}/pre-checkin/${encodeURIComponent(reservation.code)}?guest=${g.index}&resign=1`
+                                const url = `${origin}/pre-checkin/${encodeURIComponent(individualStayCode)}?guest=${g.index}&resign=1`
                                 if (navigator.clipboard?.writeText) {
                                   navigator.clipboard.writeText(url)
                                   setCopiedGuestLinkIndex(g.index)
@@ -3047,27 +3381,29 @@ export default function GuestPortal() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 text-xs">
+            <div className={`grid grid-cols-1 ${!hideFinancialForGuest ? "sm:grid-cols-2" : ""} gap-3 pt-2 text-xs`}>
               <div className="p-3.5 rounded-2xl bg-white/90 border border-rose-100 shadow-2xs space-y-1">
                 <span className="text-[10px] font-bold text-rose-500 uppercase tracking-wider block">
                   Motivo do Cancelamento
                 </span>
                 <p className="font-semibold text-slate-800">
-                  {reservation.cancellationReason || "Cancelamento solicitado pelo hóspede via autoatendimento"}
+                  {reservation.cancellationReason || "Cancelamento solicitado pelo responsável da reserva"}
                 </p>
               </div>
-              <div className="p-3.5 rounded-2xl bg-white/90 border border-rose-100 shadow-2xs space-y-1">
-                <span className="text-[10px] font-bold text-rose-500 uppercase tracking-wider block">
-                  Reembolso & Estorno
-                </span>
-                <p className="font-semibold text-slate-800">
-                  {Number(reservation.refundAmount) > 0 
-                    ? `Estorno integral de R$ ${Number(reservation.refundAmount).toFixed(2)} processado`
-                    : (reservation.refundStatus === "estorno_100%_solicitado"
-                        ? "Solicitação de estorno em processamento financeiro"
-                        : "Cancelamento efetuado sem estorno conforme as políticas contratadas")}
-                </p>
-              </div>
+              {!hideFinancialForGuest && (
+                <div className="p-3.5 rounded-2xl bg-white/90 border border-rose-100 shadow-2xs space-y-1">
+                  <span className="text-[10px] font-bold text-rose-500 uppercase tracking-wider block">
+                    Reembolso & Estorno
+                  </span>
+                  <p className="font-semibold text-slate-800">
+                    {Number(reservation.refundAmount) > 0 
+                      ? `Estorno integral de R$ ${Number(reservation.refundAmount).toFixed(2)} processado`
+                      : (reservation.refundStatus === "estorno_100%_solicitado"
+                          ? "Solicitação de estorno em processamento financeiro"
+                          : "Cancelamento efetuado sem estorno conforme as políticas contratadas")}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -3391,7 +3727,7 @@ export default function GuestPortal() {
                     <Button
                       type="button"
                       disabled={confirmingSelfCheckin}
-                      onClick={() => handleConfirmSelfCheckin(code || reservation.code)}
+                      onClick={() => handleConfirmSelfCheckin(individualStayCode)}
                       className="w-full h-auto min-h-10 py-2 px-3 whitespace-normal leading-tight text-center text-xs sm:text-sm font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2"
                     >
                       <CheckCircle2 className="w-4 h-4 shrink-0" />
@@ -3470,7 +3806,7 @@ export default function GuestPortal() {
 
               <Button
                 type="button"
-                onClick={() => setLocation(`/checkout/${code || reservation.code}`)}
+                onClick={() => setLocation(`/checkout/${encodeURIComponent(individualStayCode)}`)}
                 className="w-full h-10 text-xs sm:text-sm font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2 mt-2"
               >
                 <DoorOpen className="w-4.5 h-4.5 shrink-0" />
@@ -3478,6 +3814,24 @@ export default function GuestPortal() {
               </Button>
             </div>
           </div>
+
+          {Boolean(data?.isPackageView && data?.packageSummary?.items?.length) && (
+            <div className="p-3 rounded-2xl bg-indigo-50/80 border border-indigo-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-indigo-950">
+              <span>
+                Os atalhos individuais acima (<strong>Pré-Check-in</strong> e <strong>Check-out</strong>) abrem o <strong>Flat {reservation.flatNumber}</strong> (<span className="font-mono">{individualStayCode}</span>). Para links individuais s/ valores, cadastro único ou alteração por flat, veja o painel do pacote abaixo.
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const el = document.getElementById("painel-pacote-multiflat")
+                  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" })
+                }}
+                className="shrink-0 font-black text-indigo-700 hover:text-indigo-900 underline underline-offset-2 text-left sm:text-right"
+              >
+                Ver todos os flats do pacote ↓
+              </button>
+            </div>
+          )}
 
           {/* Ações da Reserva (Modificação de Datas e Hóspedes) */}
           {(() => {
@@ -3502,7 +3856,7 @@ export default function GuestPortal() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={handleOpenModifyModal}
+                  onClick={() => handleOpenModifyModal()}
                   className="h-10 px-4 rounded-xl border border-sky-300 bg-sky-50/70 hover:bg-sky-100 text-sky-800 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-2xs transition-all active:scale-95 shrink-0"
                 >
                   <Calendar className="w-4.5 h-4.5 text-sky-600 shrink-0" />
@@ -3512,6 +3866,253 @@ export default function GuestPortal() {
             )
           })()}
         </Card>
+
+        {/* ── 1.4 Painel Consolidado do Pacote Multi-Flat (exclusivo do Solicitante) ── */}
+        {!hideFinancialForGuest && data?.packageSummary && Array.isArray(data.packageSummary.items) && (
+          <Card id="painel-pacote-multiflat" className="bg-white rounded-3xl border border-indigo-200/90 shadow-md p-5 sm:p-7 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 pb-3">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-widest text-indigo-600 block">
+                  Pacote Multi-Flat • Pagamento & Recibo Único
+                </span>
+                <h2 className="text-base sm:text-lg font-black text-slate-900">
+                  Pacote {data.packageSummary.packageCode} ({data.packageSummary.activeFlatsCount} {data.packageSummary.activeFlatsCount === 1 ? "Flat Ativo" : "Flats Ativos"})
+                </h2>
+              </div>
+              <Badge className={data.packageSummary.isPaid ? "bg-emerald-600 text-white font-bold text-xs" : "bg-indigo-600 text-white font-bold text-xs"}>
+                {data.packageSummary.isPaid ? "✓ Pacote Quitado" : `Total PIX: R$ ${Number(data.packageSummary.pendingAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
+              </Badge>
+            </div>
+
+            <div className="space-y-2.5">
+              {data.packageSummary.items.map((it: any) => {
+                const canModifyPkgFlat =
+                  !it.isCancelled &&
+                  !it.isExpired &&
+                  ["whatsapp", "site", "site_direto", "direto", "balcao"].includes((reservation.channel || "").toLowerCase())
+                const fmtIso = (iso: string) => {
+                  const s = String(iso || "").slice(0, 10)
+                  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s.split("-").reverse().join("/") : s
+                }
+                const itemStatusConfirmed = Boolean(it.isPaid || data.packageSummary.isPaid)
+                return (
+                  <div
+                    key={it.id}
+                    className={`p-3.5 rounded-2xl border text-xs flex flex-col gap-3 ${
+                      it.isCancelled ? "bg-rose-50/50 border-rose-200 opacity-75" : "bg-slate-50/90 border-slate-200"
+                    }`}
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-black text-slate-900 text-sm">Flat {it.flatNumber}</span>
+                          <span className="font-mono text-[11px] text-slate-500">({it.code})</span>
+                          <Badge
+                            variant="outline"
+                            className={
+                              it.isCancelled
+                                ? "text-[10px] border-rose-300 text-rose-700 bg-rose-50 font-bold"
+                                : itemStatusConfirmed
+                                  ? "text-[10px] border-emerald-300 text-emerald-700 bg-emerald-50 font-bold"
+                                  : "text-[10px] border-amber-300 text-amber-800 bg-amber-50 font-bold"
+                            }
+                          >
+                            {it.isCancelled ? "Cancelado" : itemStatusConfirmed ? "Confirmado" : "Pré-Reserva"}
+                          </Badge>
+                        </div>
+                        <div className="text-slate-600">
+                          Período: <strong>{fmtIso(it.checkinDate)}</strong> a <strong>{fmtIso(it.checkoutDate)}</strong> • {it.guestCount} pax • {it.includeBreakfast ? "Com Café" : "Sem Café"} • {it.twinBeds ? "2 Solteiros" : "Casal"}
+                        </div>
+                        <div className="text-slate-500">
+                          Hóspede 1: <strong>{it.informGuestsLater ? "Informar pelo link único" : it.guestName}</strong>
+                          {it.guestCount >= 2 && (
+                            <> • Hóspede 2: <strong>{it.guest2Name || "A informar"}</strong></>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        <span className="font-mono font-bold text-slate-900">
+                          R$ {Number(it.totalAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                        </span>
+                        {canModifyPkgFlat && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleOpenModifyModal(it)}
+                            className="h-8 text-[11px] border-sky-300 bg-sky-50/70 text-sky-800 hover:bg-sky-100 font-bold gap-1"
+                          >
+                            <Calendar className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                            <span>Alterar Datas</span>
+                          </Button>
+                        )}
+                        {!it.isCancelled && data.packageSummary.activeFlatsCount > 1 && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={removingPkgItemId === it.id}
+                            onClick={() => handleCancelSingleFlatInPortal(it, data.packageSummary.packageCode)}
+                            className="h-8 text-[11px] border-rose-200 text-rose-700 hover:bg-rose-50"
+                          >
+                            {removingPkgItemId === it.id ? "Removendo..." : (itemStatusConfirmed ? "Cancelar Flat" : "Remover Flat")}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+
+                    {!it.isCancelled && (
+                      <div className="pt-2 border-t border-slate-200/70 flex flex-wrap items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const flatPortalUrl = `${window.location.origin}/minha-reserva/${encodeURIComponent(it.code)}`
+                            navigator.clipboard?.writeText(flatPortalUrl)
+                            setCopiedPkgFlatCode(String(it.code))
+                            setTimeout(() => setCopiedPkgFlatCode((prev) => (prev === String(it.code) ? null : prev)), 2500)
+                          }}
+                          className="h-8 text-[11px] rounded-xl border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-semibold gap-1.5"
+                        >
+                          {copiedPkgFlatCode === String(it.code) ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                              <span className="text-emerald-700 font-bold">✓ Portal Copiado!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                              <span>Copiar Portal Individual do Flat (s/ valores)</span>
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setLocation(`/pre-checkin/${encodeURIComponent(it.code)}`)}
+                          className="h-8 text-[11px] rounded-xl text-indigo-700 hover:bg-indigo-50 font-semibold gap-1"
+                        >
+                          <FileText className="w-3.5 h-3.5 shrink-0" />
+                          <span>Pré-Check-in Flat {it.flatNumber}</span>
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 flex flex-wrap gap-2.5">
+              <Button
+                type="button"
+                onClick={() => setLocation(data.packageSummary.batchCredentialPath)}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl h-10 px-4"
+              >
+                Cadastrar / Editar Hóspede 1 e 2 de Cada Flat (Link Único)
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  const credPath = data.packageSummary.batchCredentialPath || `/credenciamento/${encodeURIComponent(data.packageSummary.packageCode)}`
+                  const fullCredUrl = `${window.location.origin}${credPath.startsWith("/") ? credPath : `/${credPath}`}`
+                  navigator.clipboard?.writeText(fullCredUrl)
+                  setCopiedPkgCredLink(true)
+                  setTimeout(() => setCopiedPkgCredLink(false), 2500)
+                }}
+                className="border-indigo-200 bg-indigo-50/60 hover:bg-indigo-100 text-indigo-900 font-bold text-xs rounded-xl h-10 px-4 inline-flex items-center gap-1.5"
+              >
+                {copiedPkgCredLink ? (
+                  <>
+                    <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span className="text-emerald-700">✓ Link Único Copiado!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4 text-indigo-600 shrink-0" />
+                    <span>Copiar Link Único de Cadastro (/credenciamento/{data.packageSummary.packageCode})</span>
+                  </>
+                )}
+              </Button>
+
+              {data.packageSummary.isPaid && (
+                data.packageSummary.consolidatedNfseNumber ? (
+                  <a
+                    href={`/api/nfse/danfse/${data.packageSummary.consolidatedInvoiceId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center px-4 h-10 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs"
+                  >
+                    Baixar NFS-e Única Nº {data.packageSummary.consolidatedNfseNumber}
+                  </a>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setPkgNfseDoc(data.packageSummary.requesterDocument || "")
+                      setPkgNfseName(data.packageSummary.requesterName || "")
+                      setPkgNfseEmail(data.packageSummary.requesterEmail || "")
+                      setPkgNfseOpen(!pkgNfseOpen)
+                    }}
+                    className="border-emerald-300 text-emerald-900 hover:bg-emerald-50 font-bold text-xs rounded-xl h-10 px-4"
+                  >
+                    Emitir 1 NFS-e Única do Pacote (CPF ou CNPJ)
+                  </Button>
+                )
+              )}
+            </div>
+
+            {pkgNfseMessage && (
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-800">
+                {pkgNfseMessage}
+              </div>
+            )}
+
+            {pkgNfseOpen && (
+              <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200 space-y-3">
+                <div className="text-xs font-bold text-emerald-950">
+                  Emitir 1 Nota Fiscal de Serviço (NFS-e) Única consolidando todos os flats ativos do pacote (aceita CPF ou CNPJ):
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <Input
+                    value={pkgNfseDoc}
+                    onChange={(e) => { setPkgNfseDoc(e.target.value); setPkgNfseMessage(null) }}
+                    placeholder="CPF (11 díg.) ou CNPJ (14 díg.)"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    className="bg-white text-xs h-9 font-mono"
+                  />
+                  <Input
+                    value={pkgNfseName}
+                    onChange={(e) => setPkgNfseName(e.target.value)}
+                    placeholder="Nome Completo ou Razão Social"
+                    className="bg-white text-xs h-9"
+                  />
+                  <Input
+                    type="email"
+                    value={pkgNfseEmail}
+                    onChange={(e) => setPkgNfseEmail(e.target.value)}
+                    placeholder="E-mail para envio da NFS-e"
+                    className="bg-white text-xs h-9"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  disabled={emittingPkgNfse}
+                  onClick={() => handleEmitPackageConsolidatedNfse(data.packageSummary.packageCode)}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 px-4 rounded-xl"
+                >
+                  {emittingPkgNfse ? "Emitindo NFS-e Única..." : "Confirmar e Emitir 1 NFS-e Única"}
+                </Button>
+              </div>
+            )}
+          </Card>
+        )}
 
         {/* ── 1.5 Card de Pagamento & Confirmação Financeira ───────────────── */}
         {isCancelled ? (
@@ -4647,7 +5248,7 @@ export default function GuestPortal() {
                     onClick={() => {
                       const targetDt = breakfastOrder.date || breakfastOrder.deliveryDate || ""
                       const dtQuery = targetDt ? `?date=${encodeURIComponent(targetDt)}` : ""
-                      setLocation(`/minha-reserva/${reservation.code || code}/cafe${dtQuery}`)
+                      setLocation(`/minha-reserva/${encodeURIComponent(individualStayCode)}/cafe${dtQuery}`)
                     }}
                     className="flex-1 sm:flex-initial text-xs h-auto min-h-8 py-1.5 px-3 whitespace-normal leading-tight bg-amber-50 border-amber-300 text-amber-900 hover:bg-amber-100 flex items-center justify-center gap-1.5 rounded-xl font-bold"
                   >
@@ -4699,7 +5300,7 @@ export default function GuestPortal() {
             ) : (
               <div className="flex flex-col gap-2.5 pt-1 w-full">
                 <Button
-                  onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/cafe`)}
+                  onClick={() => setLocation(`/minha-reserva/${encodeURIComponent(individualStayCode)}/cafe`)}
                   className="w-full h-auto min-h-12 py-2.5 px-4 whitespace-normal leading-tight text-center bg-amber-700 hover:bg-amber-800 active:scale-[0.99] text-white font-semibold text-xs sm:text-sm rounded-2xl shadow-sm shadow-amber-900/10 inline-flex items-center justify-center gap-2.5 transition-all"
                 >
                   <Coffee className="w-5 h-5 shrink-0" />
@@ -4962,7 +5563,7 @@ export default function GuestPortal() {
           )}
 
           <Button
-            onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/frigobar`)}
+            onClick={() => setLocation(`/minha-reserva/${encodeURIComponent(individualStayCode)}/frigobar`)}
             className="w-full h-auto min-h-12 py-3 px-5 bg-cyan-700 hover:bg-cyan-800 active:scale-[0.99] text-white font-bold text-xs sm:text-sm rounded-2xl shadow-sm inline-flex items-center justify-center gap-2.5 transition-all"
           >
             <Refrigerator className="w-5 h-5 shrink-0" />
@@ -5283,10 +5884,12 @@ export default function GuestPortal() {
 
         {/* ── 10. Card: Política de Cancelamento & Estorno ────────────────── */}
         {(() => {
-          const isPaidConfirmedCard = Number(reservation.paidAmount) > 0 || reservation.paymentStatus === "pago_total" || reservation.paymentStatus === "pago"
-          const effectivePaidCard = Number(reservation.paidAmount) > 0
-            ? Number(reservation.paidAmount)
-            : (isPaidConfirmedCard ? Number(reservation.totalAmount || 0) : 0)
+          const isPaidConfirmedCard = !hideFinancialForGuest && (Number(reservation.paidAmount) > 0 || reservation.paymentStatus === "pago_total" || reservation.paymentStatus === "pago")
+          const effectivePaidCard = hideFinancialForGuest
+            ? 0
+            : Number(reservation.paidAmount) > 0
+              ? Number(reservation.paidAmount)
+              : (isPaidConfirmedCard ? Number(reservation.totalAmount || 0) : 0)
           const cancelPol = calculateCancellationPolicy(
             reservation.createdAt || reservation.checkinDate,
             reservation.checkinDate,
@@ -5300,10 +5903,12 @@ export default function GuestPortal() {
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                 <div className="flex items-center gap-2">
                   <ShieldAlert className="w-5 h-5 text-sky-600 shrink-0" />
-                  <h2 className="text-base font-bold text-slate-900">Política de Cancelamento & Estorno</h2>
+                  <h2 className="text-base font-bold text-slate-900">
+                    {hideFinancialForGuest ? "Alterações & Cancelamento" : "Política de Cancelamento & Estorno"}
+                  </h2>
                 </div>
-                <Badge variant="outline" className={isCancelledRes ? "bg-rose-50 text-rose-700 border-rose-200 text-[10px] font-bold" : cancelPol.policyType === "flexivel" ? "bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-bold" : "bg-amber-50 text-amber-700 border-amber-200 text-[10px] font-bold"}>
-                  {isCancelledRes ? "✕ Reserva Cancelada" : cancelPol.badgeText}
+                <Badge variant="outline" className={isCancelledRes ? "bg-rose-50 text-rose-700 border-rose-200 text-[10px] font-bold" : hideFinancialForGuest ? "bg-slate-100 text-slate-700 border-slate-200 text-[10px] font-bold" : cancelPol.policyType === "flexivel" ? "bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-bold" : "bg-amber-50 text-amber-700 border-amber-200 text-[10px] font-bold"}>
+                  {isCancelledRes ? "✕ Reserva Cancelada" : hideFinancialForGuest ? "Gestão pelo Solicitante" : cancelPol.badgeText}
                 </Badge>
               </div>
 
@@ -5311,12 +5916,20 @@ export default function GuestPortal() {
                 {isCancelledRes ? (
                   <div className="space-y-2">
                     <p className="text-rose-600 font-bold">Esta reserva foi cancelada.</p>
-                    <p className="text-slate-500 text-[11px]">
-                      {Number(reservation.refundAmount) > 0 
-                        ? `Estorno de R$ ${Number(reservation.refundAmount).toFixed(2)} processado com sucesso.`
-                        : (reservation.refundStatus === "estorno_100%_solicitado"
-                            ? "Solicitação de estorno em processamento financeiro."
-                            : "Cancelamento efetuado sem estorno conforme as políticas contratadas.")}
+                    {!hideFinancialForGuest && (
+                      <p className="text-slate-500 text-[11px]">
+                        {Number(reservation.refundAmount) > 0 
+                          ? `Estorno de R$ ${Number(reservation.refundAmount).toFixed(2)} processado com sucesso.`
+                          : (reservation.refundStatus === "estorno_100%_solicitado"
+                              ? "Solicitação de estorno em processamento financeiro."
+                              : "Cancelamento efetuado sem estorno conforme as políticas contratadas.")}
+                      </p>
+                    )}
+                  </div>
+                ) : hideFinancialForGuest ? (
+                  <div className="space-y-1">
+                    <p className="text-slate-600 font-medium leading-relaxed">
+                      Alterações de datas, ocupação ou cancelamento desta acomodação são gerenciados diretamente pelo solicitante / empresa responsável pela reserva.
                     </p>
                   </div>
                 ) : (
@@ -5340,7 +5953,7 @@ export default function GuestPortal() {
                           type="button"
                           variant="outline"
                           size="sm"
-                          onClick={handleOpenModifyModal}
+                          onClick={() => handleOpenModifyModal()}
                           className="w-full sm:w-auto justify-center text-xs sm:text-sm font-bold rounded-xl h-10 px-4 border-sky-300 bg-sky-50/70 hover:bg-sky-100 text-sky-800 flex items-center gap-2 shadow-2xs"
                         >
                           <Calendar className="w-4.5 h-4.5 text-sky-600 shrink-0" />
@@ -5348,6 +5961,7 @@ export default function GuestPortal() {
                         </Button>
                       )}
                       <Button
+                        type="button"
                         variant="destructive"
                         size="sm"
                         onClick={() => setCancelModalOpen(true)}
@@ -5461,7 +6075,7 @@ export default function GuestPortal() {
                     {modStep === "success" && "Alteração Confirmada!"}
                   </DialogTitle>
                   <DialogDescription className="text-xs text-slate-500">
-                    Flat {reservation?.flatNumber} • Localizador: <strong className="font-mono text-slate-700">{reservation?.code}</strong>
+                    Flat {modTargetFlat?.flatNumber || reservation?.flatNumber} • Localizador: <strong className="font-mono text-slate-700">{modTargetFlat?.code || individualStayCode}</strong>
                   </DialogDescription>
                 </div>
               </div>
@@ -5494,6 +6108,59 @@ export default function GuestPortal() {
           ══════════════════════════════════════════════════════════════════ */}
           {modStep === "preview" && (
             <div className="space-y-4 py-2 text-xs">
+              {(() => {
+                const pkgActiveItems = Array.isArray(data?.packageSummary?.items)
+                  ? data.packageSummary.items.filter((it: any) => it && !it.isCancelled && !it.isExpired)
+                  : []
+                if (pkgActiveItems.length < 2) return null
+                return (
+                  <div className="p-3 rounded-2xl bg-indigo-50/70 border border-indigo-200/80 space-y-2">
+                    <Label className="text-indigo-950 font-black text-[11px] block">
+                      Qual flat do pacote deseja alterar?
+                    </Label>
+                    <div className="flex flex-wrap gap-2">
+                      {pkgActiveItems.map((it: any) => {
+                        const isSelected = String(modTargetFlat?.code || "") === String(it.code)
+                        return (
+                          <button
+                            key={it.id || it.code}
+                            type="button"
+                            onClick={() => {
+                              const nextTarget = {
+                                code: String(it.code),
+                                flatNumber: String(it.flatNumber || ""),
+                                checkinDate: String(it.checkinDate || ""),
+                                checkoutDate: String(it.checkoutDate || ""),
+                                guestCount: Math.max(1, Number(it.guestCount) || 1),
+                              }
+                              setModTargetFlat(nextTarget)
+                              setModCheckinDate(nextTarget.checkinDate)
+                              setModCheckoutDate(nextTarget.checkoutDate)
+                              setModGuestCount(nextTarget.guestCount)
+                              setPreviewData(null)
+                              setPreviewError(null)
+                              if (nextTarget.checkinDate && nextTarget.checkoutDate) {
+                                handleRunPreview(nextTarget.checkinDate, nextTarget.checkoutDate, nextTarget.guestCount, nextTarget.code)
+                              }
+                            }}
+                            className={`px-3 py-1.5 rounded-xl border text-left transition-all ${
+                              isSelected
+                                ? "bg-indigo-600 border-indigo-600 text-white font-bold shadow-xs"
+                                : "bg-white border-indigo-200 text-slate-700 hover:bg-indigo-100/60 font-semibold"
+                            }`}
+                          >
+                            <span className="block text-xs">Flat {it.flatNumber}</span>
+                            <span className={`block font-mono text-[10px] ${isSelected ? "text-indigo-100" : "text-slate-500"}`}>
+                              {it.code}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })()}
+
               {previewError && (
                 <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
@@ -5618,7 +6285,29 @@ export default function GuestPortal() {
                       </span>
                     </div>
 
-                    {previewData.extraNights > 0 && (
+                    {previewData.recalculatesPackagePix && (
+                      <div className="space-y-1.5 pt-2 border-t border-indigo-200/80">
+                        {previewData.newDates?.totalAmount !== undefined && (
+                          <div className="flex flex-wrap justify-between items-center gap-1 text-slate-700 font-semibold">
+                            <span>Novo Valor deste Flat:</span>
+                            <span className="font-mono text-slate-900 font-bold">
+                              R$ {Number(previewData.newDates.totalAmount).toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex flex-wrap justify-between items-center gap-1 font-bold text-indigo-950">
+                          <span>Novo Total PIX Único do Pacote:</span>
+                          <span className="text-base text-indigo-700 font-mono">
+                            R$ {Number(previewData.projectedPackagePixTotal ?? data?.packageSummary?.pendingAmount ?? 0).toFixed(2)} (recalculado automaticamente)
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-indigo-800 leading-relaxed">
+                          {previewData.policyNotice || "Ao confirmar, o QR Code PIX único do pacote será atualizado automaticamente com o novo período."}
+                        </p>
+                      </div>
+                    )}
+
+                    {!previewData.recalculatesPackagePix && previewData.extraNights > 0 && (
                       <div className="space-y-1.5 pt-2 border-t border-slate-200/60">
                         <div className="flex flex-wrap justify-between items-center gap-1 font-bold text-slate-800">
                           <span>Acréscimo no Cartão de Crédito:</span>
@@ -5635,7 +6324,7 @@ export default function GuestPortal() {
                       </div>
                     )}
 
-                    {previewData.refundAmount > 0 && (
+                    {!previewData.recalculatesPackagePix && previewData.refundAmount > 0 && (
                       <div className="flex flex-wrap justify-between items-center gap-1 pt-2 border-t border-slate-200/60 font-bold text-emerald-950">
                         <span>Estorno / Crédito Elegível:</span>
                         <span className="text-base text-emerald-600 font-mono">
@@ -5644,12 +6333,15 @@ export default function GuestPortal() {
                       </div>
                     )}
 
-                    {!previewData.requiresPayment && previewData.refundAmount <= 0 && (
-                      <div className="flex flex-wrap justify-between items-center gap-1 pt-2 border-t border-slate-200/60 font-bold text-slate-800">
-                        <span>Acréscimo Financeiro:</span>
-                        <span className="text-emerald-600 font-bold">R$ 0,00 (Sem custo adicional)</span>
-                      </div>
-                    )}
+                    {!previewData.requiresPayment &&
+                      previewData.refundAmount <= 0 &&
+                      !previewData.recalculatesPackagePix &&
+                      !(previewData.extraNights > 0) && (
+                        <div className="flex flex-wrap justify-between items-center gap-1 pt-2 border-t border-slate-200/60 font-bold text-slate-800">
+                          <span>Acréscimo Financeiro:</span>
+                          <span className="text-emerald-600 font-bold">R$ 0,00 (Sem custo adicional)</span>
+                        </div>
+                      )}
                   </div>
 
                   {/* Aviso da Regra de 24h */}
@@ -5697,7 +6389,13 @@ export default function GuestPortal() {
                     className="h-auto min-h-10 py-2 px-4 font-bold text-xs rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white whitespace-normal leading-tight text-center shadow-xs gap-1.5"
                   >
                     <CheckCircle2 className="w-4 h-4 shrink-0" />
-                    <span>{checkoutLoading ? "Confirmando..." : "Confirmar Alteração de Datas"}</span>
+                    <span>
+                      {checkoutLoading
+                        ? "Confirmando..."
+                        : previewData?.recalculatesPackagePix
+                          ? "Confirmar e Recalcular PIX Único"
+                          : "Confirmar Alteração de Datas"}
+                    </span>
                   </Button>
                 )}
               </DialogFooter>
@@ -5962,7 +6660,7 @@ export default function GuestPortal() {
                     type="button"
                     onClick={() => {
                       setModifyModalOpen(false)
-                      setLocation(modifySuccessInfo.reSignatureUrl || `/pre-checkin/${encodeURIComponent(reservation?.code || code)}?resign=1`)
+                      setLocation(modifySuccessInfo.reSignatureUrl || `/pre-checkin/${encodeURIComponent(modTargetFlat?.code || individualStayCode)}?resign=1`)
                     }}
                     className="w-full h-auto min-h-11 py-2.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs sm:text-sm whitespace-normal leading-tight text-center shadow-sm flex items-center justify-center gap-2 transition-all active:scale-95"
                   >
@@ -6054,16 +6752,23 @@ export default function GuestPortal() {
                     onClick={async () => {
                       setCancelling(true)
                       try {
-                        const res = await fetch(`/api/pms/guest-portal/${code}/cancel`, {
+                        const cancelLocator = code || reservation.code
+                        const cancelQs = isRequesterPortalView ? "?requester=1" : ""
+                        const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(cancelLocator)}/cancel${cancelQs}`, {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ reason: cancelReason })
+                          body: JSON.stringify({
+                            reason: cancelReason,
+                            cancelWholePackage: Boolean(data?.isPackageView),
+                            ...(data?.packageSummary?.packageCode ? { packageCode: data.packageSummary.packageCode } : {}),
+                          })
                         })
                         const json = await res.json()
                         if (res.ok) {
                           setCancelModalOpen(false)
                           setData((prev: any) => prev ? ({
                             ...prev,
+                            packageSummary: json.packageSummary ?? prev.packageSummary,
                             reservation: {
                               ...prev.reservation,
                               status: "cancelada",
@@ -6076,7 +6781,7 @@ export default function GuestPortal() {
                               accessCode: null
                             }
                           }) : null)
-                          await fetchPortalData(reservation?.code || code)
+                          await fetchPortalData(code || reservation?.code, true)
                         } else {
                           alert(json.error || "Erro ao cancelar")
                         }
@@ -6136,7 +6841,7 @@ export default function GuestPortal() {
               <div className="text-left sm:text-right">
                 <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Recibo Nº</span>
                 <span className="font-mono text-xs font-black text-slate-800">
-                  REC-{reservation.code}
+                  REC-{receiptLocatorCode}
                 </span>
               </div>
             </div>
@@ -6147,24 +6852,24 @@ export default function GuestPortal() {
                 Identificação da Reserva
               </span>
               <div className="flex flex-wrap justify-between gap-1">
-                <span className="text-slate-500">Hóspede Titular:</span>
-                <span className="font-bold text-slate-900">{guestName}</span>
+                <span className="text-slate-500">{receiptHolderLabel}:</span>
+                <span className="font-bold text-slate-900">{receiptHolderName}</span>
               </div>
-              {reservation.guestDocument && (
+              {receiptHolderDoc && (
                 <div className="flex flex-wrap justify-between gap-1">
-                  <span className="text-slate-500">CPF / Documento:</span>
-                  <span className="font-mono font-semibold text-slate-800">{reservation.guestDocument}</span>
+                  <span className="text-slate-500">CPF / CNPJ:</span>
+                  <span className="font-mono font-semibold text-slate-800">{receiptHolderDoc}</span>
                 </div>
               )}
-              {reservation.guestPhone && (
+              {receiptHolderPhone && (
                 <div className="flex flex-wrap justify-between gap-1">
                   <span className="text-slate-500">Telefone / WhatsApp:</span>
-                  <span className="font-semibold text-slate-800">{formatPhoneDisplay(reservation.guestPhone)}</span>
+                  <span className="font-semibold text-slate-800">{formatPhoneDisplay(receiptHolderPhone)}</span>
                 </div>
               )}
               <div className="flex flex-wrap justify-between gap-1">
                 <span className="text-slate-500">Código Localizador:</span>
-                <span className="font-mono font-bold text-sky-700">{reservation.code}</span>
+                <span className="font-mono font-bold text-sky-700">{receiptLocatorCode}</span>
               </div>
             </div>
 
@@ -6175,7 +6880,7 @@ export default function GuestPortal() {
               </span>
               <div className="flex flex-wrap justify-between gap-1">
                 <span className="text-slate-500">Unidade:</span>
-                <span className="font-bold text-slate-900">Apartamento {reservation.flatNumber} ({reservation.roomCategory || "Studio Executivo"})</span>
+                <span className="font-bold text-slate-900">{receiptUnitsLabel}</span>
               </div>
               <div className="flex flex-wrap justify-between gap-1">
                 <span className="text-slate-500">Check-in:</span>
@@ -6187,7 +6892,11 @@ export default function GuestPortal() {
               </div>
               <div className="flex flex-wrap justify-between gap-1">
                 <span className="text-slate-500">Período Contratado:</span>
-                <span className="font-semibold text-slate-800">{nights} diária{nights > 1 ? "s" : ""} • {reservation.guestCount || 1} hóspede{(reservation.guestCount || 1) > 1 ? "s" : ""}</span>
+                <span className="font-semibold text-slate-800">
+                  {pkgActiveReceiptItems.length > 1
+                    ? `${pkgActiveReceiptItems.length} flats confirmados no pacote`
+                    : `${nights} diária${nights > 1 ? "s" : ""} • ${reservation.guestCount || 1} hóspede${(reservation.guestCount || 1) > 1 ? "s" : ""}`}
+                </span>
               </div>
             </div>
 
@@ -6218,7 +6927,7 @@ export default function GuestPortal() {
               </div>
 
               {/* 2. Detalhamento dia a dia das diárias e taxas */}
-              {Array.isArray((reservation as any)?.dailyRates) && (reservation as any).dailyRates.length > 0 && (
+              {!pkgReceiptSummary && Array.isArray((reservation as any)?.dailyRates) && (reservation as any).dailyRates.length > 0 && (
                 <div className="pt-2 border-t border-slate-200/60 space-y-1.5">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
                     Detalhamento Dia a Dia ({(reservation as any).dailyRates.length} diárias + taxas)

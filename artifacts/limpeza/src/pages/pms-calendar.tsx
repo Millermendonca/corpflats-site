@@ -761,6 +761,8 @@ export default function PmsCalendar(props?: {
   }
   const [reactivationFlatSwitchedInfo, setReactivationFlatSwitchedInfo] = useState<string | null>(null)
   const [expiredModalOpen, setExpiredModalOpen] = useState(false)
+  const [pkgReactivateTarget, setPkgReactivateTarget] = useState<any | null>(null)
+  const [pkgReactivatingBusy, setPkgReactivatingBusy] = useState(false)
   const [formExtensionHoldMode, setFormExtensionHoldMode] = useState<"pre_reserva" | "confirmada_sem_prazo">("pre_reserva")
   const [isReactivatingExt, setIsReactivatingExt] = useState(false)
   const [cancellingPendingExt, setCancellingPendingExt] = useState(false)
@@ -3637,7 +3639,8 @@ export default function PmsCalendar(props?: {
     flatTagsModalOpen || 
     blockDetailsModalOpen || 
     essentialConfigModalOpen ||
-    expiredModalOpen
+    expiredModalOpen ||
+    pkgReactivateTarget
   )
 
   // Sincronização em tempo real entre múltiplos dispositivos (PC, Tablet, Celular)
@@ -3725,6 +3728,9 @@ export default function PmsCalendar(props?: {
     const d1 = startDate <= endDate ? startDate : endDate
     const d2 = startDate <= endDate ? endDate : startDate
     setSelectedRes(null)
+    setIsMultiFlatPackageMode(false)
+    setPkgEditNfseOpen(false)
+    setPkgEditCancelOpen(false)
     isFlatManuallyChangedRef.current = true
     setFormFlatId(String(defaultFlatId))
     const cin = format(d1, "yyyy-MM-dd")
@@ -3952,11 +3958,87 @@ export default function PmsCalendar(props?: {
     return false
   }
 
+  // ── Estados do Construtor e Gestão de Pacote Multi-Flat (Pagamento Único) ──
+  const [isMultiFlatPackageMode, setIsMultiFlatPackageMode] = useState(false)
+  const [pkgSolName, setPkgSolName] = useState("")
+  const [pkgSolPhone, setPkgSolPhone] = useState("")
+  const [pkgSolEmail, setPkgSolEmail] = useState("")
+  const [pkgSolDoc, setPkgSolDoc] = useState("")
+  const [pkgStatusType, setPkgStatusType] = useState<"pre_reserva" | "confirmada" | "faturada">("pre_reserva")
+  const [pkgHoldMinutes, setPkgHoldMinutes] = useState("30")
+  const [pkgPricingMode, setPkgPricingMode] = useState<"sum" | "discount_amount" | "discount_pct" | "fixed_total">("sum")
+  const [pkgPricingInput, setPkgPricingInput] = useState("")
+  const [pkgEmitBoletoNow, setPkgEmitBoletoNow] = useState(true)
+  const [packageFlatsDraft, setPackageFlatsDraft] = useState<Array<{
+    uid: string
+    flatId: string
+    checkinDate: string
+    checkoutDate: string
+    guestCount: number
+    requesterIsGuest1: boolean
+    informGuestsLater: boolean
+    guest1Name: string
+    guest1Phone: string
+    guest1Doc: string
+    guest2InformLater: boolean
+    guest2Name: string
+    guest2Phone: string
+    guest2Doc: string
+    includeBreakfast: boolean
+    twinBeds: boolean
+    vehiclePlate: string
+    vehicleModel: string
+    dailyRate: string
+  }>>([])
+  const [pkgEditNfseOpen, setPkgEditNfseOpen] = useState(false)
+  const [pkgEditNfseDoc, setPkgEditNfseDoc] = useState("")
+  const [pkgEditNfseName, setPkgEditNfseName] = useState("")
+  const [pkgEditCancelOpen, setPkgEditCancelOpen] = useState(false)
+  const [pkgEditRefundResolution, setPkgEditRefundResolution] = useState<"partial_refund" | "credit" | "no_refund">("partial_refund")
+  const [pkgEditRefundAmount, setPkgEditRefundAmount] = useState("")
+  const [pkgActionLoading, setPkgActionLoading] = useState(false)
+
+  const createDefaultPkgFlatDraft = (cin: string, cout: string, idx: number, defaultFid: string = "auto") => ({
+    uid: `pkg_flat_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
+    flatId: defaultFid || "auto",
+    checkinDate: cin,
+    checkoutDate: cout,
+    guestCount: 2,
+    requesterIsGuest1: idx === 0,
+    informGuestsLater: idx > 0,
+    guest1Name: "",
+    guest1Phone: "",
+    guest1Doc: "",
+    guest2InformLater: true,
+    guest2Name: "",
+    guest2Phone: "",
+    guest2Doc: "",
+    includeBreakfast: true,
+    twinBeds: false,
+    vehiclePlate: "",
+    vehicleModel: "",
+    dailyRate: "250"
+  })
+
   const handleOpenNewRes = (defaultFlatId?: number, defaultDate?: Date, initialChannel: string = "whatsapp") => {
     setMobileRangeStart(null)
     setSelectedRes(null)
+    setIsMultiFlatPackageMode(false)
+    setPkgEditNfseOpen(false)
+    setPkgEditCancelOpen(false)
     const cin = defaultDate ? format(defaultDate, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd")
     const cout = defaultDate ? format(addDays(defaultDate, 1), "yyyy-MM-dd") : format(addDays(new Date(), 1), "yyyy-MM-dd")
+    setPackageFlatsDraft([
+      createDefaultPkgFlatDraft(cin, cout, 0, defaultFlatId ? String(defaultFlatId) : "auto"),
+      createDefaultPkgFlatDraft(cin, cout, 1, "auto")
+    ])
+    setPkgSolName("")
+    setPkgSolPhone("")
+    setPkgSolEmail("")
+    setPkgSolDoc("")
+    setPkgStatusType("pre_reserva")
+    setPkgPricingMode("sum")
+    setPkgPricingInput("")
     setFormCheckin(cin)
     setFormCheckout(cout)
 
@@ -4210,6 +4292,18 @@ export default function PmsCalendar(props?: {
 
   const handleOpenEditRes = (resItem: any) => {
     setSelectedRes(resItem)
+    setIsMultiFlatPackageMode(false)
+    setPkgEditNfseOpen(false)
+    setPkgEditCancelOpen(false)
+    const fallbackSolName =
+      resItem.companyName ||
+      resItem.requesterInfo?.name ||
+      resItem.requesterName ||
+      (!/a definir|informar depois/i.test(String(resItem.guestName || "")) ? resItem.guestName : "") ||
+      ""
+    setPkgEditNfseDoc(resItem.companyCnpj || resItem.requesterInfo?.cpf || resItem.guestDocument || resItem.guestCpf || "")
+    setPkgEditNfseName(fallbackSolName)
+    setPkgEditRefundAmount(String(Number(resItem.paidAmount || resItem.totalAmount || 0).toFixed(2)))
     setPhoneVerification(null)
     setFormForceReplace(false)
     isFlatManuallyChangedRef.current = true
@@ -4704,8 +4798,63 @@ export default function PmsCalendar(props?: {
     }
   }
 
-  const handleReactivateExpiredRes = (resItem: any) => {
+  const handleClosePkgReactivateModal = () => {
+    if (pkgReactivatingBusy) return
+    setPkgReactivateTarget(null)
+    if (modalOnly && !resModalOpen) {
+      window.dispatchEvent(new CustomEvent("gfm-res-modal-state", { detail: { open: false } }))
+      onModalClosedRef.current?.()
+    }
+  }
+
+  const executePackageReactivate = async (wantWholePkg: boolean) => {
+    if (!pkgReactivateTarget || pkgReactivatingBusy) return
+    const resItem = pkgReactivateTarget
+    const pkgCodeExp = String(resItem.packageCode || resItem.packageId || "")
+    setPkgReactivatingBusy(true)
+    try {
+      const resp = await fetch(`/api/pms/packages/${encodeURIComponent(pkgCodeExp)}/reactivate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          reactivateWholePackage: wantWholePkg,
+          reservationId: resItem.id,
+          holdDurationMinutes: 30,
+          status: "pre_reserva"
+        })
+      })
+      const json = await resp.json().catch(() => ({}))
+      if (!resp.ok) {
+        toast({ title: "Não foi possível reativar", description: json.error || "Conflito de disponibilidade.", variant: "destructive" })
+        return
+      }
+      toast({
+        title: wantWholePkg ? `Pacote ${pkgCodeExp} Reativado!` : `Flat ${resItem.flatNumber || resItem.flatId} Reativado!`,
+        description: `${json.reactivatedCount} reserva(s) reativada(s) com PIX único atualizado.`
+      })
+      setPkgReactivateTarget(null)
+      await fetchData()
+      notifyCalendarUpdated()
+      if (modalOnly && !resModalOpen) {
+        window.dispatchEvent(new CustomEvent("gfm-res-modal-state", { detail: { open: false } }))
+        onModalClosedRef.current?.()
+      }
+    } catch (e: any) {
+      toast({ title: "Erro ao reativar pacote", description: e?.message || "Falha de conexão", variant: "destructive" })
+    } finally {
+      setPkgReactivatingBusy(false)
+    }
+  }
+
+  const handleReactivateExpiredRes = async (resItem: any) => {
     setExpiredModalOpen(false)
+
+    const pkgCodeExp = resItem.packageCode || resItem.packageId
+    if (pkgCodeExp && !resItem.isExpiredExtension) {
+      setPkgReactivateTarget(resItem)
+      return
+    }
 
     if (resItem.isExpiredExtension) {
       const parentId = resItem.parentReservationId || resItem.id
@@ -6229,6 +6378,106 @@ export default function PmsCalendar(props?: {
   const handleSaveRes = async (e: React.FormEvent) => {
     e.preventDefault()
 
+    // ── Fluxo de Criação de Pacote Multi-Flat (Pagamento Único) ──────────────
+    if (!selectedRes && isMultiFlatPackageMode) {
+      if (packageFlatsDraft.length < 2) {
+        toast({ title: "Adicione ao menos 2 flats", description: "Para 1 único flat utilize o modo reserva individual.", variant: "destructive" })
+        return
+      }
+      const resolvedSolName = pkgSolName.trim() || formRequesterName.trim() || formCompanyName.trim() || formGuestName.trim()
+      if (!resolvedSolName) {
+        toast({ title: "Solicitante obrigatório", description: "Informe o Nome do Solicitante / Empresa responsável pelo pacote.", variant: "destructive" })
+        return
+      }
+      for (let i = 0; i < packageFlatsDraft.length; i++) {
+        const fl = packageFlatsDraft[i]
+        if (!fl.checkinDate || !fl.checkoutDate || fl.checkoutDate <= fl.checkinDate) {
+          toast({ title: `Datas inválidas no Flat #${i + 1}`, description: "O check-out deve ser posterior ao check-in em cada flat.", variant: "destructive" })
+          return
+        }
+      }
+      setSavingRes(true)
+      try {
+        const numVal = Number(String(pkgPricingInput || "").replace(",", ".")) || 0
+        const pkgPayload = {
+          requesterType: formCompanyId || formCompanyName.trim() ? "company" : (formAgencyId || formAgencyName.trim() ? "agency_b2b" : "other_person"),
+          requesterName: resolvedSolName,
+          requesterPhone: pkgSolPhone.trim() || formRequesterPhone.trim() || formGuestPhone.trim(),
+          requesterEmail: pkgSolEmail.trim() || formRequesterEmail.trim() || formGuestEmail.trim(),
+          requesterDocument: pkgSolDoc.trim() || formRequesterCpf.trim() || formGuest1Cpf.trim(),
+          companyId: formCompanyId || null,
+          companyName: formCompanyName.trim(),
+          agencyId: formAgencyId || null,
+          agencyName: formAgencyName.trim(),
+          channel: formChannel || "whatsapp",
+          status: pkgStatusType === "pre_reserva" ? "pre_reserva" : "confirmada",
+          paymentStatus: pkgStatusType === "confirmada" ? "pago_total" : "pendente",
+          markAsPaid: pkgStatusType === "confirmada",
+          paymentMethod: pkgStatusType === "faturada" ? "boleto_faturado" : (formPaymentMethod || "pix"),
+          isFaturadoBoleto: pkgStatusType === "faturada",
+          emitConsolidatedBoletoNow: pkgStatusType === "faturada" && pkgEmitBoletoNow,
+          boletoTermDays: Number(formBoletoTermDays) || 15,
+          boletoCustomDueDate: formBoletoCustomDueDate || null,
+          holdDurationMinutes: Number(pkgHoldMinutes) || 30,
+          packagePricingMode: pkgPricingMode,
+          packageDiscountAmount: pkgPricingMode === "discount_amount" ? numVal : 0,
+          packageDiscountPct: pkgPricingMode === "discount_pct" ? numVal : 0,
+          packageFixedTotal: pkgPricingMode === "fixed_total" ? numVal : null,
+          notes: formNotes,
+          receptionNotes: formReceptionNotes,
+          packageFlats: packageFlatsDraft.map((fl, idx) => ({
+            flatId: fl.flatId && fl.flatId !== "auto" ? Number(fl.flatId) : null,
+            checkinDate: fl.checkinDate,
+            checkoutDate: fl.checkoutDate,
+            guestCount: fl.guestCount,
+            requesterIsGuest1: idx === 0 && fl.requesterIsGuest1,
+            informGuestsLater: idx === 0 && fl.requesterIsGuest1 ? false : fl.informGuestsLater,
+            guestName: idx === 0 && fl.requesterIsGuest1 ? resolvedSolName : fl.guest1Name.trim(),
+            guestPhone: idx === 0 && fl.requesterIsGuest1 ? (pkgSolPhone.trim() || formRequesterPhone.trim()) : fl.guest1Phone.trim(),
+            guestDocument: idx === 0 && fl.requesterIsGuest1 ? pkgSolDoc.trim() : fl.guest1Doc.trim(),
+            guest2InformLater: fl.guestCount >= 2 ? fl.guest2InformLater : false,
+            guest2Name: fl.guest2Name.trim(),
+            guest2Phone: fl.guest2Phone.trim(),
+            guest2Document: fl.guest2Doc.trim(),
+            includeBreakfast: fl.includeBreakfast,
+            twinBeds: fl.twinBeds,
+            vehiclePlate: fl.vehiclePlate.trim(),
+            vehicleModel: fl.vehicleModel.trim(),
+            dailyRate: String(fl.dailyRate ?? "").trim() !== ""
+              ? Math.max(0, Number(String(fl.dailyRate).replace(",", ".")) || 0)
+              : 250
+          }))
+        }
+
+        const resp = await fetch("/api/pms/reservations/package", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify(pkgPayload)
+        })
+        const json = await resp.json().catch(() => ({}))
+        if (!resp.ok) {
+          toast({ title: "Erro ao criar pacote multi-flat", description: json.error || "Verifique os flats e datas informados.", variant: "destructive" })
+          return
+        }
+        toast({
+          title: `Pacote ${json.packageCode} criado com sucesso!`,
+          description: `${json.reservations?.length || packageFlatsDraft.length} flats vinculados • Total: R$ ${Number(json.packageSummary?.totalAmount || 0).toFixed(2)}`
+        })
+        setResModalOpen(false)
+        setIsMultiFlatPackageMode(false)
+        await fetchData()
+        fetchCrmGuests()
+        notifyCalendarUpdated()
+        return
+      } catch (err: any) {
+        toast({ title: "Erro de conexão", description: err?.message || "Falha ao criar pacote.", variant: "destructive" })
+        return
+      } finally {
+        setSavingRes(false)
+      }
+    }
+
     if (!formFlatId) {
       toast({
         title: "Apartamento obrigatório",
@@ -7130,7 +7379,7 @@ export default function PmsCalendar(props?: {
     if (modalOnly) return 0
     return data.reservations.filter(r => {
       if (r.status === "cancelada") return false
-      const matched = data.guests.find(g => g.id === r.guestId)
+      const matched = (data.guests || []).find(g => g.id === r.guestId)
       return isResCamposResident(r, matched)
     }).length
   }, [modalOnly, data.reservations, data.guests])
@@ -7155,7 +7404,7 @@ export default function PmsCalendar(props?: {
         const hasRiskInFlat = data.reservations.some(r => 
           (r.flatId === f.id || String(r.flatNumber) === String(f.number)) &&
           r.status !== "cancelada" &&
-          isResCamposResident(r, data.guests.find(g => g.id === r.guestId))
+          isResCamposResident(r, (data.guests || []).find(g => g.id === r.guestId))
         )
         if (!hasRiskInFlat) return false
       }
@@ -7412,6 +7661,7 @@ export default function PmsCalendar(props?: {
     csvExportModalOpen ||
     csvImportModalOpen ||
     expiredModalOpen ||
+    Boolean(pkgReactivateTarget) ||
     Boolean(maintModalFlat)
 
   if (!loadingUser && user?.role !== "admin" && user?.role !== "dev") {
@@ -8470,6 +8720,15 @@ export default function PmsCalendar(props?: {
                                         🔒 Fixo
                                       </span>
                                     )}
+                                    {resItem.packageCode && (
+                                      <span
+                                        data-package-badge={resItem.packageCode}
+                                        title={`Pacote Multi-Flat ${resItem.packageCode}${resItem.packageIndex && resItem.packageTotalFlats ? ` (Flat ${resItem.packageIndex} de ${resItem.packageTotalFlats})` : ""}`}
+                                        className="shrink-0 text-[9px] px-1.5 py-0.2 bg-indigo-600 text-white border border-indigo-300/80 font-black rounded shadow-xs flex items-center gap-0.5"
+                                      >
+                                        📦 {resItem.packageCode}{resItem.packageIndex && resItem.packageTotalFlats ? ` (${resItem.packageIndex}/${resItem.packageTotalFlats})` : ""}
+                                      </span>
+                                    )}
                                     {isMultiChannel && (
                                       <span title="Reserva com múltiplos canais de diárias" className="shrink-0 text-[8.5px] px-1 py-0.2 bg-black/60 backdrop-blur-xs text-white font-black rounded shadow-xs border border-white/40 flex items-center gap-0.5">
                                         🔀 Multi
@@ -9167,8 +9426,966 @@ export default function PmsCalendar(props?: {
             {(resModalTab === "reservation" || resModalTab === "details" || resModalTab === "payments") && (
               <form noValidate onSubmit={handleSaveRes}>
                 {(resModalTab === "reservation" || resModalTab === "details") && (
+                  <div className="pt-2 space-y-3">
+                    {/* 1. Seletor de Modo na Criação: 1 Flat vs Pacote Multi-Flat (Pagamento Único) */}
+                    {!selectedRes && (
+                      <div className="p-2.5 rounded-2xl border border-indigo-200 dark:border-indigo-800/70 bg-indigo-50/60 dark:bg-indigo-950/30 flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-8 h-8 rounded-xl bg-indigo-600/15 text-indigo-700 dark:text-indigo-300 flex items-center justify-center shrink-0">
+                            <Building2 className="w-4 h-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                              Formato da Reserva
+                            </div>
+                            <div className="text-[11px] text-muted-foreground truncate">
+                              {isMultiFlatPackageMode
+                                ? "Vários flats para 1 Solicitante • 1 pagamento/PIX/Boleto/NFS-e única"
+                                : "Reserva tradicional de 1 apartamento"}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 bg-white dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
+                          <button
+                            type="button"
+                            onClick={() => setIsMultiFlatPackageMode(false)}
+                            className={cn(
+                              "px-2.5 py-1 rounded-lg text-xs font-bold transition-colors",
+                              !isMultiFlatPackageMode
+                                ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-2xs"
+                                : "text-muted-foreground hover:text-foreground"
+                            )}
+                          >
+                            1 Flat Individual
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsMultiFlatPackageMode(true)
+                              if (!pkgSolName && (formRequesterName || formCompanyName || formGuestName)) {
+                                setPkgSolName(formRequesterName || formCompanyName || formGuestName)
+                              }
+                              if (!pkgSolPhone && (formRequesterPhone || formGuestPhone)) {
+                                setPkgSolPhone(formRequesterPhone || formGuestPhone)
+                              }
+                              if (!pkgSolEmail && (formRequesterEmail || formGuestEmail)) {
+                                setPkgSolEmail(formRequesterEmail || formGuestEmail)
+                              }
+                              if (!pkgSolDoc && (formRequesterCpf || formGuest1Cpf)) {
+                                setPkgSolDoc(formRequesterCpf || formGuest1Cpf)
+                              }
+                              if (packageFlatsDraft.length < 2) {
+                                const cin = formCheckin || format(new Date(), "yyyy-MM-dd")
+                                const cout = formCheckout || format(addDays(new Date(), 1), "yyyy-MM-dd")
+                                setPackageFlatsDraft([
+                                  createDefaultPkgFlatDraft(cin, cout, 0, formFlatId || "auto"),
+                                  createDefaultPkgFlatDraft(cin, cout, 1, "auto"),
+                                ])
+                              }
+                            }}
+                            className={cn(
+                              "px-2.5 py-1 rounded-lg text-xs font-bold transition-colors flex items-center gap-1",
+                              isMultiFlatPackageMode
+                                ? "bg-indigo-600 text-white shadow-2xs"
+                                : "text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/50"
+                            )}
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>Pacote Multi-Flat</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
-              <div className="py-2.5 space-y-3">
+                    {/* 2. Construtor Completo de Pacote Multi-Flat (PMS) */}
+                    {!selectedRes && isMultiFlatPackageMode && (() => {
+                      const updatePkgFlat = (uid: string, patch: Partial<typeof packageFlatsDraft[number]>) => {
+                        setPackageFlatsDraft(prev => prev.map(item => item.uid === uid ? { ...item, ...patch } : item))
+                      }
+                      const rawStats = packageFlatsDraft.map((fl) => {
+                        const nights = fl.checkinDate && fl.checkoutDate && fl.checkoutDate > fl.checkinDate
+                          ? Math.max(1, differenceInCalendarDays(parseISO(fl.checkoutDate), parseISO(fl.checkinDate)))
+                          : 1
+                        const rate = Math.max(0, Number(String(fl.dailyRate || "0").replace(",", ".")) || 0)
+                        const subtotal = Math.round(nights * rate * 100) / 100
+                        return { nights, rate, subtotal }
+                      })
+                      const rawSum = Math.round(rawStats.reduce((s, item) => s + item.subtotal, 0) * 100) / 100
+                      const numInput = Math.max(0, Number(String(pkgPricingInput || "").replace(",", ".")) || 0)
+                      let finalPkgTotal = rawSum
+                      if (pkgPricingMode === "discount_amount") {
+                        finalPkgTotal = Math.max(0, Math.round((rawSum - numInput) * 100) / 100)
+                      } else if (pkgPricingMode === "discount_pct") {
+                        finalPkgTotal = Math.max(0, Math.round(rawSum * (1 - Math.min(100, numInput) / 100) * 100) / 100)
+                      } else if (pkgPricingMode === "fixed_total" && numInput > 0) {
+                        finalPkgTotal = Math.round(numInput * 100) / 100
+                      }
+                      const totalCents = Math.round(finalPkgTotal * 100)
+                      const baseCents = rawStats.map((st) =>
+                        rawSum > 0
+                          ? Math.floor((st.subtotal / rawSum) * totalCents)
+                          : Math.floor(totalCents / Math.max(1, packageFlatsDraft.length))
+                      )
+                      let remCents = totalCents - baseCents.reduce((a, b) => a + b, 0)
+                      const proratedFlats = baseCents.map((c) => {
+                        if (remCents > 0) {
+                          remCents -= 1
+                          return (c + 1) / 100
+                        }
+                        if (remCents < 0) {
+                          remCents += 1
+                          return Math.max(0, c - 1) / 100
+                        }
+                        return c / 100
+                      })
+
+                      return (
+                        <div className="space-y-3.5 pb-2">
+                          {/* Tipo da Reserva do Pacote */}
+                          <fieldset className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50 space-y-2.5">
+                            <legend className="px-1.5 text-[11px] font-black uppercase tracking-wider text-indigo-700 dark:text-indigo-300">
+                              1. Modalidade do Pacote no PMS
+                            </legend>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                              {[
+                                { id: "pre_reserva", title: "Pré-Reserva (PIX Único)", desc: "Bloqueia flats + envia 1 PIX único" },
+                                { id: "confirmada", title: "Confirmada (Já Paga)", desc: "Confirma todos os flats pagos" },
+                                { id: "faturada", title: "Faturada (Boleto / Nota)", desc: "1 Boleto + 1 NFS-e única do pacote" },
+                              ].map((opt) => (
+                                <button
+                                  key={opt.id}
+                                  type="button"
+                                  onClick={() => setPkgStatusType(opt.id as any)}
+                                  className={cn(
+                                    "p-2.5 rounded-xl border text-left transition-all",
+                                    pkgStatusType === opt.id
+                                      ? "border-indigo-600 bg-indigo-600/10 dark:bg-indigo-500/20 ring-1 ring-indigo-600"
+                                      : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-indigo-300"
+                                  )}
+                                >
+                                  <div className="text-xs font-bold text-foreground">{opt.title}</div>
+                                  <div className="text-[10px] text-muted-foreground mt-0.5">{opt.desc}</div>
+                                </button>
+                              ))}
+                            </div>
+
+                            {pkgStatusType === "pre_reserva" && (
+                              <div className="flex flex-wrap items-center gap-2 pt-1">
+                                <Label className="text-xs font-semibold">Prazo de expiração do PIX único:</Label>
+                                {[
+                                  { v: "30", l: "30 min" },
+                                  { v: "60", l: "1 hora" },
+                                  { v: "180", l: "3 horas" },
+                                  { v: "1440", l: "24 horas" },
+                                ].map((h) => (
+                                  <button
+                                    key={h.v}
+                                    type="button"
+                                    onClick={() => setPkgHoldMinutes(h.v)}
+                                    className={cn(
+                                      "px-2.5 py-1 rounded-lg text-[11px] font-bold border",
+                                      pkgHoldMinutes === h.v
+                                        ? "bg-amber-500 text-white border-amber-600"
+                                        : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-muted-foreground"
+                                    )}
+                                  >
+                                    {h.l}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+
+                            {pkgStatusType === "faturada" && (
+                              <div className="pt-1 flex flex-wrap items-center justify-between gap-2 text-xs">
+                                <label className="flex items-center gap-2 font-semibold cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={pkgEmitBoletoNow}
+                                    onChange={(e) => setPkgEmitBoletoNow(e.target.checked)}
+                                    className="rounded border-slate-300"
+                                  />
+                                  <span>Emitir 1 Boleto Único + 1 NFS-e consolidada do pacote agora</span>
+                                </label>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-[11px] text-muted-foreground">Prazo Boleto (dias):</span>
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    max={90}
+                                    value={formBoletoTermDays}
+                                    onChange={(e) => setFormBoletoTermDays(Math.max(1, Number(e.target.value) || 15))}
+                                    className="h-7 w-16 text-xs"
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </fieldset>
+
+                          {/* Solicitante Único */}
+                          <fieldset className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 space-y-2.5">
+                            <legend className="px-1.5 text-[11px] font-black uppercase tracking-wider text-indigo-700 dark:text-indigo-300">
+                              2. Solicitante / Pagador Único do Pacote
+                            </legend>
+                            {companies.length > 0 && (
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Label className="text-[11px] text-muted-foreground">Vincular Empresa B2B (opcional):</Label>
+                                <select
+                                  value={formCompanyId}
+                                  onChange={(e) => {
+                                    const cid = e.target.value
+                                    setFormCompanyId(cid)
+                                    const comp = companies.find((c: any) => String(c.id) === cid)
+                                    if (comp) {
+                                      const cName = comp.tradeName || comp.corporateName || ""
+                                      setFormCompanyName(cName)
+                                      setPkgSolName(cName)
+                                      if (comp.cnpj) setPkgSolDoc(comp.cnpj)
+                                      if (comp.email) setPkgSolEmail(comp.email)
+                                      if (comp.phone) setPkgSolPhone(comp.phone)
+                                    } else {
+                                      setFormCompanyName("")
+                                    }
+                                  }}
+                                  className="h-7 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-2 text-xs"
+                                >
+                                  <option value="">Pessoa Física / Informar manualmente</option>
+                                  {companies.map((c: any) => (
+                                    <option key={c.id} value={String(c.id)}>
+                                      {c.tradeName || c.corporateName} {c.cnpj ? `(${c.cnpj})` : ""}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                              <div>
+                                <Label className="text-[11px] font-semibold">Nome do Solicitante ou Empresa *</Label>
+                                <Input
+                                  value={pkgSolName}
+                                  onChange={(e) => setPkgSolName(e.target.value)}
+                                  placeholder="Ex: Maria Souza ou Tech Engenharia Ltda"
+                                  className="h-8 text-xs mt-0.5"
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-[11px] font-semibold">WhatsApp do Solicitante (recebe 1 PIX único)</Label>
+                                <Input
+                                  value={pkgSolPhone}
+                                  onChange={(e) => setPkgSolPhone(e.target.value)}
+                                  placeholder="Ex: 22999998888"
+                                  className="h-8 text-xs mt-0.5"
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-[11px] font-semibold">CPF ou CNPJ (PIX, Boleto e 1 NFS-e Única)</Label>
+                                <Input
+                                  value={pkgSolDoc}
+                                  onChange={(e) => setPkgSolDoc(e.target.value)}
+                                  placeholder="CPF (11 dígitos) ou CNPJ (14 dígitos)"
+                                  className="h-8 text-xs mt-0.5"
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-[11px] font-semibold">E-mail Financeiro / Recibo</Label>
+                                <Input
+                                  type="email"
+                                  value={pkgSolEmail}
+                                  onChange={(e) => setPkgSolEmail(e.target.value)}
+                                  placeholder="financeiro@empresa.com.br"
+                                  className="h-8 text-xs mt-0.5"
+                                />
+                              </div>
+                            </div>
+                          </fieldset>
+
+                          {/* Lista de Flats do Pacote */}
+                          <div className="space-y-2.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-black uppercase tracking-wider text-indigo-700 dark:text-indigo-300">
+                                3. Flats do Pacote ({packageFlatsDraft.length} apartamentos)
+                              </span>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  const refFlat = packageFlatsDraft[packageFlatsDraft.length - 1]
+                                  const cin = refFlat?.checkinDate || formCheckin || format(new Date(), "yyyy-MM-dd")
+                                  const cout = refFlat?.checkoutDate || formCheckout || format(addDays(new Date(), 1), "yyyy-MM-dd")
+                                  setPackageFlatsDraft((prev) => [
+                                    ...prev,
+                                    createDefaultPkgFlatDraft(cin, cout, prev.length, "auto"),
+                                  ])
+                                }}
+                                className="h-7 text-xs font-bold border-indigo-300 text-indigo-700 dark:text-indigo-300 gap-1"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>Adicionar Flat</span>
+                              </Button>
+                            </div>
+
+                            {packageFlatsDraft.map((fl, idx) => {
+                              const st = rawStats[idx]
+                              const finalVal = proratedFlats[idx] ?? st.subtotal
+                              return (
+                                <fieldset
+                                  key={fl.uid}
+                                  className="p-3 rounded-2xl border border-indigo-200/80 dark:border-indigo-900/60 bg-indigo-50/25 dark:bg-slate-900/70 space-y-2.5"
+                                >
+                                  <legend className="px-2 text-xs font-black text-indigo-800 dark:text-indigo-200 flex items-center gap-2">
+                                    <span>Flat #{idx + 1}</span>
+                                    <span className="text-[11px] font-semibold text-muted-foreground">
+                                      • {st.nights} {st.nights === 1 ? "noite" : "noites"} • R$ {finalVal.toFixed(2)}
+                                    </span>
+                                  </legend>
+
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 flex-1">
+                                      <div>
+                                        <Label className="text-[10px] font-bold uppercase text-muted-foreground">Apartamento</Label>
+                                        <select
+                                          value={fl.flatId}
+                                          onChange={(e) => updatePkgFlat(fl.uid, { flatId: e.target.value })}
+                                          className="mt-0.5 w-full h-8 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 text-xs font-semibold"
+                                        >
+                                          <option value="auto">⚡ Automático (Livre)</option>
+                                          {(data.flats || []).map((fObj: any) => (
+                                            <option key={fObj.id} value={String(fObj.id)}>
+                                              Flat {fObj.number} {fObj.category ? `(${fObj.category})` : ""}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <Label className="text-[10px] font-bold uppercase text-muted-foreground">Check-in</Label>
+                                        <Input
+                                          type="date"
+                                          value={fl.checkinDate}
+                                          onChange={(e) => updatePkgFlat(fl.uid, { checkinDate: e.target.value })}
+                                          className="h-8 text-xs mt-0.5 bg-white dark:bg-slate-900"
+                                        />
+                                      </div>
+                                      <div>
+                                        <Label className="text-[10px] font-bold uppercase text-muted-foreground">Check-out</Label>
+                                        <Input
+                                          type="date"
+                                          value={fl.checkoutDate}
+                                          onChange={(e) => updatePkgFlat(fl.uid, { checkoutDate: e.target.value })}
+                                          className="h-8 text-xs mt-0.5 bg-white dark:bg-slate-900"
+                                        />
+                                      </div>
+                                      <div className="grid grid-cols-2 gap-1.5">
+                                        <div>
+                                          <Label className="text-[10px] font-bold uppercase text-muted-foreground">Ocupação</Label>
+                                          <select
+                                            value={String(fl.guestCount)}
+                                            onChange={(e) => updatePkgFlat(fl.uid, { guestCount: Number(e.target.value) || 1 })}
+                                            className="mt-0.5 w-full h-8 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-1.5 text-xs font-semibold"
+                                          >
+                                            <option value="1">1 Pessoa</option>
+                                            <option value="2">2 Pessoas</option>
+                                            <option value="3">3 Pessoas</option>
+                                          </select>
+                                        </div>
+                                        <div>
+                                          <Label className="text-[10px] font-bold uppercase text-muted-foreground">Diária R$</Label>
+                                          <Input
+                                            type="number"
+                                            step="0.01"
+                                            min="0"
+                                            value={fl.dailyRate}
+                                            onChange={(e) => updatePkgFlat(fl.uid, { dailyRate: e.target.value })}
+                                            className="h-8 text-xs mt-0.5 bg-white dark:bg-slate-900"
+                                          />
+                                        </div>
+                                      </div>
+                                    </div>
+                                    {packageFlatsDraft.length > 2 && (
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => setPackageFlatsDraft((prev) => prev.filter((item) => item.uid !== fl.uid))}
+                                        className="h-8 w-8 p-0 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 shrink-0 mt-4"
+                                        title="Remover flat do pacote"
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </Button>
+                                    )}
+                                  </div>
+
+                                  {/* Opções independentes por flat: Café, Cama e Veículo */}
+                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 items-center">
+                                    <div className="flex flex-wrap items-center gap-3">
+                                      <label className="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
+                                        <input
+                                          type="checkbox"
+                                          checked={fl.includeBreakfast}
+                                          onChange={(e) => updatePkgFlat(fl.uid, { includeBreakfast: e.target.checked })}
+                                          className="rounded border-slate-300"
+                                        />
+                                        <Coffee className="w-3.5 h-3.5 text-amber-600" />
+                                        <span>Com Café</span>
+                                      </label>
+                                      <label className="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
+                                        <input
+                                          type="checkbox"
+                                          checked={fl.twinBeds}
+                                          onChange={(e) => updatePkgFlat(fl.uid, { twinBeds: e.target.checked })}
+                                          className="rounded border-slate-300"
+                                        />
+                                        <Bed className="w-3.5 h-3.5 text-indigo-600" />
+                                        <span>2 Solteiros</span>
+                                      </label>
+                                    </div>
+                                    <Input
+                                      value={fl.vehiclePlate}
+                                      onChange={(e) => updatePkgFlat(fl.uid, { vehiclePlate: e.target.value.toUpperCase() })}
+                                      placeholder="Placa Veículo (opcional)"
+                                      className="h-7 text-xs bg-white dark:bg-slate-900"
+                                    />
+                                    <Input
+                                      value={fl.vehicleModel}
+                                      onChange={(e) => updatePkgFlat(fl.uid, { vehicleModel: e.target.value })}
+                                      placeholder="Modelo / Cor do Veículo"
+                                      className="h-7 text-xs bg-white dark:bg-slate-900"
+                                    />
+                                  </div>
+
+                                  {/* Hóspede 1 e Hóspede 2 por Flat */}
+                                  <div className="pt-2 border-t border-indigo-200/60 dark:border-slate-800 space-y-2">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                      <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                                        <Users className="w-3.5 h-3.5 text-indigo-600" />
+                                        <span>Hóspedes deste Flat (recebem instruções sem valores)</span>
+                                      </span>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        {idx === 0 && (
+                                          <label className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-lg border border-emerald-200 dark:border-emerald-800 cursor-pointer">
+                                            <input
+                                              type="checkbox"
+                                              checked={fl.requesterIsGuest1}
+                                              onChange={(e) =>
+                                                updatePkgFlat(fl.uid, {
+                                                  requesterIsGuest1: e.target.checked,
+                                                  informGuestsLater: e.target.checked ? false : fl.informGuestsLater,
+                                                })
+                                              }
+                                              className="rounded border-emerald-400"
+                                            />
+                                            <span>O próprio Solicitante ficará neste flat</span>
+                                          </label>
+                                        )}
+                                        {!(idx === 0 && fl.requesterIsGuest1) && (
+                                          <label className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-700 dark:text-amber-300 cursor-pointer">
+                                            <input
+                                              type="checkbox"
+                                              checked={fl.informGuestsLater}
+                                              onChange={(e) => updatePkgFlat(fl.uid, { informGuestsLater: e.target.checked })}
+                                              className="rounded border-amber-400"
+                                            />
+                                            <span>Informar depois (1 link único pós-pagamento)</span>
+                                          </label>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    {!(idx === 0 && fl.requesterIsGuest1) && !fl.informGuestsLater && (
+                                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                        <Input
+                                          value={fl.guest1Name}
+                                          onChange={(e) => updatePkgFlat(fl.uid, { guest1Name: e.target.value })}
+                                          placeholder="Nome do Hóspede 1"
+                                          className="h-7 text-xs bg-white dark:bg-slate-900"
+                                        />
+                                        <Input
+                                          value={fl.guest1Phone}
+                                          onChange={(e) => updatePkgFlat(fl.uid, { guest1Phone: e.target.value })}
+                                          placeholder="WhatsApp Hóspede 1"
+                                          className="h-7 text-xs bg-white dark:bg-slate-900"
+                                        />
+                                        <Input
+                                          value={fl.guest1Doc}
+                                          onChange={(e) => updatePkgFlat(fl.uid, { guest1Doc: e.target.value })}
+                                          placeholder="CPF Hóspede 1"
+                                          className="h-7 text-xs bg-white dark:bg-slate-900"
+                                        />
+                                      </div>
+                                    )}
+
+                                    {fl.guestCount >= 2 && !fl.informGuestsLater && (
+                                      <div className="space-y-1.5 pt-1">
+                                        <div className="flex items-center justify-between">
+                                          <span className="text-[10px] font-bold uppercase text-muted-foreground">
+                                            Hóspede 2 (Acompanhante)
+                                          </span>
+                                          <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer">
+                                            <input
+                                              type="checkbox"
+                                              checked={fl.guest2InformLater}
+                                              onChange={(e) => updatePkgFlat(fl.uid, { guest2InformLater: e.target.checked })}
+                                              className="rounded border-slate-300"
+                                            />
+                                            <span>Informar Hóspede 2 depois</span>
+                                          </label>
+                                        </div>
+                                        {!fl.guest2InformLater && (
+                                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                            <Input
+                                              value={fl.guest2Name}
+                                              onChange={(e) => updatePkgFlat(fl.uid, { guest2Name: e.target.value })}
+                                              placeholder="Nome do Hóspede 2"
+                                              className="h-7 text-xs bg-white dark:bg-slate-900"
+                                            />
+                                            <Input
+                                              value={fl.guest2Phone}
+                                              onChange={(e) => updatePkgFlat(fl.uid, { guest2Phone: e.target.value })}
+                                              placeholder="WhatsApp Hóspede 2"
+                                              className="h-7 text-xs bg-white dark:bg-slate-900"
+                                            />
+                                            <Input
+                                              value={fl.guest2Doc}
+                                              onChange={(e) => updatePkgFlat(fl.uid, { guest2Doc: e.target.value })}
+                                              placeholder="CPF Hóspede 2"
+                                              className="h-7 text-xs bg-white dark:bg-slate-900"
+                                            />
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                </fieldset>
+                              )
+                            })}
+                          </div>
+
+                          {/* Precificação e Rateio Automático do Pacote */}
+                          <fieldset className="p-3 rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/40 dark:bg-emerald-950/20 space-y-2.5">
+                            <legend className="px-1.5 text-[11px] font-black uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+                              4. Precificação & Rateio Automático do Pacote
+                            </legend>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {[
+                                { id: "sum", label: "Soma Normal" },
+                                { id: "discount_amount", label: "Desconto (R$)" },
+                                { id: "discount_pct", label: "Desconto (%)" },
+                                { id: "fixed_total", label: "Valor Fechado no Pacote (R$)" },
+                              ].map((m) => (
+                                <button
+                                  key={m.id}
+                                  type="button"
+                                  onClick={() => setPkgPricingMode(m.id as any)}
+                                  className={cn(
+                                    "px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors",
+                                    pkgPricingMode === m.id
+                                      ? "bg-emerald-700 text-white border-emerald-800"
+                                      : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-muted-foreground"
+                                  )}
+                                >
+                                  {m.label}
+                                </button>
+                              ))}
+                              {pkgPricingMode !== "sum" && (
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={pkgPricingInput}
+                                  onChange={(e) => setPkgPricingInput(e.target.value)}
+                                  placeholder={pkgPricingMode === "discount_pct" ? "Ex: 10 (%)" : "Valor R$"}
+                                  className="h-8 w-36 text-xs bg-white dark:bg-slate-900"
+                                />
+                              )}
+                            </div>
+
+                            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-emerald-200/60 dark:border-emerald-800/50 text-xs">
+                              <div className="text-muted-foreground">
+                                Soma bruta: <span className="font-semibold text-foreground">R$ {rawSum.toFixed(2)}</span>
+                                {finalPkgTotal !== rawSum && (
+                                  <span className="ml-2 text-emerald-700 dark:text-emerald-400 font-semibold">
+                                    (rateado automaticamente entre {packageFlatsDraft.length} flats)
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-sm font-black text-emerald-800 dark:text-emerald-300">
+                                Total Único do Pacote: R$ {finalPkgTotal.toFixed(2)}
+                              </div>
+                            </div>
+                          </fieldset>
+                        </div>
+                      )
+                    })()}
+
+                    {/* 3. Painel de Gestão de Reserva Pertencente a Pacote Multi-Flat (Edição) */}
+                    {selectedRes && Boolean(selectedRes.packageId || selectedRes.packageCode) && (() => {
+                      const pkgCode = String(selectedRes.packageCode || selectedRes.packageId || "")
+                      const pkgSiblings = (data.reservations || []).filter(
+                        (r: any) => String(r.packageCode || r.packageId || "") === pkgCode
+                      )
+                      const activeSiblings = pkgSiblings.filter(
+                        (r: any) => !["cancelada", "cancelled", "expirada"].includes(String(r.status || "").toLowerCase())
+                      )
+                      const pkgTotalVal = activeSiblings.reduce((acc: number, r: any) => acc + (Number(r.totalAmount) || 0), 0)
+                      const hasUnpaidSibling = activeSiblings.some(
+                        (r: any) => r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago"
+                      )
+                      const isCurrentFlatPaid =
+                        selectedRes.paymentStatus === "pago_total" || selectedRes.paymentStatus === "pago"
+
+                      return (
+                        <div className="p-3 rounded-2xl border-2 border-indigo-300 dark:border-indigo-800 bg-indigo-50/70 dark:bg-indigo-950/30 space-y-2.5 text-xs">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <Badge className="bg-indigo-600 text-white font-black text-[10px]">
+                                📦 {pkgCode}{selectedRes.packageIndex && selectedRes.packageTotalFlats ? ` (${selectedRes.packageIndex}/${selectedRes.packageTotalFlats})` : ""}
+                              </Badge>
+                              <span className="font-bold text-slate-900 dark:text-slate-100">
+                                {activeSiblings.length} flat(s) ativo(s) • Total Pacote: R$ {pkgTotalVal.toFixed(2)}
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  const url = `${window.location.origin}/minha-reserva/${encodeURIComponent(pkgCode)}?requester=1`
+                                  navigator.clipboard.writeText(url)
+                                  toast({ title: "Link único do Solicitante copiado!", description: url })
+                                }}
+                                className="h-7 px-2 text-[11px] font-bold gap-1"
+                              >
+                                <Copy className="w-3 h-3" />
+                                <span>PIX / Portal Único</span>
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  const url = `${window.location.origin}/copiar-pix/${encodeURIComponent(pkgCode)}`
+                                  navigator.clipboard.writeText(url)
+                                  toast({ title: "Link direto Copiar PIX copiado!", description: url })
+                                }}
+                                className="h-7 px-2 text-[11px] font-bold gap-1"
+                              >
+                                <CreditCard className="w-3 h-3" />
+                                <span>Copiar PIX</span>
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  const url = `${window.location.origin}/credenciamento/${encodeURIComponent(pkgCode)}`
+                                  navigator.clipboard.writeText(url)
+                                  toast({ title: "Link único de Hóspedes 1 e 2 copiado!", description: url })
+                                }}
+                                className="h-7 px-2 text-[11px] font-bold gap-1"
+                              >
+                                <Users className="w-3 h-3" />
+                                <span>Link Hóspedes</span>
+                              </Button>
+                              {hasUnpaidSibling && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  disabled={pkgActionLoading}
+                                  onClick={async () => {
+                                    setPkgActionLoading(true)
+                                    try {
+                                      const r = await fetch(`/api/pms/packages/${encodeURIComponent(pkgCode)}/confirm-payment`, {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json" },
+                                        credentials: "include",
+                                        body: JSON.stringify({ paymentMethod: "pix" }),
+                                      })
+                                      const j = await r.json().catch(() => ({}))
+                                      if (!r.ok) {
+                                        toast({ title: "Falha ao quitar pacote", description: j.error || "Tente novamente.", variant: "destructive" })
+                                        return
+                                      }
+                                      toast({ title: `Pagamento do pacote ${pkgCode} confirmado!`, description: "Todos os flats ativos foram quitados e liberados." })
+                                      await fetchData()
+                                      notifyCalendarUpdated()
+                                      setResModalOpen(false)
+                                    } finally {
+                                      setPkgActionLoading(false)
+                                    }
+                                  }}
+                                  className="h-7 px-2 text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
+                                >
+                                  <CheckCircle2 className="w-3 h-3" />
+                                  <span>Quitar Pacote</span>
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Lista rápida dos flats irmãos no pacote */}
+                          {pkgSiblings.length > 1 && (
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {pkgSiblings.map((sib: any) => {
+                                const isCurrent = Number(sib.id) === Number(selectedRes.id)
+                                const isCanceled = ["cancelada", "cancelled", "expirada"].includes(String(sib.status || "").toLowerCase())
+                                return (
+                                  <button
+                                    key={sib.id}
+                                    type="button"
+                                    onClick={() => handleOpenEditRes(sib)}
+                                    className={cn(
+                                      "px-2 py-1 rounded-lg border text-[11px] font-semibold transition-colors",
+                                      isCurrent
+                                        ? "bg-indigo-600 text-white border-indigo-700"
+                                        : isCanceled
+                                          ? "bg-slate-100 dark:bg-slate-900 text-muted-foreground line-through border-slate-200 dark:border-slate-800"
+                                          : "bg-white dark:bg-slate-900 text-foreground border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100/50"
+                                    )}
+                                  >
+                                    Flat {sib.flatNumber || sib.flatId} • R$ {Number(sib.totalAmount || 0).toFixed(2)}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          )}
+
+                          {/* Ações consolidadas: 1 NFS-e Única (CPF/CNPJ), 1 Boleto Único, Cancelar só este flat */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-indigo-200/70 dark:border-indigo-800/60">
+                            <span className="text-[11px] text-muted-foreground">
+                              {hasUnpaidSibling
+                                ? "Editar datas/diária deste flat recalcula automaticamente o mesmo PIX único."
+                                : "Pacote quitado • Hóspedes recebem instruções individuais sem valores."}
+                            </span>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setPkgEditNfseOpen((v) => !v)
+                                  setPkgEditCancelOpen(false)
+                                }}
+                                className="h-7 px-2 text-[11px] font-bold gap-1"
+                              >
+                                <FileText className="w-3 h-3" />
+                                <span>1 NFS-e Única</span>
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={pkgActionLoading}
+                                onClick={async () => {
+                                  setPkgActionLoading(true)
+                                  try {
+                                    const r = await fetch("/api/boletos/emit", {
+                                      method: "POST",
+                                      headers: { "Content-Type": "application/json" },
+                                      credentials: "include",
+                                      body: JSON.stringify({
+                                        reservationId: selectedRes.id,
+                                        packageId: pkgCode,
+                                        consolidatePackage: true,
+                                      }),
+                                    })
+                                    const j = await r.json().catch(() => ({}))
+                                    if (!r.ok) {
+                                      toast({ title: "Não foi possível emitir boleto único", description: j.error || "Verifique CPF/CNPJ do solicitante.", variant: "destructive" })
+                                      return
+                                    }
+                                    toast({ title: "Boleto único do pacote emitido!", description: `Total consolidado: R$ ${pkgTotalVal.toFixed(2)}` })
+                                    await fetchData()
+                                  } finally {
+                                    setPkgActionLoading(false)
+                                  }
+                                }}
+                                className="h-7 px-2 text-[11px] font-bold gap-1"
+                              >
+                                <CreditCard className="w-3 h-3" />
+                                <span>1 Boleto Único</span>
+                              </Button>
+                              {activeSiblings.length >= 2 && (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setPkgEditCancelOpen((v) => {
+                                      const nextOpen = !v
+                                      if (nextOpen && !String(pkgEditRefundAmount || "").trim()) {
+                                        setPkgEditRefundAmount(String(Number(selectedRes.paidAmount || selectedRes.totalAmount || 0).toFixed(2)))
+                                      }
+                                      return nextOpen
+                                    })
+                                    setPkgEditNfseOpen(false)
+                                  }}
+                                  className="h-7 px-2 text-[11px] font-bold border-rose-300 text-rose-700 dark:text-rose-300 gap-1"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                  <span>Cancelar Só Este Flat</span>
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Painel inline: Emitir 1 NFS-e Única do Pacote (CPF ou CNPJ) */}
+                          {pkgEditNfseOpen && (
+                            <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 space-y-2">
+                              <div className="font-bold text-xs">Emitir 1 NFS-e Consolidada de Todo o Pacote (CPF ou CNPJ)</div>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <Input
+                                  value={pkgEditNfseDoc}
+                                  onChange={(e) => setPkgEditNfseDoc(e.target.value)}
+                                  placeholder="CPF (11 dígitos) ou CNPJ (14 dígitos)"
+                                  className="h-8 text-xs"
+                                />
+                                <Input
+                                  value={pkgEditNfseName}
+                                  onChange={(e) => setPkgEditNfseName(e.target.value)}
+                                  placeholder="Nome Completo ou Razão Social"
+                                  className="h-8 text-xs"
+                                />
+                              </div>
+                              <div className="flex justify-end gap-2">
+                                <Button type="button" variant="ghost" size="sm" onClick={() => setPkgEditNfseOpen(false)} className="h-7 text-xs">
+                                  Fechar
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  disabled={pkgActionLoading}
+                                  onClick={async () => {
+                                    setPkgActionLoading(true)
+                                    try {
+                                      const r = await fetch("/api/nfse/emit-consolidated", {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json" },
+                                        credentials: "include",
+                                        body: JSON.stringify({
+                                          packageId: pkgCode,
+                                          tomadorCpfCnpj: pkgEditNfseDoc,
+                                          tomadorDocumento: pkgEditNfseDoc,
+                                          tomadorNome: pkgEditNfseName,
+                                        }),
+                                      })
+                                      const j = await r.json().catch(() => ({}))
+                                      if (!r.ok) {
+                                        toast({ title: "Erro ao emitir NFS-e consolidada", description: j.error || "Verifique CPF/CNPJ.", variant: "destructive" })
+                                        return
+                                      }
+                                      toast({ title: "NFS-e única do pacote emitida!", description: `Protocolo/Nota gerada para ${pkgCode}.` })
+                                      setPkgEditNfseOpen(false)
+                                      await fetchData()
+                                    } finally {
+                                      setPkgActionLoading(false)
+                                    }
+                                  }}
+                                  className="h-7 text-xs font-bold bg-indigo-600 text-white"
+                                >
+                                  Emitir 1 NFS-e (R$ {pkgTotalVal.toFixed(2)})
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Painel inline: Cancelar Apenas Este Flat */}
+                          {pkgEditCancelOpen && (
+                            <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 space-y-2">
+                              <div className="font-bold text-rose-900 dark:text-rose-200 text-xs">
+                                Cancelar apenas o Flat {selectedRes.flatNumber || selectedRes.flatId} mantendo os demais ativos
+                              </div>
+                              {isCurrentFlatPaid ? (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
+                                  <div>
+                                    <Label className="text-[11px] font-semibold">Tratamento financeiro deste flat pago:</Label>
+                                    <select
+                                      value={pkgEditRefundResolution}
+                                      onChange={(e) => setPkgEditRefundResolution(e.target.value as any)}
+                                      className="mt-0.5 w-full h-8 rounded-lg border border-rose-300 bg-white dark:bg-slate-900 px-2 text-xs font-semibold"
+                                    >
+                                      <option value="partial_refund">Estorno Parcial ao Solicitante</option>
+                                      <option value="credit">Converter em Crédito de Hospedagem</option>
+                                      <option value="no_refund">Sem Reembolso (Retenção)</option>
+                                    </select>
+                                  </div>
+                                  {pkgEditRefundResolution !== "no_refund" && (
+                                    <div>
+                                      <Label className="text-[11px] font-semibold">Valor do Estorno / Crédito (R$):</Label>
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        value={pkgEditRefundAmount}
+                                        onChange={(e) => setPkgEditRefundAmount(e.target.value)}
+                                        className="h-8 text-xs mt-0.5 bg-white dark:bg-slate-900"
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <p className="text-[11px] text-rose-800 dark:text-rose-300">
+                                  Como o pacote ainda não foi pago, os outros flats permanecerão ativos e o mesmo PIX único será recalculado automaticamente.
+                                </p>
+                              )}
+                              <div className="flex justify-end gap-2">
+                                <Button type="button" variant="ghost" size="sm" onClick={() => setPkgEditCancelOpen(false)} className="h-7 text-xs">
+                                  Voltar
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="destructive"
+                                  size="sm"
+                                  disabled={pkgActionLoading}
+                                  onClick={async () => {
+                                    setPkgActionLoading(true)
+                                    try {
+                                      const r = await fetch(`/api/pms/reservations/${selectedRes.id}/cancel-package-item`, {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json" },
+                                        credentials: "include",
+                                        body: JSON.stringify({
+                                          refundResolution: isCurrentFlatPaid ? pkgEditRefundResolution : "unpaid_recalc",
+                                          refundAmount: String(pkgEditRefundAmount ?? "").trim() !== ""
+                                            ? Math.max(0, Number(String(pkgEditRefundAmount).replace(",", ".")) || 0)
+                                            : Number(selectedRes.paidAmount || selectedRes.totalAmount || 0),
+                                          reason: "Cancelamento individual de flat dentro do pacote multi-flat",
+                                        }),
+                                      })
+                                      const j = await r.json().catch(() => ({}))
+                                      if (!r.ok) {
+                                        toast({ title: "Erro ao cancelar flat do pacote", description: j.error || "Tente novamente.", variant: "destructive" })
+                                        return
+                                      }
+                                      toast({
+                                        title: `Flat ${selectedRes.flatNumber || selectedRes.flatId} removido do pacote ${pkgCode}`,
+                                        description: isCurrentFlatPaid
+                                          ? "Os demais flats seguem confirmados e pagos."
+                                          : `PIX único recalculado para R$ ${Number(j.summary?.totalAmount ?? j.packageSummary?.totalAmount ?? 0).toFixed(2)}.`,
+                                      })
+                                      setPkgEditCancelOpen(false)
+                                      setResModalOpen(false)
+                                      await fetchData()
+                                      notifyCalendarUpdated()
+                                    } finally {
+                                      setPkgActionLoading(false)
+                                    }
+                                  }}
+                                  className="h-7 text-xs font-bold"
+                                >
+                                  Confirmar Cancelamento Deste Flat
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })()}
+                  </div>
+                )}
+
+                {(resModalTab === "reservation" || resModalTab === "details") && (
+
+              <div className={cn("py-2.5 space-y-3", !selectedRes && isMultiFlatPackageMode && "hidden")}>
                 {/* Banner de Alerta para Equipe: Hóspede com apontamento de Fumante */}
                 {(selectedRes?.isSmoker || selectedRes?.smokerGuestAlert) && (
                   <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border-2 border-rose-300 dark:border-rose-800 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-xs">
@@ -10177,7 +11394,7 @@ export default function PmsCalendar(props?: {
                               size="sm"
                               variant="outline"
                               onClick={() => {
-                                const code = selectedRes.code || selectedRes.b2bReservationNumber || selectedRes.id
+                                const code = selectedRes.packageCode || selectedRes.code || selectedRes.b2bReservationNumber || selectedRes.id
                                 const url = `${window.location.origin}/credenciamento/${encodeURIComponent(String(code))}`
                                 navigator.clipboard.writeText(url)
                                 toast({ title: "Link de Credenciamento Copiado!", description: url })
@@ -10353,7 +11570,7 @@ export default function PmsCalendar(props?: {
                           </span>
                           <button
                             type="button"
-                            onClick={handleOpenNewCompanyModal}
+                            onClick={() => handleOpenNewCompanyModal("b2b_client")}
                             className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold flex items-center gap-1 cursor-pointer"
                           >
                             <Plus className="w-3 h-3" /> Cadastrar Empresa
@@ -13427,7 +14644,22 @@ export default function PmsCalendar(props?: {
               )}
 
               {/* ABA: Pagamento & Diárias */}
-              {resModalTab === "payments" && (
+              {resModalTab === "payments" && !selectedRes && isMultiFlatPackageMode && (
+                <div className="py-4">
+                  <div className="p-4 rounded-2xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-950/30 flex items-center justify-between gap-3 text-xs">
+                    <div>
+                      <div className="font-bold text-slate-900 dark:text-slate-100">Precificação Consolidada do Pacote Multi-Flat</div>
+                      <p className="text-muted-foreground mt-0.5">
+                        As diárias por flat, descontos (R$ / %) e valor fechado com rateio automático são configurados diretamente na aba principal do pacote.
+                      </p>
+                    </div>
+                    <Button type="button" size="sm" onClick={() => setResModalTab("reservation")} className="text-xs font-bold shrink-0">
+                      Voltar ao Pacote
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {resModalTab === "payments" && !(!selectedRes && isMultiFlatPackageMode) && (
                 <div className="py-2 space-y-3.5">
                   {/* 1. Cockpit Financeiro: Barra de Indicadores Unificada */}
                   {(() => {
@@ -14154,13 +15386,22 @@ export default function PmsCalendar(props?: {
                             variant="outline"
                             size="sm"
                             onClick={() => {
-                              const link = `https://corpflats.com.br/minha-reserva/${selectedRes.code || selectedRes.id}`;
+                              const origin = typeof window !== "undefined" ? window.location.origin : "https://corpflats.com.br";
+                              const pkgCodeLink = selectedRes.packageCode || selectedRes.packageId;
+                              const link = pkgCodeLink
+                                ? `${origin}/minha-reserva/${encodeURIComponent(String(pkgCodeLink))}?requester=1`
+                                : `${origin}/minha-reserva/${selectedRes.code || selectedRes.id}`;
                               navigator.clipboard.writeText(link);
-                              toast({ title: "Link Copiado!", description: "Link do hóspede copiado para a área de transferência." });
+                              toast({
+                                title: pkgCodeLink ? "Link Financeiro do Pacote Copiado!" : "Link Copiado!",
+                                description: pkgCodeLink
+                                  ? `Recibo/Portal único do Solicitante (${pkgCodeLink}) copiado.`
+                                  : "Link do hóspede copiado para a área de transferência."
+                              });
                             }}
                             className="h-7 px-2 text-[11px] bg-white dark:bg-slate-900 border-slate-300 cursor-pointer"
                           >
-                            <Copy className="w-3 h-3 mr-1" /> Copiar Link
+                            <Copy className="w-3 h-3 mr-1" /> {selectedRes.packageCode ? "Link Recibo Pacote" : "Copiar Link"}
                           </Button>
 
                           <Button
@@ -14747,7 +15988,11 @@ export default function PmsCalendar(props?: {
                   </Button>
                   <Button type="submit" size="sm" disabled={savingRes} className="font-bold text-xs bg-primary hover:bg-primary/90 text-primary-foreground min-w-[100px] shadow-sm">
                     {savingRes ? <RefreshCw className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
-                    {selectedRes ? "Salvar Alterações" : "Criar Reserva"}
+                    {selectedRes
+                      ? "Salvar Alterações"
+                      : isMultiFlatPackageMode
+                        ? `Criar Pacote (${packageFlatsDraft.length} Flats)`
+                        : "Criar Reserva"}
                   </Button>
                 </div>
               </DialogFooter>
@@ -15116,7 +16361,7 @@ export default function PmsCalendar(props?: {
                             size="sm"
                             variant="outline"
                             onClick={() => {
-                              const code = selectedRes.code || selectedRes.b2bReservationNumber || selectedRes.id;
+                              const code = selectedRes.packageCode || selectedRes.code || selectedRes.b2bReservationNumber || selectedRes.id;
                               const url = `${window.location.origin}/credenciamento/${encodeURIComponent(String(code))}`;
                               const agName = selectedRes.requesterInfo?.name || selectedRes.requesterName || selectedRes.agencyTradeName || selectedRes.agencyName || formAgencyName || "Solicitante";
                               const b2bNum = selectedRes.b2bReservationNumber || formB2bReservationNumber || code;
@@ -15143,7 +16388,7 @@ export default function PmsCalendar(props?: {
                             size="sm"
                             variant="outline"
                             onClick={() => {
-                              const code = selectedRes.code || selectedRes.b2bReservationNumber || selectedRes.id;
+                              const code = selectedRes.packageCode || selectedRes.code || selectedRes.b2bReservationNumber || selectedRes.id;
                               const url = `${window.location.origin}/credenciamento/${encodeURIComponent(String(code))}`;
                               const agName = selectedRes.requesterInfo?.name || selectedRes.requesterName || selectedRes.agencyTradeName || selectedRes.agencyName || formAgencyName || "Solicitante";
                               const b2bNum = selectedRes.b2bReservationNumber || formB2bReservationNumber || code;
@@ -15167,7 +16412,7 @@ export default function PmsCalendar(props?: {
                         <div className="font-semibold text-foreground flex items-center justify-between gap-2 flex-wrap">
                           <span>Mensagem & Link enviados para a Agência ({selectedRes.b2bCredentialEmailRecipient || selectedRes.agencyAgentEmail || "E-mail da Agência"}):</span>
                           <a
-                            href={`/credenciamento/${encodeURIComponent(String(selectedRes.code || selectedRes.id))}`}
+                            href={`/credenciamento/${encodeURIComponent(String(selectedRes.packageCode || selectedRes.code || selectedRes.id))}`}
                             target="_blank"
                             rel="noreferrer"
                             className="text-purple-700 dark:text-purple-300 underline font-mono text-[10.5px]"
@@ -15188,7 +16433,7 @@ Confirmamos com muita satisfação a reserva #${selectedRes.b2bReservationNumber
 
 ⚠️ IMPORTANTE — LIBERAÇÃO ANTECIPADA NA RECEPÇÃO:
 Como ainda não temos o contato direto do hóspede na reserva, pedimos que preencha antecipadamente os dados dele(a) (Nome Completo, CPF, WhatsApp e E-mail) pelo nosso link seguro para gerarmos a liberação na recepção e enviarmos as instruções de acesso:
-👉 ${window.location.origin}/credenciamento/${encodeURIComponent(String(selectedRes.code || selectedRes.id))}
+👉 ${window.location.origin}/credenciamento/${encodeURIComponent(String(selectedRes.packageCode || selectedRes.code || selectedRes.id))}
 
 Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora no balcão, pois sem o credenciamento prévio pelo link a recepção não conseguirá localizar a reserva nem autorizar a entrada.`}
                         </div>
@@ -15717,21 +16962,61 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
             {selectedRes && resModalTab === "links" && (() => {
               const origin = typeof window !== "undefined" ? window.location.origin : "https://corpflats.com.br"
               const resCode = selectedRes.code || selectedRes.id
+              const pkgCode = String(selectedRes.packageCode || selectedRes.packageId || "").trim()
               const guestName = selectedRes.guestName || "Hóspede"
               const flatNum = selectedRes.flatNumber || ""
-              const guestPhone = (selectedRes.guestPhone || "").replace(/\D/g, "")
-              const waPhone = cleanWhatsAppPhone(selectedRes.guestPhone || "")
+              const waGuestPhone = cleanWhatsAppPhone(selectedRes.guestPhone || "")
+              const waReqPhone = cleanWhatsAppPhone(selectedRes.requesterInfo?.phone || selectedRes.requesterPhone || "")
+              const waPhone = waGuestPhone || waReqPhone
 
               const checkinUrl = getCheckinUrl(selectedRes, 1, origin, settings)
 
               const linksList = [
+                ...(pkgCode
+                  ? [
+                      {
+                        id: "pagamento",
+                        title: "Pagamento & Extrato Único do Pacote (Solicitante)",
+                        url: `${origin}/minha-reserva/${encodeURIComponent(pkgCode)}?requester=1`,
+                        desc: `Portal financeiro consolidado do pacote ${pkgCode} para o solicitante/pagador quitar via PIX/Cartão e baixar 1 recibo único.`,
+                        icon: CreditCard,
+                        badge: `Pacote ${pkgCode}`,
+                        badgeColor: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-300",
+                        iconColor: "text-indigo-600 bg-indigo-100 dark:bg-indigo-950/60 dark:text-indigo-400",
+                      },
+                      {
+                        id: "copiar_pix_pacote",
+                        title: "Copiar PIX Único do Pacote (1-Clique)",
+                        url: `${origin}/copiar-pix/${encodeURIComponent(pkgCode)}`,
+                        desc: `Atalho direto para copiar o código PIX Copia e Cola consolidado de todos os flats ativos do pacote ${pkgCode}.`,
+                        icon: CreditCard,
+                        badge: "PIX Único",
+                        badgeColor: "bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-300",
+                        iconColor: "text-purple-600 bg-purple-100 dark:bg-purple-950/60 dark:text-purple-400",
+                      },
+                      {
+                        id: "credenciamento_pacote",
+                        title: "Link Único de Cadastro de Hóspedes (1 e 2)",
+                        url: `${origin}/credenciamento/${encodeURIComponent(pkgCode)}`,
+                        desc: `Formulário único para o solicitante cadastrar Hóspede 1 e Hóspede 2 de cada flat do pacote ${pkgCode}.`,
+                        icon: Users,
+                        badge: "Credenciamento",
+                        badgeColor: "bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-300",
+                        iconColor: "text-amber-600 bg-amber-100 dark:bg-amber-950/60 dark:text-amber-400",
+                      },
+                    ]
+                  : []),
                 {
                   id: "portal",
-                  title: "Minha Reserva (Portal do Hóspede)",
+                  title: pkgCode
+                    ? "Portal Individual deste Flat (s/ valores)"
+                    : "Minha Reserva (Portal do Hóspede)",
                   url: `${origin}/minha-reserva/${resCode}`,
-                  desc: "Acesso completo à reserva: instruções de recepção 24h (cartão NFC), Wi-Fi, regras, pedidos de café e serviços.",
+                  desc: pkgCode
+                    ? "Portal exclusivo do hóspede deste flat SEM valores financeiros do pacote: recepção 24h (cartão NFC), Wi-Fi, regras, café e serviços."
+                    : "Acesso completo à reserva: instruções de recepção 24h (cartão NFC), Wi-Fi, regras, pedidos de café e serviços.",
                   icon: User,
-                  badge: "Completo",
+                  badge: pkgCode ? "Individual s/ Valores" : "Completo",
                   badgeColor: "bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-300",
                   iconColor: "text-sky-600 bg-sky-100 dark:bg-sky-950/60 dark:text-sky-400",
                 },
@@ -15765,16 +17050,20 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                   badgeColor: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-300",
                   iconColor: "text-emerald-600 bg-emerald-100 dark:bg-emerald-950/60 dark:text-emerald-400",
                 },
-                {
-                  id: "pagamento",
-                  title: "Pagamento & Extrato da Reserva",
-                  url: `${origin}/minha-reserva/${resCode}#pagamento`,
-                  desc: "Acesso direto à área de pagamento via Pix / Cartão e consulta de pendências financeiras.",
-                  icon: CreditCard,
-                  badge: "Financeiro",
-                  badgeColor: "bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-300",
-                  iconColor: "text-purple-600 bg-purple-100 dark:bg-purple-950/60 dark:text-purple-400",
-                },
+                ...(!pkgCode
+                  ? [
+                      {
+                        id: "pagamento",
+                        title: "Pagamento & Extrato da Reserva",
+                        url: `${origin}/minha-reserva/${resCode}#pagamento`,
+                        desc: "Acesso direto à área de pagamento via Pix / Cartão e consulta de pendências financeiras.",
+                        icon: CreditCard,
+                        badge: "Financeiro",
+                        badgeColor: "bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-300",
+                        iconColor: "text-purple-600 bg-purple-100 dark:bg-purple-950/60 dark:text-purple-400",
+                      },
+                    ]
+                  : []),
                 {
                   id: "maps",
                   title: "Localização no Google Maps",
@@ -15803,8 +17092,14 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                 const checkinBr = selectedRes.checkinDate ? String(selectedRes.checkinDate).substring(0, 10).split("-").reverse().join("/") : ""
                 const checkoutBr = selectedRes.checkoutDate ? String(selectedRes.checkoutDate).substring(0, 10).split("-").reverse().join("/") : ""
                 const periodLine = checkinBr && checkoutBr ? `📅 *Período:* ${checkinBr} a ${checkoutBr}\n` : ""
-                const text = `🏨 *CorpFlats - Resumo & Links da sua Estadia*\n🔑 *Reserva:* #${resCode}${flatNum ? ` (Flat ${flatNum})` : ""}\n👤 *Hóspede:* ${guestName}\n${periodLine}👥 *Total de Hóspedes:* ${guestsNum}\n📌 *Canal da Reserva:* ${channelLbl}\n\n` +
-                  `🌐 *Portal Minha Reserva:*\n${origin}/minha-reserva/${resCode}\n\n` +
+                const pkgHeaderLine = pkgCode
+                  ? `📦 *Pacote Multi-Flat:* ${pkgCode}${selectedRes.packageIndex && selectedRes.packageTotalFlats ? ` (${selectedRes.packageIndex}/${selectedRes.packageTotalFlats})` : ""}\n`
+                  : ""
+                const portalLabel = pkgCode
+                  ? `🔑 *Portal Individual deste Flat (s/ valores):*`
+                  : `🌐 *Portal Minha Reserva:*`
+                const text = `🏨 *CorpFlats - Resumo & Links da sua Estadia*\n🔑 *Reserva:* #${resCode}${flatNum ? ` (Flat ${flatNum})` : ""}\n${pkgHeaderLine}👤 *Hóspede:* ${guestName}\n${periodLine}👥 *Total de Hóspedes:* ${guestsNum}\n📌 *Canal da Reserva:* ${channelLbl}\n\n` +
+                  `${portalLabel}\n${origin}/minha-reserva/${resCode}\n\n` +
                   `📝 *Pré Check-in Digital:*\n${checkinUrl}\n\n` +
                   `☕ *Cardápio de Café da Manhã:*\n${origin}/cafe/${resCode}\n\n` +
                   `🚪 *Check-out Expresso:*\n${origin}/checkout/${resCode}\n\n` +
@@ -15819,14 +17114,22 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                 setTimeout(() => setCopiedLinkKey(null), 2500)
               }
 
-              const handleSendWa = async (url: string, title: string) => {
-                if (!waPhone) return
-                const msg = `Olá ${guestName}, aqui está o link de ${title} para sua estadia no Flat ${flatNum} (Reserva #${resCode}):\n\n${url}`
+              const requesterName = selectedRes.requesterInfo?.name || selectedRes.requesterName || guestName
+              const isPkgRequesterItem = (itemId: string) =>
+                Boolean(pkgCode) && (itemId === "pagamento" || itemId === "copiar_pix_pacote" || itemId === "credenciamento_pacote")
+
+              const handleSendWa = async (url: string, title: string, itemId: string) => {
+                const targetPhone = isPkgRequesterItem(itemId) ? (waReqPhone || waGuestPhone) : waPhone
+                const targetName = isPkgRequesterItem(itemId) ? requesterName : (waGuestPhone ? guestName : requesterName)
+                if (!targetPhone) return
+                const msg = isPkgRequesterItem(itemId)
+                  ? `Olá ${targetName}, aqui está o link de ${title} do pacote ${pkgCode}:\n\n${url}`
+                  : `Olá ${targetName}, aqui está o link de ${title} para sua estadia no Flat ${flatNum} (Reserva #${resCode}):\n\n${url}`
                 await sendDirectZapiWithFallback({
-                  phone: waPhone,
+                  phone: targetPhone,
                   message: msg,
-                  recipientName: guestName,
-                  reservationCode: String(resCode),
+                  recipientName: targetName,
+                  reservationCode: String(isPkgRequesterItem(itemId) ? pkgCode : resCode),
                   flatNumber: String(flatNum),
                   triggerEvent: "stay_link_manual",
                   label: `Link de ${title}`,
@@ -15839,10 +17142,15 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                   {/* Top Banner / Actions */}
                   <div className="p-4 bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50 dark:from-emerald-950/40 dark:via-teal-950/30 dark:to-sky-950/30 border border-emerald-200 dark:border-emerald-800 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <Badge variant="outline" className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-300 font-bold text-[11px]">
                           Reserva #{resCode}
                         </Badge>
+                        {pkgCode && (
+                          <Badge className="bg-indigo-600 text-white font-black text-[11px]">
+                            📦 {pkgCode}{selectedRes.packageIndex && selectedRes.packageTotalFlats ? ` (${selectedRes.packageIndex}/${selectedRes.packageTotalFlats})` : ""}
+                          </Badge>
+                        )}
                         {flatNum && (
                           <Badge variant="outline" className="bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-300 font-bold text-[11px]">
                             Flat {flatNum}
@@ -15949,10 +17257,14 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                                   variant="ghost"
                                   size="sm"
                                   {...bindZapiClickOrHoldWaWeb({
-                                    onClickZapi: () => handleSendWa(item.url, item.title),
+                                    onClickZapi: () => handleSendWa(item.url, item.title, item.id),
                                     getWaUrl: () => {
-                                      const msg = `Olá ${guestName}, aqui está o link de ${item.title} para sua estadia no Flat ${flatNum} (Reserva #${resCode}):\n\n${item.url}`
-                                      return buildDirectWaWebUrl(waPhone, msg)
+                                      const targetPhone = isPkgRequesterItem(item.id) ? (waReqPhone || waGuestPhone) : waPhone
+                                      const targetName = isPkgRequesterItem(item.id) ? requesterName : (waGuestPhone ? guestName : requesterName)
+                                      const msg = isPkgRequesterItem(item.id)
+                                        ? `Olá ${targetName}, aqui está o link de ${item.title} do pacote ${pkgCode}:\n\n${item.url}`
+                                        : `Olá ${targetName}, aqui está o link de ${item.title} para sua estadia no Flat ${flatNum} (Reserva #${resCode}):\n\n${item.url}`
+                                      return buildDirectWaWebUrl(targetPhone, msg)
                                     },
                                     toast
                                   })}
@@ -17335,6 +18647,11 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                           <Badge variant="outline" className="font-mono text-[10px] font-bold">
                             {expRes.code}
                           </Badge>
+                          {expRes.packageCode && (
+                            <Badge className="bg-indigo-600 text-white text-[10px] font-black">
+                              📦 {expRes.packageCode}{expRes.packageIndex && expRes.packageTotalFlats ? ` (${expRes.packageIndex}/${expRes.packageTotalFlats})` : ""}
+                            </Badge>
+                          )}
                           {isExpExt && (
                             <Badge className="bg-amber-500 text-slate-950 text-[10px] font-black">
                               ➕ Diária Extra Expirada
@@ -17403,6 +18720,101 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                 Fechar
               </Button>
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ── MODAL DE CONFIRMAÇÃO EXPLÍCITA DE REATIVAÇÃO DE PACOTE MULTI-FLAT EXPIRADO ── */}
+        <Dialog
+          open={Boolean(pkgReactivateTarget)}
+          onOpenChange={(open) => {
+            if (!open) handleClosePkgReactivateModal()
+          }}
+        >
+          <DialogContent className="sm:max-w-lg bg-card border border-border rounded-3xl p-5">
+            {pkgReactivateTarget && (() => {
+              const pkgCodeExp = String(pkgReactivateTarget.packageCode || pkgReactivateTarget.packageId || "")
+              const expiredSiblings = (data.expiredPreReservations || []).filter(
+                (r: any) => String(r.packageCode || r.packageId || "") === pkgCodeExp
+              )
+              const allSiblings = [
+                ...expiredSiblings,
+                ...(data.reservations || []).filter(
+                  (r: any) =>
+                    String(r.packageCode || r.packageId || "") === pkgCodeExp &&
+                    !expiredSiblings.some((e: any) => String(e.id) === String(r.id))
+                ),
+              ]
+              const expiredCount = Math.max(1, expiredSiblings.length || Number(pkgReactivateTarget.packageTotalFlats) || 1)
+
+              return (
+                <>
+                  <DialogHeader className="border-b border-border pb-3">
+                    <DialogTitle className="text-base sm:text-lg font-black flex items-center gap-2 text-foreground">
+                      <RotateCcw className="w-5 h-5 text-indigo-600 shrink-0" />
+                      <span>Reativar Pré-Reserva do Pacote {pkgCodeExp}</span>
+                    </DialogTitle>
+                    <DialogDescription className="text-xs text-muted-foreground">
+                      Esta pré-reserva (<strong>Flat {pkgReactivateTarget.flatNumber || pkgReactivateTarget.flatId}</strong>) faz parte do pacote multi-flat{" "}
+                      <strong>📦 {pkgCodeExp}</strong> ({allSiblings.length || expiredCount} flat(s) vinculado(s)). Escolha como deseja reativar:
+                    </DialogDescription>
+                  </DialogHeader>
+
+                  <div className="space-y-2.5 py-2 text-xs">
+                    <div className="p-3 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 space-y-1">
+                      <div className="font-bold text-indigo-950 dark:text-indigo-200">
+                        📦 Opção 1 — Reativar Pacote Todo ({expiredCount} flat(s) expirado(s))
+                      </div>
+                      <p className="text-[11px] text-indigo-900/80 dark:text-indigo-300/80">
+                        Reativa todos os flats expirados deste pacote de uma só vez e gera 1 novo PIX único consolidado para o solicitante (prazo de 30 min).
+                      </p>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-muted/40 border border-border space-y-1">
+                      <div className="font-bold text-foreground">
+                        🏢 Opção 2 — Reativar Só Este Flat (Flat {pkgReactivateTarget.flatNumber || pkgReactivateTarget.flatId})
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        Reativa somente este apartamento ({pkgReactivateTarget.code}), mantendo os demais flats expirados como estão e recalculando o PIX apenas para os flats ativos.
+                      </p>
+                    </div>
+                  </div>
+
+                  <DialogFooter className="pt-3 border-t border-border flex flex-col-reverse sm:flex-row sm:justify-between gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={pkgReactivatingBusy}
+                      onClick={handleClosePkgReactivateModal}
+                      className="rounded-xl text-xs font-bold"
+                    >
+                      Voltar / Cancelar
+                    </Button>
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={pkgReactivatingBusy}
+                        onClick={() => executePackageReactivate(false)}
+                        className="rounded-xl text-xs font-bold border-amber-400 text-amber-800 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40"
+                      >
+                        Reativar Só Este Flat
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={pkgReactivatingBusy}
+                        onClick={() => executePackageReactivate(true)}
+                        className="rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white"
+                      >
+                        {pkgReactivatingBusy ? "Reativando..." : "Reativar Pacote Todo"}
+                      </Button>
+                    </div>
+                  </DialogFooter>
+                </>
+              )
+            })()}
           </DialogContent>
         </Dialog>
 

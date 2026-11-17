@@ -33,7 +33,12 @@ import {
   ShieldCheck,
   Smartphone,
   Download,
-  LogOut
+  LogOut,
+  ArrowUpDown,
+  Eye,
+  Gift,
+  Wrench,
+  Pencil
 } from "lucide-react";
 import {
   testVoiceAnnouncement,
@@ -64,6 +69,7 @@ import {
 } from "@/components/ui/dialog";
 
 export interface DailyLaunchGroup {
+  date?: string;
   dateYmd: string;
   dateBr: string;
   items: Array<{
@@ -76,7 +82,10 @@ export interface DailyLaunchGroup {
     quantity: number;
     unitPrice: number;
     totalPrice: number;
+    nominalValue?: number;
     isCourtesy?: boolean;
+    isInternalAdjustment?: boolean;
+    supplierOrigin?: string;
     paymentStatus: string;
     launchedByName?: string;
   }>;
@@ -103,12 +112,53 @@ export interface CheckoutSummaryData {
   }>;
 }
 
+export interface ConsumedCourtesyItem {
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  isCourtesy: boolean;
+  supplierOrigin?: string;
+}
+
 export interface FlatStatusItem {
   flatNumber: string;
   colName?: string;
-  status: "checkout_hoje" | "ocupado" | "livre";
+  status: "checkout_hoje" | "entrada_hoje" | "ocupado" | "livre";
+  scheduledCheckinTime?: string | null;
   isCheckedOut?: boolean;
   checkoutTime?: string;
+  previousCheckoutInspectedToday?: {
+    reservationCode: string;
+    guestName: string;
+    checkoutTime?: string | null;
+    inspectedAt?: string | null;
+    inspectorName?: string;
+  } | null;
+  nextCheckinTodayReservation?: {
+    code: string;
+    guestName: string;
+    scheduledCheckinTime?: string;
+  } | null;
+  lastDepartedReservation?: {
+    id?: number | string;
+    code: string;
+    guestName: string;
+    checkIn?: string;
+    checkOut?: string;
+    checkOutBr?: string;
+    totalLaunchedAmount?: number;
+    pendingBalance?: number;
+    dailyLaunches?: DailyLaunchGroup[];
+    consumedCourtesyItems?: ConsumedCourtesyItem[];
+    welcomeKitSummary?: {
+      waterCupsConsumed: number;
+      peanutsConsumed: number;
+      totalCourtesyValue: number;
+    };
+  } | null;
+  linkedCorrectionToday?: boolean;
   guestDoNotDisturb?: boolean;
   guestDoNotDisturbMode?: "today" | "stay" | null;
   guestDoNotDisturbScope?: "all" | "anserve_only" | null;
@@ -128,6 +178,7 @@ export interface FlatStatusItem {
     numGuests?: number;
     checkIn?: string;
     checkOut?: string;
+    checkinTime?: string;
     phone?: string;
     isCheckedOut?: boolean;
     checkoutTime?: string;
@@ -137,6 +188,16 @@ export interface FlatStatusItem {
   totalPaidAmount?: number;
   pendingBalance?: number;
   dailyLaunches?: DailyLaunchGroup[];
+  consumedCourtesyItems?: ConsumedCourtesyItem[];
+  welcomeKitSummary?: {
+    waterCupsConsumed: number;
+    peanutsConsumed: number;
+    totalCourtesyValue: number;
+  };
+  internalWelcomeKitToday?: {
+    waterCups: number;
+    mendoratoPeanuts: number;
+  } | null;
   declaredItemsByProduct?: Record<string, number>;
   lastInspection?: {
     id: string;
@@ -145,12 +206,17 @@ export interface FlatStatusItem {
     launchDateBr?: string;
     inspectorName?: string;
     status: string;
+    unoccupiedLaunchMode?: "internal_adjustment" | "link_last_reservation" | null;
     isDailyLaunch?: boolean;
     discrepancyTotalAmount?: number;
+    internalAdjustmentTotalAmount?: number;
     notes?: string;
   } | null;
   defaultStock?: Array<{ productId: string; quantity: number }> | Record<string, number>;
 }
+
+export type RestockerSortMode = "prioridade" | "menor_maior" | "maior_menor";
+export type UnoccupiedLaunchMode = "internal_adjustment" | "link_last_reservation";
 
 export interface MinibarProduct {
   id: string;
@@ -167,6 +233,7 @@ const ANSERVE_TOKEN_KEY = "corpflats_anserve_token";
 const ANSERVE_SHIFT_DATE_KEY = "corpflats_anserve_shift_date";
 const ANSERVE_SHIFT_STARTED_AT_KEY = "corpflats_anserve_shift_started_at";
 const ANSERVE_KIOSK_MODE_KEY = "corpflats_anserve_kiosk_mode";
+const ANSERVE_SORT_MODE_KEY = "corpflats_anserve_sort_mode";
 
 function getTodayYmdBr(): string {
   try {
@@ -331,14 +398,35 @@ export default function AnserveRestockPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Filters
-  const [statusFilter, setStatusFilter] = useState<"todos" | "checkout_hoje" | "ocupado" | "livre" | "pendentes_hoje" | "conferidos_hoje">("todos");
+  // Filters & Sorting (combináveis e com preferência salva no aparelho)
+  const [statusFilter, setStatusFilter] = useState<
+    "todos" | "checkout_hoje" | "entrada_hoje" | "ocupado" | "livre" | "pendentes_hoje" | "conferidos_hoje"
+  >("todos");
+  const [sortMode, setSortMode] = useState<RestockerSortMode>(() => {
+    if (typeof window === "undefined") return "prioridade";
+    try {
+      const saved = localStorage.getItem(ANSERVE_SORT_MODE_KEY);
+      if (saved === "menor_maior" || saved === "maior_menor" || saved === "prioridade") {
+        return saved;
+      }
+    } catch {}
+    return "prioridade";
+  });
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedFlatHistory, setExpandedFlatHistory] = useState<Record<string, boolean>>({});
 
+  const handleChangeSortMode = (nextSort: RestockerSortMode) => {
+    setSortMode(nextSort);
+    try {
+      localStorage.setItem(ANSERVE_SORT_MODE_KEY, nextSort);
+    } catch {}
+  };
+
   // Modals state
+  const [viewConsumptionModalFlat, setViewConsumptionModalFlat] = useState<FlatStatusItem | null>(null);
   const [semConsumoModalFlat, setSemConsumoModalFlat] = useState<FlatStatusItem | null>(null);
   const [launchModalFlat, setLaunchModalFlat] = useState<FlatStatusItem | null>(null);
+  const [unoccupiedLaunchMode, setUnoccupiedLaunchMode] = useState<UnoccupiedLaunchMode>("internal_adjustment");
   const [confirmSkipTarget, setConfirmSkipTarget] = useState<{
     flat: FlatStatusItem;
     type: "nq" | "np";
@@ -352,6 +440,7 @@ export default function AnserveRestockPage() {
   const [semConsumoCourtesyRestock, setSemConsumoCourtesyRestock] = useState(true);
   const [semConsumoWaterConsumed, setSemConsumoWaterConsumed] = useState<number>(0);
   const [semConsumoPeanutsConsumed, setSemConsumoPeanutsConsumed] = useState<number>(0);
+  const [semConsumoCourtesyCorrectionMode, setSemConsumoCourtesyCorrectionMode] = useState<boolean>(false);
 
   // "Lançar Consumo do Dia" form state
   const [launchDateYmd, setLaunchDateYmd] = useState<string>(getTodayYmdBr());
@@ -359,7 +448,16 @@ export default function AnserveRestockPage() {
   const [launchCourtesyRestock, setLaunchCourtesyRestock] = useState<boolean>(true);
   const [welcomeKitWaterConsumed, setWelcomeKitWaterConsumed] = useState<number>(0);
   const [welcomeKitPeanutsConsumed, setWelcomeKitPeanutsConsumed] = useState<number>(0);
+  const [launchCourtesyCorrectionMode, setLaunchCourtesyCorrectionMode] = useState<boolean>(false);
   const [launchNotes, setLaunchNotes] = useState("");
+
+  // Edição rápida de cortesia dentro da janelinha "Ver Consumo"
+  const [viewModalEditingTarget, setViewModalEditingTarget] = useState<
+    "current" | "internal" | "last_departed" | null
+  >(null);
+  const [viewModalEditWater, setViewModalEditWater] = useState<number>(0);
+  const [viewModalEditPeanuts, setViewModalEditPeanuts] = useState<number>(0);
+  const [savingCourtesyCorrection, setSavingCourtesyCorrection] = useState<boolean>(false);
   const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [radioModeOn, setRadioModeOn] = useState<boolean>(() => isRadioModeEnabled());
@@ -587,6 +685,7 @@ export default function AnserveRestockPage() {
       setShiftDate(null);
       setShiftStartedAt(null);
       setShiftExpiredBanner(true);
+      setViewConsumptionModalFlat(null);
       setSemConsumoModalFlat(null);
       setLaunchModalFlat(null);
       if (restockersList.length > 1) {
@@ -859,8 +958,19 @@ export default function AnserveRestockPage() {
     setPinError(null);
   };
 
+  // Mantém a janelinha "Ver Consumo" sincronizada em tempo real se os dados dos flats atualizarem
+  useEffect(() => {
+    if (!viewConsumptionModalFlat) return;
+    const updated = flats.find((f) => f.flatNumber === viewConsumptionModalFlat.flatNumber);
+    if (updated) {
+      setViewConsumptionModalFlat(updated);
+    }
+  }, [flats]);
+
   const isRealInspectedToday = (f: FlatStatusItem): boolean => {
-    if (f.hasRealInspectionToday) return true;
+    if (typeof f.hasRealInspectionToday === "boolean") return f.hasRealInspectionToday;
+    // Se já fez check-out hoje, somente conferência final pós-checkout conta como concluída
+    if (f.isCheckedOut) return false;
     const isSkip = f.lastInspection?.status === "nq" || f.lastInspection?.status === "np";
     if (!isSkip && f.lastInspection?.launchDate === todayYmd) return true;
     if (!isSkip && f.lastInspection?.inspectedAt && f.lastInspection.inspectedAt.slice(0, 10) === todayYmd) return true;
@@ -869,12 +979,12 @@ export default function AnserveRestockPage() {
   };
 
   const isSkippedToday = (f: FlatStatusItem): boolean => {
-    if (f.isCheckedOut) return false;
+    if (f.isCheckedOut || f.status === "livre" || f.status === "entrada_hoje") return false;
     return f.todaySkipStatus === "nq" || f.todaySkipStatus === "np";
   };
 
   const isGuestDndLocked = (f: FlatStatusItem): boolean => {
-    if (f.isCheckedOut) return false;
+    if (f.isCheckedOut || f.status === "livre" || f.status === "entrada_hoje") return false;
     return Boolean(f.guestDoNotDisturb);
   };
 
@@ -886,7 +996,8 @@ export default function AnserveRestockPage() {
     return isRealInspectedToday(f) || isSkippedToday(f);
   };
 
-  // Flat resolvido para não cobrar pendência na fila "Pendentes Hoje" (inclui Não Perturbe ativado pelo hóspede)
+  // Flat resolvido para não cobrar pendência na fila "Pendentes Hoje"
+  // Q3: Todos os flats (inclusive LIVRE e ENTRADA HOJE) entram em "Pendentes Hoje" até serem conferidos no dia
   const isResolvedForTodayQueue = (f: FlatStatusItem): boolean => {
     if (f.isCheckedOut) {
       return isRealInspectedToday(f);
@@ -898,16 +1009,16 @@ export default function AnserveRestockPage() {
   const stats = useMemo(() => {
     const total = flats.length;
     const checkoutHoje = flats.filter((f) => f.status === "checkout_hoje").length;
+    const entradaHoje = flats.filter((f) => f.status === "entrada_hoje").length;
     const ocupados = flats.filter((f) => f.status === "ocupado").length;
     const livres = flats.filter((f) => f.status === "livre").length;
-    const activeFlats = flats.filter((f) => f.status !== "livre");
     const conferidosHoje = flats.filter((f) => isInspectedToday(f)).length;
-    const pendentesHoje = activeFlats.filter((f) => !isResolvedForTodayQueue(f)).length;
-    const naoPerturbeHoje = activeFlats.filter((f) => isGuestDndLocked(f)).length;
-    return { total, checkoutHoje, ocupados, livres, conferidosHoje, pendentesHoje, naoPerturbeHoje };
+    const pendentesHoje = flats.filter((f) => !isResolvedForTodayQueue(f)).length;
+    const naoPerturbeHoje = flats.filter((f) => isGuestDndLocked(f)).length;
+    return { total, checkoutHoje, entradaHoje, ocupados, livres, conferidosHoje, pendentesHoje, naoPerturbeHoje };
   }, [flats, todayYmd]);
 
-  // Filtered flats list sorted by daily work priority
+  // Filtered flats list sorted by user-selected sortMode (combinável com qualquer filtro!)
   const filteredFlats = useMemo(() => {
     const getPriorityRank = (f: FlatStatusItem): number => {
       const doneToday = isInspectedToday(f);
@@ -918,20 +1029,24 @@ export default function AnserveRestockPage() {
       if (f.status === "checkout_hoje" && !doneToday && !dndLocked) return 1;
       // 2: Occupied & awaiting daily pass today
       if (f.status === "ocupado" && !doneToday && !dndLocked) return 2;
-      // 3: Guest DND Active (visível mas dispensado de entrada hoje)
-      if (dndLocked) return 3;
-      // 4: Checked out today & already inspected today
-      if (f.isCheckedOut && doneToday) return 4;
-      // 5: Checkout today or Occupied & already inspected/NQ/NP today
-      if ((f.status === "checkout_hoje" || f.status === "ocupado") && doneToday) return 5;
-      // 6: Vacant
-      return 6;
+      // 3: Entrada Hoje & awaiting preventive pass today
+      if (f.status === "entrada_hoje" && !doneToday) return 3;
+      // 4: Livre & awaiting preventive pass today
+      if (f.status === "livre" && !doneToday) return 4;
+      // 5: Guest DND Active (visível mas dispensado de entrada hoje)
+      if (dndLocked) return 5;
+      // 6: Checked out today & already inspected today
+      if (f.isCheckedOut && doneToday) return 6;
+      // 7: Checkout today, Occupied or Entrada Hoje & already inspected/NQ/NP today
+      if ((f.status === "checkout_hoje" || f.status === "ocupado" || f.status === "entrada_hoje") && doneToday) return 7;
+      // 8: Livre & already inspected today
+      return 8;
     };
 
     return flats
       .filter((f) => {
         if (statusFilter === "pendentes_hoje") {
-          if (f.status === "livre" || isResolvedForTodayQueue(f)) return false;
+          if (isResolvedForTodayQueue(f)) return false;
         } else if (statusFilter === "conferidos_hoje") {
           if (!isInspectedToday(f)) return false;
         } else if (statusFilter !== "todos" && f.status !== statusFilter) {
@@ -943,18 +1058,28 @@ export default function AnserveRestockPage() {
           const matchFlat = String(f.flatNumber).toLowerCase().includes(q);
           const matchGuest = f.currentReservation?.guestName?.toLowerCase().includes(q);
           const matchCode = f.currentReservation?.code?.toLowerCase().includes(q);
-          return matchFlat || matchGuest || matchCode;
+          const matchPrevGuest = f.previousCheckoutInspectedToday?.guestName?.toLowerCase().includes(q);
+          const matchLastDep =
+            f.lastDepartedReservation?.guestName?.toLowerCase().includes(q) ||
+            f.lastDepartedReservation?.code?.toLowerCase().includes(q);
+          return Boolean(matchFlat || matchGuest || matchCode || matchPrevGuest || matchLastDep);
         }
 
         return true;
       })
       .sort((a, b) => {
+        if (sortMode === "menor_maior") {
+          return Number(a.flatNumber) - Number(b.flatNumber);
+        }
+        if (sortMode === "maior_menor") {
+          return Number(b.flatNumber) - Number(a.flatNumber);
+        }
         const rankA = getPriorityRank(a);
         const rankB = getPriorityRank(b);
         if (rankA !== rankB) return rankA - rankB;
         return Number(a.flatNumber) - Number(b.flatNumber);
       });
-  }, [flats, statusFilter, searchQuery, todayYmd]);
+  }, [flats, statusFilter, sortMode, searchQuery, todayYmd]);
 
   // Photo capture
   const handlePhotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -980,20 +1105,135 @@ export default function AnserveRestockPage() {
   // Open "Sem Consumo / Repor" modal
   const handleOpenSemConsumo = (flat: FlatStatusItem) => {
     setSemConsumoModalFlat(flat);
+    setUnoccupiedLaunchMode("internal_adjustment");
     setSemConsumoNotes("");
     setSemConsumoWaterConsumed(0);
     setSemConsumoPeanutsConsumed(0);
+    setSemConsumoCourtesyCorrectionMode(false);
   };
 
   // Open "Lançar Consumo do Dia" modal
   const handleOpenLaunchConsumo = (flat: FlatStatusItem) => {
     setLaunchModalFlat(flat);
+    setUnoccupiedLaunchMode("internal_adjustment");
     setLaunchDateYmd(getTodayYmdBr());
     setLaunchedQuantities({});
     setWelcomeKitWaterConsumed(0);
     setWelcomeKitPeanutsConsumed(0);
+    setLaunchCourtesyCorrectionMode(false);
     setLaunchNotes("");
     setCapturedPhotos([]);
+  };
+
+  useEffect(() => {
+    setViewModalEditingTarget(null);
+  }, [viewConsumptionModalFlat?.flatNumber]);
+
+  const handleSaveViewModalCourtesyCorrection = async (
+    targetMode: "current" | "internal" | "last_departed" = "current"
+  ) => {
+    if (!viewConsumptionModalFlat) return;
+    const lastDep = viewConsumptionModalFlat.lastDepartedReservation;
+    if (targetMode === "last_departed" && !lastDep?.code) return;
+
+    setSavingCourtesyCorrection(true);
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (localToken) headers["x-anserve-token"] = localToken;
+
+      const payload: Record<string, unknown> = {
+        flatNumber: viewConsumptionModalFlat.flatNumber,
+        inspectedBy: inspectorName || user?.name || "Repositora Anserve",
+        inspectorId: selectedRestockerId || user?.id || undefined,
+        launchDate: getTodayYmdBr(),
+        welcomeKitConsumption: {
+          waterCups: viewModalEditWater,
+          mendoratoPeanuts: viewModalEditPeanuts
+        }
+      };
+
+      if (targetMode === "internal") {
+        payload.unoccupiedLaunchMode = "internal_adjustment";
+        payload.reservationCode = "";
+      } else if (targetMode === "last_departed" && lastDep) {
+        payload.unoccupiedLaunchMode = "link_last_reservation";
+        payload.reservationCode = lastDep.code;
+        payload.targetLastReservationCode = lastDep.code;
+      } else {
+        payload.reservationCode = viewConsumptionModalFlat.currentReservation?.code || "";
+      }
+
+      const res = await fetch("/api/minibar/inspections/courtesy-correction", {
+        method: "POST",
+        headers,
+        credentials: "include",
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setViewConsumptionModalFlat((prev) => {
+          if (!prev) return null;
+          if (targetMode === "last_departed" && prev.lastDepartedReservation) {
+            return {
+              ...prev,
+              lastDepartedReservation: {
+                ...prev.lastDepartedReservation,
+                welcomeKitSummary:
+                  data.statement?.welcomeKitSummary ?? prev.lastDepartedReservation.welcomeKitSummary,
+                consumedCourtesyItems:
+                  data.statement?.consumedCourtesyItems ?? prev.lastDepartedReservation.consumedCourtesyItems,
+                dailyLaunches:
+                  data.statement?.dailyLaunches ?? prev.lastDepartedReservation.dailyLaunches
+              }
+            };
+          }
+          if (targetMode === "internal") {
+            return {
+              ...prev,
+              internalWelcomeKitToday: data.internalWelcomeKitToday ?? {
+                waterCups: viewModalEditWater,
+                mendoratoPeanuts: viewModalEditPeanuts
+              }
+            };
+          }
+          return {
+            ...prev,
+            welcomeKitSummary: data.statement?.welcomeKitSummary ?? prev.welcomeKitSummary,
+            consumedCourtesyItems: data.statement?.consumedCourtesyItems ?? prev.consumedCourtesyItems,
+            dailyLaunches: data.statement?.dailyLaunches ?? prev.dailyLaunches
+          };
+        });
+        setViewModalEditingTarget(null);
+        toast({
+          title:
+            targetMode === "last_departed"
+              ? `Cortesias ajustadas na reserva ${lastDep?.code}! ✅`
+              : targetMode === "internal"
+              ? `Baixa interna de cortesia ajustada no Flat ${viewConsumptionModalFlat.flatNumber}! ✅`
+              : `Cortesias ajustadas no Flat ${viewConsumptionModalFlat.flatNumber}! ✅`,
+          description: `Total atualizado: 💧 ${viewModalEditWater}/2 Água • 🥜 ${viewModalEditPeanuts}/2 Amendoim (R$ 0,00).`
+        });
+        fetchData();
+      } else if (res.status === 401 || data?.code === "SHIFT_EXPIRED") {
+        setViewConsumptionModalFlat(null);
+        await handleSwitchRestocker({ expired: true });
+      } else {
+        toast({
+          title: "Não foi possível corrigir a cortesia",
+          description: data.error || "Tente novamente.",
+          variant: "destructive"
+        });
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro de comunicação",
+        description: err.message || "Falha na conexão com o servidor.",
+        variant: "destructive"
+      });
+    } finally {
+      setSavingCourtesyCorrection(false);
+    }
   };
 
   // Cálculo em tempo real do Lançamento Diário de Consumo
@@ -1128,6 +1368,36 @@ export default function AnserveRestockPage() {
   // Submit "Sem Consumo / Repor Cortesias"
   const handleSubmitSemConsumo = async () => {
     if (!semConsumoModalFlat) return;
+
+    const isUnoccupied =
+      semConsumoModalFlat.status === "livre" || semConsumoModalFlat.status === "entrada_hoje";
+    const targetSemSummary = isUnoccupied
+      ? unoccupiedLaunchMode === "link_last_reservation"
+        ? semConsumoModalFlat.lastDepartedReservation?.welcomeKitSummary
+        : null
+      : semConsumoModalFlat.welcomeKitSummary;
+    const savedSemWater = Math.min(2, Math.max(0, Number(targetSemSummary?.waterCupsConsumed) || 0));
+    const savedSemPeanuts = Math.min(2, Math.max(0, Number(targetSemSummary?.peanutsConsumed) || 0));
+    const hasCourtesyCorrection =
+      semConsumoCourtesyCorrectionMode &&
+      (semConsumoWaterConsumed !== savedSemWater || semConsumoPeanutsConsumed !== savedSemPeanuts);
+    const hasCourtesySelected =
+      semConsumoWaterConsumed > 0 || semConsumoPeanutsConsumed > 0 || hasCourtesyCorrection;
+
+    if (
+      isUnoccupied &&
+      hasCourtesySelected &&
+      unoccupiedLaunchMode === "link_last_reservation" &&
+      !semConsumoModalFlat.lastDepartedReservation
+    ) {
+      toast({
+        title: "Sem reserva anterior neste flat",
+        description: "Escolha 'Ocorrência / Ajuste Interno' para registrar a falta sem vínculo.",
+        variant: "destructive"
+      });
+      return;
+    }
+
     setSubmittingInspection(true);
 
     try {
@@ -1135,6 +1405,17 @@ export default function AnserveRestockPage() {
       if (localToken) headers["x-anserve-token"] = localToken;
 
       const isPostCheckout = Boolean(semConsumoModalFlat.isCheckedOut);
+      const effectiveUnoccupiedMode = isUnoccupied
+        ? hasCourtesySelected
+          ? unoccupiedLaunchMode
+          : "internal_adjustment"
+        : undefined;
+
+      const targetResCode = isUnoccupied
+        ? effectiveUnoccupiedMode === "link_last_reservation"
+          ? semConsumoModalFlat.lastDepartedReservation?.code || ""
+          : ""
+        : semConsumoModalFlat.currentReservation?.code || "";
 
       const res = await fetch("/api/minibar/inspections", {
         method: "POST",
@@ -1142,13 +1423,21 @@ export default function AnserveRestockPage() {
         credentials: "include",
         body: JSON.stringify({
           flatNumber: semConsumoModalFlat.flatNumber,
-          reservationCode: semConsumoModalFlat.currentReservation?.code || "",
+          reservationCode: targetResCode,
+          targetLastReservationCode:
+            isUnoccupied && effectiveUnoccupiedMode === "link_last_reservation"
+              ? semConsumoModalFlat.lastDepartedReservation?.code || ""
+              : undefined,
+          unoccupiedLaunchMode: effectiveUnoccupiedMode,
+          noActiveGuestInFlat: isUnoccupied ? true : undefined,
+          notifySofia: isUnoccupied ? false : undefined,
           inspectedBy: inspectorName || user?.name || "Repositora Anserve",
           inspectorId: selectedRestockerId || user?.id || undefined,
           status: "conforme",
           isDailyLaunch: false,
-          isFinalCheckoutInspection: isPostCheckout,
+          isFinalCheckoutInspection: isUnoccupied ? false : isPostCheckout,
           launchDate: getTodayYmdBr(),
+          welcomeKitMode: semConsumoCourtesyCorrectionMode ? "set_total" : undefined,
           welcomeKitConsumption: {
             waterCups: semConsumoWaterConsumed,
             mendoratoPeanuts: semConsumoPeanutsConsumed
@@ -1163,9 +1452,21 @@ export default function AnserveRestockPage() {
         toast({
           title: isPostCheckout
             ? "Conferência Final Pós-Checkout Concluída! ✅"
+            : isUnoccupied
+            ? `Conferência preventiva registrada no Flat ${semConsumoModalFlat.flatNumber}! ✅`
+            : hasCourtesyCorrection
+            ? "Correção de cortesia e passagem salvas! ✅"
+            : hasCourtesySelected
+            ? "Consumo de cortesia e passagem salvos! ✅"
             : "Passagem registrada com sucesso! ✅",
           description: data.whatsappSofiaAlertSent
             ? `Cobrança do saldo pendente (R$ ${Number(data.statement?.pendingBalance || 0).toFixed(2)}) enviada automaticamente para o WhatsApp do hóspede!`
+            : isUnoccupied
+            ? "Gravado apenas no sistema/relatório (nenhum WhatsApp disparado)."
+            : hasCourtesyCorrection
+            ? `Total de cortesias ajustado para 💧 ${semConsumoWaterConsumed}/2 • 🥜 ${semConsumoPeanutsConsumed}/2 no Flat ${semConsumoModalFlat.flatNumber}.`
+            : hasCourtesySelected
+            ? `Cortesias do Kit de Boas-Vindas registradas no extrato do Flat ${semConsumoModalFlat.flatNumber}.`
             : `Flat ${semConsumoModalFlat.flatNumber} conferido (sem saldo pendente para cobrar no WhatsApp).`
         });
         setSemConsumoModalFlat(null);
@@ -1207,11 +1508,37 @@ export default function AnserveRestockPage() {
         quantity: r.qty
       }));
 
+    const isUnoccupied =
+      launchModalFlat.status === "livre" || launchModalFlat.status === "entrada_hoje";
+    const targetLaunchSummary = isUnoccupied
+      ? unoccupiedLaunchMode === "link_last_reservation"
+        ? launchModalFlat.lastDepartedReservation?.welcomeKitSummary
+        : null
+      : launchModalFlat.welcomeKitSummary;
+    const savedLaunchWater = Math.min(2, Math.max(0, Number(targetLaunchSummary?.waterCupsConsumed) || 0));
+    const savedLaunchPeanuts = Math.min(2, Math.max(0, Number(targetLaunchSummary?.peanutsConsumed) || 0));
+    const hasCourtesyCorrection =
+      launchCourtesyCorrectionMode &&
+      (welcomeKitWaterConsumed !== savedLaunchWater || welcomeKitPeanutsConsumed !== savedLaunchPeanuts);
+
     const hasCourtesyConsumed = welcomeKitWaterConsumed > 0 || welcomeKitPeanutsConsumed > 0;
-    if (consumedItemsList.length === 0 && !hasCourtesyConsumed) {
+    if (consumedItemsList.length === 0 && !hasCourtesyConsumed && !hasCourtesyCorrection) {
       toast({
         title: "Nenhum consumo informado",
-        description: "Selecione ao menos 1 produto pago consumido ou registre o consumo das cortesias do Kit de Boas-Vindas.",
+        description: "Selecione ao menos 1 produto pago consumido ou registre/corrija o consumo das cortesias do Kit de Boas-Vindas.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (
+      isUnoccupied &&
+      unoccupiedLaunchMode === "link_last_reservation" &&
+      !launchModalFlat.lastDepartedReservation
+    ) {
+      toast({
+        title: "Sem reserva anterior neste flat",
+        description: "Escolha 'Ocorrência / Ajuste Interno' para registrar a falta sem vínculo.",
         variant: "destructive"
       });
       return;
@@ -1232,6 +1559,11 @@ export default function AnserveRestockPage() {
         }));
 
       const isPostCheckout = Boolean(launchModalFlat.isCheckedOut);
+      const targetResCode = isUnoccupied
+        ? unoccupiedLaunchMode === "link_last_reservation"
+          ? launchModalFlat.lastDepartedReservation?.code || ""
+          : ""
+        : launchModalFlat.currentReservation?.code || "";
 
       const res = await fetch("/api/minibar/inspections", {
         method: "POST",
@@ -1239,13 +1571,27 @@ export default function AnserveRestockPage() {
         credentials: "include",
         body: JSON.stringify({
           flatNumber: launchModalFlat.flatNumber,
-          reservationCode: launchModalFlat.currentReservation?.code || "",
+          reservationCode: targetResCode,
+          targetLastReservationCode:
+            isUnoccupied && unoccupiedLaunchMode === "link_last_reservation"
+              ? launchModalFlat.lastDepartedReservation?.code || ""
+              : undefined,
+          unoccupiedLaunchMode: isUnoccupied ? unoccupiedLaunchMode : undefined,
+          noActiveGuestInFlat: isUnoccupied ? true : undefined,
+          notifySofia:
+            isUnoccupied || (launchCourtesyCorrectionMode && consumedItemsList.length === 0)
+              ? false
+              : undefined,
           inspectedBy: inspectorName || user?.name || "Repositora Anserve",
           inspectorId: selectedRestockerId || user?.id || undefined,
-          status: "lancamento_diario",
+          status:
+            isUnoccupied && unoccupiedLaunchMode === "internal_adjustment"
+              ? "ocorrencia_interna"
+              : "lancamento_diario",
           isDailyLaunch: true,
-          isFinalCheckoutInspection: isPostCheckout,
+          isFinalCheckoutInspection: isUnoccupied ? false : isPostCheckout,
           launchDate: launchDateYmd || getTodayYmdBr(),
+          welcomeKitMode: launchCourtesyCorrectionMode ? "set_total" : undefined,
           welcomeKitConsumption: {
             waterCups: welcomeKitWaterConsumed,
             mendoratoPeanuts: welcomeKitPeanutsConsumed
@@ -1260,15 +1606,29 @@ export default function AnserveRestockPage() {
       const data = await res.json();
       if (res.ok && data.success) {
         toast({
-          title: isPostCheckout
+          title: isPostCheckout && consumedItemsList.length > 0
             ? "Conferência Final Pós-Checkout Concluída! ✅"
+            : isUnoccupied
+            ? unoccupiedLaunchMode === "internal_adjustment"
+              ? `Ocorrência / Ajuste interno registrado no Flat ${launchModalFlat.flatNumber}! 🛠️`
+              : `Consumo vinculado à reserva ${targetResCode}! 🔄`
+            : consumedItemsList.length === 0 && hasCourtesyCorrection
+            ? `Cortesia corrigida na estadia! ✅`
+            : consumedItemsList.length === 0 && hasCourtesyConsumed
+            ? `Consumo de cortesia salvo (${formatYmdToBr(launchDateYmd)})! 🎁`
             : `Consumo do dia ${formatYmdToBr(launchDateYmd)} lançado! ✅`,
-          description: data.whatsappSofiaAlertSent
+          description: isUnoccupied
+            ? "Gravado no sistema e nos relatórios, sem disparar WhatsApp automático."
+            : data.whatsappSofiaAlertSent
             ? data.postCheckoutNotificationType === "daily_summary"
               ? `Resumo diário (R$ ${dailyLaunchCalculation.totalAmount.toFixed(2)}) e link de acompanhamento enviados ao WhatsApp do(s) hóspede(s)!`
               : data.postCheckoutNotificationType === "remaining_balance"
               ? `Diferença do último dia lançada! Mensagem com o saldo restante (R$ ${Number(data.statement?.pendingBalance || 0).toFixed(2)}) enviada ao WhatsApp do hóspede!`
               : `Total da estadia (R$ ${Number(data.statement?.pendingBalance || dailyLaunchCalculation.totalAmount).toFixed(2)}) enviado ao WhatsApp do hóspede com link de pagamento!`
+            : consumedItemsList.length === 0 && hasCourtesyCorrection
+            ? `Total atualizado para 💧 ${welcomeKitWaterConsumed}/2 • 🥜 ${welcomeKitPeanutsConsumed}/2 no Flat ${launchModalFlat.flatNumber} (R$ 0,00).`
+            : consumedItemsList.length === 0 && hasCourtesyConsumed
+            ? `Cortesia (R$ 0,00) registrada com sucesso no Flat ${launchModalFlat.flatNumber}.`
             : `R$ ${dailyLaunchCalculation.totalAmount.toFixed(2)} adicionado ao extrato do Flat ${launchModalFlat.flatNumber}.`
         });
         setLaunchModalFlat(null);
@@ -1870,8 +2230,8 @@ export default function AnserveRestockPage() {
           );
         })()}
 
-        {/* Filter Pills & Search */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        {/* Filter Pills, Sort Selector & Search */}
+        <search aria-label="Filtrar, ordenar e buscar flats" className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-1.5">
             <Button
               size="sm"
@@ -1903,7 +2263,15 @@ export default function AnserveRestockPage() {
               onClick={() => setStatusFilter("checkout_hoje")}
               className="h-8 rounded-xl text-xs font-bold border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
             >
-              🔴 Check-out Hoje ({stats.checkoutHoje})
+              🔴 Saída Hoje ({stats.checkoutHoje})
+            </Button>
+            <Button
+              size="sm"
+              variant={statusFilter === "entrada_hoje" ? "default" : "outline"}
+              onClick={() => setStatusFilter("entrada_hoje")}
+              className="h-8 rounded-xl text-xs font-bold border-violet-500/40 text-violet-700 dark:text-violet-300 hover:bg-violet-500/10"
+            >
+              🟣 Entrada Hoje ({stats.entradaHoje})
             </Button>
             <Button
               size="sm"
@@ -1923,16 +2291,41 @@ export default function AnserveRestockPage() {
             </Button>
           </div>
 
-          <div className="relative w-full sm:w-64">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Buscar flat ou hóspede..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-8 pl-9 text-xs rounded-xl"
-            />
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            {/* Seletor de Ordenamento combinável com qualquer filtro (salvo no aparelho) */}
+            <div className="flex items-center gap-2 bg-card border border-border rounded-xl px-3 py-1.5 w-full sm:w-auto">
+              <ArrowUpDown className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0" aria-hidden="true" />
+              <label htmlFor="anserve-sort-select" className="text-[11px] font-black text-muted-foreground shrink-0">
+                Ordenar:
+              </label>
+              <select
+                id="anserve-sort-select"
+                value={sortMode}
+                onChange={(e) => handleChangeSortMode(e.target.value as RestockerSortMode)}
+                className="bg-transparent text-xs font-bold text-foreground outline-none flex-1 sm:flex-initial cursor-pointer"
+              >
+                <option value="prioridade">⚡ Prioridade Operacional (Saídas no topo)</option>
+                <option value="menor_maior">⬆️ Menor → Maior (101 → 1304 • Subindo)</option>
+                <option value="maior_menor">⬇️ Maior → Menor (1304 → 101 • Descendo)</option>
+              </select>
+            </div>
+
+            <div className="relative w-full sm:w-64">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+              <Input
+                type="search"
+                aria-label="Buscar flat ou hóspede"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                placeholder="Buscar flat ou hóspede..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-9 pl-9 text-xs rounded-xl"
+              />
+            </div>
           </div>
-        </div>
+        </search>
 
         {/* Flats Grid */}
         {loading ? (
@@ -1951,9 +2344,20 @@ export default function AnserveRestockPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
             {filteredFlats.map((flat) => {
               const isCheckout = flat.status === "checkout_hoje";
+              const isEntradaHoje = flat.status === "entrada_hoje";
               const isOcupado = flat.status === "ocupado";
               const isLivre = flat.status === "livre";
               const dailyGroups = Array.isArray(flat.dailyLaunches) ? flat.dailyLaunches : [];
+              const courtesyWaterCount = Number(flat.welcomeKitSummary?.waterCupsConsumed) || 0;
+              const courtesyPeanutsCount = Number(flat.welcomeKitSummary?.peanutsConsumed) || 0;
+              const hasCourtesyOnCard =
+                courtesyWaterCount > 0 ||
+                courtesyPeanutsCount > 0 ||
+                (Array.isArray(flat.consumedCourtesyItems) && flat.consumedCourtesyItems.length > 0);
+              const hasAnyConsumptionOnCard =
+                dailyGroups.length > 0 ||
+                hasCourtesyOnCard ||
+                Boolean(flat.linkedCorrectionToday && flat.lastDepartedReservation);
               const pendingVal = Number(flat.pendingBalance) || 0;
               const paidVal = Number(flat.totalPaidAmount || flat.declaredAmount) || 0;
               const doneToday = isInspectedToday(flat);
@@ -1961,7 +2365,6 @@ export default function AnserveRestockPage() {
               const skippedToday = isSkippedToday(flat);
               const guestDndLocked = isGuestDndLocked(flat);
               const skipStatus = skippedToday ? flat.todaySkipStatus : null;
-              const isExpanded = Boolean(expandedFlatHistory[flat.flatNumber]);
 
               return (
                 <Card
@@ -1977,6 +2380,8 @@ export default function AnserveRestockPage() {
                       ? "border-amber-500/50 bg-amber-500/5"
                       : isCheckout
                       ? "border-red-500/40 bg-red-500/5 shadow-xs"
+                      : isEntradaHoje
+                      ? "border-violet-500/35 bg-violet-500/5 hover:border-violet-500/55"
                       : isOcupado
                       ? "border-blue-500/20 bg-card hover:border-blue-500/40"
                       : "border-border bg-card"
@@ -1994,19 +2399,23 @@ export default function AnserveRestockPage() {
                           </Badge>
                         ) : isCheckout ? (
                           <Badge className="bg-red-600 text-white border-none text-[10px] font-black uppercase tracking-wider">
-                            Saída Hoje
+                            SAÍDA HOJE
+                          </Badge>
+                        ) : isEntradaHoje ? (
+                          <Badge className="bg-violet-600 text-white border-none text-[10px] font-black uppercase tracking-wider">
+                            ENTRADA HOJE
                           </Badge>
                         ) : isOcupado ? (
-                          <Badge className="bg-blue-600/10 text-blue-700 dark:text-blue-300 border-blue-500/20 text-[10px] font-bold">
-                            Ocupado
+                          <Badge className="bg-blue-600/15 text-blue-700 dark:text-blue-300 border-blue-500/30 text-[10px] font-black uppercase tracking-wider">
+                            OCUPADO
                           </Badge>
                         ) : (
-                          <Badge className="bg-emerald-600/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20 text-[10px] font-bold">
-                            Livre
+                          <Badge className="bg-emerald-600/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px] font-black uppercase tracking-wider">
+                            LIVRE
                           </Badge>
                         )}
 
-                        {/* Indicador claro se está com Não Perturbe do hóspede, NQ, NP ou conferido hoje */}
+                        {/* Indicador claro se está com Não Perturbe do hóspede, NQ, NP, conferido hoje ou pendente hoje (em TODOS os flats) */}
                         {guestDndLocked ? (
                           <Badge className="bg-rose-600 text-white border-none text-[10px] font-black animate-pulse">
                             🔕 NÃO PERTURBE
@@ -2023,11 +2432,11 @@ export default function AnserveRestockPage() {
                           <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px] font-black">
                             ✓ Conferido Hoje
                           </Badge>
-                        ) : !isLivre ? (
+                        ) : (
                           <Badge className="bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/30 text-[10px] font-bold">
                             ⏳ Pendente Hoje
                           </Badge>
-                        ) : null}
+                        )}
                       </div>
 
                       <div className="flex items-center gap-1 shrink-0">
@@ -2056,11 +2465,47 @@ export default function AnserveRestockPage() {
                               {flat.currentReservation.numGuests} hósp.
                             </Badge>
                           )}
+                          {isEntradaHoje && flat.scheduledCheckinTime && (
+                            <span className="text-[10px] font-bold text-violet-600 dark:text-violet-300 shrink-0">
+                              • prev. {flat.scheduledCheckinTime}
+                            </span>
+                          )}
                         </div>
                         <span className="font-mono text-[11px] shrink-0">{flat.currentReservation.code}</span>
                       </div>
                     ) : (
-                      <span className="text-xs text-muted-foreground mt-0.5">Sem reserva ativa no momento</span>
+                      <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground gap-2">
+                        <span>Sem hóspede no flat no momento</span>
+                        {flat.lastDepartedReservation && (
+                          <span className="text-[10px] font-semibold truncate max-w-[160px]" title={`Última saída: ${flat.lastDepartedReservation.guestName} (${flat.lastDepartedReservation.code})`}>
+                            Últ.: {flat.lastDepartedReservation.guestName.split(" ")[0]} ({flat.lastDepartedReservation.checkOutBr || ""})
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Indicadores de Dobradinha (Q2) */}
+                    {flat.previousCheckoutInspectedToday && (
+                      <div className="mt-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 flex items-center justify-between gap-2">
+                        <span>
+                          ✓ Saída anterior ({flat.previousCheckoutInspectedToday.guestName.split(" ")[0]}
+                          {flat.previousCheckoutInspectedToday.checkoutTime
+                            ? ` às ${flat.previousCheckoutInspectedToday.checkoutTime}`
+                            : ""}) conferida
+                        </span>
+                        <span className="font-mono opacity-80">{flat.previousCheckoutInspectedToday.reservationCode}</span>
+                      </div>
+                    )}
+
+                    {flat.nextCheckinTodayReservation && isCheckout && (
+                      <div className="mt-1.5 px-2.5 py-1 rounded-xl bg-violet-500/10 border border-violet-500/30 text-[10px] font-bold text-violet-700 dark:text-violet-300 flex items-center justify-between gap-2">
+                        <span>
+                          🔄 Dobradinha hoje: entra {flat.nextCheckinTodayReservation.guestName.split(" ")[0]}
+                        </span>
+                        {flat.nextCheckinTodayReservation.scheduledCheckinTime && (
+                          <span>prev. {flat.nextCheckinTodayReservation.scheduledCheckinTime}</span>
+                        )}
+                      </div>
                     )}
                   </CardHeader>
 
@@ -2137,62 +2582,128 @@ export default function AnserveRestockPage() {
                       </div>
                     )}
 
-                    {/* Resumo Compacto de Lançamentos da Estadia (Expansível no celular) */}
-                    <div className="p-2.5 rounded-2xl bg-muted/40 border border-border text-xs space-y-1.5">
-                      <div className="flex items-center justify-between text-[11px]">
-                        <span className="text-muted-foreground font-bold flex items-center gap-1">
-                          <Calendar className="w-3 h-3 text-sky-500" />
-                          Consumo na estadia:
+                    {/* Consumo Lançado Separado por Dia + Cortesias + Botão "Ver Consumo" (abre janelinha sem sair da tela) */}
+                    <div className="p-2.5 rounded-2xl bg-muted/40 border border-border text-xs space-y-2">
+                      <div className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="text-muted-foreground font-bold flex items-center gap-1 min-w-0">
+                          <Calendar className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+                          <span className="truncate">
+                            {isLivre || isEntradaHoje ? "Consumo / Conferência:" : "Consumo por dia:"}
+                          </span>
                         </span>
-                        {dailyGroups.length > 0 ? (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setExpandedFlatHistory((prev) => ({
-                                ...prev,
-                                [flat.flatNumber]: !prev[flat.flatNumber]
-                              }))
-                            }
-                            className="inline-flex items-center gap-1 font-black text-sky-600 dark:text-sky-400 hover:underline"
-                          >
-                            <span>R$ {Number(flat.totalLaunchedAmount || 0).toFixed(2)}</span>
-                            <span className="text-[10px] font-bold text-muted-foreground">
-                              ({dailyGroups.length} {dailyGroups.length === 1 ? "dia" : "dias"})
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {Number(flat.totalLaunchedAmount || 0) > 0 && (
+                            <span className="font-black font-mono text-sky-600 dark:text-sky-400">
+                              R$ {Number(flat.totalLaunchedAmount || 0).toFixed(2)}
                             </span>
-                            {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                          </button>
-                        ) : (
-                          <span className="text-muted-foreground">Sem consumo lançado</span>
-                        )}
+                          )}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setViewConsumptionModalFlat(flat)}
+                            className="h-6 px-2 rounded-lg text-[10px] font-black border-sky-500/40 text-sky-700 dark:text-sky-300 hover:bg-sky-500/10 gap-1"
+                          >
+                            <Eye className="w-3 h-3" />
+                            <span>
+                              Ver Consumo
+                              {dailyGroups.length > 0 ? ` (${dailyGroups.length}d)` : ""}
+                            </span>
+                          </Button>
+                        </div>
                       </div>
 
-                      {dailyGroups.length > 0 && isExpanded && (
-                        <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1 pt-1 border-t border-border/60">
-                          {dailyGroups.map((g) => (
-                            <div
-                              key={g.dateYmd}
-                              className="p-2 rounded-xl bg-background/80 border border-border/80 space-y-1"
-                            >
-                              <div className="flex items-center justify-between text-[10px] font-black text-sky-600 dark:text-sky-400">
-                                <span>📅 Dia {g.dateBr}</span>
-                                <span>R$ {Number(g.totalDayAmount || 0).toFixed(2)}</span>
-                              </div>
-                              <div className="flex flex-wrap gap-1">
-                                {(Array.isArray(g.items) ? g.items : []).map((it, idx) => (
-                                  <span
-                                    key={`${it.orderId}-${it.productId}-${idx}`}
-                                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                      it.paymentStatus === "pago"
-                                        ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                                        : "bg-amber-500/15 text-amber-800 dark:text-amber-300"
-                                    }`}
-                                  >
-                                    {it.quantity}x {it.productName}
+                      {/* Resumo das Cortesias Consumidas (Kit de Boas-Vindas) diretamente no Card */}
+                      {hasCourtesyOnCard && (
+                        <div className="px-2 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-2 text-[10px]">
+                          <span className="font-black text-amber-800 dark:text-amber-300 flex items-center gap-1">
+                            <Gift className="w-3 h-3 shrink-0" />
+                            <span>Cortesias:</span>
+                          </span>
+                          <span className="font-bold text-foreground">
+                            💧 {courtesyWaterCount}/2 Água • 🥜 {courtesyPeanutsCount}/2 Amendoim
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Resumo por dia visível no card (até 2 dias inline; se houver mais, clique em Ver Consumo abre rolagem completa) */}
+                      {dailyGroups.length > 0 ? (
+                        <div className="space-y-1.5 pt-0.5">
+                          {dailyGroups.slice(-2).map((g) => {
+                            const dayAmt = Number(g.totalDayAmount || 0);
+                            const dayItems = Array.isArray(g.items) ? g.items : [];
+                            const allInternalDay =
+                              dayAmt === 0 &&
+                              dayItems.length > 0 &&
+                              dayItems.every((x) => x.isInternalAdjustment || x.paymentStatus === "ajuste_interno");
+                            return (
+                              <div
+                                key={g.dateYmd}
+                                className="p-2 rounded-xl bg-background/85 border border-border/80 space-y-1"
+                              >
+                                <div className="flex items-center justify-between text-[10px] font-black text-sky-600 dark:text-sky-400">
+                                  <span>📅 Dia {g.dateBr}</span>
+                                  <span>
+                                    {dayAmt > 0
+                                      ? `R$ ${dayAmt.toFixed(2)}`
+                                      : allInternalDay
+                                      ? "Ajuste / R$ 0,00"
+                                      : "Cortesia / R$ 0,00"}
                                   </span>
-                                ))}
+                                </div>
+                                <div className="flex flex-wrap gap-1">
+                                  {dayItems.map((it, idx) => (
+                                    <span
+                                      key={`${it.orderId}-${it.productId}-${idx}`}
+                                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                        it.isInternalAdjustment || it.paymentStatus === "ajuste_interno"
+                                          ? "bg-purple-500/15 text-purple-700 dark:text-purple-300 border border-purple-500/25"
+                                          : it.isCourtesy
+                                          ? "bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-500/25"
+                                          : it.paymentStatus === "pago"
+                                          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                                          : "bg-sky-500/15 text-sky-800 dark:text-sky-300"
+                                      }`}
+                                    >
+                                      {it.isInternalAdjustment || it.paymentStatus === "ajuste_interno"
+                                        ? "🛠️ "
+                                        : it.isCourtesy
+                                        ? "🎁 "
+                                        : ""}
+                                      {it.quantity}x {it.productName}
+                                    </span>
+                                  ))}
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
+                          {dailyGroups.length > 2 && (
+                            <button
+                              type="button"
+                              onClick={() => setViewConsumptionModalFlat(flat)}
+                              className="w-full text-center text-[10px] font-black text-sky-600 dark:text-sky-400 hover:underline pt-0.5"
+                            >
+                              + {dailyGroups.length - 2} {dailyGroups.length - 2 === 1 ? "dia anterior" : "dias anteriores"} • Toque em Ver Consumo
+                            </button>
+                          )}
+                        </div>
+                      ) : !hasAnyConsumptionOnCard ? (
+                        <div className="text-[11px] text-muted-foreground">
+                          Sem consumo lançado
+                        </div>
+                      ) : null}
+
+                      {flat.linkedCorrectionToday && flat.lastDepartedReservation && (
+                        <div className="px-2 py-1 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-[10px] font-bold text-indigo-700 dark:text-indigo-300 flex items-center justify-between gap-2">
+                          <span>🔄 Correção vinculada à última reserva ({flat.lastDepartedReservation.code})</span>
+                          <button
+                            type="button"
+                            onClick={() => setViewConsumptionModalFlat(flat)}
+                            className="underline font-black shrink-0"
+                          >
+                            Ver
+                          </button>
                         </div>
                       )}
 
@@ -2211,15 +2722,11 @@ export default function AnserveRestockPage() {
                       )}
                     </div>
 
-                    {/* Botões de Ação da Repositora */}
+                    {/* Botões de Ação da Repositora (Habilitados em TODOS os flats, inclusive LIVRE e ENTRADA HOJE!) */}
                     {guestDndLocked ? (
                       <div className="p-2.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-center text-[11px] font-bold text-rose-700 dark:text-rose-300 flex items-center justify-center gap-1.5">
                         <Lock className="w-3.5 h-3.5 shrink-0" />
                         <span>Ações bloqueadas enquanto Não Perturbe estiver ativo</span>
-                      </div>
-                    ) : isLivre ? (
-                      <div className="p-2 rounded-2xl bg-muted/40 border border-border text-center text-[11px] text-muted-foreground font-medium">
-                        Flat livre • Sem reposição pendente
                       </div>
                     ) : (
                       <div className="space-y-2">
@@ -2230,7 +2737,7 @@ export default function AnserveRestockPage() {
                             className="rounded-2xl text-xs font-bold bg-sky-600 hover:bg-sky-700 text-white h-9 shadow-xs"
                           >
                             <Plus className="w-3.5 h-3.5 mr-1" />
-                            Lançar Consumo
+                            {isLivre || isEntradaHoje ? "Lançar Falta" : "Lançar Consumo"}
                           </Button>
 
                           <Button
@@ -2240,12 +2747,12 @@ export default function AnserveRestockPage() {
                             className="rounded-2xl text-xs font-bold border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 h-9"
                           >
                             <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-                            Sem Consumo
+                            {isLivre || isEntradaHoje ? "Conforme" : "Sem Consumo"}
                           </Button>
                         </div>
 
-                        {/* Botões NQ e NP: exibidos apenas quando há hóspede no quarto (antes do check-out) */}
-                        {!flat.isCheckedOut && (
+                        {/* Botões NQ e NP: exibidos apenas quando há hóspede hospedado no quarto (Ocupado ou Saída Hoje antes do check-out) */}
+                        {(isOcupado || isCheckout) && !flat.isCheckedOut && (
                           <div className="grid grid-cols-2 gap-2">
                             <Button
                               type="button"
@@ -2289,116 +2796,793 @@ export default function AnserveRestockPage() {
           </div>
         )}
 
-        {/* Modal 1: Registrar Passagem Sem Consumo Pago / Repor Cortesias */}
-        <Dialog open={Boolean(semConsumoModalFlat)} onOpenChange={() => setSemConsumoModalFlat(null)}>
-          <DialogContent className="sm:max-w-md rounded-3xl p-6">
+        {/* Modal 0: Janelinha "Ver Consumo" Separado por Dia + Cortesias (Sem sair da tela, com barra de rolagem) */}
+        <Dialog
+          open={Boolean(viewConsumptionModalFlat)}
+          onOpenChange={(open) => {
+            if (!open) setViewConsumptionModalFlat(null);
+          }}
+        >
+          <DialogContent className="sm:max-w-lg max-h-[90dvh] overflow-y-auto overscroll-contain rounded-3xl p-4 sm:p-6">
             <DialogHeader>
               <DialogTitle className="text-base font-black flex items-center gap-2">
-                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                <span>Passagem Sem Consumo — Flat {semConsumoModalFlat?.flatNumber}</span>
+                <Eye className="w-5 h-5 text-sky-600 shrink-0" />
+                <span>Consumo por Dia — Flat {viewConsumptionModalFlat?.flatNumber}</span>
               </DialogTitle>
               <DialogDescription className="text-xs">
-                Registra que você conferiu o frigobar hoje e não houve novo consumo de itens pagos.
+                {viewConsumptionModalFlat?.currentReservation
+                  ? `Hóspede: ${viewConsumptionModalFlat.currentReservation.guestName} (${viewConsumptionModalFlat.currentReservation.code})`
+                  : "Flat sem hóspede ativo no momento • Histórico de conferência / ajustes de hoje"}
               </DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-4 py-2 text-xs">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-bold">Responsável pela Conferência</Label>
-                <Input
-                  value={inspectorName}
-                  onChange={(e) => setInspectorName(e.target.value)}
-                  className="h-9 text-xs rounded-xl"
-                  placeholder="Nome da repositora"
-                />
-              </div>
+            {viewConsumptionModalFlat && (() => {
+              const modalGroups = Array.isArray(viewConsumptionModalFlat.dailyLaunches)
+                ? viewConsumptionModalFlat.dailyLaunches
+                : [];
+              const isUnoccupiedModal =
+                viewConsumptionModalFlat.status === "livre" ||
+                viewConsumptionModalFlat.status === "entrada_hoje";
+              const intWater = Number(viewConsumptionModalFlat.internalWelcomeKitToday?.waterCups) || 0;
+              const intPeanuts = Number(viewConsumptionModalFlat.internalWelcomeKitToday?.mendoratoPeanuts) || 0;
+              const cWater = isUnoccupiedModal
+                ? intWater
+                : Number(viewConsumptionModalFlat.welcomeKitSummary?.waterCupsConsumed) || 0;
+              const cPeanuts = isUnoccupiedModal
+                ? intPeanuts
+                : Number(viewConsumptionModalFlat.welcomeKitSummary?.peanutsConsumed) || 0;
+              const primaryEditTarget: "current" | "internal" | null =
+                !isUnoccupiedModal &&
+                Boolean(viewConsumptionModalFlat.currentReservation) &&
+                !isGuestDndLocked(viewConsumptionModalFlat)
+                  ? "current"
+                  : isUnoccupiedModal && (intWater > 0 || intPeanuts > 0 || viewModalEditingTarget === "internal")
+                  ? "internal"
+                  : null;
+              const isEditingPrimaryCourtesy =
+                primaryEditTarget !== null && viewModalEditingTarget === primaryEditTarget;
 
-              {/* Bloco R4: Kit de Boas-Vindas (Cortesia da Casa) */}
-              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/10 via-sky-500/10 to-transparent border border-amber-500/30 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-base">🎁</span>
-                    <div>
-                      <h4 className="text-xs font-black text-foreground">Kit de Boas-Vindas (Cortesia da Casa)</h4>
-                      <p className="text-[10px] text-muted-foreground">
-                        Conferência de consumo • Limite de até 2 unidades de cada por estadia
-                      </p>
+              const totLaunched = Number(viewConsumptionModalFlat.totalLaunchedAmount || 0);
+              const totPaid = Number(viewConsumptionModalFlat.totalPaidAmount || viewConsumptionModalFlat.declaredAmount || 0);
+              const totPending = Number(viewConsumptionModalFlat.pendingBalance || 0);
+              const lastDep = viewConsumptionModalFlat.lastDepartedReservation;
+              const lastDepWater = Number(lastDep?.welcomeKitSummary?.waterCupsConsumed) || 0;
+              const lastDepPeanuts = Number(lastDep?.welcomeKitSummary?.peanutsConsumed) || 0;
+              const isEditingLastDepCourtesy = viewModalEditingTarget === "last_departed";
+              const lastDepHasData = Boolean(
+                lastDep &&
+                  ((Array.isArray(lastDep.dailyLaunches) && lastDep.dailyLaunches.length > 0) ||
+                    (Array.isArray(lastDep.consumedCourtesyItems) && lastDep.consumedCourtesyItems.length > 0) ||
+                    lastDepWater > 0 ||
+                    lastDepPeanuts > 0 ||
+                    isEditingLastDepCourtesy)
+              );
+              const showLastDepSection = Boolean(
+                lastDepHasData &&
+                  (viewConsumptionModalFlat.linkedCorrectionToday ||
+                    Boolean(viewConsumptionModalFlat.previousCheckoutInspectedToday) ||
+                    viewConsumptionModalFlat.status === "livre" ||
+                    viewConsumptionModalFlat.status === "entrada_hoje" ||
+                    isEditingLastDepCourtesy)
+              );
+
+              return (
+                <div className="space-y-3.5 py-1 text-xs min-w-0">
+                  {/* Resumo Financeiro da Estadia */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="p-2.5 rounded-2xl bg-muted/50 border border-border text-center">
+                      <span className="text-[10px] text-muted-foreground block font-semibold">Total Lançado</span>
+                      <strong className="text-sm font-black font-mono text-foreground">
+                        R$ {totLaunched.toFixed(2)}
+                      </strong>
+                    </div>
+                    <div className="p-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/25 text-center">
+                      <span className="text-[10px] text-emerald-700 dark:text-emerald-300 block font-semibold">Já Pago</span>
+                      <strong className="text-sm font-black font-mono text-emerald-700 dark:text-emerald-300">
+                        R$ {totPaid.toFixed(2)}
+                      </strong>
+                    </div>
+                    <div className="p-2.5 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-center">
+                      <span className="text-[10px] text-amber-800 dark:text-amber-300 block font-semibold">A Pagar</span>
+                      <strong className="text-sm font-black font-mono text-amber-700 dark:text-amber-300">
+                        R$ {totPending.toFixed(2)}
+                      </strong>
                     </div>
                   </div>
-                  <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[9px] font-black">
-                    Cortesia R$ 0,00
-                  </Badge>
-                </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {/* Copo d'Água Mineral 200ml */}
-                  <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <span className="font-bold text-xs text-foreground block truncate">💧 Copo d'Água (200ml)</span>
-                      <span className="text-[10px] text-sky-600 dark:text-sky-400 font-semibold block">
-                        Estoque Anserve • R$ 0,00
+                  {/* Consumo das Cortesias (Kit de Boas-Vindas) */}
+                  <div className="p-3 rounded-2xl bg-gradient-to-r from-amber-500/10 via-sky-500/10 to-transparent border border-amber-500/30 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="font-black text-foreground flex items-center gap-1.5">
+                        <Gift className="w-4 h-4 text-amber-600 shrink-0" aria-hidden="true" />
+                        <span>
+                          {isUnoccupiedModal && (intWater > 0 || intPeanuts > 0)
+                            ? "Baixa Interna de Cortesias Hoje (Sem Hóspede)"
+                            : "Consumo das Cortesias (Kit Boas-Vindas)"}
+                        </span>
                       </span>
+                      <div className="flex items-center gap-1.5">
+                        {primaryEditTarget !== null && (
+                          <button
+                            type="button"
+                            aria-pressed={isEditingPrimaryCourtesy}
+                            onClick={() => {
+                              if (isEditingPrimaryCourtesy) {
+                                setViewModalEditingTarget(null);
+                              } else {
+                                setViewModalEditWater(cWater);
+                                setViewModalEditPeanuts(cPeanuts);
+                                setViewModalEditingTarget(primaryEditTarget);
+                              }
+                            }}
+                            className={`px-2 py-1 rounded-lg text-[10px] font-black flex items-center gap-1 border transition-all ${
+                              isEditingPrimaryCourtesy
+                                ? "bg-muted text-foreground border-border hover:bg-muted/80"
+                                : "bg-card text-amber-800 dark:text-amber-300 border-amber-500/40 hover:bg-amber-500/15"
+                            }`}
+                          >
+                            {isEditingPrimaryCourtesy ? (
+                              <>
+                                <RotateCcw className="w-3 h-3 shrink-0" aria-hidden="true" />
+                                <span>Cancelar</span>
+                              </>
+                            ) : (
+                              <>
+                                <Pencil className="w-3 h-3 shrink-0" aria-hidden="true" />
+                                <span>{cWater > 0 || cPeanuts > 0 ? "Corrigir" : "Ajustar"}</span>
+                              </>
+                            )}
+                          </button>
+                        )}
+                        <Badge className="bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/30 text-[10px] font-black">
+                          R$ 0,00
+                        </Badge>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {[0, 1, 2].map((num) => (
-                        <button
-                          key={num}
-                          type="button"
-                          onClick={() => setSemConsumoWaterConsumed(num)}
-                          className={`w-7 h-7 rounded-lg text-xs font-black transition-all ${
-                            semConsumoWaterConsumed === num
-                              ? "bg-sky-600 text-white shadow-xs"
-                              : "bg-muted/70 text-foreground hover:bg-muted"
-                          }`}
-                        >
-                          {num}
-                        </button>
-                      ))}
-                    </div>
+
+                    {isEditingPrimaryCourtesy && primaryEditTarget ? (
+                      <div className="p-2.5 rounded-xl bg-card border border-amber-500/40 space-y-2.5">
+                        <span className="text-[10px] font-bold text-foreground block">
+                          {primaryEditTarget === "internal"
+                            ? "Ajuste a baixa interna de cortesias registrada hoje neste flat (0, 1 ou 2):"
+                            : "Ajuste o total correto de cortesias consumidas nesta estadia (0, 1 ou 2):"}
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div className="p-2 rounded-xl bg-muted/40 border border-border flex items-center justify-between gap-2">
+                            <span className="font-bold text-[11px] truncate">💧 Copo d'Água</span>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {[0, 1, 2].map((num) => (
+                                <button
+                                  key={num}
+                                  type="button"
+                                  aria-label={`${num} Copo d'Água`}
+                                  aria-pressed={viewModalEditWater === num}
+                                  onClick={() => setViewModalEditWater(num)}
+                                  className={`w-7 h-7 rounded-lg text-xs font-black transition-all ${
+                                    viewModalEditWater === num
+                                      ? "bg-sky-600 text-white shadow-xs"
+                                      : "bg-card text-foreground border border-border hover:bg-muted"
+                                  }`}
+                                >
+                                  {num}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="p-2 rounded-xl bg-muted/40 border border-border flex items-center justify-between gap-2">
+                            <span className="font-bold text-[11px] truncate">🥜 Amendoim</span>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {[0, 1, 2].map((num) => (
+                                <button
+                                  key={num}
+                                  type="button"
+                                  aria-label={`${num} Amendoim Mendorato`}
+                                  aria-pressed={viewModalEditPeanuts === num}
+                                  onClick={() => setViewModalEditPeanuts(num)}
+                                  className={`w-7 h-7 rounded-lg text-xs font-black transition-all ${
+                                    viewModalEditPeanuts === num
+                                      ? "bg-amber-600 text-white shadow-xs"
+                                      : "bg-card text-foreground border border-border hover:bg-muted"
+                                  }`}
+                                >
+                                  {num}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 pt-0.5">
+                          <span className="text-[10px] text-muted-foreground font-semibold">
+                            Salvo: {cWater}/2 Água • {cPeanuts}/2 Amendoim → Novo: {viewModalEditWater}/2 • {viewModalEditPeanuts}/2
+                          </span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={
+                              savingCourtesyCorrection ||
+                              (viewModalEditWater === cWater && viewModalEditPeanuts === cPeanuts)
+                            }
+                            onClick={() => handleSaveViewModalCourtesyCorrection(primaryEditTarget)}
+                            className="h-7 px-3 rounded-xl text-[11px] font-black bg-emerald-600 hover:bg-emerald-700 text-white shrink-0"
+                          >
+                            {savingCourtesyCorrection ? "Salvando..." : "Salvar Correção"}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="p-2 rounded-xl bg-card border border-border flex items-center justify-between">
+                          <span className="font-bold text-[11px] truncate">💧 Copo d'Água</span>
+                          <Badge
+                            className={
+                              cWater > 0
+                                ? "bg-sky-600 text-white text-[10px] font-black"
+                                : "bg-muted text-muted-foreground text-[10px] font-bold"
+                            }
+                          >
+                            {cWater}/2
+                          </Badge>
+                        </div>
+                        <div className="p-2 rounded-xl bg-card border border-border flex items-center justify-between">
+                          <span className="font-bold text-[11px] truncate">🥜 Amendoim</span>
+                          <Badge
+                            className={
+                              cPeanuts > 0
+                                ? "bg-amber-600 text-white text-[10px] font-black"
+                                : "bg-muted text-muted-foreground text-[10px] font-bold"
+                            }
+                          >
+                            {cPeanuts}/2
+                          </Badge>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
-                  {/* Amendoim Mendorato 27g */}
-                  <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <span className="font-bold text-xs text-foreground block truncate">🥜 Amendoim Mendorato</span>
-                      <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold block">
-                        Hotel Próprio • R$ 0,00
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {[0, 1, 2].map((num) => (
-                        <button
-                          key={num}
-                          type="button"
-                          onClick={() => setSemConsumoPeanutsConsumed(num)}
-                          className={`w-7 h-7 rounded-lg text-xs font-black transition-all ${
-                            semConsumoPeanutsConsumed === num
-                              ? "bg-amber-600 text-white shadow-xs"
-                              : "bg-muted/70 text-foreground hover:bg-muted"
-                          }`}
-                        >
-                          {num}
-                        </button>
-                      ))}
-                    </div>
+                  {/* Lista Rolável Separada por Dia */}
+                  <div className="max-h-[46dvh] overflow-y-auto overscroll-contain pr-1 space-y-2.5">
+                    {modalGroups.length === 0 ? (
+                      <div className="p-5 rounded-2xl bg-muted/40 border border-border text-center text-muted-foreground">
+                        Nenhum consumo lançado por dia até o momento neste flat.
+                      </div>
+                    ) : (
+                      modalGroups.map((group) => {
+                        const dayTotal = Number(group.totalDayAmount || 0);
+                        const groupItems = Array.isArray(group.items) ? group.items : [];
+                        const isAllInternalGroup =
+                          dayTotal === 0 &&
+                          groupItems.length > 0 &&
+                          groupItems.every((x) => x.isInternalAdjustment || x.paymentStatus === "ajuste_interno");
+                        return (
+                          <div
+                            key={group.dateYmd}
+                            className="rounded-2xl border border-border bg-card overflow-hidden"
+                          >
+                            <div className="px-3 py-2 bg-muted/50 border-b border-border flex items-center justify-between">
+                              <span className="font-black text-xs text-foreground flex items-center gap-1.5">
+                                <Calendar className="w-3.5 h-3.5 text-sky-500" />
+                                <span>Dia {group.dateBr}</span>
+                              </span>
+                              <span className="font-black font-mono text-xs text-sky-600 dark:text-sky-400">
+                                {dayTotal > 0
+                                  ? `Subtotal: R$ ${dayTotal.toFixed(2)}`
+                                  : isAllInternalGroup
+                                  ? "Ajuste Interno / R$ 0,00"
+                                  : "Cortesia / R$ 0,00"}
+                              </span>
+                            </div>
+
+                            <div className="divide-y divide-border px-3">
+                              {groupItems.map((it, idx) => (
+                                <div
+                                  key={`${it.orderId}-${it.productId}-${idx}`}
+                                  className="py-2 flex items-center justify-between gap-2"
+                                >
+                                  <div className="min-w-0">
+                                    <div className="font-bold text-foreground flex items-center gap-1.5 flex-wrap">
+                                      <span>
+                                        {it.isInternalAdjustment || it.paymentStatus === "ajuste_interno"
+                                          ? "🛠️ "
+                                          : it.isCourtesy
+                                          ? "🎁 "
+                                          : ""}
+                                        {it.quantity}x {it.productName}
+                                      </span>
+                                      <Badge
+                                        className={`text-[9px] px-1.5 py-0 h-4 ${
+                                          it.isInternalAdjustment || it.paymentStatus === "ajuste_interno"
+                                            ? "bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-500/30"
+                                            : it.isCourtesy
+                                            ? "bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/30"
+                                            : it.paymentStatus === "pago"
+                                            ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+                                            : "bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30"
+                                        }`}
+                                      >
+                                        {it.isInternalAdjustment || it.paymentStatus === "ajuste_interno"
+                                          ? "Ajuste Interno"
+                                          : it.isCourtesy
+                                          ? "Cortesia"
+                                          : it.paymentStatus === "pago"
+                                          ? "Pago"
+                                          : "A pagar"}
+                                      </Badge>
+                                    </div>
+                                    <span className="text-[10px] text-muted-foreground block">
+                                      {it.isInternalAdjustment || it.paymentStatus === "ajuste_interno"
+                                        ? it.isCourtesy
+                                          ? "Baixa interna sem cobrança (Cortesia)"
+                                          : `Baixa interna sem cobrança (valor ref. R$ ${Number(it.nominalValue || 0).toFixed(2)})`
+                                        : it.isCourtesy
+                                        ? "Kit de Boas-Vindas (Gratuito)"
+                                        : `R$ ${Number(it.unitPrice || 0).toFixed(2)} un.`}
+                                      {it.launchedByName ? ` • por ${it.launchedByName.split(" ")[0]}` : ""}
+                                    </span>
+                                  </div>
+
+                                  <strong className="font-mono font-black text-xs shrink-0 text-foreground">
+                                    {it.isCourtesy || it.isInternalAdjustment
+                                      ? "R$ 0,00"
+                                      : `R$ ${Number(it.totalPrice || 0).toFixed(2)}`}
+                                  </strong>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+
+                    {/* Se houve correção vinculada à última reserva hoje (ou saída anterior em dobradinha), mostra o extrato e permite corrigir cortesia dela */}
+                    {showLastDepSection && lastDep && (
+                      <div className="p-3 rounded-2xl bg-indigo-500/5 border border-indigo-500/30 space-y-2">
+                        <div className="flex items-center justify-between gap-2 flex-wrap text-[11px] font-black text-indigo-700 dark:text-indigo-300">
+                          <span>🔄 Extrato da Última Reserva ({lastDep.guestName} • {lastDep.code})</span>
+                          <span>R$ {Number(lastDep.totalLaunchedAmount || 0).toFixed(2)}</span>
+                        </div>
+
+                        <div className="p-2 rounded-xl bg-card border border-border space-y-2">
+                          <div className="flex items-center justify-between gap-2 flex-wrap text-[10px]">
+                            <span className="font-bold text-foreground">
+                              🎁 Cortesias ({lastDep.code}): 💧 {lastDepWater}/2 Água • 🥜 {lastDepPeanuts}/2 Amendoim
+                            </span>
+                            <button
+                              type="button"
+                              aria-pressed={isEditingLastDepCourtesy}
+                              onClick={() => {
+                                if (isEditingLastDepCourtesy) {
+                                  setViewModalEditingTarget(null);
+                                } else {
+                                  setViewModalEditWater(lastDepWater);
+                                  setViewModalEditPeanuts(lastDepPeanuts);
+                                  setViewModalEditingTarget("last_departed");
+                                }
+                              }}
+                              className="px-2 py-0.5 rounded-lg border border-indigo-500/40 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/10 font-black flex items-center gap-1"
+                            >
+                              {isEditingLastDepCourtesy ? (
+                                <>
+                                  <RotateCcw className="w-3 h-3 shrink-0" aria-hidden="true" />
+                                  <span>Cancelar</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Pencil className="w-3 h-3 shrink-0" aria-hidden="true" />
+                                  <span>{lastDepWater > 0 || lastDepPeanuts > 0 ? "Corrigir cortesia" : "Ajustar cortesia"}</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+
+                          {isEditingLastDepCourtesy && (
+                            <div className="pt-1.5 border-t border-border space-y-2">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <div className="p-1.5 rounded-lg bg-muted/40 border border-border flex items-center justify-between gap-1.5">
+                                  <span className="font-bold text-[10px] truncate">💧 Copo d'Água</span>
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    {[0, 1, 2].map((num) => (
+                                      <button
+                                        key={num}
+                                        type="button"
+                                        aria-label={`${num} Copo d'Água (${lastDep.code})`}
+                                        aria-pressed={viewModalEditWater === num}
+                                        onClick={() => setViewModalEditWater(num)}
+                                        className={`w-6 h-6 rounded-md text-[11px] font-black transition-all ${
+                                          viewModalEditWater === num
+                                            ? "bg-sky-600 text-white"
+                                            : "bg-card text-foreground border border-border hover:bg-muted"
+                                        }`}
+                                      >
+                                        {num}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                                <div className="p-1.5 rounded-lg bg-muted/40 border border-border flex items-center justify-between gap-1.5">
+                                  <span className="font-bold text-[10px] truncate">🥜 Amendoim</span>
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    {[0, 1, 2].map((num) => (
+                                      <button
+                                        key={num}
+                                        type="button"
+                                        aria-label={`${num} Amendoim Mendorato (${lastDep.code})`}
+                                        aria-pressed={viewModalEditPeanuts === num}
+                                        onClick={() => setViewModalEditPeanuts(num)}
+                                        className={`w-6 h-6 rounded-md text-[11px] font-black transition-all ${
+                                          viewModalEditPeanuts === num
+                                            ? "bg-amber-600 text-white"
+                                            : "bg-card text-foreground border border-border hover:bg-muted"
+                                        }`}
+                                      >
+                                        {num}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center justify-end">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  disabled={
+                                    savingCourtesyCorrection ||
+                                    (viewModalEditWater === lastDepWater && viewModalEditPeanuts === lastDepPeanuts)
+                                  }
+                                  onClick={() => handleSaveViewModalCourtesyCorrection("last_departed")}
+                                  className="h-7 px-3 rounded-xl text-[10px] font-black bg-indigo-600 hover:bg-indigo-700 text-white"
+                                >
+                                  {savingCourtesyCorrection ? "Salvando..." : "Salvar Correção"}
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {(lastDep.dailyLaunches || []).map((dg) => (
+                          <div key={`lastdep-${dg.dateYmd}`} className="p-2 rounded-xl bg-card border border-border space-y-1">
+                            <div className="flex items-center justify-between text-[10px] font-bold">
+                              <span>📅 Dia {dg.dateBr}</span>
+                              <span>R$ {Number(dg.totalDayAmount || 0).toFixed(2)}</span>
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              {(dg.items || []).map((dit, didx) => (
+                                <span
+                                  key={`${dit.orderId}-${dit.productId}-${didx}`}
+                                  className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-bold"
+                                >
+                                  {dit.isCourtesy ? "🎁 " : ""}{dit.quantity}x {dit.productName}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
+              );
+            })()}
 
-                <p className="text-[10px] text-muted-foreground italic">
-                  * A reposição do kit é realizada exclusivamente pela camareira na virada de hóspede.
-                </p>
-              </div>
+            <DialogFooter className="pt-2 flex flex-col sm:flex-row gap-2">
+              {viewConsumptionModalFlat && !isGuestDndLocked(viewConsumptionModalFlat) && (
+                <Button
+                  type="button"
+                  onClick={() => {
+                    const target = viewConsumptionModalFlat;
+                    setViewConsumptionModalFlat(null);
+                    handleOpenLaunchConsumo(target);
+                  }}
+                  className="rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-700 text-white"
+                >
+                  <Plus className="w-3.5 h-3.5 mr-1" />
+                  Lançar Novo Consumo
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setViewConsumptionModalFlat(null)}
+                className="rounded-xl text-xs font-bold"
+              >
+                Fechar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
-              <div className="space-y-1.5">
-                <Label className="text-xs font-bold">Observações (Opcional)</Label>
-                <Textarea
-                  placeholder="Ex: Frigobar conferido e abastecido."
-                  value={semConsumoNotes}
-                  onChange={(e) => setSemConsumoNotes(e.target.value)}
-                  className="text-xs rounded-2xl resize-none min-h-[60px]"
-                />
-              </div>
-            </div>
+        {/* Modal 1: Registrar Passagem Sem Consumo Pago / Repor Cortesias */}
+        <Dialog
+          open={Boolean(semConsumoModalFlat)}
+          onOpenChange={(open) => {
+            if (!open) setSemConsumoModalFlat(null);
+          }}
+        >
+          <DialogContent className="sm:max-w-md max-h-[92dvh] overflow-y-auto overscroll-contain rounded-3xl p-5 sm:p-6">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                <span>
+                  {semConsumoModalFlat?.status === "livre" || semConsumoModalFlat?.status === "entrada_hoje"
+                    ? `Conferência Conforme — Flat ${semConsumoModalFlat?.flatNumber}`
+                    : `Passagem Sem Consumo — Flat ${semConsumoModalFlat?.flatNumber}`}
+                </span>
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                {semConsumoModalFlat?.status === "livre" || semConsumoModalFlat?.status === "entrada_hoje"
+                  ? "Registra conferência preventiva em flat onde ninguém entrou ainda (sem disparar WhatsApp)."
+                  : "Registra que você conferiu o frigobar hoje e não houve novo consumo de itens pagos."}
+              </DialogDescription>
+            </DialogHeader>
+
+            {(() => {
+              const isSemUnoccupied =
+                semConsumoModalFlat?.status === "livre" || semConsumoModalFlat?.status === "entrada_hoje";
+              const targetSemSummary = isSemUnoccupied
+                ? unoccupiedLaunchMode === "link_last_reservation"
+                  ? semConsumoModalFlat?.lastDepartedReservation?.welcomeKitSummary
+                  : null
+                : semConsumoModalFlat?.welcomeKitSummary;
+              const savedSemWater = Math.min(2, Math.max(0, Number(targetSemSummary?.waterCupsConsumed) || 0));
+              const savedSemPeanuts = Math.min(2, Math.max(0, Number(targetSemSummary?.peanutsConsumed) || 0));
+              const hasPriorSemCourtesy = savedSemWater > 0 || savedSemPeanuts > 0;
+              const maxSemWater = semConsumoCourtesyCorrectionMode
+                ? 2
+                : isSemUnoccupied && unoccupiedLaunchMode === "internal_adjustment"
+                ? 2
+                : Math.max(0, 2 - savedSemWater);
+              const maxSemPeanuts = semConsumoCourtesyCorrectionMode
+                ? 2
+                : isSemUnoccupied && unoccupiedLaunchMode === "internal_adjustment"
+                ? 2
+                : Math.max(0, 2 - savedSemPeanuts);
+
+              return (
+                <div className="space-y-4 py-2 text-xs">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="sem-consumo-inspector" className="text-xs font-bold">
+                      Responsável pela Conferência
+                    </Label>
+                    <Input
+                      id="sem-consumo-inspector"
+                      value={inspectorName}
+                      onChange={(e) => setInspectorName(e.target.value)}
+                      className="h-9 text-xs rounded-xl"
+                      placeholder="Nome da repositora"
+                    />
+                  </div>
+
+                  {/* Bloco R4: Kit de Boas-Vindas (Cortesia da Casa) */}
+                  <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/10 via-sky-500/10 to-transparent border border-amber-500/30 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-base">🎁</span>
+                        <div>
+                          <h4 className="text-xs font-black text-foreground">Kit de Boas-Vindas (Cortesia da Casa)</h4>
+                          <p className="text-[10px] text-muted-foreground">
+                            {semConsumoCourtesyCorrectionMode
+                              ? "Modo correção: selecione o total correto da estadia (0, 1 ou 2)"
+                              : hasPriorSemCourtesy
+                              ? "Selecione quantas NOVAS unidades foram consumidas hoje (+0 mantém o já salvo)"
+                              : "Informe quantas unidades de cortesia foram consumidas hoje (limite 2 por estadia)"}
+                          </p>
+                        </div>
+                      </div>
+                      <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[9px] font-black shrink-0">
+                        Cortesia R$ 0,00
+                      </Badge>
+                    </div>
+
+                    {(hasPriorSemCourtesy || semConsumoCourtesyCorrectionMode) && (
+                      <div
+                        className={`px-2.5 py-2 rounded-xl border text-[10px] font-bold flex items-center justify-between gap-2 flex-wrap ${
+                          semConsumoCourtesyCorrectionMode
+                            ? "bg-amber-500/15 border-amber-500/40 text-amber-900 dark:text-amber-200"
+                            : "bg-emerald-500/10 border-emerald-500/30 text-emerald-800 dark:text-emerald-300"
+                        }`}
+                      >
+                        <span>
+                          {semConsumoCourtesyCorrectionMode
+                            ? `✏️ Corrigindo estadia: antes 💧 ${savedSemWater}/2 • 🥜 ${savedSemPeanuts}/2 → novo total 💧 ${semConsumoWaterConsumed}/2 • 🥜 ${semConsumoPeanutsConsumed}/2`
+                            : `✓ Já salvo nesta estadia: 💧 ${savedSemWater}/2 Água • 🥜 ${savedSemPeanuts}/2 Amendoim${
+                                maxSemWater === 0 && maxSemPeanuts === 0 ? " (Limite 2/2 atingido)" : ""
+                              }`}
+                        </span>
+                        <button
+                          type="button"
+                          aria-pressed={semConsumoCourtesyCorrectionMode}
+                          onClick={() => {
+                            if (semConsumoCourtesyCorrectionMode) {
+                              setSemConsumoCourtesyCorrectionMode(false);
+                              setSemConsumoWaterConsumed(0);
+                              setSemConsumoPeanutsConsumed(0);
+                            } else {
+                              setSemConsumoCourtesyCorrectionMode(true);
+                              setSemConsumoWaterConsumed(savedSemWater);
+                              setSemConsumoPeanutsConsumed(savedSemPeanuts);
+                            }
+                          }}
+                          className="px-2 py-1 rounded-lg bg-card border border-border text-foreground hover:bg-muted font-black text-[10px] flex items-center gap-1 shrink-0"
+                        >
+                          {semConsumoCourtesyCorrectionMode ? (
+                            <>
+                              <RotateCcw className="w-3 h-3 shrink-0" />
+                              <span>Cancelar correção</span>
+                            </>
+                          ) : (
+                            <>
+                              <Pencil className="w-3 h-3 shrink-0" />
+                              <span>Corrigir cortesia salva</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {/* Copo d'Água Mineral 200ml */}
+                      <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <span className="font-bold text-xs text-foreground block truncate">💧 Copo d'Água (200ml)</span>
+                          <span className="text-[10px] text-sky-600 dark:text-sky-400 font-semibold block">
+                            {semConsumoCourtesyCorrectionMode
+                              ? `Total na estadia (salvo: ${savedSemWater}/2)`
+                              : savedSemWater >= 2
+                              ? "✓ Já salvo: 2/2 (limite atingido)"
+                              : savedSemWater > 0
+                              ? `✓ Já salvo: ${savedSemWater}/2 • Adicional hoje:`
+                              : "Estoque Anserve • R$ 0,00"}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {[0, 1, 2].map((num) => {
+                            const btnText = !semConsumoCourtesyCorrectionMode && savedSemWater > 0 ? `+${num}` : `${num}`;
+                            return (
+                              <button
+                                key={num}
+                                type="button"
+                                aria-label={`${btnText} Copo d'Água`}
+                                aria-pressed={semConsumoWaterConsumed === num}
+                                disabled={num > maxSemWater}
+                                onClick={() => setSemConsumoWaterConsumed(num)}
+                                className={`px-2 h-7 min-w-[28px] rounded-lg text-xs font-black transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
+                                  semConsumoWaterConsumed === num
+                                    ? "bg-sky-600 text-white shadow-xs"
+                                    : "bg-muted/70 text-foreground hover:bg-muted"
+                                }`}
+                              >
+                                {btnText}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Amendoim Mendorato 27g */}
+                      <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <span className="font-bold text-xs text-foreground block truncate">🥜 Amendoim Mendorato</span>
+                          <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold block">
+                            {semConsumoCourtesyCorrectionMode
+                              ? `Total na estadia (salvo: ${savedSemPeanuts}/2)`
+                              : savedSemPeanuts >= 2
+                              ? "✓ Já salvo: 2/2 (limite atingido)"
+                              : savedSemPeanuts > 0
+                              ? `✓ Já salvo: ${savedSemPeanuts}/2 • Adicional hoje:`
+                              : "Hotel Próprio • R$ 0,00"}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {[0, 1, 2].map((num) => {
+                            const btnText = !semConsumoCourtesyCorrectionMode && savedSemPeanuts > 0 ? `+${num}` : `${num}`;
+                            return (
+                              <button
+                                key={num}
+                                type="button"
+                                aria-label={`${btnText} Amendoim Mendorato`}
+                                aria-pressed={semConsumoPeanutsConsumed === num}
+                                disabled={num > maxSemPeanuts}
+                                onClick={() => setSemConsumoPeanutsConsumed(num)}
+                                className={`px-2 h-7 min-w-[28px] rounded-lg text-xs font-black transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
+                                  semConsumoPeanutsConsumed === num
+                                    ? "bg-amber-600 text-white shadow-xs"
+                                    : "bg-muted/70 text-foreground hover:bg-muted"
+                                }`}
+                              >
+                                {btnText}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+
+                    <p className="text-[10px] text-muted-foreground italic">
+                      * A reposição do kit é realizada exclusivamente pela camareira na virada de hóspede.
+                    </p>
+                  </div>
+
+                  {/* Q4/Q5: Se marcou falta de cortesia em flat sem hóspede (ou última reserva já possui cortesia salva), permite escolher Ajuste Interno vs Última Reserva */}
+                  {isSemUnoccupied &&
+                    (semConsumoWaterConsumed > 0 ||
+                      semConsumoPeanutsConsumed > 0 ||
+                      semConsumoCourtesyCorrectionMode ||
+                      Number(semConsumoModalFlat?.lastDepartedReservation?.welcomeKitSummary?.waterCupsConsumed || 0) > 0 ||
+                      Number(semConsumoModalFlat?.lastDepartedReservation?.welcomeKitSummary?.peanutsConsumed || 0) > 0) && (
+                      <div className="p-3 rounded-2xl bg-purple-500/10 border border-purple-500/30 space-y-2">
+                        <span className="font-black text-foreground block">
+                          Flat sem hóspede no quarto — como registrar esta baixa?
+                        </span>
+                        <div className="space-y-1.5">
+                          <button
+                            type="button"
+                            aria-pressed={unoccupiedLaunchMode === "internal_adjustment"}
+                            onClick={() => {
+                              const wasCorr = semConsumoCourtesyCorrectionMode;
+                              setUnoccupiedLaunchMode("internal_adjustment");
+                              setSemConsumoCourtesyCorrectionMode(false);
+                              if (wasCorr) {
+                                setSemConsumoWaterConsumed(0);
+                                setSemConsumoPeanutsConsumed(0);
+                              }
+                            }}
+                            className={`w-full p-2.5 rounded-xl border text-left transition-all ${
+                              unoccupiedLaunchMode === "internal_adjustment"
+                                ? "bg-purple-600 text-white border-purple-500 font-bold"
+                                : "bg-card border-border text-foreground hover:bg-muted/60"
+                            }`}
+                          >
+                            <span className="block text-xs font-black">1. 🛠️ Ocorrência / Ajuste Interno</span>
+                            <span className="block text-[10px] opacity-85">
+                              Registra baixa e observação no relatório sem cobrar hóspede (sem WhatsApp).
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            aria-pressed={unoccupiedLaunchMode === "link_last_reservation"}
+                            disabled={!semConsumoModalFlat?.lastDepartedReservation}
+                            onClick={() => {
+                              const wasCorr = semConsumoCourtesyCorrectionMode;
+                              setUnoccupiedLaunchMode("link_last_reservation");
+                              setSemConsumoCourtesyCorrectionMode(false);
+                              const depW = Math.min(2, Number(semConsumoModalFlat?.lastDepartedReservation?.welcomeKitSummary?.waterCupsConsumed) || 0);
+                              const depP = Math.min(2, Number(semConsumoModalFlat?.lastDepartedReservation?.welcomeKitSummary?.peanutsConsumed) || 0);
+                              setSemConsumoWaterConsumed((prev) => (wasCorr ? 0 : Math.min(prev, Math.max(0, 2 - depW))));
+                              setSemConsumoPeanutsConsumed((prev) => (wasCorr ? 0 : Math.min(prev, Math.max(0, 2 - depP))));
+                            }}
+                            className={`w-full p-2.5 rounded-xl border text-left transition-all disabled:opacity-45 ${
+                              unoccupiedLaunchMode === "link_last_reservation"
+                                ? "bg-indigo-600 text-white border-indigo-500 font-bold"
+                                : "bg-card border-border text-foreground hover:bg-muted/60"
+                            }`}
+                          >
+                            <span className="block text-xs font-black">2. 🔄 Vincular à última reserva que saiu do flat</span>
+                            <span className="block text-[10px] opacity-85">
+                              {semConsumoModalFlat?.lastDepartedReservation
+                                ? `${semConsumoModalFlat.lastDepartedReservation.guestName} (${semConsumoModalFlat.lastDepartedReservation.code} • saída ${semConsumoModalFlat.lastDepartedReservation.checkOutBr || ""}) — sem disparar WhatsApp.`
+                                : "Nenhuma reserva anterior encontrada neste flat."}
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="sem-consumo-notes" className="text-xs font-bold">
+                      Observações (Opcional)
+                    </Label>
+                    <Textarea
+                      id="sem-consumo-notes"
+                      placeholder="Ex: Frigobar conferido e abastecido."
+                      value={semConsumoNotes}
+                      onChange={(e) => setSemConsumoNotes(e.target.value)}
+                      className="text-xs rounded-2xl resize-y min-h-[60px]"
+                    />
+                  </div>
+                </div>
+              );
+            })()}
 
             <DialogFooter className="pt-2">
               <Button
@@ -2419,123 +3603,336 @@ export default function AnserveRestockPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Modal 2: Lançar Consumo do Dia & Reposição */}
-        <Dialog open={Boolean(launchModalFlat)} onOpenChange={() => setLaunchModalFlat(null)}>
-          <DialogContent className="sm:max-w-xl max-h-[92vh] overflow-y-auto rounded-3xl p-4 sm:p-6">
+        {/* Modal 2: Lançar Consumo do Dia & Reposição (Hóspede Ativo ou Flat Sem Hóspede Q4/Q5) */}
+        <Dialog
+          open={Boolean(launchModalFlat)}
+          onOpenChange={(open) => {
+            if (!open) setLaunchModalFlat(null);
+          }}
+        >
+          <DialogContent className="sm:max-w-xl max-h-[92dvh] overflow-y-auto overscroll-contain rounded-3xl p-4 sm:p-6">
             <DialogHeader>
               <DialogTitle className="text-base font-black flex items-center gap-2">
                 <Plus className="w-5 h-5 text-sky-600" />
-                <span>Lançar Consumo do Dia — Flat {launchModalFlat?.flatNumber}</span>
+                <span>
+                  {launchModalFlat?.status === "livre" || launchModalFlat?.status === "entrada_hoje"
+                    ? `Conferência / Falta em Flat Sem Hóspede — Flat ${launchModalFlat?.flatNumber}`
+                    : `Lançar Consumo do Dia — Flat ${launchModalFlat?.flatNumber}`}
+                </span>
               </DialogTitle>
               <DialogDescription className="text-xs">
-                Selecione abaixo a quantidade consumida hoje em cada item. O lançamento fica visível para o hóspede com a <strong>data do dia</strong> (sem hora) e pronto para pagamento no check-out.
+                {launchModalFlat?.status === "livre" || launchModalFlat?.status === "entrada_hoje" ? (
+                  <span>
+                    Escolha abaixo se deseja registrar como <strong>Ocorrência / Ajuste Interno</strong> ou{" "}
+                    <strong>Vincular à última reserva que saiu</strong>. Nenhum WhatsApp automático será disparado.
+                  </span>
+                ) : (
+                  <span>
+                    Selecione abaixo a quantidade consumida hoje (itens pagos e/ou cortesias). O lançamento fica salvo separado por <strong>data do dia</strong>.
+                  </span>
+                )}
               </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-4 py-1">
-              {launchModalFlat?.currentReservation && (
-                <div className="p-3 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-xs flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <span className="font-bold text-foreground block">
-                      Hóspede: {launchModalFlat.currentReservation.guestName} ({launchModalFlat.currentReservation.code})
+              {/* Q4 & Q5: Seletor obrigatório quando ninguém entrou no flat (LIVRE ou ENTRADA HOJE antes do check-in) */}
+              {launchModalFlat?.status === "livre" || launchModalFlat?.status === "entrada_hoje" ? (
+                <div className="p-3.5 rounded-2xl bg-purple-500/10 border border-purple-500/30 space-y-2.5 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-black text-foreground flex items-center gap-1.5">
+                      <Wrench className="w-4 h-4 text-purple-600 shrink-0" />
+                      <span>Como registrar a falta encontrada neste flat?</span>
                     </span>
-                    <span className="text-[11px] text-muted-foreground">
-                      {launchModalFlat.isCheckedOut
-                        ? "✅ Hóspede já fez check-out: ao salvar, o fechamento final será enviado no WhatsApp liberando o pagamento!"
-                        : "📲 Hóspede no flat: ao salvar consumo, o resumo atualizado do quarto e o link do extrato serão enviados automaticamente no WhatsApp do(s) hóspede(s)."}
-                    </span>
+                    <Badge className="bg-slate-500/15 text-foreground border-border text-[9px] font-bold">
+                      Sem disparo de WhatsApp
+                    </Badge>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2">
+                    <button
+                      type="button"
+                      aria-pressed={unoccupiedLaunchMode === "internal_adjustment"}
+                      onClick={() => {
+                        const wasCorr = launchCourtesyCorrectionMode;
+                        setUnoccupiedLaunchMode("internal_adjustment");
+                        setLaunchCourtesyCorrectionMode(false);
+                        if (wasCorr) {
+                          setWelcomeKitWaterConsumed(0);
+                          setWelcomeKitPeanutsConsumed(0);
+                        }
+                      }}
+                      className={`p-3 rounded-2xl border text-left transition-all ${
+                        unoccupiedLaunchMode === "internal_adjustment"
+                          ? "bg-purple-600 text-white border-purple-500 shadow-sm"
+                          : "bg-card border-border text-foreground hover:bg-muted/60"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-black text-xs">1. 🛠️ Ocorrência / Ajuste Interno</span>
+                        {unoccupiedLaunchMode === "internal_adjustment" && (
+                          <Badge className="bg-white/20 text-white border-none text-[9px] font-black">Selecionado</Badge>
+                        )}
+                      </div>
+                      <span
+                        className={`text-[11px] block mt-0.5 ${
+                          unoccupiedLaunchMode === "internal_adjustment" ? "text-purple-100" : "text-muted-foreground"
+                        }`}
+                      >
+                        Registra baixa, reposição e observação no sistema/relatório <strong>sem cobrar hóspede</strong>.
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      aria-pressed={unoccupiedLaunchMode === "link_last_reservation"}
+                      disabled={!launchModalFlat?.lastDepartedReservation}
+                      onClick={() => {
+                        const wasCorr = launchCourtesyCorrectionMode;
+                        setUnoccupiedLaunchMode("link_last_reservation");
+                        setLaunchCourtesyCorrectionMode(false);
+                        const depW = Math.min(2, Number(launchModalFlat?.lastDepartedReservation?.welcomeKitSummary?.waterCupsConsumed) || 0);
+                        const depP = Math.min(2, Number(launchModalFlat?.lastDepartedReservation?.welcomeKitSummary?.peanutsConsumed) || 0);
+                        setWelcomeKitWaterConsumed((prev) => (wasCorr ? 0 : Math.min(prev, Math.max(0, 2 - depW))));
+                        setWelcomeKitPeanutsConsumed((prev) => (wasCorr ? 0 : Math.min(prev, Math.max(0, 2 - depP))));
+                      }}
+                      className={`p-3 rounded-2xl border text-left transition-all disabled:opacity-45 ${
+                        unoccupiedLaunchMode === "link_last_reservation"
+                          ? "bg-indigo-600 text-white border-indigo-500 shadow-sm"
+                          : "bg-card border-border text-foreground hover:bg-muted/60"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-black text-xs">2. 🔄 Vincular à última reserva que saiu do flat</span>
+                        {unoccupiedLaunchMode === "link_last_reservation" && (
+                          <Badge className="bg-white/20 text-white border-none text-[9px] font-black">Selecionado</Badge>
+                        )}
+                      </div>
+                      <span
+                        className={`text-[11px] block mt-0.5 ${
+                          unoccupiedLaunchMode === "link_last_reservation" ? "text-indigo-100" : "text-muted-foreground"
+                        }`}
+                      >
+                        {launchModalFlat?.lastDepartedReservation ? (
+                          <>
+                            Correção de consumo anterior de{" "}
+                            <strong>{launchModalFlat.lastDepartedReservation.guestName}</strong> (
+                            {launchModalFlat.lastDepartedReservation.code} • saída{" "}
+                            {launchModalFlat.lastDepartedReservation.checkOutBr || ""}). Apenas grava no sistema.
+                          </>
+                        ) : (
+                          "Nenhuma reserva anterior que saiu deste flat foi encontrada."
+                        )}
+                      </span>
+                    </button>
                   </div>
                 </div>
+              ) : (
+                launchModalFlat?.currentReservation && (
+                  <div className="p-3 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-xs flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="font-bold text-foreground block">
+                        Hóspede: {launchModalFlat.currentReservation.guestName} ({launchModalFlat.currentReservation.code})
+                      </span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {launchModalFlat.isCheckedOut
+                          ? "✅ Hóspede já fez check-out: ao salvar itens pagos, o fechamento final será enviado no WhatsApp liberando o pagamento!"
+                          : "📲 Hóspede no flat: ao salvar itens pagos, o resumo atualizado do quarto e o link do extrato serão enviados no WhatsApp."}
+                      </span>
+                    </div>
+                  </div>
+                )
               )}
 
               {/* Bloco R4: Kit de Boas-Vindas (Cortesia da Casa) */}
-              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/10 via-sky-500/10 to-transparent border border-amber-500/30 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-base">🎁</span>
-                    <div>
-                      <h4 className="text-xs font-black text-foreground">Kit de Boas-Vindas (Cortesia da Casa)</h4>
-                      <p className="text-[10px] text-muted-foreground">
-                        Conferência de consumo • Limite de até 2 unidades de cada por estadia
-                      </p>
-                    </div>
-                  </div>
-                  <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[9px] font-black">
-                    Cortesia R$ 0,00
-                  </Badge>
-                </div>
+              {(() => {
+                const isLaunchUnoccupied =
+                  launchModalFlat?.status === "livre" || launchModalFlat?.status === "entrada_hoje";
+                const targetLaunchSummary = isLaunchUnoccupied
+                  ? unoccupiedLaunchMode === "link_last_reservation"
+                    ? launchModalFlat?.lastDepartedReservation?.welcomeKitSummary
+                    : null
+                  : launchModalFlat?.welcomeKitSummary;
+                const savedLaunchWater = Math.min(2, Math.max(0, Number(targetLaunchSummary?.waterCupsConsumed) || 0));
+                const savedLaunchPeanuts = Math.min(2, Math.max(0, Number(targetLaunchSummary?.peanutsConsumed) || 0));
+                const hasPriorLaunchCourtesy = savedLaunchWater > 0 || savedLaunchPeanuts > 0;
+                const maxLaunchWater = launchCourtesyCorrectionMode
+                  ? 2
+                  : isLaunchUnoccupied && unoccupiedLaunchMode === "internal_adjustment"
+                  ? 2
+                  : Math.max(0, 2 - savedLaunchWater);
+                const maxLaunchPeanuts = launchCourtesyCorrectionMode
+                  ? 2
+                  : isLaunchUnoccupied && unoccupiedLaunchMode === "internal_adjustment"
+                  ? 2
+                  : Math.max(0, 2 - savedLaunchPeanuts);
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {/* Copo d'Água Mineral 200ml */}
-                  <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <span className="font-bold text-xs text-foreground block truncate">💧 Copo d'Água (200ml)</span>
-                      <span className="text-[10px] text-sky-600 dark:text-sky-400 font-semibold block">
-                        Estoque Anserve • R$ 0,00
-                      </span>
+                return (
+                  <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/10 via-sky-500/10 to-transparent border border-amber-500/30 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-base">🎁</span>
+                        <div>
+                          <h4 className="text-xs font-black text-foreground">Kit de Boas-Vindas (Cortesia da Casa)</h4>
+                          <p className="text-[10px] text-muted-foreground">
+                            {launchCourtesyCorrectionMode
+                              ? "Modo correção: selecione o total correto da estadia (0, 1 ou 2)"
+                              : hasPriorLaunchCourtesy
+                              ? "Selecione quantas NOVAS unidades foram consumidas hoje (+0 mantém o já salvo)"
+                              : "Conferência de consumo • Limite de até 2 unidades de cada por estadia"}
+                          </p>
+                        </div>
+                      </div>
+                      <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[9px] font-black shrink-0">
+                        Cortesia R$ 0,00
+                      </Badge>
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {[0, 1, 2].map((num) => (
+
+                    {(hasPriorLaunchCourtesy || launchCourtesyCorrectionMode) && (
+                      <div
+                        className={`px-2.5 py-2 rounded-xl border text-[10px] font-bold flex items-center justify-between gap-2 flex-wrap ${
+                          launchCourtesyCorrectionMode
+                            ? "bg-amber-500/15 border-amber-500/40 text-amber-900 dark:text-amber-200"
+                            : "bg-emerald-500/10 border-emerald-500/30 text-emerald-800 dark:text-emerald-300"
+                        }`}
+                      >
+                        <span>
+                          {launchCourtesyCorrectionMode
+                            ? `✏️ Corrigindo estadia: antes 💧 ${savedLaunchWater}/2 • 🥜 ${savedLaunchPeanuts}/2 → novo total 💧 ${welcomeKitWaterConsumed}/2 • 🥜 ${welcomeKitPeanutsConsumed}/2`
+                            : `✓ Já salvo nesta estadia: 💧 ${savedLaunchWater}/2 Água • 🥜 ${savedLaunchPeanuts}/2 Amendoim${
+                                maxLaunchWater === 0 && maxLaunchPeanuts === 0 ? " (Limite 2/2 atingido)" : ""
+                              }`}
+                        </span>
                         <button
-                          key={num}
                           type="button"
-                          onClick={() => setWelcomeKitWaterConsumed(num)}
-                          className={`w-7 h-7 rounded-lg text-xs font-black transition-all ${
-                            welcomeKitWaterConsumed === num
-                              ? "bg-sky-600 text-white shadow-xs"
-                              : "bg-muted/70 text-foreground hover:bg-muted"
-                          }`}
+                          aria-pressed={launchCourtesyCorrectionMode}
+                          onClick={() => {
+                            if (launchCourtesyCorrectionMode) {
+                              setLaunchCourtesyCorrectionMode(false);
+                              setWelcomeKitWaterConsumed(0);
+                              setWelcomeKitPeanutsConsumed(0);
+                            } else {
+                              setLaunchCourtesyCorrectionMode(true);
+                              setWelcomeKitWaterConsumed(savedLaunchWater);
+                              setWelcomeKitPeanutsConsumed(savedLaunchPeanuts);
+                            }
+                          }}
+                          className="px-2 py-1 rounded-lg bg-card border border-border text-foreground hover:bg-muted font-black text-[10px] flex items-center gap-1 shrink-0"
                         >
-                          {num}
+                          {launchCourtesyCorrectionMode ? (
+                            <>
+                              <RotateCcw className="w-3 h-3 shrink-0" />
+                              <span>Cancelar correção</span>
+                            </>
+                          ) : (
+                            <>
+                              <Pencil className="w-3 h-3 shrink-0" />
+                              <span>Corrigir cortesia salva</span>
+                            </>
+                          )}
                         </button>
-                      ))}
-                    </div>
-                  </div>
+                      </div>
+                    )}
 
-                  {/* Amendoim Mendorato 27g */}
-                  <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <span className="font-bold text-xs text-foreground block truncate">🥜 Amendoim Mendorato</span>
-                      <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold block">
-                        Hotel Próprio • R$ 0,00
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {[0, 1, 2].map((num) => (
-                        <button
-                          key={num}
-                          type="button"
-                          onClick={() => setWelcomeKitPeanutsConsumed(num)}
-                          className={`w-7 h-7 rounded-lg text-xs font-black transition-all ${
-                            welcomeKitPeanutsConsumed === num
-                              ? "bg-amber-600 text-white shadow-xs"
-                              : "bg-muted/70 text-foreground hover:bg-muted"
-                          }`}
-                        >
-                          {num}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {/* Copo d'Água Mineral 200ml */}
+                      <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <span className="font-bold text-xs text-foreground block truncate">💧 Copo d'Água (200ml)</span>
+                          <span className="text-[10px] text-sky-600 dark:text-sky-400 font-semibold block">
+                            {launchCourtesyCorrectionMode
+                              ? `Total na estadia (salvo: ${savedLaunchWater}/2)`
+                              : savedLaunchWater >= 2
+                              ? "✓ Já salvo: 2/2 (limite atingido)"
+                              : savedLaunchWater > 0
+                              ? `✓ Já salvo: ${savedLaunchWater}/2 • Adicional hoje:`
+                              : "Estoque Anserve • R$ 0,00"}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {[0, 1, 2].map((num) => {
+                            const btnText = !launchCourtesyCorrectionMode && savedLaunchWater > 0 ? `+${num}` : `${num}`;
+                            return (
+                              <button
+                                key={num}
+                                type="button"
+                                aria-label={`${btnText} Copo d'Água`}
+                                aria-pressed={welcomeKitWaterConsumed === num}
+                                disabled={num > maxLaunchWater}
+                                onClick={() => setWelcomeKitWaterConsumed(num)}
+                                className={`px-2 h-7 min-w-[28px] rounded-lg text-xs font-black transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
+                                  welcomeKitWaterConsumed === num
+                                    ? "bg-sky-600 text-white shadow-xs"
+                                    : "bg-muted/70 text-foreground hover:bg-muted"
+                                }`}
+                              >
+                                {btnText}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
 
-                <p className="text-[10px] text-muted-foreground italic">
-                  * A reposição do kit é realizada exclusivamente pela camareira na virada de hóspede.
-                </p>
-              </div>
+                      {/* Amendoim Mendorato 27g */}
+                      <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <span className="font-bold text-xs text-foreground block truncate">🥜 Amendoim Mendorato</span>
+                          <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold block">
+                            {launchCourtesyCorrectionMode
+                              ? `Total na estadia (salvo: ${savedLaunchPeanuts}/2)`
+                              : savedLaunchPeanuts >= 2
+                              ? "✓ Já salvo: 2/2 (limite atingido)"
+                              : savedLaunchPeanuts > 0
+                              ? `✓ Já salvo: ${savedLaunchPeanuts}/2 • Adicional hoje:`
+                              : "Hotel Próprio • R$ 0,00"}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {[0, 1, 2].map((num) => {
+                            const btnText = !launchCourtesyCorrectionMode && savedLaunchPeanuts > 0 ? `+${num}` : `${num}`;
+                            return (
+                              <button
+                                key={num}
+                                type="button"
+                                aria-label={`${btnText} Amendoim Mendorato`}
+                                aria-pressed={welcomeKitPeanutsConsumed === num}
+                                disabled={num > maxLaunchPeanuts}
+                                onClick={() => setWelcomeKitPeanutsConsumed(num)}
+                                className={`px-2 h-7 min-w-[28px] rounded-lg text-xs font-black transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
+                                  welcomeKitPeanutsConsumed === num
+                                    ? "bg-amber-600 text-white shadow-xs"
+                                    : "bg-muted/70 text-foreground hover:bg-muted"
+                                }`}
+                              >
+                                {btnText}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+
+                    <p className="text-[10px] text-muted-foreground italic">
+                      * A reposição do kit é realizada exclusivamente pela camareira na virada de hóspede.
+                    </p>
+                  </div>
+                );
+              })()}
 
               {/* Seletor de Data do Lançamento (Dia) */}
               <div className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-muted/50 border border-border">
                 <div className="flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-sky-500" />
+                  <Calendar className="w-4 h-4 text-sky-500" aria-hidden="true" />
                   <div>
-                    <Label className="text-xs font-bold block">Data do Lançamento (Dia)</Label>
+                    <Label htmlFor="launch-date-input" className="text-xs font-bold block">
+                      Data do Lançamento (Dia)
+                    </Label>
                     <span className="text-[10px] text-muted-foreground">
-                      Aparecerá para o hóspede como Dia {formatYmdToBr(launchDateYmd)}
+                      Registrado separado por dia como Dia {formatYmdToBr(launchDateYmd)}
                     </span>
                   </div>
                 </div>
                 <Input
+                  id="launch-date-input"
                   type="date"
                   value={launchDateYmd}
                   onChange={(e) => setLaunchDateYmd(e.target.value)}
@@ -2545,7 +3942,7 @@ export default function AnserveRestockPage() {
 
               {/* Lista de Produtos para Lançar Quantidade Consumida no Dia */}
               <div className="border border-border rounded-2xl overflow-hidden bg-card">
-                <div className="divide-y divide-border max-h-[42vh] overflow-y-auto">
+                <div className="divide-y divide-border max-h-[42vh] overflow-y-auto overscroll-contain">
                   {dailyLaunchCalculation.rows.map(({ product: prod, qty, subtotal }) => (
                     <div
                       key={prod.id}
@@ -2571,6 +3968,7 @@ export default function AnserveRestockPage() {
 
                         <button
                           type="button"
+                          aria-label={`Diminuir ${prod.name}`}
                           disabled={qty <= 0}
                           onClick={() =>
                             setLaunchedQuantities((prev) => ({
@@ -2580,7 +3978,7 @@ export default function AnserveRestockPage() {
                           }
                           className="w-8 h-8 rounded-xl bg-muted/70 hover:bg-muted active:scale-95 disabled:opacity-30 flex items-center justify-center text-foreground border border-border"
                         >
-                          <Minus className="w-3.5 h-3.5" />
+                          <Minus className="w-3.5 h-3.5" aria-hidden="true" />
                         </button>
 
                         <span className="font-black text-sm text-foreground text-center min-w-[24px]">
@@ -2589,6 +3987,7 @@ export default function AnserveRestockPage() {
 
                         <button
                           type="button"
+                          aria-label={`Aumentar ${prod.name}`}
                           onClick={() =>
                             setLaunchedQuantities((prev) => ({
                               ...prev,
@@ -2597,7 +3996,7 @@ export default function AnserveRestockPage() {
                           }
                           className="w-8 h-8 rounded-xl bg-sky-600 hover:bg-sky-500 text-white active:scale-95 flex items-center justify-center font-bold shadow-xs"
                         >
-                          <Plus className="w-3.5 h-3.5" />
+                          <Plus className="w-3.5 h-3.5" aria-hidden="true" />
                         </button>
                       </div>
                     </div>
@@ -2611,12 +4010,21 @@ export default function AnserveRestockPage() {
                       Total do Lançamento ({formatYmdToBr(launchDateYmd)}):
                     </span>
                     <span className="text-xs font-bold text-foreground">
-                      {dailyLaunchCalculation.totalUnits} {dailyLaunchCalculation.totalUnits === 1 ? "item" : "itens"}
+                      {dailyLaunchCalculation.totalUnits} {dailyLaunchCalculation.totalUnits === 1 ? "item pago" : "itens pagos"}
+                      {launchCourtesyCorrectionMode
+                        ? ` • cortesia ajustada (💧 ${welcomeKitWaterConsumed}/2, 🥜 ${welcomeKitPeanutsConsumed}/2)`
+                        : (welcomeKitWaterConsumed > 0 || welcomeKitPeanutsConsumed > 0)
+                        ? ` + ${welcomeKitWaterConsumed + welcomeKitPeanutsConsumed} cortesia(s)`
+                        : ""}
                     </span>
                   </div>
                   <div className="text-right">
                     <span className="text-base font-black font-mono text-sky-600 dark:text-sky-400">
-                      R$ {dailyLaunchCalculation.totalAmount.toFixed(2)}
+                      {launchModalFlat &&
+                      (launchModalFlat.status === "livre" || launchModalFlat.status === "entrada_hoje") &&
+                      unoccupiedLaunchMode === "internal_adjustment"
+                        ? "R$ 0,00 (Ajuste)"
+                        : `R$ ${dailyLaunchCalculation.totalAmount.toFixed(2)}`}
                     </span>
                   </div>
                 </div>
@@ -2665,12 +4073,23 @@ export default function AnserveRestockPage() {
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold">Observações (Opcional)</Label>
+                <Label htmlFor="launch-notes-textarea" className="text-xs font-bold">
+                  Observações{" "}
+                  {(launchModalFlat?.status === "livre" || launchModalFlat?.status === "entrada_hoje") &&
+                  unoccupiedLaunchMode === "internal_adjustment"
+                    ? "(Motivo do Ajuste / Ocorrência)"
+                    : "(Opcional)"}
+                </Label>
                 <Textarea
-                  placeholder="Ex: Reposição diária realizada."
+                  id="launch-notes-textarea"
+                  placeholder={
+                    launchModalFlat?.status === "livre" || launchModalFlat?.status === "entrada_hoje"
+                      ? "Ex: Falta constatada em conferência preventiva com flat sem hóspede."
+                      : "Ex: Reposição diária realizada."
+                  }
                   value={launchNotes}
                   onChange={(e) => setLaunchNotes(e.target.value)}
-                  className="text-xs rounded-2xl resize-none min-h-[52px]"
+                  className="text-xs rounded-2xl resize-y min-h-[52px]"
                 />
               </div>
             </div>
@@ -2683,21 +4102,62 @@ export default function AnserveRestockPage() {
               >
                 Cancelar
               </Button>
-              <Button
-                disabled={submittingInspection || dailyLaunchCalculation.totalUnits === 0}
-                onClick={handleSubmitLaunchConsumo}
-                className="rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-700 text-white"
-              >
-                {submittingInspection
-                  ? "Salvando Lançamento..."
-                  : `Salvar Lançamento do Dia (R$ ${dailyLaunchCalculation.totalAmount.toFixed(2)})`}
-              </Button>
+              {(() => {
+                const isFooterUnoccupied =
+                  launchModalFlat?.status === "livre" || launchModalFlat?.status === "entrada_hoje";
+                const footerTargetSummary = isFooterUnoccupied
+                  ? unoccupiedLaunchMode === "link_last_reservation"
+                    ? launchModalFlat?.lastDepartedReservation?.welcomeKitSummary
+                    : null
+                  : launchModalFlat?.welcomeKitSummary;
+                const footerSavedW = Math.min(2, Math.max(0, Number(footerTargetSummary?.waterCupsConsumed) || 0));
+                const footerSavedP = Math.min(2, Math.max(0, Number(footerTargetSummary?.peanutsConsumed) || 0));
+                const footerHasCourtesyCorrection =
+                  launchCourtesyCorrectionMode &&
+                  (welcomeKitWaterConsumed !== footerSavedW || welcomeKitPeanutsConsumed !== footerSavedP);
+
+                return (
+                  <Button
+                    disabled={
+                      submittingInspection ||
+                      (launchCourtesyCorrectionMode
+                        ? dailyLaunchCalculation.totalUnits === 0 && !footerHasCourtesyCorrection
+                        : dailyLaunchCalculation.totalUnits === 0 &&
+                          welcomeKitWaterConsumed === 0 &&
+                          welcomeKitPeanutsConsumed === 0) ||
+                      ((launchModalFlat?.status === "livre" || launchModalFlat?.status === "entrada_hoje") &&
+                        unoccupiedLaunchMode === "link_last_reservation" &&
+                        !launchModalFlat?.lastDepartedReservation)
+                    }
+                    onClick={handleSubmitLaunchConsumo}
+                    className="rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-700 text-white"
+                  >
+                    {submittingInspection
+                      ? "Salvando Lançamento..."
+                      : launchModalFlat &&
+                        (launchModalFlat.status === "livre" || launchModalFlat.status === "entrada_hoje") &&
+                        unoccupiedLaunchMode === "internal_adjustment"
+                      ? "Registrar Ocorrência / Ajuste Interno"
+                      : dailyLaunchCalculation.totalUnits === 0 && footerHasCourtesyCorrection
+                      ? "Salvar Correção de Cortesia (R$ 0,00)"
+                      : dailyLaunchCalculation.totalUnits === 0 &&
+                        (welcomeKitWaterConsumed > 0 || welcomeKitPeanutsConsumed > 0)
+                      ? "Salvar Consumo de Cortesia (R$ 0,00)"
+                      : `Salvar Lançamento do Dia (R$ ${dailyLaunchCalculation.totalAmount.toFixed(2)})`}
+                  </Button>
+                );
+              })()}
             </DialogFooter>
           </DialogContent>
         </Dialog>
 
         {/* Modal 3: Confirmação Rápida Anti-Toque Acidental para NQ / NP */}
-        <Dialog open={Boolean(confirmSkipTarget)} onOpenChange={() => setConfirmSkipTarget(null)}>
+        <Dialog
+          open={Boolean(confirmSkipTarget)}
+          onOpenChange={(open) => {
+            if (!open) setConfirmSkipTarget(null);
+          }}
+        >
           <DialogContent className="sm:max-w-sm rounded-3xl p-5">
             <DialogHeader>
               <DialogTitle className="text-base font-black flex items-center gap-2">

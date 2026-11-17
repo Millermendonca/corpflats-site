@@ -281,6 +281,9 @@ const FunnelStaySummaryCard = memo(function FunnelStaySummaryCard({
 
 const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
   rooms,
+  defaultCheckin,
+  defaultCheckout,
+  minDate,
   ratePlan,
   occupancySecondGuestDiff,
   twinFeeUnit,
@@ -298,6 +301,9 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
   updateRoom,
 }: {
   rooms: RoomConfig[]
+  defaultCheckin?: string
+  defaultCheckout?: string
+  minDate?: string
   ratePlan: "with_breakfast" | "room_only"
   occupancySecondGuestDiff: number
   twinFeeUnit: number
@@ -312,7 +318,7 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
   allowThirdGuest?: boolean
   addRoom: () => void
   removeRoom: (id: number) => void
-  updateRoom: (id: number, field: "bedType" | "adults", value: any) => void
+  updateRoom: (id: number, field: string, value: any) => void
 }) {
   const twinFeeSuffix = twinFeeUnit > 0 ? ` (+R$ ${formatBrl(twinFeeUnit)}${twinFeeType === "per_night" ? "/noite" : ""})` : ""
   const extraBedSuffix = extraBedFeeUnit > 0 ? `+R$ ${formatBrl(extraBedFeeUnit)}${extraBedFeeType === "per_night" ? "/noite" : ""}` : "Incluso"
@@ -320,7 +326,7 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <Label className="text-xs font-bold text-slate-900 dark:text-slate-100">
-          Configuração dos Flats ({rooms.length}):
+          Configuração dos Flats ({rooms.length}{rooms.length > 1 ? " • Pagamento Único" : ""}):
         </Label>
         <Button
           type="button"
@@ -334,78 +340,173 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
       </div>
 
       <div className="space-y-2">
-        {rooms.map((r, idx) => (
-          <div key={r.id} className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2">
-            <div className="flex items-center justify-between text-xs font-bold">
-              <span className="text-slate-900 dark:text-slate-100">Flat Soho #{idx + 1}</span>
+        {rooms.map((r, idx) => {
+          const effPlan = r.ratePlan || ratePlan
+          return (
+            <div key={r.id} className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2.5">
+              <div className="flex items-center justify-between text-xs font-bold flex-wrap gap-2">
+                <span className="text-slate-900 dark:text-slate-100">Flat Soho #{idx + 1}</span>
+                <div className="flex items-center gap-3">
+                  {rooms.length > 1 && (
+                    <label className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-600 dark:text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(r.customDates)}
+                        onChange={(e) =>
+                          updateRoom(r.id, "__patch__", {
+                            customDates: e.target.checked,
+                            checkinDate: r.checkinDate || defaultCheckin || "",
+                            checkoutDate: r.checkoutDate || defaultCheckout || "",
+                          })
+                        }
+                        className="rounded accent-[#0F3D4C]"
+                      />
+                      <span>Datas próprias neste flat</span>
+                    </label>
+                  )}
+                  {rooms.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeRoom(r.id)}
+                      className="text-slate-500 hover:text-rose-600 hover:underline text-[10px]"
+                    >
+                      Remover
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {rooms.length > 1 && r.customDates && (
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="space-y-0.5">
+                    <Label className="text-[10px] text-slate-500 font-bold">Check-in deste Flat:</Label>
+                    <Input
+                      type="date"
+                      min={minDate}
+                      value={r.checkinDate || defaultCheckin || ""}
+                      onChange={(e) => updateRoom(r.id, "checkinDate", e.target.value)}
+                      className="h-9 text-xs bg-white dark:bg-slate-900 rounded-xl"
+                    />
+                  </div>
+                  <div className="space-y-0.5">
+                    <Label className="text-[10px] text-slate-500 font-bold">Check-out deste Flat:</Label>
+                    <Input
+                      type="date"
+                      min={r.checkinDate || defaultCheckin || minDate}
+                      value={r.checkoutDate || defaultCheckout || ""}
+                      onChange={(e) => updateRoom(r.id, "checkoutDate", e.target.value)}
+                      className="h-9 text-xs bg-white dark:bg-slate-900 rounded-xl"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className={`grid grid-cols-1 ${rooms.length > 1 ? "sm:grid-cols-3" : "sm:grid-cols-2"} gap-2 text-xs`}>
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-slate-500 font-bold">Configuração de Cama:</Label>
+                  <select
+                    value={r.bedType}
+                    onChange={e => updateRoom(r.id, "bedType", e.target.value as any)}
+                    className="w-full min-h-[44px] sm:min-h-[36px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 text-base sm:text-xs font-bold text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="queen">1 Cama Queen Casal</option>
+                    {showTwinOption && (
+                      <option value="twin" disabled={!allowTwinBeds}>
+                        2 Camas Solteiro{twinFeeSuffix}{!allowTwinBeds ? " — Indisponível" : ""}
+                      </option>
+                    )}
+                  </select>
+                  {showTwinOption && !allowTwinBeds && twinDisabledReason && (
+                    <p className="text-[10px] text-amber-700 dark:text-amber-400 font-medium leading-tight">
+                      {twinDisabledReason}
+                    </p>
+                  )}
+                  {r.bedType === "twin" && otaTwinFeeUnit && otaTwinFeeUnit > twinFeeUnit && (
+                    <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
+                      Nas plataformas: <span translate="no" className="line-through text-slate-400">R$ {formatBrl(otaTwinFeeUnit)}</span> • Direto: <span translate="no">R$ {formatBrl(twinFeeUnit)}</span>
+                    </p>
+                  )}
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-slate-500 font-bold">Hóspedes:</Label>
+                  <select
+                    value={allowThirdGuest ? r.adults : Math.min(2, r.adults)}
+                    onChange={e => updateRoom(r.id, "adults", Number(e.target.value))}
+                    className="w-full min-h-[44px] sm:min-h-[36px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 text-base sm:text-xs font-bold text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="1">1 Hóspede</option>
+                    <option value="2">
+                      {effPlan === "with_breakfast" && occupancySecondGuestDiff > 0
+                        ? `2 Hóspedes (+R$ ${formatBrl(occupancySecondGuestDiff)}/noite)`
+                        : "2 Hóspedes"}
+                    </option>
+                    {allowThirdGuest && (
+                      <option value="3">
+                        {effPlan === "with_breakfast" && occupancySecondGuestDiff > 0
+                          ? `3 Hósp. (+R$ ${formatBrl(occupancySecondGuestDiff * 2)}/noite • Colchonete ${extraBedSuffix})`
+                          : `3 Hósp. (Colchonete ${extraBedSuffix})`}
+                      </option>
+                    )}
+                  </select>
+                  {allowThirdGuest && r.adults === 3 && otaExtraBedFeeUnit && otaExtraBedFeeUnit > extraBedFeeUnit && (
+                    <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
+                      Colchonete nas plataformas: <span translate="no" className="line-through text-slate-400">R$ {formatBrl(otaExtraBedFeeUnit)}</span> • Direto: <span translate="no">R$ {formatBrl(extraBedFeeUnit)}</span>
+                    </p>
+                  )}
+                </div>
+
+                {rooms.length > 1 && (
+                  <div className="space-y-1">
+                    <Label className="text-[10px] text-slate-500 font-bold">Café neste Flat:</Label>
+                    <select
+                      value={r.ratePlan || ""}
+                      onChange={(e) => updateRoom(r.id, "ratePlan", e.target.value || undefined)}
+                      className="w-full min-h-[44px] sm:min-h-[36px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 text-base sm:text-xs font-bold text-slate-900 dark:text-slate-100"
+                    >
+                      <option value="">Seguir plano geral ({ratePlan === "with_breakfast" ? "Com Café" : "Sem Café"})</option>
+                      <option value="with_breakfast">Com Café da Manhã</option>
+                      <option value="room_only">Sem Café (Só Hospedagem)</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+
               {rooms.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => removeRoom(r.id)}
-                  className="text-slate-500 hover:text-rose-600 hover:underline text-[10px]"
-                >
-                  Remover
-                </button>
+                <div className="pt-1 border-t border-slate-200/70 dark:border-slate-700/70 space-y-1.5">
+                  <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-700 dark:text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(r.hasVehicle)}
+                      onChange={(e) => updateRoom(r.id, "hasVehicle", e.target.checked)}
+                      className="rounded accent-[#0F3D4C]"
+                    />
+                    <span>Veículo para garagem neste Flat #{idx + 1}</span>
+                  </label>
+                  {r.hasVehicle && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input
+                        value={r.vehiclePlate || ""}
+                        onChange={(e) => updateRoom(r.id, "vehiclePlate", e.target.value.toUpperCase())}
+                        placeholder="Placa (ex: ABC1D23)"
+                        autoCorrect="off"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        className="h-8 text-xs font-mono uppercase bg-white dark:bg-slate-900 rounded-xl"
+                      />
+                      <Input
+                        value={r.vehicleModel || ""}
+                        onChange={(e) => updateRoom(r.id, "vehicleModel", e.target.value)}
+                        placeholder="Modelo / Cor"
+                        className="h-8 text-xs bg-white dark:bg-slate-900 rounded-xl"
+                      />
+                    </div>
+                  )}
+                </div>
               )}
             </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-              <div className="space-y-1">
-                <Label className="text-[10px] text-slate-500 font-bold">Configuração de Cama:</Label>
-                <select
-                  value={r.bedType}
-                  onChange={e => updateRoom(r.id, "bedType", e.target.value as any)}
-                  className="w-full min-h-[44px] sm:min-h-[36px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 text-base sm:text-xs font-bold text-slate-900 dark:text-slate-100"
-                >
-                  <option value="queen">1 Cama Queen Casal</option>
-                  {showTwinOption && (
-                    <option value="twin" disabled={!allowTwinBeds}>
-                      2 Camas Solteiro{twinFeeSuffix}{!allowTwinBeds ? " — Indisponível" : ""}
-                    </option>
-                  )}
-                </select>
-                {showTwinOption && !allowTwinBeds && twinDisabledReason && (
-                  <p className="text-[10px] text-amber-700 dark:text-amber-400 font-medium leading-tight">
-                    {twinDisabledReason}
-                  </p>
-                )}
-                {r.bedType === "twin" && otaTwinFeeUnit && otaTwinFeeUnit > twinFeeUnit && (
-                  <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
-                    Nas plataformas: <span translate="no" className="line-through text-slate-400">R$ {formatBrl(otaTwinFeeUnit)}</span> • Direto: <span translate="no">R$ {formatBrl(twinFeeUnit)}</span>
-                  </p>
-                )}
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-[10px] text-slate-500 font-bold">Hóspedes:</Label>
-                <select
-                  value={allowThirdGuest ? r.adults : Math.min(2, r.adults)}
-                  onChange={e => updateRoom(r.id, "adults", Number(e.target.value))}
-                  className="w-full min-h-[44px] sm:min-h-[36px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 text-base sm:text-xs font-bold text-slate-900 dark:text-slate-100"
-                >
-                  <option value="1">1 Hóspede</option>
-                  <option value="2">
-                    {ratePlan === "with_breakfast" && occupancySecondGuestDiff > 0
-                      ? `2 Hóspedes (+R$ ${formatBrl(occupancySecondGuestDiff)}/noite)`
-                      : "2 Hóspedes"}
-                  </option>
-                  {allowThirdGuest && (
-                    <option value="3">
-                      {ratePlan === "with_breakfast" && occupancySecondGuestDiff > 0
-                        ? `3 Hósp. (+R$ ${formatBrl(occupancySecondGuestDiff * 2)}/noite • Colchonete ${extraBedSuffix})`
-                        : `3 Hósp. (Colchonete ${extraBedSuffix})`}
-                    </option>
-                  )}
-                </select>
-                {allowThirdGuest && r.adults === 3 && otaExtraBedFeeUnit && otaExtraBedFeeUnit > extraBedFeeUnit && (
-                  <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
-                    Colchonete nas plataformas: <span translate="no" className="line-through text-slate-400">R$ {formatBrl(otaExtraBedFeeUnit)}</span> • Direto: <span translate="no">R$ {formatBrl(extraBedFeeUnit)}</span>
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
@@ -414,6 +515,9 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
 const FunnelPriceBreakdownCard = memo(function FunnelPriceBreakdownCard({
   nights,
   flatsCount,
+  totalRoomNights,
+  hasCustomRoomDates = false,
+  hasMixedRatePlan = false,
   ratePlan,
   subtotal,
   cleaningFee,
@@ -438,6 +542,9 @@ const FunnelPriceBreakdownCard = memo(function FunnelPriceBreakdownCard({
 }: {
   nights: number
   flatsCount: number
+  totalRoomNights?: number
+  hasCustomRoomDates?: boolean
+  hasMixedRatePlan?: boolean
   ratePlan: "with_breakfast" | "room_only"
   subtotal: number
   cleaningFee: number
@@ -460,11 +567,17 @@ const FunnelPriceBreakdownCard = memo(function FunnelPriceBreakdownCard({
   policyType: string
   policyExplanation: string
 }) {
+  const nightsSummaryText = hasCustomRoomDates && totalRoomNights
+    ? `${totalRoomNights} ${totalRoomNights === 1 ? "diária somada" : "diárias somadas"} • ${flatsCount} flats`
+    : `${nights} ${nights === 1 ? "noite" : "noites"} • ${flatsCount} ${flatsCount === 1 ? "flat" : "flats"}`
+  const planSummaryText = hasMixedRatePlan
+    ? "Planos por flat"
+    : (ratePlan === "with_breakfast" ? "Com Café" : "Sem Café")
   return (
     <>
       <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2 text-xs">
         <div className="flex justify-between gap-2 text-slate-600 dark:text-slate-400">
-          <span>Diárias ({nights} {nights === 1 ? "noite" : "noites"} • {flatsCount} {flatsCount === 1 ? "flat" : "flats"} • {ratePlan === "with_breakfast" ? "Com Café" : "Sem Café"}):</span>
+          <span>Diárias ({nightsSummaryText} • {planSummaryText}):</span>
           <span className="shrink-0">R$ {formatBrl(subtotal)}</span>
         </div>
 
@@ -670,7 +783,7 @@ export interface BookingFunnelModalProps {
   rooms: RoomConfig[]
   ratePlan: "with_breakfast" | "room_only"
   setRatePlan: (plan: "with_breakfast" | "room_only") => void
-  updateRoom: (id: number, field: "bedType" | "adults", value: any) => void
+  updateRoom: (id: number, field: string, value: any) => void
   addRoom: () => void
   removeRoom: (id: number) => void
   siteConfig: any
@@ -1241,7 +1354,32 @@ export function BookingFunnelModal({
     activeAvailability?.hasLowAvailability ?? (minAvailable !== null ? minAvailable <= 5 : false)
   )
 
-  // Pricing & Calculations (Sincronizados com SEBRAE / Calendário / Preços)
+  // Pricing & Calculations (Sincronizados com SEBRAE / Calendário / Preços + datas próprias por flat)
+  const [customWindowPricingMap, setCustomWindowPricingMap] = useState<Record<string, any>>({})
+
+  useEffect(() => {
+    if (!open || rooms.length < 2) return
+    for (const rm of rooms) {
+      if (!rm.customDates) continue
+      const rIn = (rm.checkinDate || checkin || "").trim()
+      const rOut = (rm.checkoutDate || checkout || "").trim()
+      if (!rIn || !rOut || rOut <= rIn) continue
+      if (rIn === checkin && rOut === checkout) continue
+      const winKey = `${rIn}|${rOut}`
+      if (customWindowPricingMap[winKey]) continue
+      fetch(`/api/reservations/availability?checkin=${encodeURIComponent(rIn)}&checkout=${encodeURIComponent(rOut)}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((json) => {
+          if (json?.dynamicPricing) {
+            setCustomWindowPricingMap((prev) =>
+              prev[winKey] ? prev : { ...prev, [winKey]: json.dynamicPricing }
+            )
+          }
+        })
+        .catch(() => {})
+    }
+  }, [open, rooms, checkin, checkout, customWindowPricingMap])
+
   const flatsCount = rooms.length
   const dynPricing = activeAvailability?.dynamicPricing
   const breakfastSurchargePerGuest = Number(
@@ -1307,26 +1445,171 @@ export function BookingFunnelModal({
 
   const currentPlan = ratePlan === "with_breakfast" ? withBreakfastConfig : roomOnlyConfig
   const selectedDailyRate = ratePlan === "with_breakfast" ? withBreakfastAvgRate : roomOnlyAvgRate
-  const pixAccommodationSubtotal = ratePlan === "with_breakfast" ? withBreakfastPixSubtotal : roomOnlyPixSubtotal
+
+  const { pixAccommodationSubtotal, totalRoomNights, hasCustomRoomDates, hasMixedRatePlan } = useMemo(() => {
+    if (rooms.length <= 1) {
+      return {
+        pixAccommodationSubtotal: ratePlan === "with_breakfast" ? withBreakfastPixSubtotal : roomOnlyPixSubtotal,
+        totalRoomNights: nights,
+        hasCustomRoomDates: false,
+        hasMixedRatePlan: false,
+      }
+    }
+
+    const baseDateRateLookup = new Map<string, number>()
+    if (Array.isArray(dynPricing?.baseSemCafeRates)) {
+      for (const item of dynPricing.baseSemCafeRates) {
+        if (item?.date && Number(item?.rate) > 0) baseDateRateLookup.set(String(item.date), Number(item.rate))
+      }
+    }
+    const discountedDateRateLookup = new Map<string, number>()
+    if (Array.isArray(dynPricing?.discountedSemCafeRates)) {
+      for (const item of dynPricing.discountedSemCafeRates) {
+        if (item?.date && Number(item?.rate) > 0) discountedDateRateLookup.set(String(item.date), Number(item.rate))
+      }
+    }
+    for (const winDyn of Object.values(customWindowPricingMap)) {
+      if (Array.isArray(winDyn?.baseSemCafeRates)) {
+        for (const item of winDyn.baseSemCafeRates) {
+          if (item?.date && Number(item?.rate) > 0 && !baseDateRateLookup.has(String(item.date))) {
+            baseDateRateLookup.set(String(item.date), Number(item.rate))
+          }
+        }
+      }
+    }
+
+    let totalSub = 0
+    let sumNights = 0
+    const windowSet = new Set<string>()
+    const planSet = new Set<string>()
+
+    for (const rm of rooms) {
+      const rIn = rm.customDates && rm.checkinDate ? rm.checkinDate : checkin
+      const rOut = rm.customDates && rm.checkoutDate ? rm.checkoutDate : checkout
+      windowSet.add(`${rIn}|${rOut}`)
+      const effPlan = rm.ratePlan || ratePlan
+      planSet.add(effPlan)
+      const pax = Math.min(3, Math.max(1, Number(rm.adults) || 1))
+      const bfAdd = effPlan === "with_breakfast" ? pax * breakfastSurchargePerGuest : 0
+
+      let rmNights = nights
+      const rmDates: string[] = []
+      if (rIn && rOut && rOut > rIn) {
+        const startMs = new Date(`${rIn}T12:00:00Z`).getTime()
+        const endMs = new Date(`${rOut}T12:00:00Z`).getTime()
+        const diff = Math.round((endMs - startMs) / 86400000)
+        if (diff > 0) {
+          rmNights = diff
+          for (let nIdx = 0; nIdx < diff; nIdx++) {
+            rmDates.push(new Date(startMs + nIdx * 86400000).toISOString().slice(0, 10))
+          }
+        }
+      }
+      sumNights += rmNights
+
+      const rmDyn = rIn === checkin && rOut === checkout ? dynPricing : customWindowPricingMap[`${rIn}|${rOut}`]
+      if (Array.isArray(rmDyn?.discountedSemCafeRates) && rmDyn.discountedSemCafeRates.length === rmNights) {
+        for (const dItem of rmDyn.discountedSemCafeRates) {
+          const baseNight = Number(dItem?.rate) || fallbackBaseSemCafe
+          totalSub += Math.round((baseNight + bfAdd) * 100) / 100
+        }
+      } else if (rmDates.length === rmNights) {
+        let stayDisc = 0
+        if (rmNights >= 30) stayDisc = 0.25
+        else if (rmNights >= 15) stayDisc = 0.15
+        else if (rmNights >= 7) stayDisc = 0.10
+        for (const dStr of rmDates) {
+          const rawNight = baseDateRateLookup.get(dStr)
+          const discNight = rawNight !== undefined
+            ? (stayDisc > 0 ? Math.round(rawNight * (1 - stayDisc) * 100) / 100 : rawNight)
+            : (discountedDateRateLookup.get(dStr) ?? fallbackBaseSemCafe)
+          totalSub += Math.round((discNight + bfAdd) * 100) / 100
+        }
+      } else {
+        totalSub += Math.round((fallbackBaseSemCafe + bfAdd) * 100) / 100 * rmNights
+      }
+    }
+
+    return {
+      pixAccommodationSubtotal: Math.round(totalSub * 100) / 100,
+      totalRoomNights: sumNights,
+      hasCustomRoomDates: windowSet.size > 1 || !windowSet.has(`${checkin}|${checkout}`),
+      hasMixedRatePlan: planSet.size > 1,
+    }
+  }, [
+    rooms,
+    ratePlan,
+    withBreakfastPixSubtotal,
+    roomOnlyPixSubtotal,
+    checkin,
+    checkout,
+    nights,
+    dynPricing,
+    customWindowPricingMap,
+    fallbackBaseSemCafe,
+    breakfastSurchargePerGuest,
+  ])
 
   const discountPercent = 0
   const discountAmount = 0
 
-  // Taxa de Limpeza (apenas no plano Sem Café por padrão; zero menção no plano Com Café)
+  // Taxa de Limpeza (respeita o plano individual de cada flat quando em pacote multi-flat)
   const cleaningFeePerFlat = currentPlan.cleaningFeeEnabled
     ? (currentPlan.cleaningFeeType === "per_night" ? (Number(currentPlan.cleaningFeeAmount) || 0) * nights : (Number(currentPlan.cleaningFeeAmount) || 0))
     : 0
-  const cleaningFee = Math.round(cleaningFeePerFlat * flatsCount * 100) / 100
+  const cleaningFee = useMemo(() => {
+    if (rooms.length <= 1) {
+      return Math.round(cleaningFeePerFlat * flatsCount * 100) / 100
+    }
+    let sumClean = 0
+    for (const rm of rooms) {
+      const effPlan = rm.ratePlan || ratePlan
+      const cfg = effPlan === "with_breakfast" ? withBreakfastConfig : roomOnlyConfig
+      if (cfg.cleaningFeeEnabled) {
+        const rIn = rm.customDates && rm.checkinDate ? rm.checkinDate : checkin
+        const rOut = rm.customDates && rm.checkoutDate ? rm.checkoutDate : checkout
+        const rmNights = rIn && rOut && rOut > rIn
+          ? Math.max(1, Math.round((new Date(`${rOut}T12:00:00Z`).getTime() - new Date(`${rIn}T12:00:00Z`).getTime()) / 86400000))
+          : nights
+        sumClean += cfg.cleaningFeeType === "per_night" ? (Number(cfg.cleaningFeeAmount) || 0) * rmNights : (Number(cfg.cleaningFeeAmount) || 0)
+      }
+    }
+    return Math.round(sumClean * 100) / 100
+  }, [rooms, ratePlan, cleaningFeePerFlat, flatsCount, checkin, checkout, nights, withBreakfastConfig, roomOnlyConfig])
 
-  // Taxa de Camas Solteiro (Twin)
+  // Taxa de Camas Solteiro (Twin) — respeita diárias individuais por flat quando customDates está ativo
   const twinCount = useMemo(() => rooms.filter(r => r.bedType === "twin").length, [rooms])
   const twinFeeUnit = siteConfig?.bedConfig?.twinFeeAmount ?? 30
-  const twinFee = twinCount * (siteConfig?.bedConfig?.twinFeeType === "per_night" ? twinFeeUnit * nights : twinFeeUnit)
+  const twinFee = useMemo(() => {
+    const isPerNight = siteConfig?.bedConfig?.twinFeeType === "per_night"
+    if (!isPerNight) return twinCount * twinFeeUnit
+    return rooms.reduce((acc, rm) => {
+      if (rm.bedType !== "twin") return acc
+      const rIn = rm.customDates && rm.checkinDate ? rm.checkinDate : checkin
+      const rOut = rm.customDates && rm.checkoutDate ? rm.checkoutDate : checkout
+      const rmNights = rIn && rOut && rOut > rIn
+        ? Math.max(1, Math.round((new Date(`${rOut}T12:00:00Z`).getTime() - new Date(`${rIn}T12:00:00Z`).getTime()) / 86400000))
+        : nights
+      return acc + twinFeeUnit * rmNights
+    }, 0)
+  }, [rooms, twinCount, twinFeeUnit, siteConfig?.bedConfig?.twinFeeType, checkin, checkout, nights])
 
-  // Taxa de Colchonete Extra
+  // Taxa de Colchonete Extra — respeita diárias individuais por flat quando customDates está ativo
   const extraBedCount = useMemo(() => rooms.filter(r => r.adults === 3).length, [rooms])
   const extraBedFeeUnit = siteConfig?.extraBedConfig?.feeAmount ?? 60
-  const extraBedFee = extraBedCount * (siteConfig?.extraBedConfig?.feeType === "per_night" ? extraBedFeeUnit * nights : extraBedFeeUnit)
+  const extraBedFee = useMemo(() => {
+    const isPerNight = siteConfig?.extraBedConfig?.feeType === "per_night"
+    if (!isPerNight) return extraBedCount * extraBedFeeUnit
+    return rooms.reduce((acc, rm) => {
+      if (rm.adults !== 3) return acc
+      const rIn = rm.customDates && rm.checkinDate ? rm.checkinDate : checkin
+      const rOut = rm.customDates && rm.checkoutDate ? rm.checkoutDate : checkout
+      const rmNights = rIn && rOut && rOut > rIn
+        ? Math.max(1, Math.round((new Date(`${rOut}T12:00:00Z`).getTime() - new Date(`${rIn}T12:00:00Z`).getTime()) / 86400000))
+        : nights
+      return acc + extraBedFeeUnit * rmNights
+    }, 0)
+  }, [rooms, extraBedCount, extraBedFeeUnit, siteConfig?.extraBedConfig?.feeType, checkin, checkout, nights])
 
   // Taxa Pet
   const petFeePerUnit = siteConfig?.petPolicy?.feeAmount ?? 40
@@ -1500,6 +1783,31 @@ export function BookingFunnelModal({
   // Avançar Etapa com Validações Acessíveis (sem window.alert bloqueante)
   const handleNextStep = () => {
     if (currentStep === 1) {
+      if (rooms.length >= 2) {
+        for (let i = 0; i < rooms.length; i++) {
+          const rm = rooms[i]
+          const rIn = rm.customDates && rm.checkinDate ? rm.checkinDate : checkin
+          const rOut = rm.customDates && rm.checkoutDate ? rm.checkoutDate : checkout
+          if (todayFunnelIso && rIn && rIn < todayFunnelIso) {
+            reportValidationFailure(
+              `roomDates_${rm.id}`,
+              "",
+              `Data passada no Flat #${i + 1}`,
+              `A data de check-in do Flat #${i + 1} não pode ser anterior a hoje.`
+            )
+            return
+          }
+          if (!rIn || !rOut || rOut <= rIn) {
+            reportValidationFailure(
+              `roomDates_${rm.id}`,
+              "",
+              `Datas inválidas no Flat #${i + 1}`,
+              `A data de check-out deve ser posterior à data de check-in no Flat #${i + 1}.`
+            )
+            return
+          }
+        }
+      }
       if (bringingPet && !petRulesAccepted) {
         reportValidationFailure(
           "petRules",
@@ -1513,6 +1821,26 @@ export function BookingFunnelModal({
       setStepValidationError(null)
       setCurrentStep(2)
     } else if (currentStep === 2) {
+      if (rooms.length >= 2) {
+        for (let i = 0; i < rooms.length; i++) {
+          const rm = rooms[i]
+          const reqHere = i === 0 && (rm.requesterIsGuest1 !== undefined ? Boolean(rm.requesterIsGuest1) : !isSeparateRequester)
+          const informLater = Boolean(rm.informGuestsLater ?? (!reqHere && !rm.guest1?.name))
+          if (!reqHere && !informLater) {
+            const g1Nm = String(rm.guest1?.name || "").trim()
+            const g1Ph = String(rm.guest1?.phone || "").replace(/\D/g, "")
+            if (g1Nm.split(/\s+/).filter(Boolean).length < 2 || g1Ph.length < 10) {
+              reportValidationFailure(
+                `flatGuest1_${rm.id}`,
+                "",
+                `Dados incompletos no Flat #${i + 1}`,
+                `Preencha Nome Completo e WhatsApp com DDD do Hóspede 1 no Flat #${i + 1}, ou clique em "Informar depois" para cadastrar após o pagamento.`
+              )
+              return
+            }
+          }
+        }
+      }
       if (isSeparateRequester) {
         if (!requesterName.trim()) {
           reportValidationFailure(
@@ -1544,7 +1872,7 @@ export function BookingFunnelModal({
           return
         }
         const rawOptionalGuestDoc = guestDocument.trim()
-        if (rawOptionalGuestDoc && !isPlausibleCpfOrPassport(rawOptionalGuestDoc)) {
+        if (!(rooms.length >= 2 && isSeparateRequester) && rawOptionalGuestDoc && !isPlausibleCpfOrPassport(rawOptionalGuestDoc)) {
           reportValidationFailure(
             "guestDocument",
             "funnel-guest-doc",
@@ -1688,24 +2016,67 @@ export function BookingFunnelModal({
         ? (isWorkTrip && companyName.trim() ? "company" : "other_person")
         : "guest"
 
+      const enrichedRoomsForPayload = rooms.map((rm, idx) => {
+        const effIn = rm.customDates && rm.checkinDate ? rm.checkinDate : checkin
+        const effOut = rm.customDates && rm.checkoutDate ? rm.checkoutDate : checkout
+        const effPlan = rm.ratePlan || ratePlan
+        const reqStaysInFlat1 =
+          idx === 0 &&
+          (rm.requesterIsGuest1 !== undefined ? Boolean(rm.requesterIsGuest1) : !isSeparateRequester)
+        const informLater =
+          rooms.length >= 2
+            ? Boolean(rm.informGuestsLater ?? (!reqStaysInFlat1 && !rm.guest1?.name))
+            : Boolean(rm.informGuestsLater)
+        return {
+          ...rm,
+          checkinDate: effIn,
+          checkoutDate: effOut,
+          ratePlan: effPlan,
+          includeBreakfast: effPlan === "with_breakfast",
+          requesterIsGuest1: reqStaysInFlat1,
+          informGuestsLater: informLater,
+          guest1: reqStaysInFlat1
+            ? {
+                name: (isSeparateRequester ? requesterName : guestName).trim(),
+                phone: (isSeparateRequester ? requesterPhone : guestPhone).trim(),
+                email: (isSeparateRequester ? requesterEmail : guestEmail).trim(),
+                document: (isSeparateRequester ? requesterDocument : guestDocument).trim(),
+                informLater: false
+              }
+            : rm.guest1 || undefined,
+          guest2: rm.adults >= 2 ? (rm.guest2 || { informLater: Boolean(rm.guest2InformLater ?? true) }) : undefined,
+          guest2InformLater: rm.adults >= 2 ? Boolean(rm.guest2InformLater ?? !rm.guest2?.name) : false,
+          vehicle: rm.hasVehicle && rm.vehiclePlate
+            ? { plate: rm.vehiclePlate.toUpperCase().trim(), model: (rm.vehicleModel || "").trim() }
+            : (idx === 0 && hasVehicle && vehiclePlate ? { plate: vehiclePlate.toUpperCase().trim(), model: vehicleModel.trim() } : null)
+        }
+      })
+
+      const solNamePkg = (isSeparateRequester ? requesterName : guestName).trim()
+      const solPhonePkg = (isSeparateRequester ? requesterPhone : guestPhone).trim()
+      const solEmailPkg = (isSeparateRequester ? requesterEmail : guestEmail).trim()
+      const solDocPkg = (isSeparateRequester ? requesterDocument : guestDocument).trim()
+
       const payload = {
         sessionId,
-        requesterType: resolvedRequesterType,
+        requesterType: rooms.length >= 2 && !enrichedRoomsForPayload[0]?.requesterIsGuest1
+          ? (isWorkTrip && companyName.trim() ? "company" : "other_person")
+          : resolvedRequesterType,
         deferDocToPreCheckin: !docFileBase64,
         attribution: getStoredAttribution(),
-        ...(isSeparateRequester
+        ...(isSeparateRequester || rooms.length >= 2
           ? {
-              requesterName: requesterName.trim(),
-              requesterPhone: requesterPhone.trim(),
-              requesterEmail: requesterEmail.trim(),
-              requesterDocument: requesterDocument.trim(),
+              requesterName: solNamePkg,
+              requesterPhone: solPhonePkg,
+              requesterEmail: solEmailPkg,
+              requesterDocument: solDocPkg,
               requesterInfo: {
                 type: resolvedRequesterType,
-                name: requesterName.trim(),
-                phone: requesterPhone.trim(),
-                whatsapp: requesterPhone.trim(),
-                email: requesterEmail.trim(),
-                document: requesterDocument.trim()
+                name: solNamePkg,
+                phone: solPhonePkg,
+                whatsapp: solPhonePkg,
+                email: solEmailPkg,
+                document: solDocPkg
               }
             }
           : {}),
@@ -1729,7 +2100,7 @@ export function BookingFunnelModal({
         checkoutDate: checkout,
         numGuests: totalGuestsCount,
         flatsCount: rooms.length,
-        rooms,
+        rooms: enrichedRoomsForPayload,
         ratePlan,
         includeBreakfast: ratePlan === "with_breakfast",
         bedType: rooms.some(r => r.bedType === "twin") ? "twin" : "queen",
@@ -1782,7 +2153,10 @@ export function BookingFunnelModal({
       const data = await res.json()
       if (res.ok && data.reservation) {
         const createdResCode = String(data.reservation.code || data.reservation.reservationCode || "")
-        setConfirmedReservation(data.reservation)
+        setConfirmedReservation({
+          ...data.reservation,
+          ...(data.packageSummary ? { packageSummary: data.packageSummary } : {}),
+        })
         if (paymentMethod === "pix" && data.pixData) {
           setPixData(data.pixData)
         }
@@ -1958,6 +2332,9 @@ export function BookingFunnelModal({
             {/* Configuração de Camas & Lotação por Flat */}
             <FunnelRoomConfigList
               rooms={rooms}
+              defaultCheckin={checkin}
+              defaultCheckout={checkout}
+              minDate={todayFunnelIso}
               ratePlan={ratePlan}
               occupancySecondGuestDiff={breakfastSurchargePerGuest}
               twinFeeUnit={twinFeeUnit}
@@ -2466,7 +2843,8 @@ export function BookingFunnelModal({
               </div>
             )}
 
-            {/* Formulário Principal de Dados do Hóspede */}
+            {/* Formulário Principal de Dados do Hóspede (oculto em pacotes multi-flat com solicitante separado, pois os hóspedes são preenchidos por flat abaixo) */}
+            {!(rooms.length >= 2 && isSeparateRequester) && (
             <div className="space-y-2.5">
               {isSeparateRequester && (
                 <div className="flex items-center justify-between gap-2 flex-wrap pt-1">
@@ -2633,6 +3011,153 @@ export function BookingFunnelModal({
                 </details>
               </div>
             </div>
+            )}
+
+            {/* Cadastro de Hóspede 1 e Hóspede 2 por Flat (Pacote Multi-Flat ou 2º Hóspede) */}
+            {(rooms.length >= 2 || (rooms.length === 1 && rooms[0]?.adults >= 2)) && (
+              <fieldset className="p-3.5 rounded-2xl border border-[#0F3D4C]/30 bg-[#0F3D4C]/[0.03] space-y-3 text-xs">
+                <legend className="px-1.5 font-black text-xs text-[#0F3D4C] dark:text-[#E5C98B]">
+                  {rooms.length >= 2
+                    ? `Hóspedes de Cada Flat do Pacote (${rooms.length} Flats • 1 Pagamento Único)`
+                    : "Dados do 2º Hóspede (Acompanhante)"}
+                </legend>
+                {rooms.length >= 2 && (
+                  <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+                    Você (Solicitante) receberá <strong>1 único PIX/link e recibo do pacote todo</strong>. Para cada flat abaixo, preencha o Hóspede 1 e 2 agora ou marque <strong>"Informar depois"</strong> (enviaremos 1 link único após o pagamento). Os hóspedes recebem apenas as instruções do seu flat, sem ver valores.
+                  </p>
+                )}
+
+                <div className="space-y-2.5">
+                  {rooms.map((rm, idx) => {
+                    const isFlat1 = idx === 0
+                    const reqHere = isFlat1 && (rm.requesterIsGuest1 !== undefined ? Boolean(rm.requesterIsGuest1) : !isSeparateRequester)
+                    const informLater = rooms.length >= 2
+                      ? Boolean(rm.informGuestsLater ?? (!reqHere && !rm.guest1?.name))
+                      : false
+                    const g2Later = Boolean(rm.guest2InformLater ?? !rm.guest2?.name)
+
+                    return (
+                      <div key={rm.id} className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2.5">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <span className="font-bold text-slate-900 dark:text-slate-100">
+                            Flat #{idx + 1} ({rm.adults} {rm.adults === 1 ? "hóspede" : "hóspedes"})
+                          </span>
+
+                          {rooms.length >= 2 && (
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {isFlat1 && (
+                                <label className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 text-emerald-900 dark:text-emerald-300 text-[11px] font-bold cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={reqHere}
+                                    onChange={(e) =>
+                                      stableUpdateRoom(rm.id, "__patch__", {
+                                        requesterIsGuest1: e.target.checked,
+                                        informGuestsLater: e.target.checked ? false : rm.informGuestsLater
+                                      })
+                                    }
+                                    className="rounded accent-emerald-700"
+                                  />
+                                  <span>O próprio Solicitante ficará neste flat</span>
+                                </label>
+                              )}
+
+                              {!reqHere && (
+                                <button
+                                  type="button"
+                                  onClick={() => stableUpdateRoom(rm.id, "informGuestsLater", !informLater)}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-colors ${
+                                    informLater
+                                      ? "bg-amber-50 border-amber-300 text-amber-900"
+                                      : "bg-slate-100 border-slate-300 text-slate-700"
+                                  }`}
+                                >
+                                  {informLater ? "⏳ Informar depois (link pós-pagamento)" : "Preencher agora"}
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {rooms.length >= 2 && !reqHere && !informLater && (
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                            <Input
+                              value={rm.guest1?.name || ""}
+                              onChange={(e) => stableUpdateRoom(rm.id, "guest1", { ...(rm.guest1 || {}), name: e.target.value })}
+                              placeholder="Nome Completo Hóspede 1 *"
+                              className="h-9 text-xs"
+                            />
+                            <Input
+                              type="tel"
+                              inputMode="tel"
+                              value={rm.guest1?.phone || ""}
+                              onChange={(e) => stableUpdateRoom(rm.id, "guest1", { ...(rm.guest1 || {}), phone: maskPhone(e.target.value) })}
+                              placeholder="WhatsApp Hóspede 1 *"
+                              className="h-9 text-xs"
+                            />
+                            <Input
+                              value={rm.guest1?.document || ""}
+                              onChange={(e) => stableUpdateRoom(rm.id, "guest1", { ...(rm.guest1 || {}), document: maskCpf(e.target.value) })}
+                              placeholder="CPF Hóspede 1 (Opcional)"
+                              autoCorrect="off"
+                              autoCapitalize="none"
+                              spellCheck={false}
+                              className="h-9 text-xs font-mono"
+                            />
+                          </div>
+                        )}
+
+                        {rm.adults >= 2 && (!informLater || rooms.length === 1) && (
+                          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">Hóspede 2 (Acompanhante):</span>
+                              <button
+                                type="button"
+                                onClick={() => stableUpdateRoom(rm.id, "guest2InformLater", !g2Later)}
+                                className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${
+                                  g2Later
+                                    ? "bg-amber-50 border-amber-300 text-amber-800"
+                                    : "bg-slate-100 border-slate-300 text-slate-700"
+                                }`}
+                              >
+                                {g2Later ? "⏳ Informar Hóspede 2 depois" : "Informar depois"}
+                              </button>
+                            </div>
+                            {!g2Later && (
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                <Input
+                                  value={rm.guest2?.name || ""}
+                                  onChange={(e) => stableUpdateRoom(rm.id, "__patch__", { guest2InformLater: false, guest2: { ...(rm.guest2 || {}), name: e.target.value } })}
+                                  placeholder="Nome Completo Hóspede 2"
+                                  className="h-9 text-xs"
+                                />
+                                <Input
+                                  type="tel"
+                                  inputMode="tel"
+                                  value={rm.guest2?.phone || ""}
+                                  onChange={(e) => stableUpdateRoom(rm.id, "__patch__", { guest2InformLater: false, guest2: { ...(rm.guest2 || {}), phone: maskPhone(e.target.value) } })}
+                                  placeholder="WhatsApp Hóspede 2"
+                                  className="h-9 text-xs"
+                                />
+                                <Input
+                                  value={rm.guest2?.document || ""}
+                                  onChange={(e) => stableUpdateRoom(rm.id, "__patch__", { guest2InformLater: false, guest2: { ...(rm.guest2 || {}), document: maskCpf(e.target.value) } })}
+                                  placeholder="CPF Hóspede 2 (Opcional)"
+                                  autoCorrect="off"
+                                  autoCapitalize="none"
+                                  spellCheck={false}
+                                  className="h-9 text-xs font-mono"
+                                />
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </fieldset>
+            )}
 
             {/* Nota tranquila de 1 linha: documento oficial apenas no Check-in Digital antes da chegada */}
             <div className="px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-700/70 flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300">
@@ -2813,6 +3338,9 @@ export function BookingFunnelModal({
             <FunnelPriceBreakdownCard
               nights={nights}
               flatsCount={flatsCount}
+              totalRoomNights={totalRoomNights}
+              hasCustomRoomDates={hasCustomRoomDates}
+              hasMixedRatePlan={hasMixedRatePlan}
               ratePlan={ratePlan}
               subtotal={subtotal}
               cleaningFee={cleaningFee}
@@ -2910,30 +3438,95 @@ export function BookingFunnelModal({
 
             <div className="bg-slate-50 dark:bg-slate-800/80 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 text-left space-y-2 text-xs">
               <div className="flex justify-between items-center gap-2">
-                <span className="text-slate-500 shrink-0">Código da Reserva:</span>
+                <span className="text-slate-500 shrink-0">
+                  {rooms.length >= 2 ? "Código do Pacote:" : "Código da Reserva:"}
+                </span>
                 <span translate="no" className="font-mono font-black text-[#0F3D4C] dark:text-[#E5C98B] text-sm text-right">
                   {confirmedReservation.code || confirmedReservation.reservationCode}
                 </span>
               </div>
-              {isSeparateRequester && requesterName.trim() && (
+              {(isSeparateRequester || rooms.length >= 2) && (requesterName.trim() || guestName.trim()) && (
                 <div className="flex justify-between items-center gap-2">
                   <span className="text-slate-500 shrink-0">Solicitante:</span>
-                  <span className="font-bold text-slate-900 dark:text-slate-100 text-right break-words">{requesterName.trim()}</span>
+                  <span className="font-bold text-slate-900 dark:text-slate-100 text-right break-words">
+                    {(isSeparateRequester ? requesterName : guestName).trim()}
+                  </span>
                 </div>
               )}
-              <div className="flex justify-between items-center gap-2">
-                <span className="text-slate-500 shrink-0">Hóspede:</span>
-                <span className="font-bold text-slate-900 dark:text-slate-100 text-right break-words">
-                  {guestName.trim() || "A Definir (link enviado ao solicitante)"}
-                </span>
-              </div>
-              <div className="flex justify-between items-center gap-2">
-                <span className="text-slate-500 shrink-0">Período:</span>
-                <span className="font-bold text-slate-900 dark:text-slate-100 text-right">{formatDisplayDate(checkin)} a {formatDisplayDate(checkout)} ({nights} {nights === 1 ? "noite" : "noites"})</span>
-              </div>
+              {rooms.length < 2 && (
+                <div className="flex justify-between items-center gap-2">
+                  <span className="text-slate-500 shrink-0">Hóspede:</span>
+                  <span className="font-bold text-slate-900 dark:text-slate-100 text-right break-words">
+                    {guestName.trim() || "A Definir (link enviado ao solicitante)"}
+                  </span>
+                </div>
+              )}
+              {(() => {
+                const pkgItemsList = Array.isArray(confirmedReservation.packageSummary?.items)
+                  ? confirmedReservation.packageSummary.items
+                  : null
+                const flatWindows = pkgItemsList && pkgItemsList.length >= 2
+                  ? pkgItemsList.map((it: any, i: number) => {
+                      const fIn = it.checkinDate || checkin
+                      const fOut = it.checkoutDate || checkout
+                      const fNights = fIn && fOut && fOut > fIn
+                        ? Math.max(1, Math.round((new Date(`${fOut}T12:00:00Z`).getTime() - new Date(`${fIn}T12:00:00Z`).getTime()) / 86400000))
+                        : nights
+                      return {
+                        label: it.flatNumber ? `Flat ${it.flatNumber}` : `Flat #${i + 1}`,
+                        inDate: fIn,
+                        outDate: fOut,
+                        nights: fNights,
+                      }
+                    })
+                  : rooms.map((rm, i) => {
+                      const fIn = rm.customDates && rm.checkinDate ? rm.checkinDate : checkin
+                      const fOut = rm.customDates && rm.checkoutDate ? rm.checkoutDate : checkout
+                      const fNights = fIn && fOut && fOut > fIn
+                        ? Math.max(1, Math.round((new Date(`${fOut}T12:00:00Z`).getTime() - new Date(`${fIn}T12:00:00Z`).getTime()) / 86400000))
+                        : nights
+                      return {
+                        label: `Flat #${i + 1}`,
+                        inDate: fIn,
+                        outDate: fOut,
+                        nights: fNights,
+                      }
+                    })
+                const distinctWindows = new Set(flatWindows.map((w: any) => `${w.inDate}|${w.outDate}`))
+                if (rooms.length >= 2 && (distinctWindows.size > 1 || hasCustomRoomDates)) {
+                  return (
+                    <div className="space-y-1.5 pt-0.5">
+                      <span className="text-slate-500 block">Período por Flat:</span>
+                      <div className="space-y-1 pl-2 border-l-2 border-[#0F3D4C]/30">
+                        {flatWindows.map((fw: any, fIdx: number) => (
+                          <div key={fIdx} className="flex justify-between items-center gap-2 text-[11px]">
+                            <span translate="no" className="font-bold text-slate-700 dark:text-slate-300 shrink-0">
+                              {fw.label}:
+                            </span>
+                            <span className="font-bold text-slate-900 dark:text-slate-100 text-right">
+                              {formatDisplayDate(fw.inDate)} a {formatDisplayDate(fw.outDate)} ({fw.nights} {fw.nights === 1 ? "noite" : "noites"})
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                }
+                const singleWin = flatWindows[0] || { inDate: checkin, outDate: checkout, nights }
+                return (
+                  <div className="flex justify-between items-center gap-2">
+                    <span className="text-slate-500 shrink-0">Período:</span>
+                    <span className="font-bold text-slate-900 dark:text-slate-100 text-right">
+                      {formatDisplayDate(singleWin.inDate)} a {formatDisplayDate(singleWin.outDate)} ({singleWin.nights} {singleWin.nights === 1 ? "noite" : "noites"})
+                    </span>
+                  </div>
+                )
+              })()}
               <div className="flex justify-between items-center gap-2">
                 <span className="text-slate-500 shrink-0">Acomodação:</span>
-                <span translate="no" className="font-bold text-slate-900 dark:text-slate-100 text-right">Flat {confirmedReservation.flatNumber}</span>
+                <span translate="no" className="font-bold text-slate-900 dark:text-slate-100 text-right">
+                  {rooms.length >= 2 ? `Flats ${confirmedReservation.flatNumber}` : `Flat ${confirmedReservation.flatNumber}`}
+                </span>
               </div>
               <div className="flex flex-wrap justify-between items-center gap-2 pt-1.5 border-t border-slate-200 dark:border-slate-700">
                 <span className="text-slate-500">Status:</span>

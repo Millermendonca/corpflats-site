@@ -16,18 +16,54 @@ import { buildOfficialNfseDraftForReservation } from "./chat-service.mjs";
 
 export function isNonRequesterGuestForReservation(reservation, senderPhone = "", db = {}) {
   if (!reservation) return false;
+  const cleanSender = cleanWhatsAppPhone(senderPhone);
+  const recipients = getReservationRecipients(reservation, db);
+  const cleanReq = cleanWhatsAppPhone(
+    recipients.requester?.phone ||
+      reservation.requesterInfo?.whatsapp ||
+      reservation.requesterInfo?.phone ||
+      reservation.requesterPhone ||
+      ""
+  );
+  if (cleanSender && cleanReq && matchClientPhone(cleanSender, cleanReq)) {
+    return false;
+  }
+
+  const mainGuestPhone = cleanWhatsAppPhone(
+    reservation.guestPhone ||
+      reservation.phone ||
+      reservation.guests?.[0]?.phone ||
+      reservation.guests?.[0]?.whatsapp ||
+      ""
+  );
+  const matchesMainGuest = Boolean(cleanSender && mainGuestPhone && matchClientPhone(cleanSender, mainGuestPhone));
+  if (reservation.requesterIsGuest1 && matchesMainGuest) {
+    return false;
+  }
+
+  if (cleanSender && !matchesMainGuest && Array.isArray(reservation.guests)) {
+    const matchedAsCompanion = reservation.guests.some((g, idx) => {
+      if (idx === 0 || !g) return false;
+      const gPhone = cleanWhatsAppPhone(typeof g === "string" ? g : (g.phone || g.whatsapp || ""));
+      return Boolean(gPhone && matchClientPhone(cleanSender, gPhone));
+    });
+    if (matchedAsCompanion) {
+      return true;
+    }
+  }
+
+  const hasPackage = Boolean(reservation.packageId || reservation.packageCode);
+  const hasExplicitNonGuestRequester = Boolean(
+    (reservation.requesterType && reservation.requesterType !== "guest" && !reservation.requesterIsGuest1) ||
+      (hasPackage && !reservation.requesterIsGuest1 && Boolean(cleanReq || reservation.requesterName || reservation.requesterInfo?.name))
+  );
   const isB2bOrCorporateHidden =
     String(reservation.channel || "").toLowerCase().includes("b2b") ||
     Boolean(reservation.hideFinancialForGuest) ||
     Boolean(reservation.agencyId) ||
-    Boolean(reservation.b2bReservationNumber);
-  const recipients = getReservationRecipients(reservation, db);
+    Boolean(reservation.b2bReservationNumber) ||
+    hasExplicitNonGuestRequester;
   if (!recipients.requester?.isDifferentFromGuest && !isB2bOrCorporateHidden) return false;
-  const cleanSender = cleanWhatsAppPhone(senderPhone);
-  const cleanReq = cleanWhatsAppPhone(recipients.requester?.phone);
-  if (cleanSender && cleanReq && matchClientPhone(cleanSender, cleanReq)) {
-    return false;
-  }
   return true;
 }
 import { getCheckinUrlSync as getSerproCheckinUrlSync } from "./fnrh-serpro-service.mjs";
@@ -144,17 +180,25 @@ export {
  * Resolução dinâmica e unificada de URL de check-in para o agente de IA WhatsApp
  */
 export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
+  const safeGuestIndex = Math.max(1, Number(guestIndex) || 1);
+  const ensureCompanionGuestParam = (url) => {
+    if (!url || safeGuestIndex <= 1) return url;
+    if (/[?&]guest=\d+/i.test(url)) return url;
+    if (/\/pre-checkin\//i.test(url)) {
+      return `${url}${url.includes("?") ? "&" : "?"}guest=${safeGuestIndex}`;
+    }
+    return url;
+  };
   if (typeof globalThis.getCheckinUrlSync === "function") {
-    return globalThis.getCheckinUrlSync(reservation, guestIndex, baseUrl, dbInstance);
+    return ensureCompanionGuestParam(globalThis.getCheckinUrlSync(reservation, safeGuestIndex, baseUrl, dbInstance));
   }
   if (typeof getSerproCheckinUrlSync === "function") {
-    return getSerproCheckinUrlSync(reservation, guestIndex, baseUrl, dbInstance);
+    return ensureCompanionGuestParam(getSerproCheckinUrlSync(reservation, safeGuestIndex, baseUrl, dbInstance));
   }
   const activeDb = dbInstance || (typeof globalThis.db !== "undefined" ? globalThis.db : null);
   const activeSettings = activeDb?.settings || activeDb || {};
   const currentProvider = activeSettings.checkinProvider || "proprio";
   const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br").replace(/\/$/, "");
-  const safeGuestIndex = Number(guestIndex) || 1;
   const resCode = reservation?.code || reservation?.id || "";
   const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}?guest=${safeGuestIndex}`;
 
@@ -721,24 +765,45 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
           if (!r) return false;
           const rPhone = normalizePhone(r.guestPhone || r.phone || "");
           const reqPhone = normalizePhone(r.requesterInfo?.phone || r.requesterInfo?.whatsapp || r.requesterPhone || "");
+          const hasCompanionMatch = Array.isArray(r.guests) && r.guests.some(g => {
+            const gP = normalizePhone(g?.phone || g?.whatsapp || "");
+            return Boolean(gP && (cleanPhone.endsWith(gP.slice(-8)) || gP.endsWith(cleanPhone.slice(-8))));
+          });
           return (rPhone && (cleanPhone.endsWith(rPhone.slice(-8)) || rPhone.endsWith(cleanPhone.slice(-8)))) ||
-                 (reqPhone && (cleanPhone.endsWith(reqPhone.slice(-8)) || reqPhone.endsWith(cleanPhone.slice(-8))));
+                 (reqPhone && (cleanPhone.endsWith(reqPhone.slice(-8)) || reqPhone.endsWith(cleanPhone.slice(-8)))) ||
+                 hasCompanionMatch;
         });
 
     const nowMs = now instanceof Date ? now.getTime() : Date.now();
     const isDevPhone = isDeveloperPhone(cleanPhone, db);
-    const nonCancelled = allMatching.filter(r => {
-      if (!r) return false;
-      const st = String(r.status || "").toLowerCase();
-      if (["cancelada", "cancelled", "expirada", "expired", "no_show"].includes(st)) return false;
-      const paySt = String(r.paymentStatus || "").toLowerCase();
-      const isPaid = ["paid", "pago", "pago_total", "pago_integralmente", "confirmado"].includes(paySt);
-      if ((st === "pre_reserva" || r.isPreReservation) && !isPaid && r.holdExpiresAt) {
-        const expMs = new Date(r.holdExpiresAt).getTime();
-        if (Number.isFinite(expMs) && expMs <= nowMs) return false;
-      }
-      return true;
-    });
+    const rankReservationForSender = (r) => {
+      const rMain = normalizePhone(r.guestPhone || r.phone || r.guests?.[0]?.phone || "");
+      if (rMain && (cleanPhone.endsWith(rMain.slice(-8)) || rMain.endsWith(cleanPhone.slice(-8)))) return 0;
+      const isComp = Array.isArray(r.guests) && r.guests.some((g, idx) => {
+        if (idx === 0 || !g) return false;
+        const gP = normalizePhone(g?.phone || g?.whatsapp || "");
+        return Boolean(gP && (cleanPhone.endsWith(gP.slice(-8)) || gP.endsWith(cleanPhone.slice(-8))));
+      });
+      if (isComp) return 1;
+      if (r.requesterIsGuest1) return 2;
+      if (r.isPackagePrimary) return 3;
+      return 4 + (Number(r.packageIndex) || 99);
+    };
+    const nonCancelled = allMatching
+      .filter(r => {
+        if (!r) return false;
+        const st = String(r.status || "").toLowerCase();
+        if (["cancelada", "cancelado", "cancelled", "expirada", "expired", "no_show"].includes(st)) return false;
+        const paySt = String(r.paymentStatus || "").toLowerCase();
+        const isPaid = ["paid", "pago", "pago_total", "pago_integralmente", "confirmado"].includes(paySt);
+        const holdExp = r.expiresAt || r.holdExpiresAt;
+        if ((st === "pre_reserva" || st === "pendente" || r.isPreReservation) && !isPaid && holdExp) {
+          const expMs = new Date(holdExp).getTime();
+          if (Number.isFinite(expMs) && expMs <= nowMs) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => rankReservationForSender(a) - rankReservationForSender(b));
 
     const todayMatches = nonCancelled.filter(r =>
       (r.checkinDate === todayStr || r.checkoutDate === todayStr || (r.checkinDate <= todayStr && r.checkoutDate >= todayStr))
@@ -751,7 +816,10 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
     if (!matchedReservation) {
       const futureCandidates = nonCancelled
         .filter(r => (r.checkinDate || "") > todayStr && !isReservationCheckoutCompleted(r, db, cleanPhone, convMessages))
-        .sort((a, b) => (a.checkinDate || "").localeCompare(b.checkinDate || ""));
+        .sort((a, b) => {
+          const cmp = (a.checkinDate || "").localeCompare(b.checkinDate || "");
+          return cmp !== 0 ? cmp : rankReservationForSender(a) - rankReservationForSender(b);
+        });
       if (futureCandidates.length > 0) {
         matchedReservation = futureCandidates[0];
       }
@@ -780,9 +848,38 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
   }
 
   const convName = (convRecord?.name && convRecord.name.trim() !== "Hóspede") ? convRecord.name.trim() : null;
+  const isPlaceholderResName = (nm) => !nm || /a definir|informar depois|pendente|^h[oó]spede\s*\d*$/i.test(String(nm).trim());
+
+  let matchedCompanionIdx = -1;
+  if (matchedReservation && cleanPhone && Array.isArray(matchedReservation.guests)) {
+    const mainGuestPh = normalizePhone(matchedReservation.guestPhone || matchedReservation.phone || matchedReservation.guests?.[0]?.phone || "");
+    const reqPh = normalizePhone(matchedReservation.requesterInfo?.whatsapp || matchedReservation.requesterInfo?.phone || matchedReservation.requesterPhone || "");
+    const matchesPrimaryOrReq =
+      (mainGuestPh && (cleanPhone.endsWith(mainGuestPh.slice(-8)) || mainGuestPh.endsWith(cleanPhone.slice(-8)))) ||
+      (reqPh && (cleanPhone.endsWith(reqPh.slice(-8)) || reqPh.endsWith(cleanPhone.slice(-8))));
+    if (!matchesPrimaryOrReq) {
+      matchedCompanionIdx = matchedReservation.guests.findIndex((g, idx) => {
+        if (idx === 0 || !g) return false;
+        const gPh = normalizePhone(g?.phone || g?.whatsapp || "");
+        return Boolean(gPh && (cleanPhone.endsWith(gPh.slice(-8)) || gPh.endsWith(cleanPhone.slice(-8))));
+      });
+    }
+  }
+  const matchedCompanionObj = matchedCompanionIdx >= 1 ? matchedReservation?.guests?.[matchedCompanionIdx] : null;
+  const companionRealName =
+    matchedCompanionObj?.name && !isPlaceholderResName(matchedCompanionObj.name)
+      ? String(matchedCompanionObj.name).trim()
+      : null;
+  const hideFinancialEarly = matchedReservation ? isNonRequesterGuestForReservation(matchedReservation, cleanPhone, db) : false;
+  const resCandidateName =
+    matchedReservation && !isPlaceholderResName(matchedReservation.guestName)
+      ? matchedReservation.guestName
+      : (!hideFinancialEarly
+          ? (matchedReservation?.requesterInfo?.name || matchedReservation?.requesterName || null)
+          : null);
 
   // 3. Monta resumo do hóspede
-  const guestName = matchedReservation?.guestName || guestRecord?.name || convName || null;
+  const guestName = companionRealName || resCandidateName || guestRecord?.name || convName || matchedReservation?.guestName || null;
 
   let stayStatus = "sem_reserva_ativa";
   let flatNumber = matchedReservation?.flatNumber || null;
@@ -831,7 +928,8 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
   }
 
   const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br";
-  const rawCheckinUrl = matchedReservation ? getCheckinUrlSync(matchedReservation, 1, appOrigin, db) : null;
+  const guestIndexForCheckin = matchedCompanionIdx >= 1 ? matchedCompanionIdx + 1 : 1;
+  const rawCheckinUrl = matchedReservation ? getCheckinUrlSync(matchedReservation, guestIndexForCheckin, appOrigin, db) : null;
   const isCheckinRelevant = !isCheckoutCompleted && (stayStatus === "checkin_hoje" || stayStatus === "reserva_futura");
   const isCheckoutDay = !isCheckoutCompleted && stayStatus === "checkout_hoje";
   const isHosted = !isCheckoutCompleted && (stayStatus === "em_estadia" || isCheckoutDay);
@@ -852,12 +950,14 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
   const isPreCheckinCompleted = Boolean(
     matchedReservation &&
     !matchedReservation.needsReSignature &&
-    (
-      matchedReservation.fnhrCompleted ||
-      matchedReservation.preCheckinCompleted ||
-      matchedReservation.checkedInAt ||
-      (Array.isArray(matchedReservation.guests) && matchedReservation.guests.length > 0 && (matchedReservation.guests[0]?.hasCompletedCheckin || matchedReservation.guests[0]?.status === "CHECKED_IN"))
-    )
+    (matchedCompanionIdx >= 1
+      ? Boolean(matchedCompanionObj?.hasCompletedCheckin || matchedCompanionObj?.status === "CHECKED_IN")
+      : (
+          matchedReservation.fnhrCompleted ||
+          matchedReservation.preCheckinCompleted ||
+          matchedReservation.checkedInAt ||
+          (Array.isArray(matchedReservation.guests) && matchedReservation.guests.length > 0 && (matchedReservation.guests[0]?.hasCompletedCheckin || matchedReservation.guests[0]?.status === "CHECKED_IN"))
+        ))
   );
 
   const baseGuestContext = {
@@ -1090,11 +1190,14 @@ export async function querySystemData(db, {
 
       let list = flats.map(f => {
         const flatNum = String(f.number);
-        const activeRes = reservations.find(r =>
-          (r.flatId === f.id || String(r.flatNumber) === flatNum) &&
-          r.status !== "cancelada" &&
-          r.checkinDate <= todayStr && r.checkoutDate > todayStr
-        );
+        const activeRes = reservations.find(r => {
+          if (!r || (r.flatId !== f.id && String(r.flatNumber) !== flatNum)) return false;
+          const st = String(r.status || "").toLowerCase();
+          if (["cancelada", "cancelado", "cancelled", "expirada", "expired", "no_show"].includes(st)) return false;
+          const holdExp = r.expiresAt || r.holdExpiresAt;
+          if ((st === "pre_reserva" || st === "pendente") && holdExp && new Date(holdExp).getTime() <= Date.now() && r.paymentStatus !== "pago_total") return false;
+          return r.checkinDate <= todayStr && r.checkoutDate > todayStr;
+        });
         const latestClean = cleaningReqs
           .filter(c => String(c.flatNumber) === flatNum || c.flatId === f.id)
           .sort((a, b) => new Date(b.requestDate || b.createdAt || 0) - new Date(a.requestDate || a.createdAt || 0))[0];
@@ -2708,8 +2811,9 @@ function handleCheckAvailability(db, args = {}) {
   const nowMs = Date.now();
   // 1. Limpeza de pré-reservas vencidas
   (db?.reservations || []).forEach(r => {
-    if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt) {
-      if (new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") {
+    const holdExp = r?.expiresAt || r?.holdExpiresAt;
+    if ((r.status === "pre_reserva" || r.status === "pendente") && holdExp) {
+      if (new Date(holdExp).getTime() < nowMs && r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago") {
         r.status = "expirada";
         r.updatedAt = new Date().toISOString();
       }
@@ -2720,9 +2824,10 @@ function handleCheckAvailability(db, args = {}) {
   const busyFlatSet = new Set();
   (db?.reservations || []).forEach(r => {
     const statusNorm = String(r.status || "").toLowerCase();
-    if (["cancelada", "cancelled", "expirada", "completed", "checked_out", "finalizada", "concluida", "checkout", "no_show"].includes(statusNorm)) return;
+    if (["cancelada", "cancelado", "cancelled", "expirada", "expired", "completed", "checked_out", "finalizada", "concluida", "checkout", "no_show"].includes(statusNorm)) return;
     if (isReservationCheckoutCompleted(r, db)) return;
-    if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return;
+    const holdExp = r.expiresAt || r.holdExpiresAt;
+    if ((r.status === "pre_reserva" || r.status === "pendente") && holdExp && new Date(holdExp).getTime() < nowMs && r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago") return;
 
     if (r.checkinDate < outDate && r.checkoutDate > inDate) {
       if (r.flatId != null) busyFlatSet.add(String(r.flatId));
@@ -2852,7 +2957,17 @@ function handleCalculateQuote(db, args = {}) {
     breakfastFee = Math.round(bSurchargePerGuest * Math.max(1, guests) * nights * 100) / 100;
   }
 
-  const pixTotal = Math.round((roomTotal + cleaningFee + extraBedFee + breakfastFee) * 100) / 100;
+  let twinFee = 0;
+  const bedPrefRaw = String(args.bedPreference || args.preferencia_cama || args.bedType || "").toLowerCase().trim();
+  const wantsTwin = Boolean(args.twinBeds) || bedPrefRaw === "solteiro" || bedPrefRaw.includes("solteiro") || bedPrefRaw.includes("twin") || bedPrefRaw.includes("duas");
+  const bedCfg = siteCfg.bedConfig || {};
+  if (wantsTwin && bedCfg.twinFeeEnabled !== false) {
+    const rawTwinUnit = Math.max(0, Number(bedCfg.twinFeeAmount ?? bedCfg.twinPreparationFeeAmount ?? 30));
+    const twinType = bedCfg.twinFeeType || bedCfg.twinPreparationFeeType || "per_stay";
+    twinFee = Math.round((twinType === "per_night" ? rawTwinUnit * nights : rawTwinUnit) * 100) / 100;
+  }
+
+  const pixTotal = Math.round((roomTotal + cleaningFee + extraBedFee + breakfastFee + twinFee) * 100) / 100;
   const cardMarkupPct = Number(db?.tariffSettings?.cardMarkupPercent ?? siteCfg.pricing?.cardMarkupPercent ?? siteCfg.pricing?.pixDiscountPercent ?? 5);
   const cardTotal = computeCardAmountFromPix(pixTotal, cardMarkupPct);
   const total = pixTotal;
@@ -2871,6 +2986,7 @@ function handleCalculateQuote(db, args = {}) {
     roomTotal: ratePlan === "with_breakfast" ? Math.round((roomTotal + breakfastFee) * 100) / 100 : roomTotal,
     cleaningFee,
     extraBedFee,
+    twinFee,
     breakfastFee: 0,
     total,
     pixTotalAmount: pixTotal,
@@ -2917,9 +3033,10 @@ function createPreReservationSync(db, args = {}) {
   const nowMs = Date.now();
   const hasConflict = (db?.reservations || []).some(r => {
     const statusNorm = String(r.status || "").toLowerCase();
-    if (["cancelada", "cancelled", "expirada", "completed", "checked_out", "finalizada", "concluida", "checkout", "no_show"].includes(statusNorm)) return false;
+    if (["cancelada", "cancelado", "cancelled", "expirada", "expired", "completed", "checked_out", "finalizada", "concluida", "checkout", "no_show"].includes(statusNorm)) return false;
     if (isReservationCheckoutCompleted(r, db)) return false;
-    if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return false;
+    const holdExp = r.expiresAt || r.holdExpiresAt;
+    if ((r.status === "pre_reserva" || r.status === "pendente") && holdExp && new Date(holdExp).getTime() < nowMs && r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago") return false;
     if (String(r.flatId) !== String(flat.id) && String(r.flatNumber) !== String(flat.number)) return false;
     return r.checkinDate < outDate && r.checkoutDate > inDate;
   });
@@ -3101,7 +3218,7 @@ function createPreReservationSync(db, args = {}) {
     paymentStatus: "pendente",
     paymentMethod: "pix",
     totalAmount: total,
-    cardTotalAmount: Number((total * 1.05).toFixed(2)),
+    cardTotalAmount: computeCardAmountFromPix(total),
     dailyRate,
     dailyRates,
     cleaningFee: resolvedCleaningFee,
@@ -3187,14 +3304,24 @@ async function handleCreatePreReservation(db, args = {}) {
   if (createdRes && typeof globalThis.createInterPixCob === "function") {
     try {
       const cleanTxId = String(createdRes.pixTxId || createdRes.code || "").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
-      const interCob = await globalThis.createInterPixCob(
-        db?.settings?.interConfig,
-        cleanTxId,
-        createdRes.totalAmount,
-        createdRes.guestName,
-        createdRes.guestCpf || createdRes.guestDocument || "",
-        `Reserva ${createdRes.code} - Flat ${createdRes.flatNumber}`
-      );
+      const interDesc = `Reserva ${createdRes.code} - Flat ${createdRes.flatNumber}`;
+      const interDoc = createdRes.guestCpf || createdRes.guestDocument || "";
+      const interCob = globalThis.createInterPixCob.length <= 1
+        ? await globalThis.createInterPixCob({
+            amount: createdRes.totalAmount,
+            description: interDesc,
+            debtorName: createdRes.guestName,
+            debtorDocument: interDoc,
+            reservationCode: createdRes.code
+          })
+        : await globalThis.createInterPixCob(
+            db?.settings?.interConfig,
+            cleanTxId,
+            createdRes.totalAmount,
+            createdRes.guestName,
+            interDoc,
+            interDesc
+          );
       if (interCob && interCob.pixCopiaECola) {
         createdRes.pixCopiaECola = interCob.pixCopiaECola;
         createdRes.pixTxId = interCob.txid || cleanTxId;
@@ -3327,11 +3454,12 @@ function handleCommitReservation(db, args = {}) {
   }
 
   const nowMs = Date.now();
-  const isExpired = reservation.status === "expirada" ||
+  const resHoldExp = reservation.expiresAt || reservation.holdExpiresAt;
+  const isExpired = reservation.status === "expirada" || reservation.status === "expired" ||
     ((reservation.status === "pre_reserva" || reservation.status === "pendente") &&
-      reservation.expiresAt &&
-      new Date(reservation.expiresAt).getTime() < nowMs &&
-      reservation.paymentStatus !== "pago_total");
+      resHoldExp &&
+      new Date(resHoldExp).getTime() < nowMs &&
+      reservation.paymentStatus !== "pago_total" && reservation.paymentStatus !== "pago");
 
   if (isExpired) {
     reservation.status = "expirada";
@@ -3344,8 +3472,10 @@ function handleCommitReservation(db, args = {}) {
 
   const hasConflict = (db?.reservations || []).some(r => {
     if (String(r.id) === String(reservation.id) || String(r.code) === String(reservation.code)) return false;
-    if (r.status === "cancelada" || r.status === "expirada") return false;
-    if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return false;
+    const st = String(r.status || "").toLowerCase();
+    if (["cancelada", "cancelado", "cancelled", "expirada", "expired", "no_show"].includes(st)) return false;
+    const holdExp = r.expiresAt || r.holdExpiresAt;
+    if ((r.status === "pre_reserva" || r.status === "pendente") && holdExp && new Date(holdExp).getTime() < nowMs && r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago") return false;
     if (String(r.flatId) !== String(reservation.flatId) && String(r.flatNumber) !== String(reservation.flatNumber)) return false;
     return r.checkinDate < reservation.checkoutDate && r.checkoutDate > reservation.checkinDate;
   });
@@ -3387,7 +3517,31 @@ export function handleGetReservationDetails(db, args = {}) {
   const pickBestReservation = (candidates) => {
     if (!Array.isArray(candidates) || candidates.length === 0) return null;
     if (candidates.length === 1) return candidates[0];
-    const activeList = candidates.filter(r => r && r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "expirada");
+    const nowPickMs = Date.now();
+    const rankCandidate = (r) => {
+      if (!targetPhone) return r.isPackagePrimary ? 0 : (Number(r.packageIndex) || 99);
+      const rMain = normalizePhone(r.guestPhone || r.phone || r.guests?.[0]?.phone || "");
+      if (rMain && (targetPhone.endsWith(rMain.slice(-8)) || rMain.endsWith(targetPhone.slice(-8)))) return 0;
+      const isComp = Array.isArray(r.guests) && r.guests.some((g, idx) => {
+        if (idx === 0 || !g) return false;
+        const gPh = normalizePhone(g?.phone || g?.whatsapp || "");
+        return Boolean(gPh && (targetPhone.endsWith(gPh.slice(-8)) || gPh.endsWith(targetPhone.slice(-8))));
+      });
+      if (isComp) return 1;
+      if (r.requesterIsGuest1) return 2;
+      if (r.isPackagePrimary) return 3;
+      return 4 + (Number(r.packageIndex) || 99);
+    };
+    const activeList = candidates
+      .filter(r => {
+        if (!r) return false;
+        const st = String(r.status || "").toLowerCase();
+        if (["cancelada", "cancelado", "cancelled", "expirada", "expired", "no_show"].includes(st)) return false;
+        const holdExp = r.expiresAt || r.holdExpiresAt;
+        if ((st === "pre_reserva" || st === "pendente") && holdExp && new Date(holdExp).getTime() <= nowPickMs && r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago") return false;
+        return true;
+      })
+      .sort((a, b) => rankCandidate(a) - rankCandidate(b));
     const pool = activeList.length > 0 ? activeList : candidates;
 
     const todayMatches = pool.filter(r =>
@@ -3398,7 +3552,10 @@ export function handleGetReservationDetails(db, args = {}) {
 
     const futureMatches = pool
       .filter(r => (r.checkinDate || "") > todayStr && !isReservationCheckoutCompleted(r, db, targetPhone || r.guestPhone || r.phone, args.history || []))
-      .sort((a, b) => (a.checkinDate || "").localeCompare(b.checkinDate || ""));
+      .sort((a, b) => {
+        const cmp = (a.checkinDate || "").localeCompare(b.checkinDate || "");
+        return cmp !== 0 ? cmp : rankCandidate(a) - rankCandidate(b);
+      });
     if (futureMatches.length > 0) return futureMatches[0];
 
     if (todayMatches.length > 0) return todayMatches[0];
@@ -3411,18 +3568,23 @@ export function handleGetReservationDetails(db, args = {}) {
   if (targetCode) {
     const codeLower = targetCode.toLowerCase();
     matched = reservations.find(r =>
-      r && (getCanonicalReservationCodes(r).includes(codeLower) || String(r.id || "") === targetCode)
+      r && (getCanonicalReservationCodes(r).includes(codeLower) || String(r.id || "") === targetCode || String(r.packageCode || r.packageId || "").toLowerCase() === codeLower)
     );
   }
 
-  // 2. Busca por telefone
+  // 2. Busca por telefone (incluindo acompanhantes em r.guests)
   if (!matched && targetPhone) {
     const phoneMatches = reservations.filter(r => {
       if (!r) return false;
       const rPhone = normalizePhone(r.guestPhone || r.phone || "");
       const reqPhone = normalizePhone(r.requesterInfo?.phone || r.requesterInfo?.whatsapp || r.requesterPhone || "");
+      const compMatch = Array.isArray(r.guests) && r.guests.some(g => {
+        const gPh = normalizePhone(g?.phone || g?.whatsapp || "");
+        return Boolean(gPh && (targetPhone.endsWith(gPh.slice(-8)) || gPh.endsWith(targetPhone.slice(-8))));
+      });
       return (rPhone && (targetPhone.endsWith(rPhone.slice(-8)) || rPhone.endsWith(targetPhone.slice(-8)))) ||
-             (reqPhone && (targetPhone.endsWith(reqPhone.slice(-8)) || reqPhone.endsWith(targetPhone.slice(-8))));
+             (reqPhone && (targetPhone.endsWith(reqPhone.slice(-8)) || reqPhone.endsWith(targetPhone.slice(-8)))) ||
+             compMatch;
     });
     matched = pickBestReservation(phoneMatches);
   }
@@ -3430,7 +3592,10 @@ export function handleGetReservationDetails(db, args = {}) {
   // 3. Busca por nome do hóspede
   if (!matched && targetName) {
     const nameMatches = reservations.filter(r =>
-      r && r.guestName && r.guestName.toLowerCase().includes(targetName)
+      r && (
+        (r.guestName && r.guestName.toLowerCase().includes(targetName)) ||
+        (Array.isArray(r.guests) && r.guests.some(g => g?.name && String(g.name).toLowerCase().includes(targetName)))
+      )
     );
     matched = pickBestReservation(nameMatches);
   }
@@ -3439,7 +3604,7 @@ export function handleGetReservationDetails(db, args = {}) {
   if (!matched && targetFlat) {
     const flatMatches = reservations.filter(r =>
       r && (String(r.flatNumber) === targetFlat || String(r.flatId) === targetFlat) &&
-      r.status !== "cancelada" && r.status !== "expirada" &&
+      !["cancelada", "cancelado", "cancelled", "expirada", "expired", "no_show"].includes(String(r.status || "").toLowerCase()) &&
       (r.checkinDate <= todayStr && r.checkoutDate >= todayStr)
     );
     matched = pickBestReservation(flatMatches);
@@ -3454,7 +3619,24 @@ export function handleGetReservationDetails(db, args = {}) {
   }
 
   const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br";
-  const rawCheckinUrl = getCheckinUrlSync(matched, 1, appOrigin, db);
+  const senderLookupPh = normalizePhone(args.requesterPhone || args.phone || args.guestPhone || "");
+  let matchedCompIdxDetails = -1;
+  if (senderLookupPh && Array.isArray(matched.guests)) {
+    const mainPh = normalizePhone(matched.guestPhone || matched.phone || matched.guests?.[0]?.phone || "");
+    const reqPh = normalizePhone(matched.requesterInfo?.whatsapp || matched.requesterInfo?.phone || matched.requesterPhone || "");
+    const isMainOrReq =
+      (mainPh && (senderLookupPh.endsWith(mainPh.slice(-8)) || mainPh.endsWith(senderLookupPh.slice(-8)))) ||
+      (reqPh && (senderLookupPh.endsWith(reqPh.slice(-8)) || reqPh.endsWith(senderLookupPh.slice(-8))));
+    if (!isMainOrReq) {
+      matchedCompIdxDetails = matched.guests.findIndex((g, idx) => {
+        if (idx === 0 || !g) return false;
+        const gPh = normalizePhone(g?.phone || g?.whatsapp || "");
+        return Boolean(gPh && (senderLookupPh.endsWith(gPh.slice(-8)) || gPh.endsWith(senderLookupPh.slice(-8))));
+      });
+    }
+  }
+  const guestIdxDetails = matchedCompIdxDetails >= 1 ? matchedCompIdxDetails + 1 : 1;
+  const rawCheckinUrl = getCheckinUrlSync(matched, guestIdxDetails, appOrigin, db);
 
   const isCheckoutCompleted = isReservationCheckoutCompleted(
     matched,
@@ -3512,7 +3694,10 @@ export function handleGetReservationDetails(db, args = {}) {
     reservation: {
       id: matched.id,
       code: canonicalCode,
-      guestName: matched.guestName,
+      guestName:
+        matchedCompIdxDetails >= 1 && matched.guests?.[matchedCompIdxDetails]?.name
+          ? matched.guests[matchedCompIdxDetails].name
+          : matched.guestName,
       guestPhone: matched.guestPhone || matched.phone,
       checkinDate: matched.checkinDate,
       checkoutDate: matched.checkoutDate,
@@ -3760,8 +3945,17 @@ export function handleInformCheckout(dbOrArgs, argsOrDb = {}, optionalPhone = ""
   if (!matchedRes && phone) {
     matchedRes = reservations.find(r => {
       const rPhone = cleanWhatsAppPhone(r.guestPhone || r.phone || "");
-      const isPhoneMatch = rPhone && (phone.endsWith(rPhone.slice(-8)) || rPhone.endsWith(phone.slice(-8)));
-      return isPhoneMatch && r.status !== "cancelada" && r.status !== "cancelled" &&
+      const reqPhone = cleanWhatsAppPhone(r.requesterInfo?.whatsapp || r.requesterInfo?.phone || r.requesterPhone || "");
+      const compMatch = Array.isArray(r.guests) && r.guests.some(g => {
+        const gPh = cleanWhatsAppPhone(g?.phone || g?.whatsapp || "");
+        return Boolean(gPh && (phone.endsWith(gPh.slice(-8)) || gPh.endsWith(phone.slice(-8))));
+      });
+      const isPhoneMatch =
+        (rPhone && (phone.endsWith(rPhone.slice(-8)) || rPhone.endsWith(phone.slice(-8)))) ||
+        (reqPhone && (phone.endsWith(reqPhone.slice(-8)) || reqPhone.endsWith(phone.slice(-8)))) ||
+        compMatch;
+      const st = String(r.status || "").toLowerCase();
+      return isPhoneMatch && !["cancelada", "cancelado", "cancelled", "expirada", "expired", "no_show"].includes(st) &&
         (r.checkoutDate === todayStr || (r.checkinDate <= todayStr && r.checkoutDate >= todayStr));
     });
     if (matchedRes && !matchedFlat) {
@@ -6116,15 +6310,18 @@ export function extractConversationState(messageText = "", history = [], guestCo
     ...(messageText ? [String(messageText)] : [])
   ];
 
-  // Procura pré-reserva ativa existente para o telefone do hóspede
+  // Procura pré-reserva ativa existente para o telefone do hóspede/solicitante
   const cleanPhone = cleanWhatsAppPhone(guestContext?.phone || "");
   const nowMs = Date.now();
   const activePreReservation = (db?.reservations || []).find(r => {
     if (r.status !== "pre_reserva") return false;
-    if (r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return false;
+    const holdExp = r.expiresAt || r.holdExpiresAt;
+    if (holdExp && new Date(holdExp).getTime() < nowMs && r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago") return false;
     const rPhone = cleanWhatsAppPhone(r.guestPhone || r.phone || "");
-    if (!cleanPhone || !rPhone || (!rPhone.endsWith(cleanPhone.slice(-8)) && !cleanPhone.endsWith(rPhone.slice(-8)))) return false;
-    return true;
+    const reqPhone = cleanWhatsAppPhone(r.requesterInfo?.whatsapp || r.requesterInfo?.phone || r.requesterPhone || "");
+    const matchesGuest = Boolean(cleanPhone && rPhone && (rPhone.endsWith(cleanPhone.slice(-8)) || cleanPhone.endsWith(rPhone.slice(-8))));
+    const matchesReq = Boolean(cleanPhone && reqPhone && (reqPhone.endsWith(cleanPhone.slice(-8)) || cleanPhone.endsWith(reqPhone.slice(-8))));
+    return matchesGuest || matchesReq;
   }) || null;
 
   let parsedDates = null;
@@ -6309,7 +6506,8 @@ export function executeConversationalBookingStep({
             if (r.id === convState.activePreReservation.id) return false;
             if (!["confirmada", "checkin", "pre_reserva"].includes(r.status)) return false;
             if (isReservationCheckoutCompleted(r, db)) return false;
-            if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowCheckMs && r.paymentStatus !== "pago_total") return false;
+            const holdExp = r.expiresAt || r.holdExpiresAt;
+            if (r.status === "pre_reserva" && holdExp && new Date(holdExp).getTime() < nowCheckMs && r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago") return false;
             const sameFlat = (r.flatId && String(r.flatId) === String(heldFlatObj.id)) ||
                              (r.flatNumber && String(r.flatNumber) === String(heldFlatObj.number));
             if (!sameFlat) return false;
@@ -7731,6 +7929,15 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
   // 0.A.1 Solicitação de Nota Fiscal (Intercepção Fiscal Heurística)
   if (isFiscalIntentMessage(messageText)) {
     const { matchedReservation: hRes, matchedGuest: hGuest, linkedCompany } = findContactAndReservation(activeDb, guestContext?.phone);
+    if (hRes && isNonRequesterGuestForReservation(hRes, guestContext?.phone, activeDb)) {
+      const reqLabel =
+        hRes.requesterInfo?.name ||
+        hRes.requesterName ||
+        hRes.companyName ||
+        hRes.agencyName ||
+        "o solicitante responsável pela reserva";
+      return ret(`Olá${name}! Como esta reserva foi realizada por *${reqLabel}*, por política de privacidade financeira o comprovante de pagamento (recibo) e a Nota Fiscal Eletrônica (NFS-e) pertencem exclusivamente ao solicitante responsável pela reserva. Caso precise do documento, basta solicitá-lo diretamente ao responsável pela reserva! 🏨✨`);
+    }
     if (linkedCompany && isValidCnpj(linkedCompany.cnpj)) {
       return ret(`Olá${name}! Identificamos que a sua estadia já possui vínculo com a empresa **${linkedCompany.corporateName || linkedCompany.tradeName}** (CNPJ: ${formatCnpj(linkedCompany.cnpj)}). A sua Nota Fiscal (NFS-e) será emitida automaticamente com todos os dados corporativos cadastrados. Qualquer dúvida, estamos à disposição! 🏨✨`);
     }
@@ -11494,9 +11701,25 @@ export function findContactAndReservation(db, cleanTarget) {
     return pList.some(phoneMatches);
   });
 
-  const nonCancelled = matchedReservations.filter(
-    r => !INVALID_FISCAL_RES_STATUSES.has(String(r.status || "").trim().toLowerCase())
-  );
+  const nowFiscalMs = Date.now();
+  const rankFiscalCandidate = (r) => {
+    const rMain = cleanWhatsAppPhone(r.guestPhone || r.phone || r.guests?.[0]?.phone || "");
+    if (rMain && phoneMatches(rMain)) return 0;
+    if (r.requesterIsGuest1) return 1;
+    if (r.isPackagePrimary) return 2;
+    return 3 + (Number(r.packageIndex) || 99);
+  };
+  const nonCancelled = matchedReservations
+    .filter(r => {
+      const st = String(r.status || "").trim().toLowerCase();
+      if (INVALID_FISCAL_RES_STATUSES.has(st)) return false;
+      const holdExp = r.expiresAt || r.holdExpiresAt;
+      if ((st === "pre_reserva" || st === "pendente") && holdExp && new Date(holdExp).getTime() <= nowFiscalMs && r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago") {
+        return false;
+      }
+      return true;
+    })
+    .sort((a, b) => rankFiscalCandidate(a) - rankFiscalCandidate(b));
   const confirmedOnly = nonCancelled.filter(r => !isPreReservationHoldStatus(r));
   const candidatePool = confirmedOnly.length > 0 ? confirmedOnly : nonCancelled;
 
@@ -12890,9 +13113,10 @@ export async function handleWhatsAppFiscalFlow({
   if (isFiscalRequestEarly || isAwaitingConfEarly || isAwaitingFiscalEarly) {
     const { matchedReservation: earlyRes, matchedGuest: earlyGuest, callerRole: earlyCallerRole } = findContactAndReservation(db, cleanTarget);
     const isHiddenFromCallerEarly = Boolean(
-      earlyRes?.nfHideFromGuest === true &&
-      earlyCallerRole === "guest" &&
-      earlyRes?.invoiceRecipientType !== "guest"
+      (earlyRes?.nfHideFromGuest === true &&
+        earlyCallerRole === "guest" &&
+        earlyRes?.invoiceRecipientType !== "guest") ||
+      (earlyRes && isNonRequesterGuestForReservation(earlyRes, cleanTarget, db))
     );
     if (!isHiddenFromCallerEarly && (earlyGuest || earlyRes || conv?.fiscalConferenceState?.reservationId)) {
       enableAutoEmitInvoiceForGuestAndReservations(db, {
@@ -13279,22 +13503,32 @@ export async function handleWhatsAppFiscalFlow({
     });
   }
 
-  // Trava de Sigilo Tarifário Corporativo / Agência B2B (nfHideFromGuest):
-  // Se a reserva oculta tarifas/NFS-e do hóspede e quem chama é o próprio hóspede, orienta sem expor valores.
+  // Trava de Sigilo Tarifário Corporativo / Agência B2B / Pacote Terceiro ou Acompanhante:
+  // Se a reserva oculta tarifas/NFS-e do hóspede ou quem chama não é o solicitante responsável, orienta sem expor valores.
+  const isBlockedByFinancialPrivacy = Boolean(
+    matchedReservation && isNonRequesterGuestForReservation(matchedReservation, cleanTarget, db)
+  );
   if (
-    matchedReservation?.nfHideFromGuest === true &&
-    callerRole === "guest" &&
-    matchedReservation?.invoiceRecipientType !== "guest"
+    (matchedReservation?.nfHideFromGuest === true &&
+      callerRole === "guest" &&
+      matchedReservation?.invoiceRecipientType !== "guest") ||
+    isBlockedByFinancialPrivacy
   ) {
-    const entityLabel = matchedReservation.channel === "b2b" || matchedReservation.invoiceRecipientType === "agency"
-      ? "agência de viagens responsável pela reserva"
-      : "empresa contratante responsável pela reserva";
+    const entityLabel =
+      matchedReservation?.requesterInfo?.name ||
+      matchedReservation?.requesterName ||
+      matchedReservation?.companyName ||
+      matchedReservation?.agencyName ||
+      (matchedReservation?.channel === "b2b" || matchedReservation?.invoiceRecipientType === "agency"
+        ? "agência de viagens responsável pela reserva"
+        : "solicitante responsável pela reserva");
     const hideMsg = `Olá! Identificamos a sua reserva #${matchedReservation.code || matchedReservation.id}. 🏨✨\n\n` +
-      `Como esta hospedagem possui faturamento corporativo direto, a Nota Fiscal de Serviços (NFS-e) é emitida e encaminhada diretamente para o setor financeiro da *${entityLabel}*.\n\n` +
-      `Caso precise de segunda via do comprovante de faturamento ou deseje nota de consumos extras pagos à parte, nossa recepção está à disposição!`;
+      `Por política de privacidade financeira e conformidade fiscal, o comprovante de pagamento (recibo) e a Nota Fiscal de Serviços (NFS-e) pertencem exclusivamente a *${entityLabel}*.\n\n` +
+      `Caso precise do documento fiscal da hospedagem, por gentileza solicite-o diretamente ao solicitante ou empresa responsável pela reserva!`;
     return await respond(hideMsg, {
       action: "blocked_nf_hide_from_guest",
       nfHideFromGuest: true,
+      ocultarFinanceiro: true,
       reservationId: matchedReservation.id
     });
   }
@@ -15185,31 +15419,36 @@ export async function processAiInboundMessage({
   // e aciona imediatamente a Régua Oficial de Pré-Reserva (tpl_pre_reserva com botões interativos, PIX e link de Cartão):
   const targetPreRes = (db?.reservations || []).find(r => {
     if (r.status !== "pre_reserva") return false;
+    const candidatePhones = [
+      cleanWhatsAppPhone(r.guestPhone || r.phone || ""),
+      cleanWhatsAppPhone(r.requesterPhone || r.requesterInfo?.whatsapp || r.requesterInfo?.phone || "")
+    ].filter(Boolean);
+    const phoneMatched = Boolean(cleanTarget && candidatePhones.some(cp => matchClientPhone(cp, cleanTarget)));
     if (r._needsOfficialPreResDispatch === true) {
-      const rPhone = cleanWhatsAppPhone(r.guestPhone || r.phone || "");
-      if (rPhone && cleanTarget && matchClientPhone(rPhone, cleanTarget)) return true;
-      if (aiResult?.functionResult?.code && r.code === aiResult.functionResult.code) return true;
+      if (phoneMatched) return true;
+      if (aiResult?.functionResult?.code && (r.code === aiResult.functionResult.code || r.packageCode === aiResult.functionResult.code)) return true;
     }
     if (r._preReservationRulerSentAt && (Date.now() - new Date(r._preReservationRulerSentAt).getTime()) < 25000) {
-      const rPhone = cleanWhatsAppPhone(r.guestPhone || r.phone || "");
-      if (rPhone && cleanTarget && matchClientPhone(rPhone, cleanTarget)) return true;
+      if (phoneMatched) return true;
+    }
+    if (r.packagePreResDispatchedAt && (Date.now() - new Date(r.packagePreResDispatchedAt).getTime()) < 25000) {
+      if (phoneMatched) return true;
     }
     return false;
   });
 
-  if (targetPreRes && targetPreRes._needsOfficialPreResDispatch === true) {
+  if (targetPreRes && targetPreRes._needsOfficialPreResDispatch === true && !(targetPreRes.packageId || targetPreRes.packageCode)) {
     const oldPix = targetPreRes.pixCopiaECola;
     if (typeof globalThis.createInterPixCob === "function") {
       try {
         const cleanTxId = String(targetPreRes.pixTxId || targetPreRes.code || "").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
-        const interCob = await globalThis.createInterPixCob(
-          db?.settings?.interConfig,
-          cleanTxId,
-          targetPreRes.totalAmount,
-          targetPreRes.guestName,
-          targetPreRes.guestCpf || targetPreRes.guestDocument || "",
-          `Reserva ${targetPreRes.code} - Flat ${targetPreRes.flatNumber}`
-        );
+        const interCob = await globalThis.createInterPixCob({
+          amount: targetPreRes.totalAmount,
+          description: `Reserva ${targetPreRes.code} - Flat ${targetPreRes.flatNumber}`,
+          debtorName: targetPreRes.guestName || targetPreRes.requesterName,
+          debtorDocument: targetPreRes.guestCpf || targetPreRes.guestDocument || targetPreRes.requesterInfo?.cpf || "",
+          reservationCode: targetPreRes.code
+        });
         if (interCob && interCob.pixCopiaECola) {
           targetPreRes.pixCopiaECola = interCob.pixCopiaECola;
           targetPreRes.pixTxId = interCob.txid || cleanTxId;
@@ -15238,12 +15477,25 @@ export async function processAiInboundMessage({
 
   const rulerDispatchedLive = Boolean(
     targetPreRes &&
-    (db?.whatsappHistory || []).some(h =>
-      h.triggerEvent === "pre_reservation_created" &&
-      h.status === "sent" &&
-      String(h.reservationCode || "").toUpperCase() === String(targetPreRes.code || "").toUpperCase() &&
-      h.sentAt &&
-      (Date.now() - new Date(h.sentAt).getTime()) < 30000
+    (
+      (targetPreRes.packagePreResDispatchedAt && (Date.now() - new Date(targetPreRes.packagePreResDispatchedAt).getTime()) < 30000 &&
+        (db?.whatsappHistory || []).some(h =>
+          h.triggerEvent === "pre_reservation_created" &&
+          h.status === "sent" &&
+          (
+            String(h.reservationCode || "").toUpperCase() === String(targetPreRes.code || "").toUpperCase() ||
+            (targetPreRes.packageCode && String(h.packageCode || "").toUpperCase() === String(targetPreRes.packageCode).toUpperCase())
+          ) &&
+          h.sentAt &&
+          (Date.now() - new Date(h.sentAt).getTime()) < 30000
+        )) ||
+      (db?.whatsappHistory || []).some(h =>
+        h.triggerEvent === "pre_reservation_created" &&
+        h.status === "sent" &&
+        String(h.reservationCode || "").toUpperCase() === String(targetPreRes.code || "").toUpperCase() &&
+        h.sentAt &&
+        (Date.now() - new Date(h.sentAt).getTime()) < 30000
+      )
     )
   );
 
@@ -15253,7 +15505,7 @@ export async function processAiInboundMessage({
       handled: true,
       handover: false,
       preReservationRulerDispatched: true,
-      reservationCode: targetPreRes.code,
+      reservationCode: targetPreRes.packageCode || targetPreRes.code,
       replyText: aiResult.replyText,
       modelUsed: aiResult.modelUsed,
       source: aiResult.source,
@@ -16139,9 +16391,10 @@ export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId 
     if (!r) return false;
     if (excludeResId != null && String(r.id) === String(excludeResId)) return false;
     const statusNorm = String(r.status || "").toLowerCase();
-    if (["cancelada", "cancelled", "no_show", "expirada"].includes(statusNorm)) return false;
-    if ((statusNorm === "pre_reserva" || statusNorm === "pendente") && r.expiresAt) {
-      if (new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") {
+    if (["cancelada", "cancelado", "cancelled", "no_show", "expirada", "expired"].includes(statusNorm)) return false;
+    const holdExp = r.expiresAt || r.holdExpiresAt;
+    if ((statusNorm === "pre_reserva" || statusNorm === "pendente") && holdExp) {
+      if (new Date(holdExp).getTime() < nowMs && r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago") {
         return false;
       }
     }
@@ -17311,8 +17564,9 @@ export async function evaluateAndNotifyActivePreReservation({
   const existingReservation = (db.reservations || []).find(r => {
     if (!r) return false;
     const statusNorm = String(r.status || "").toLowerCase();
-    if (["cancelada", "cancelled", "expirada", "no_show"].includes(statusNorm)) return false;
-    if ((statusNorm === "pre_reserva" || statusNorm === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") {
+    if (["cancelada", "cancelado", "cancelled", "expirada", "expired", "no_show"].includes(statusNorm)) return false;
+    const holdExp = r.expiresAt || r.holdExpiresAt;
+    if ((statusNorm === "pre_reserva" || statusNorm === "pendente") && holdExp && new Date(holdExp).getTime() < nowMs && r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago") {
       return false;
     }
     const sameDates = r.checkinDate === extracted.checkIn && r.checkoutDate === extracted.checkOut;
@@ -17616,14 +17870,23 @@ export async function createStandardPmsPreReservation(db, proposal, options = {}
 
   if (typeof globalThis.createInterPixCob === "function") {
     try {
-      const interCob = await globalThis.createInterPixCob(
-        db?.settings?.interConfig,
-        cleanTxId,
-        totalAmount,
-        cleanGuestName,
-        cleanGuestCpf,
-        `Reserva ${code} - Flat ${flat.number}`
-      );
+      const interDesc = `Reserva ${code} - Flat ${flat.number}`;
+      const interCob = globalThis.createInterPixCob.length <= 1
+        ? await globalThis.createInterPixCob({
+            amount: totalAmount,
+            description: interDesc,
+            debtorName: cleanGuestName,
+            debtorDocument: cleanGuestCpf,
+            reservationCode: code
+          })
+        : await globalThis.createInterPixCob(
+            db?.settings?.interConfig,
+            cleanTxId,
+            totalAmount,
+            cleanGuestName,
+            cleanGuestCpf,
+            interDesc
+          );
       if (interCob && interCob.pixCopiaECola) {
         pixPayload = interCob.pixCopiaECola;
         resolvedPixTxId = interCob.txid || cleanTxId;
@@ -18869,14 +19132,25 @@ export async function handleManagerExtensionReply({
 
     if (typeof globalThis.createInterPixCob === "function" && extraAmt > 0) {
       try {
-        const interCob = await globalThis.createInterPixCob(
-          db?.settings?.interConfig,
-          cleanTxId,
-          extraAmt,
-          resObj?.guestName || targetProposal.guestName || "Hospede CorpFlats",
-          resObj?.guestCpf || resObj?.guestDocument || "",
-          `Prorrogacao Reserva ${portalCode} - Flat ${targetProposal.flatNumber}`
-        );
+        const interDebtor = resObj?.guestName || targetProposal.guestName || "Hospede CorpFlats";
+        const interDoc = resObj?.guestCpf || resObj?.guestDocument || "";
+        const interDesc = `Prorrogacao Reserva ${portalCode} - Flat ${targetProposal.flatNumber}`;
+        const interCob = globalThis.createInterPixCob.length <= 1
+          ? await globalThis.createInterPixCob({
+              amount: extraAmt,
+              description: interDesc,
+              debtorName: interDebtor,
+              debtorDocument: interDoc,
+              reservationCode: portalCode
+            })
+          : await globalThis.createInterPixCob(
+              db?.settings?.interConfig,
+              cleanTxId,
+              extraAmt,
+              interDebtor,
+              interDoc,
+              interDesc
+            );
         if (interCob && interCob.pixCopiaECola) {
           pixCopiaECola = interCob.pixCopiaECola;
           resolvedTxId = interCob.txid || cleanTxId;

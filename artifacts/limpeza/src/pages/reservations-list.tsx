@@ -512,6 +512,9 @@ export default function ReservationsListPage() {
         const hay = [
           r.guestName,
           r.code,
+          r.packageCode,
+          r.requesterName,
+          r.requesterPhone,
           r.externalOrderId,
           r.flatNumber ? `flat ${r.flatNumber}` : "",
           r.flatNumber || "",
@@ -529,8 +532,13 @@ export default function ReservationsListPage() {
         if (hay.includes(q)) return true;
         if (qDigits.length >= 3) {
           const phoneDigits = (r.guestPhone || "").replace(/\D/g, "");
+          const reqPhoneDigits = (r.requesterPhone || "").replace(/\D/g, "");
           const docDigits = (r.guestDocument || "").replace(/\D/g, "");
-          if (phoneDigits.includes(qDigits) || docDigits.includes(qDigits)) {
+          if (
+            phoneDigits.includes(qDigits) ||
+            reqPhoneDigits.includes(qDigits) ||
+            docDigits.includes(qDigits)
+          ) {
             return true;
           }
         }
@@ -635,20 +643,72 @@ export default function ReservationsListPage() {
     }
   };
 
+  const getOriginUrl = () =>
+    typeof window !== "undefined"
+      ? window.location.origin
+      : "https://corpflats.com.br";
+
   const getPortalUrl = (row: UnifiedReservationRow) => {
-    const origin =
-      typeof window !== "undefined"
-        ? window.location.origin
-        : "https://corpflats.com.br";
-    return `${origin}/minha-reserva/${encodeURIComponent(row.code)}`;
+    return `${getOriginUrl()}/minha-reserva/${encodeURIComponent(row.code)}`;
+  };
+
+  const getPaymentPortalUrl = (row: UnifiedReservationRow) => {
+    if (row.packageCode) {
+      return `${getOriginUrl()}/minha-reserva/${encodeURIComponent(row.packageCode)}?requester=1`;
+    }
+    return getPortalUrl(row);
+  };
+
+  const getPackageCredentialUrl = (row: UnifiedReservationRow) => {
+    return `${getOriginUrl()}/credenciamento/${encodeURIComponent(row.packageCode || row.code)}`;
   };
 
   const handleCopyPortalLink = (row: UnifiedReservationRow) => {
     copyToClipboard(
       getPortalUrl(row),
-      "🔗 Link do Portal copiado!",
-      `Portal Minha Reserva (${row.code})`
+      row.packageCode
+        ? "🔑 Portal Individual deste Flat (s/ valores) copiado!"
+        : "🔗 Link do Portal copiado!",
+      row.packageCode
+        ? `Portal Individual s/ valores (${row.code})`
+        : `Portal Minha Reserva (${row.code})`
     );
+  };
+
+  const handleCopyPaymentLink = (row: UnifiedReservationRow) => {
+    copyToClipboard(
+      getPaymentPortalUrl(row),
+      row.packageCode
+        ? "💳 Link Pagamento / Recibo do Pacote copiado!"
+        : "💳 Link de Pagamento / Portal copiado!",
+      row.packageCode
+        ? `Pacote ${row.packageCode} (Solicitante)`
+        : `Portal Minha Reserva (${row.code})`
+    );
+  };
+
+  const handleCopyPackageCredentialLink = (row: UnifiedReservationRow) => {
+    copyToClipboard(
+      getPackageCredentialUrl(row),
+      "👥 Link Único Cadastro Hóspedes copiado!",
+      row.packageCode
+        ? `Pacote ${row.packageCode} (Hóspedes 1 e 2)`
+        : `Credenciamento (${row.code})`
+    );
+  };
+
+  const handleFilterByPackage = (packageCode: string) => {
+    if (!packageCode) return;
+    closeQuickDrawer();
+    setFilters((prev) => ({
+      ...prev,
+      tab: "all",
+      search: packageCode,
+    }));
+    toast({
+      title: `📦 Filtrando pacote ${packageCode}`,
+      description: "Exibindo todos os flats vinculados a este pacote.",
+    });
   };
 
   const handleCopyPreCheckinLink = (row: UnifiedReservationRow) => {
@@ -666,10 +726,7 @@ export default function ReservationsListPage() {
   };
 
   const handleCopyBreakfastLink = (row: UnifiedReservationRow) => {
-    const origin =
-      typeof window !== "undefined"
-        ? window.location.origin
-        : "https://corpflats.com.br";
+    const origin = getOriginUrl();
     copyToClipboard(
       `${origin}/cafe/${encodeURIComponent(row.code)}`,
       "☕ Link do Café da Manhã copiado!",
@@ -684,6 +741,13 @@ export default function ReservationsListPage() {
   const handleCopySummaryText = (row: UnifiedReservationRow) => {
     const text = [
       `🏨 *Resumo da Reserva ${row.code}*`,
+      row.packageCode
+        ? `• Pacote Multi-Flat: *${row.packageCode}${
+            row.packageIndex && row.packageTotalFlats
+              ? ` (${row.packageIndex}/${row.packageTotalFlats})`
+              : ""
+          }*`
+        : null,
       `• Hóspede: *${row.guestName}* (${row.guestCount} pax)`,
       `• Acomodação: *Flat ${row.flatNumber || "A definir"}*`,
       `• Check-in: *${formatDateBrFull(row.checkinDate)}* (${row.checkinTime})`,
@@ -693,8 +757,13 @@ export default function ReservationsListPage() {
       row.balanceDue > 0.01
         ? `• Saldo Pendente: *${formatCurrencyBRL(row.balanceDue)}*`
         : `• Situação: *Quitada*`,
-      `• Portal do Hóspede: ${getPortalUrl(row)}`,
-    ].join("\n");
+      row.packageCode
+        ? `• Pagamento / Recibo Pacote (Solicitante): ${getPaymentPortalUrl(row)}`
+        : null,
+      `• ${row.packageCode ? "Portal Individual deste Flat (s/ valores)" : "Portal do Hóspede"}: ${getPortalUrl(row)}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
     copyToClipboard(text, "📋 Resumo copiado p/ WhatsApp!", row.code);
   };
 
@@ -711,7 +780,7 @@ export default function ReservationsListPage() {
   };
 
   const handleOpenInternalChat = (row: UnifiedReservationRow) => {
-    const clean = cleanWhatsAppPhone(row.guestPhone || "");
+    const clean = cleanWhatsAppPhone(row.guestPhone || row.requesterPhone || "");
     const targetUrl = clean
       ? `/whatsapp-chat?phone=${encodeURIComponent(clean)}`
       : "/whatsapp-chat";
@@ -723,16 +792,19 @@ export default function ReservationsListPage() {
   };
 
   const handleOpenExternalWa = (row: UnifiedReservationRow) => {
-    const clean = cleanWhatsAppPhone(row.guestPhone || "");
+    const cleanGuest = cleanWhatsAppPhone(row.guestPhone || "");
+    const cleanReq = cleanWhatsAppPhone(row.requesterPhone || "");
+    const clean = cleanGuest || cleanReq;
     if (!clean) {
       toast({
         title: "Sem telefone cadastrado",
-        description: "Adicione o WhatsApp do hóspede na edição da reserva.",
+        description: "Adicione o WhatsApp do hóspede ou solicitante na edição da reserva.",
         variant: "destructive",
       });
       return;
     }
-    const url = buildDirectWaWebUrl(clean, `Olá, ${row.guestName}! Tudo bem?`);
+    const targetName = cleanGuest ? row.guestName : row.requesterName || row.guestName;
+    const url = buildDirectWaWebUrl(clean, `Olá, ${targetName}! Tudo bem?`);
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
@@ -1144,6 +1216,9 @@ export default function ReservationsListPage() {
             onTriggerQuickMessage={(row, qm) => setConfirmingQuickMsg({ row, qm })}
             activeQuickMessages={activeQuickMessages}
             onCopyPortalLink={handleCopyPortalLink}
+            onCopyPaymentLink={handleCopyPaymentLink}
+            onCopyPackageCredentialLink={handleCopyPackageCredentialLink}
+            onFilterByPackage={handleFilterByPackage}
             onCopyPreCheckinLink={handleCopyPreCheckinLink}
             onCopyBreakfastLink={handleCopyBreakfastLink}
             onOpenPortalNewTab={handleOpenPortalNewTab}
@@ -1226,6 +1301,9 @@ export default function ReservationsListPage() {
         onTriggerQuickMessage={(row, qm) => setConfirmingQuickMsg({ row, qm })}
         activeQuickMessages={activeQuickMessages}
         onCopyPortalLink={handleCopyPortalLink}
+        onCopyPaymentLink={handleCopyPaymentLink}
+        onCopyPackageCredentialLink={handleCopyPackageCredentialLink}
+        onFilterByPackage={handleFilterByPackage}
         onCopyPreCheckinLink={handleCopyPreCheckinLink}
         onOpenPortalNewTab={handleOpenPortalNewTab}
         onOpenNfseHub={(row) =>
@@ -1289,9 +1367,13 @@ export default function ReservationsListPage() {
             confirmingQuickMsg.row.rawReservation || {
               id: confirmingQuickMsg.row.id,
               code: confirmingQuickMsg.row.code,
+              packageId: confirmingQuickMsg.row.packageId,
+              packageCode: confirmingQuickMsg.row.packageCode,
               flatNumber: confirmingQuickMsg.row.flatNumber,
               guestName: confirmingQuickMsg.row.guestName,
               guestPhone: confirmingQuickMsg.row.guestPhone,
+              requesterName: confirmingQuickMsg.row.requesterName,
+              requesterPhone: confirmingQuickMsg.row.requesterPhone,
               checkinDate: confirmingQuickMsg.row.checkinDate,
               checkoutDate: confirmingQuickMsg.row.checkoutDate,
               totalAmount: confirmingQuickMsg.row.totalAmount,

@@ -24,6 +24,7 @@
 import { triggerImmediateWhatsApp, generateStaticPixPayload, formatReservationChannelLabel, resolveReservationGuestCount, computeCardAmountFromPix } from './zapi-service.mjs';
 import { validateGuestEmailAddress, updateGuestEmailAndResendRecentPending } from './mail-service.mjs';
 import { WbpPricingManager, calculateSebraeRate, STANDARD_SEBRAE_SEASONALITY_FACTORS } from './wbp/pricing.mjs';
+import { generatePackageCode, computePackageSummary, syncPackagePixAndPaymentLinks, cancelSinglePackageFlat, getPackageReservations, isPackageItemActive, isReservationSettledInPackage } from './package-reservations-service.mjs';
 
 function normalizePhoneDigits(phone) {
   return String(phone || '').replace(/\D+/g, '');
@@ -34,6 +35,82 @@ function phonesMatch(phoneA, phoneB) {
   const b = normalizePhoneDigits(phoneB);
   if (!a || !b || a.length < 8 || b.length < 8) return false;
   return a.endsWith(b.slice(-8)) || b.endsWith(a.slice(-8));
+}
+
+function isPlaceholderGuestName(nm) {
+  const s = String(nm || '').trim();
+  return !s || /a definir|informar depois|pendente|^h[oó]spede\s*\d*$/i.test(s);
+}
+
+export function evaluateReservationFinancialPrivacy(sourceRes, senderPhone, guestContext = null) {
+  if (!sourceRes) {
+    return {
+      isSenderRequester: false,
+      isCompanionSender: false,
+      matchedCompanionIdx: -1,
+      matchedCompanionGuestNumber: 1,
+      isSeparateRequester: false,
+      ocultarFinanceiro: false,
+    };
+  }
+  const cleanPhone = normalizePhoneDigits(senderPhone);
+  const reqPhoneCandidate =
+    sourceRes.requesterInfo?.whatsapp ||
+    sourceRes.requesterInfo?.phone ||
+    sourceRes.requesterPhone ||
+    '';
+  const matchesReqPhone = Boolean(cleanPhone && phonesMatch(reqPhoneCandidate, cleanPhone));
+  const matchesMainGuestPhone = Boolean(
+    cleanPhone &&
+      (phonesMatch(sourceRes.guestPhone || sourceRes.phone, cleanPhone) ||
+        (Array.isArray(sourceRes.guests) &&
+          sourceRes.guests[0] &&
+          phonesMatch(sourceRes.guests[0]?.phone || sourceRes.guests[0]?.whatsapp, cleanPhone)))
+  );
+
+  const matchedCompanionIdx = Array.isArray(sourceRes.guests)
+    ? sourceRes.guests.findIndex(
+        (g, idx) =>
+          (idx >= 1 || Number(g?.index) >= 2 || g?.isMain === false) &&
+          phonesMatch(g?.phone || g?.whatsapp, cleanPhone)
+      )
+    : -1;
+
+  const isCompanionSender = matchedCompanionIdx >= 0 && !matchesReqPhone && !matchesMainGuestPhone;
+  const compObj = isCompanionSender ? sourceRes.guests[matchedCompanionIdx] : null;
+  const matchedCompanionGuestNumber = isCompanionSender
+    ? (Number(compObj?.index) >= 2 ? Number(compObj.index) : Math.max(2, matchedCompanionIdx + 1))
+    : 1;
+
+  const isSenderRequester = Boolean(
+    matchesReqPhone ||
+      (sourceRes.requesterIsGuest1 && !isCompanionSender && matchesMainGuestPhone)
+  );
+
+  const isB2bRes =
+    String(sourceRes.channel || '').toLowerCase().includes('b2b') ||
+    Boolean(sourceRes.agencyId || sourceRes.b2bReservationNumber);
+
+  const isSeparateRequester = Boolean(
+    isB2bRes ||
+      (sourceRes.requesterType && sourceRes.requesterType !== 'guest' && !sourceRes.requesterIsGuest1) ||
+      (reqPhoneCandidate && !phonesMatch(reqPhoneCandidate, sourceRes.guestPhone || sourceRes.phone || '')) ||
+      ((sourceRes.packageId || sourceRes.packageCode) && !sourceRes.requesterIsGuest1) ||
+      guestContext?.hideFinancialForGuest
+  );
+
+  const ocultarFinanceiro = Boolean(
+    isCompanionSender || ((sourceRes.hideFinancialForGuest || isSeparateRequester) && !isSenderRequester)
+  );
+
+  return {
+    isSenderRequester,
+    isCompanionSender,
+    matchedCompanionIdx,
+    matchedCompanionGuestNumber,
+    isSeparateRequester,
+    ocultarFinanceiro,
+  };
 }
 
 function getBrasiliaIsoAndDate(now = new Date()) {
@@ -71,7 +148,8 @@ function getBrasiliaIsoAndDate(now = new Date()) {
 }
 
 export function injectSessionContext(params = {}) {
-  const { db, phone, now = new Date(), guestContext, runtime } = params;
+  const simOffset = Number(globalThis.__simulatedTimeOffsetMs || 0);
+  const { db, phone, now = new Date(Date.now() + simOffset), guestContext, runtime } = params;
   const cleanPhone = normalizePhoneDigits(phone);
   const { isoNow, todayStr } = getBrasiliaIsoAndDate(now);
 
@@ -79,23 +157,45 @@ export function injectSessionContext(params = {}) {
   const guests = Array.isArray(db?.guests) ? db.guests : [];
 
   const isDevSender = cleanPhone && cleanPhone.endsWith('998505276');
-  const nowMs = now instanceof Date ? now.getTime() : Date.now();
+  const nowMs = now instanceof Date ? now.getTime() : Date.now() + simOffset;
 
-  const matchingReservations = reservations.filter((r) => {
-    if (!r) return false;
-    const st = String(r.status || '').toLowerCase();
-    if (['cancelada', 'cancelled', 'expirada', 'expired', 'no_show'].includes(st)) return false;
-    const paySt = String(r.paymentStatus || '').toLowerCase();
-    const isPaid = ['paid', 'pago', 'pago_total', 'pago_integralmente', 'confirmado'].includes(paySt);
-    if ((st === 'pre_reserva' || r.isPreReservation) && !isPaid && r.holdExpiresAt) {
-      const expMs = new Date(r.holdExpiresAt).getTime();
-      if (Number.isFinite(expMs) && expMs <= nowMs) return false;
-    }
-    return (
-      phonesMatch(r.guestPhone || r.phone, cleanPhone) ||
-      phonesMatch(r.requesterInfo?.phone || r.requesterInfo?.whatsapp || r.requesterPhone, cleanPhone)
-    );
-  });
+  const matchingReservations = reservations
+    .filter((r) => {
+      if (!r) return false;
+      const st = String(r.status || '').toLowerCase().trim();
+      if (['cancelada', 'cancelado', 'cancelled', 'expirada', 'expired', 'no_show'].includes(st)) return false;
+      const paySt = String(r.paymentStatus || '').toLowerCase().trim();
+      const isPaid = ['paid', 'pago', 'pago_total', 'pago_integralmente', 'confirmado'].includes(paySt);
+      const holdExp = r.expiresAt || r.holdExpiresAt;
+      if ((st === 'pre_reserva' || st === 'pendente' || r.isPreReservation) && !isPaid && holdExp) {
+        const expMs = new Date(holdExp).getTime();
+        if (Number.isFinite(expMs) && expMs <= nowMs) return false;
+      }
+      const matchesCompanion =
+        Array.isArray(r.guests) &&
+        r.guests.some((g) => phonesMatch(g?.phone || g?.whatsapp, cleanPhone));
+      return (
+        phonesMatch(r.guestPhone || r.phone, cleanPhone) ||
+        phonesMatch(r.requesterInfo?.phone || r.requesterInfo?.whatsapp || r.requesterPhone, cleanPhone) ||
+        matchesCompanion
+      );
+    })
+    .sort((a, b) => {
+      const scoreMatch = (r) => {
+        let s = 0;
+        if (phonesMatch(r.guestPhone || r.phone, cleanPhone)) s += 10;
+        if (Array.isArray(r.guests) && r.guests.some((g) => phonesMatch(g?.phone || g?.whatsapp, cleanPhone))) s += 8;
+        if (r.requesterIsGuest1) s += 4;
+        if (r.isPackagePrimary) s += 2;
+        return s;
+      };
+      const diffScore = scoreMatch(b) - scoreMatch(a);
+      if (diffScore !== 0) return diffScore;
+      const idxA = Number(a?.packageIndex) || 999;
+      const idxB = Number(b?.packageIndex) || 999;
+      if (idxA !== idxB) return idxA - idxB;
+      return 0;
+    });
 
   const activeRes = matchingReservations.find((r) => {
     const ci = String(r.checkinDate || '').slice(0, 10);
@@ -113,7 +213,13 @@ export function injectSessionContext(params = {}) {
   if (!activeRes) {
     const futureCandidates = matchingReservations
       .filter((r) => String(r.checkinDate || '').slice(0, 10) > todayStr)
-      .sort((a, b) => String(a.checkinDate || '').localeCompare(String(b.checkinDate || '')));
+      .sort((a, b) => {
+        const cmp = String(a.checkinDate || '').localeCompare(String(b.checkinDate || ''));
+        if (cmp !== 0) return cmp;
+        const idxA = Number(a?.packageIndex) || 999;
+        const idxB = Number(b?.packageIndex) || 999;
+        return idxA - idxB;
+      });
     if (futureCandidates.length > 0) {
       futureRes = futureCandidates[0];
     }
@@ -172,8 +278,33 @@ export function injectSessionContext(params = {}) {
   }
 
   const matchedGuest = guests.find((g) => phonesMatch(g?.phone || g?.whatsapp, cleanPhone));
+  const sourceRes = chosenRes || (guestContext?.hasReservation ? guestContext.reservation : null);
+
+  const privacyEval = evaluateReservationFinancialPrivacy(sourceRes, cleanPhone, guestContext);
+  const {
+    isSenderRequester,
+    isCompanionSender,
+    matchedCompanionIdx,
+    matchedCompanionGuestNumber,
+    ocultarFinanceiro,
+  } = privacyEval;
+
+  const companionObj =
+    isCompanionSender && sourceRes && Array.isArray(sourceRes.guests)
+      ? sourceRes.guests[matchedCompanionIdx]
+      : null;
+  const companionRealName =
+    companionObj?.name && !isPlaceholderGuestName(companionObj.name)
+      ? String(companionObj.name).trim()
+      : '';
+  const rawChosenGuestName = String(chosenRes?.guestName || '').trim();
+  const isChosenPendingName = isPlaceholderGuestName(rawChosenGuestName);
   const guestName =
-    chosenRes?.guestName ||
+    companionRealName ||
+    (isSenderRequester && (isChosenPendingName || !phonesMatch(sourceRes?.guestPhone || sourceRes?.phone, cleanPhone))
+      ? String(sourceRes?.requesterInfo?.name || sourceRes?.requesterName || '').trim()
+      : '') ||
+    (!isChosenPendingName ? rawChosenGuestName : '') ||
     guestContext?.guestName ||
     matchedGuest?.name ||
     undefined;
@@ -187,7 +318,6 @@ export function injectSessionContext(params = {}) {
     : undefined;
 
   let reservaSessao;
-  const sourceRes = chosenRes || (guestContext?.hasReservation ? guestContext.reservation : null);
 
   if (sourceRes) {
     const flatNum = String(sourceRes.flatNumber || guestContext?.flatNumber || 'S/N');
@@ -218,19 +348,36 @@ export function injectSessionContext(params = {}) {
         sourceRes.ratePlan === 'with_breakfast' ||
         String(sourceRes.ratePlan || '').toLowerCase().includes('cafe')
     );
-    const preCheckinDone = Boolean(
-      sourceRes.preCheckinCompleted ||
-        sourceRes.preCheckinCompletedAt ||
-        sourceRes.fnrhCompleted ||
-        sourceRes.checkinCompletedAt
-    );
+    const preCheckinDone = isCompanionSender
+      ? Boolean(companionObj?.hasCompletedCheckin || companionObj?.status === 'CHECKED_IN')
+      : Boolean(
+          sourceRes.preCheckinCompleted ||
+            sourceRes.preCheckinCompletedAt ||
+            sourceRes.fnrhCompleted ||
+            sourceRes.checkinCompletedAt
+        );
 
     const wifiPassword =
       db?.whatsappAiSettings?.knowledgeBase?.wifiPassword || '1234567890123';
-    const baseUrl =
+    const baseUrl = String(
       db?.settings?.baseUrl ||
-      (typeof process !== 'undefined' && process.env?.SERVER_BASE_URL) ||
-      'https://corpflats.com.br';
+      (typeof process !== 'undefined' && (process.env?.APP_BASE_URL || process.env?.SERVER_BASE_URL)) ||
+      'https://corpflats.com.br'
+    ).replace(/\/+$/, '');
+
+    const guestIdxQuery = isCompanionSender ? `?guest=${matchedCompanionGuestNumber}` : '';
+    const linkPreCheckinResolved = isUnconfirmedPreRes
+      ? null
+      : `${baseUrl}/pre-checkin/${resCode}${guestIdxQuery}`;
+    const linkPortalHospedeIndividual = `${baseUrl}/minha-reserva/${resCode}${guestIdxQuery}`;
+
+    const pkgSummaryCtx =
+      !ocultarFinanceiro && isSenderRequester && (sourceRes.packageId || sourceRes.packageCode) && db
+        ? computePackageSummary(db, sourceRes.packageId || sourceRes.packageCode, {
+            baseUrl,
+            computeCardAmountFromPix,
+          })
+        : null;
 
     reservaSessao = {
       id: resCode,
@@ -242,22 +389,36 @@ export function injectSessionContext(params = {}) {
       data_checkout: checkoutDate,
       check_in: `${checkinDate}T${sourceRes.checkinTime || '14:00'}:00`,
       check_out: `${checkoutDate}T${sourceRes.lateCheckoutTime || sourceRes.checkoutTime || '12:00'}:00`,
-      status_pagamento: isPaid ? 'PAGO_INTEGRALMENTE' : 'PENDENTE',
+      ...(ocultarFinanceiro ? {} : { status_pagamento: isPaid ? 'PAGO_INTEGRALMENTE' : 'PENDENTE' }),
       status_reserva: isUnconfirmedPreRes ? 'PRE_RESERVA' : 'CONFIRMADA',
       plano_tarifa: includeBreakfast ? 'COM_CAFE_DA_MANHA' : 'SOMENTE_HOSPEDAGEM',
       cafe_incluso: includeBreakfast,
       status_pre_checkin_fnrh: preCheckinDone ? 'CONCLUIDO' : 'PENDENTE',
       canal_reserva: String(sourceRes.channel || 'whatsapp').toLowerCase(),
       canal_reserva_nome: formatReservationChannelLabel(sourceRes),
-      valor_diaria: Number(sourceRes.dailyRate || 237),
-      valor_total: Number(sourceRes.totalAmount || 0),
+      ocultar_financeiro: ocultarFinanceiro,
+      papel_remetente: isSenderRequester
+        ? (pkgSummaryCtx ? 'SOLICITANTE_PACOTE' : 'SOLICITANTE')
+        : isCompanionSender
+          ? 'ACOMPANHANTE'
+          : 'HOSPEDE_TITULAR',
+      indice_hospede: isCompanionSender ? matchedCompanionGuestNumber : 1,
+      ...(ocultarFinanceiro
+        ? {}
+        : {
+            valor_diaria: Number(sourceRes.dailyRate || 237),
+            valor_total: pkgSummaryCtx ? Number(pkgSummaryCtx.totalAmount || 0) : Number(sourceRes.totalAmount || 0),
+          }),
       quantidade_hospedes: resolveReservationGuestCount(sourceRes),
       acesso_imovel: 'Cartão NFC retirado na recepção 24h',
       wifi_rede: `apto ${flatNum}`,
       wifi_senha: wifiPassword,
-      email_cadastrado: sourceRes.guestEmail || matchedGuest?.email || null,
+      email_cadastrado: isCompanionSender
+        ? (companionObj?.email || null)
+        : (sourceRes.guestEmail || matchedGuest?.email || null),
       alerta_email_incorreto:
-        sourceRes.emailCorrectionRequest?.status === 'awaiting_reply' || sourceRes.guestEmailInvalid
+        !isCompanionSender &&
+        (sourceRes.emailCorrectionRequest?.status === 'awaiting_reply' || sourceRes.guestEmailInvalid)
           ? {
               status: 'AGUARDANDO_CORRECAO',
               email_invalido: String(
@@ -268,12 +429,62 @@ export function injectSessionContext(params = {}) {
             }
           : null,
       veiculo: sourceRes.vehicle || null,
-      link_pre_checkin: isUnconfirmedPreRes ? null : `${baseUrl}/pre-checkin/${resCode}`,
-      link_comprovante_pagamento: `${baseUrl}/minha-reserva/${resCode}`,
+      link_pre_checkin: linkPreCheckinResolved,
+      link_portal_hospede: linkPortalHospedeIndividual,
+      ...(ocultarFinanceiro
+        ? {}
+        : {
+            link_comprovante_pagamento: pkgSummaryCtx
+              ? pkgSummaryCtx.packagePortalUrl
+              : `${baseUrl}/minha-reserva/${resCode}`,
+          }),
       link_agendamento_cafe: (!isUnconfirmedPreRes && includeBreakfast) ? `${baseUrl}/minha-reserva/${resCode}/cafe` : null,
+      ...(pkgSummaryCtx
+        ? {
+            pacote_multi_flat: {
+              packageCode: pkgSummaryCtx.packageCode,
+              package_code: pkgSummaryCtx.packageCode,
+              codigo_pacote: pkgSummaryCtx.packageCode,
+              quantidade_flats_ativos: pkgSummaryCtx.activeFlatsCount,
+              activeFlatsCount: pkgSummaryCtx.activeFlatsCount,
+              totalAmount: pkgSummaryCtx.totalAmount,
+              paidAmount: pkgSummaryCtx.paidAmount,
+              pendingAmount: pkgSummaryCtx.pendingAmount,
+              valor_total_pacote: pkgSummaryCtx.totalAmount,
+              valor_pago_pacote: pkgSummaryCtx.paidAmount,
+              valor_pendente_pacote: pkgSummaryCtx.pendingAmount,
+              valor_cartao_pendente: pkgSummaryCtx.cardPendingAmount,
+              status_pagamento_pacote: pkgSummaryCtx.isPaid ? 'PAGO_INTEGRALMENTE' : 'PENDENTE',
+              precisa_cadastrar_hospedes: pkgSummaryCtx.needsGuestCredentials,
+              chave_pix_unica: pkgSummaryCtx.pixCopiaECola || null,
+              packagePortalUrl: pkgSummaryCtx.packagePortalUrl,
+              batchCredentialUrl: pkgSummaryCtx.batchCredentialUrl,
+              link_pacote: pkgSummaryCtx.packagePortalUrl,
+              link_credenciamento: pkgSummaryCtx.batchCredentialUrl,
+              flats: pkgSummaryCtx.items
+                .filter((it) => it.isActive)
+                .map((it) => ({
+                  codigo_reserva: it.code,
+                  code: it.code,
+                  flat: it.flatNumber,
+                  flatNumber: it.flatNumber,
+                  data_checkin: it.checkinDate,
+                  data_checkout: it.checkoutDate,
+                  checkinDate: it.checkinDate,
+                  checkoutDate: it.checkoutDate,
+                  quantidade_hospedes: it.guestCount,
+                  guestCount: it.guestCount,
+                  incluir_cafe: it.includeBreakfast,
+                  hospede_titular: it.informGuestsLater ? 'A informar após pagamento' : it.guestName,
+                  hospede_2: it.guest2Name || (it.guestCount >= 2 && it.guest2InformLater ? 'A informar' : null),
+                  valor_flat: it.totalAmount,
+                })),
+            },
+          }
+        : {}),
     };
 
-    if (sourceRes.pendingSundayUpsell || sourceRes.sundayUpsellOffer) {
+    if (!ocultarFinanceiro && (sourceRes.pendingSundayUpsell || sourceRes.sundayUpsellOffer)) {
       const offer = sourceRes.pendingSundayUpsell || sourceRes.sundayUpsellOffer;
       const holdExp = offer.expiresAt || offer.holdExpiresAt ? new Date(offer.expiresAt || offer.holdExpiresAt).getTime() : 0;
       const isExpired = holdExp > 0 && Date.now() > holdExp;
@@ -335,6 +546,20 @@ export function buildContextoSessaoJson(context) {
   const todayIso = String(isoNow).slice(0, 10);
   const tomorrowIso = addDaysIso(todayIso, 1);
   const dayAfterTomorrowIso = addDaysIso(todayIso, 2);
+  const rawRes = context?.reserva_atual || context?.reserva_ativa || null;
+  const sanitizedRes =
+    rawRes && rawRes.ocultar_financeiro
+      ? (() => {
+          const clone = { ...rawRes };
+          delete clone.valor_diaria;
+          delete clone.valor_total;
+          delete clone.status_pagamento;
+          delete clone.link_comprovante_pagamento;
+          delete clone.oferta_domingo_sem_pressa;
+          delete clone.pacote_multi_flat;
+          return clone;
+        })()
+      : rawRes;
   const payload = {
     contexto_sessao: {
       data_hora_atual: isoNow,
@@ -346,7 +571,7 @@ export function buildContextoSessaoJson(context) {
         (context?.reserva_ativa ? 'HOSPEDE_ATIVO' : 'LEAD_DESCONHECIDO'),
       estado_atual: context?.estado_atual || 'COMERCIAL_VENDAS',
       dados_hospede: context?.dados_hospede || context?.hospede || null,
-      reserva_atual: context?.reserva_atual || context?.reserva_ativa || null,
+      reserva_atual: sanitizedRes,
     },
   };
   return JSON.stringify(payload, null, 2);
@@ -662,6 +887,32 @@ export function buildStandardStayDescription(params) {
   return lines.join('\n');
 }
 
+export function buildConsolidatedPackageStayDescription(params) {
+  const items = Array.isArray(params.items) ? params.items : [];
+  const lines = [
+    `Nota consolidada relativa ao Pacote ${params.packageCode} (${items.length} flats) na CorpFlats.`,
+    `Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ (Soho Residence Service)`,
+  ];
+  items.forEach((r, idx) => {
+    const ci = String(r.checkinDate || '').slice(0, 10);
+    const co = String(r.checkoutDate || '').slice(0, 10);
+    const diarias = Math.max(1, diffDays(ci, co));
+    const gArr = Array.isArray(r.guests) ? r.guests : [];
+    const gNames = [
+      r.guestName && !isPlaceholderGuestName(r.guestName) ? r.guestName : '',
+      ...gArr.slice(1).map((g) => (g?.name && !isPlaceholderGuestName(g.name) ? g.name : '')),
+    ].filter(Boolean);
+    const gStr = gNames.length > 0 ? formatGuestListPtBr(gNames) : 'Hóspede designado';
+    lines.push(
+      `${idx + 1}. Flat ${r.flatNumber} (${r.code || r.id}): ${ci} a ${co} (${diarias} diária(s)) — ${gStr} — R$ ${Number(r.totalAmount || 0).toFixed(2)}`
+    );
+  });
+  if (params.extraNotes && String(params.extraNotes).trim()) {
+    lines.push(String(params.extraNotes).trim());
+  }
+  return lines.join('\n');
+}
+
 function selectFairShareFlatHelper(db, checkinDate, checkoutDate, excludeFlatNumber = null) {
   if (!db) return null;
   if (typeof globalThis.selectFairShareFlat === 'function') {
@@ -683,10 +934,15 @@ function selectFairShareFlatHelper(db, checkinDate, checkoutDate, excludeFlatNum
   if (activeFlats.length === 0) return null;
 
   const reservations = Array.isArray(db.reservations) ? db.reservations : [];
+  const nowMs = Date.now() + Number(globalThis.__simulatedTimeOffsetMs || 0);
   const available = activeFlats.filter((flat) => {
     const fNum = String(flat.number);
     const hasConflict = reservations.some((r) => {
-      if (!r || r.status === 'cancelada' || r.status === 'cancelled' || r.checkoutCompleted) return false;
+      if (!r || r.checkoutCompleted) return false;
+      const st = String(r.status || '').toLowerCase().trim();
+      if (['cancelada', 'cancelado', 'cancelled', 'expirada', 'expired', 'no_show'].includes(st)) return false;
+      const holdExp = r.expiresAt || r.holdExpiresAt;
+      if ((st === 'pre_reserva' || st === 'pendente' || r.isPreReservation) && holdExp && new Date(holdExp).getTime() < nowMs && r.paymentStatus !== 'pago_total' && r.paymentStatus !== 'pago') return false;
       const sameFlat = String(r.flatNumber) === fNum || String(r.flatId) === String(flat.id);
       if (!sameFlat) return false;
       const rIn = String(r.checkinDate || '').slice(0, 10);
@@ -801,21 +1057,139 @@ async function sendReceptionEmailHelper({
 export const consultarDisponibilidadeTool = {
   name: 'consultar_disponibilidade',
   description:
-    'Consulta a disponibilidade real de flats na CorpFlats para um período de entrada (data_checkin) e saída (data_checkout) ' +
-    'e quantidade de hóspedes. Deve ser chamada sempre que um cliente perguntar se há vaga ou quiser cotar datas.',
+    'Consulta a disponibilidade real de 1 ou múltiplos flats na CorpFlats (inclusive com datas, ocupação e camas independentes por flat no mesmo pacote). ' +
+    'Deve ser chamada sempre que um cliente perguntar se há vaga para 1 ou vários flats ou quiser cotar datas.',
   allowedStates: ['COMERCIAL_VENDAS', 'PRE_CHECKIN', 'IN_STAY_CONCIERGE'],
   parametersSchema: {
     type: 'OBJECT',
     properties: {
       data_checkin: { type: 'STRING', description: 'Data desejada de check-in no formato YYYY-MM-DD.' },
       data_checkout: { type: 'STRING', description: 'Data desejada de check-out no formato YYYY-MM-DD.' },
-      quantidade_hospedes: { type: 'NUMBER', description: 'Quantidade total de hóspedes (padrão: 1).' },
+      quantidade_hospedes: { type: 'NUMBER', description: 'Quantidade de hóspedes (padrão: 1).' },
+      quantidade_flats: { type: 'NUMBER', description: 'Quantidade de flats desejados no pacote (padrão: 1).' },
       preferencia_cama: { type: 'STRING', description: 'Preferência opcional de configuração de cama (casal, solteiro, indiferente).' },
+      flats: {
+        type: 'ARRAY',
+        description: 'Lista opcional quando o cliente pedir múltiplos flats com datas, ocupação ou camas diferentes por flat.',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            data_checkin: { type: 'STRING' },
+            data_checkout: { type: 'STRING' },
+            quantidade_hospedes: { type: 'NUMBER' },
+            preferencia_cama: { type: 'STRING' },
+          },
+        },
+      },
     },
     required: ['data_checkin', 'data_checkout'],
   },
   async execute(args, context) {
     try {
+      const db = context.runtime?.db;
+      const extraBedEnabled = Boolean(db?.siteConfig?.extraBedConfig?.enabled);
+      const maxGuestsPerFlat = extraBedEnabled ? 3 : 2;
+      const requestedFlatsCount = Array.isArray(args.flats) && args.flats.length >= 2
+        ? args.flats.length
+        : Math.max(1, Number(args.quantidade_flats || 1));
+
+      if (requestedFlatsCount >= 2) {
+        const defaultIn = String(args.data_checkin || '').slice(0, 10);
+        const defaultOut = String(args.data_checkout || '').slice(0, 10);
+        const items = Array.isArray(args.flats) && args.flats.length >= 2
+          ? args.flats
+          : Array.from({ length: requestedFlatsCount }, (_, i) => {
+              const totalPax = Math.max(requestedFlatsCount, Number(args.quantidade_hospedes || requestedFlatsCount));
+              const basePax = Math.floor(totalPax / requestedFlatsCount);
+              const rem = totalPax % requestedFlatsCount;
+              return {
+                data_checkin: defaultIn,
+                data_checkout: defaultOut,
+                quantidade_hospedes: Math.min(maxGuestsPerFlat, basePax + (i < rem ? 1 : 0)),
+                preferencia_cama: args.preferencia_cama || 'casal',
+              };
+            });
+
+        const allFlats = Array.isArray(db?.flats) && db.flats.length > 0
+          ? db.flats.filter((f) => f && f.isActive !== false && f.status !== 'maintenance' && f.status !== 'manutencao_bloqueada')
+          : [{ number: '113' }, { number: '114' }, { number: '212' }, { number: '905' }];
+        const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
+        const nowMsMulti = Date.now() + Number(globalThis.__simulatedTimeOffsetMs || 0);
+        const bedCfgMulti = db?.siteConfig?.bedConfig || {};
+        const twinAllowedMulti = (Array.isArray(bedCfgMulti.twinAllowedFlats) && bedCfgMulti.twinAllowedFlats.length > 0
+          ? bedCfgMulti.twinAllowedFlats
+          : ['113', '114', '115', '202', '905']
+        ).map((n) => String(n));
+
+        const allocatedBatch = [];
+        for (let idx = 0; idx < items.length; idx++) {
+          const it = items[idx] || {};
+          const fIn = String(it.data_checkin || defaultIn).slice(0, 10);
+          const fOut = String(it.data_checkout || defaultOut).slice(0, 10);
+          const fDiarias = diffDays(fIn, fOut);
+          const fPax = Math.max(1, Number(it.quantidade_hospedes || 1));
+          if (!fIn || !fOut || fDiarias <= 0) {
+            const msg = `Peça ao cliente para confirmar as datas válidas de entrada e saída do Flat ${idx + 1}.`;
+            return { status: 'BLOQUEADO_PELA_REGRA', codigo_regra_bloqueio: 'DATAS_INVALIDAS', instrucao_para_ia: msg, instrucao_resposta_ia: msg };
+          }
+          if (fPax > maxGuestsPerFlat) {
+            const msg = `Explique ao cliente que cada flat comporta até ${maxGuestsPerFlat} hóspedes (Flat ${idx + 1} solicitado para ${fPax}). Sugira redistribuir ou acrescentar mais 1 flat ao pacote.`;
+            return { status: 'BLOQUEADO_PELA_REGRA', codigo_regra_bloqueio: 'CAPACIDADE_MAXIMA_EXCEDIDA', instrucao_para_ia: msg, instrucao_resposta_ia: msg };
+          }
+          const wantsTwin = String(it.preferencia_cama || args.preferencia_cama || '').toLowerCase().includes('solteiro');
+          if (wantsTwin && bedCfgMulti.allowTwinBeds === false) {
+            const msgTwinOff =
+              'Informe ao cliente que no momento todos os flats estão configurados com cama Queen de casal (a montagem com 2 camas de solteiro está indisponível). Pergunte se a cama Queen atende.';
+            return { status: 'BLOQUEADO_PELA_REGRA', codigo_regra_bloqueio: 'CAMAS_SOLTEIRO_INDISPONIVEIS', instrucao_para_ia: msgTwinOff, instrucao_resposta_ia: msgTwinOff };
+          }
+          const candidates = allFlats.filter((flat) => {
+            const fNum = String(flat.number || flat.id || '');
+            if (wantsTwin && !twinAllowedMulti.includes(fNum)) return false;
+            if (allocatedBatch.some((prev) => prev.flatNumber === fNum && fIn < prev.checkout && fOut > prev.checkin)) return false;
+            const hasConflict = reservations.some((r) => {
+              if (!r) return false;
+              const st = String(r.status || '').toLowerCase();
+              if (['cancelada', 'cancelado', 'cancelled', 'expirada', 'expired', 'no_show'].includes(st)) return false;
+              const holdExp = r.expiresAt || r.holdExpiresAt;
+              if ((st === 'pre_reserva' || st === 'pendente' || r.isPreReservation) && holdExp && new Date(holdExp).getTime() < nowMsMulti && r.paymentStatus !== 'pago_total' && r.paymentStatus !== 'pago') return false;
+              if (String(r.flatNumber || r.flatId || '') !== fNum) return false;
+              return fIn < String(r.checkoutDate || '').slice(0, 10) && fOut > String(r.checkinDate || '').slice(0, 10);
+            });
+            return !hasConflict;
+          });
+          if (candidates.length === 0) {
+            const msg = `Informe com empatia que não há disponibilidade simultânea para o Flat ${idx + 1} no período ${fIn} a ${fOut} (temos ${allocatedBatch.length} flat(s) livres nesse intervalo).`;
+            return {
+              status: 'BLOQUEADO_PELA_REGRA',
+              codigo_regra_bloqueio: 'SEM_DISPONIBILIDADE_MULTI_FLAT',
+              dados: { flats_solicitados: items.length, flats_atendidos: allocatedBatch.length },
+              instrucao_para_ia: msg,
+              instrucao_resposta_ia: msg,
+            };
+          }
+          allocatedBatch.push({
+            flatNumber: String(candidates[0].number || candidates[0].id),
+            checkin: fIn,
+            checkout: fOut,
+            hospedes: fPax,
+            cama: wantsTwin ? 'solteiro' : 'casal',
+          });
+        }
+
+        const resumo = allocatedBatch
+          .map((a, i) => `Flat ${i + 1} (Unid. ${a.flatNumber}: ${a.checkin} a ${a.checkout}, ${a.hospedes} pax, cama ${a.cama})`)
+          .join('; ');
+        const msg =
+          `Confirme com entusiasmo que temos disponibilidade para os *${allocatedBatch.length} flats* em pacote unificado (pagamento único para o solicitante): ${resumo}. ` +
+          `Pergunte se prefere cotar com café da manhã servido no flat ou somente hospedagem para cada unidade.`;
+        return {
+          status: 'SUCESSO_EXECUTADO',
+          dados: { quantidade_flats: allocatedBatch.length, alocacao_sugerida: allocatedBatch },
+          instrucao_para_ia: msg,
+          instrucao_resposta_ia: msg,
+        };
+      }
+
       const checkin = String(args.data_checkin || '').slice(0, 10);
       const checkout = String(args.data_checkout || '').slice(0, 10);
       const hospedes = Math.max(1, Number(args.quantidade_hospedes || 1));
@@ -833,20 +1207,17 @@ export const consultarDisponibilidadeTool = {
         };
       }
 
-      const db = context.runtime?.db;
-      const extraBedEnabled = Boolean(db?.siteConfig?.extraBedConfig?.enabled);
-      const maxGuestsPerFlat = extraBedEnabled ? 3 : 2;
-
       if (hospedes > maxGuestsPerFlat) {
+        const flatsSug = Math.ceil(hospedes / maxGuestsPerFlat);
         const msg =
           hospedes === 3 && !extraBedEnabled
-            ? 'Explique educadamente ao cliente que o padrão oficial dos nossos flats comporta até 2 hóspedes. Pergunte se ele prefere cotar 2 apartamentos ou se deseja que você consulte diretamente a gerência para verificar a possibilidade de exceção com adicional para 3ª pessoa.'
+            ? 'Explique educadamente ao cliente que o padrão oficial dos nossos flats comporta até 2 hóspedes. Pergunte se ele prefere que você cote um pacote unificado de 2 apartamentos (com 1 único PIX) ou consulte a gerência para verificar exceção.'
             : `Explique ao cliente que cada flat comporta até ${maxGuestsPerFlat} hóspedes com conforto. ` +
-              `Para ${hospedes} pessoas, sugira reservar 2 apartamentos próximos e pergunte se ele gostaria de cotar dessa forma.`;
+              `Para ${hospedes} pessoas, ofereça montar um pacote unificado de *${flatsSug} flats* com pagamento único e pergunte se pode cotar dessa forma.`;
         return {
           status: 'BLOQUEADO_PELA_REGRA',
           codigo_regra_bloqueio: hospedes === 3 && !extraBedEnabled ? 'TERCEIRO_HOSPEDE_REQUER_EXCECAO' : 'CAPACIDADE_MAXIMA_EXCEDIDA',
-          dados: { quantidade_solicitada: hospedes, capacidade_maxima_por_flat: maxGuestsPerFlat },
+          dados: { quantidade_solicitada: hospedes, capacidade_maxima_por_flat: maxGuestsPerFlat, flats_sugeridos_pacote: flatsSug },
           instrucao_para_ia: msg,
           instrucao_resposta_ia: msg,
         };
@@ -928,8 +1299,9 @@ export const consultarDisponibilidadeTool = {
         const hasConflict = reservations.some((r) => {
           if (!r) return false;
           const st = String(r.status || '').toLowerCase();
-          if (['cancelada', 'cancelled', 'expirada', 'no_show'].includes(st)) return false;
-          if ((st === 'pre_reserva' || st === 'pendente') && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== 'pago_total') {
+          if (['cancelada', 'cancelado', 'cancelled', 'expirada', 'expired', 'no_show'].includes(st)) return false;
+          const holdExp = r.expiresAt || r.holdExpiresAt;
+          if ((st === 'pre_reserva' || st === 'pendente' || r.isPreReservation) && holdExp && new Date(holdExp).getTime() < nowMs && r.paymentStatus !== 'pago_total' && r.paymentStatus !== 'pago') {
             return false;
           }
           if (String(r.flatNumber || r.flatId || '') !== flatNum) return false;
@@ -1010,12 +1382,26 @@ export const consultarDisponibilidadeTool = {
   },
 };
 
-function resolveAgentLivePricingQuote(db, checkin, checkout, hospedes) {
+function resolveAgentLivePricingQuote(db, checkin, checkout, hospedes, preferenciaCama = 'casal') {
   const diarias = Math.max(1, diffDays(checkin, checkout));
   const wbpState = db ? WbpPricingManager.getPricingState(db) : null;
   const wbpSettings = wbpState?.settings || {};
   const tarSettings = db?.tariffSettings || {};
   const siteCfg = db?.siteConfig || {};
+  const bedCfg = siteCfg.bedConfig || {};
+
+  const prefNorm = String(preferenciaCama || '').trim().toLowerCase();
+  const wantsTwin =
+    prefNorm === 'solteiro' ||
+    prefNorm.includes('solteiro') ||
+    prefNorm.includes('twin') ||
+    prefNorm.includes('duas');
+  const twinFeeUnit = Number(bedCfg.twinFeeAmount ?? bedCfg.twinPreparationFeeAmount ?? 30);
+  const twinFeeType = bedCfg.twinFeeType || bedCfg.twinPreparationFeeType || 'per_stay';
+  const twinFee =
+    wantsTwin && twinFeeUnit > 0
+      ? Number((twinFeeType === 'per_night' ? twinFeeUnit * diarias : twinFeeUnit).toFixed(2))
+      : 0.0;
 
   const valorCafeInternoPorPessoaDia = Number(
     wbpSettings.breakfastSurchargePerGuest ??
@@ -1117,8 +1503,8 @@ function resolveAgentLivePricingQuote(db, checkin, checkout, hospedes) {
   const somaHospedagemComCafe = Number(comCafeNightlyRates.reduce((acc, r) => acc + r, 0).toFixed(2));
   const diariaMediaComCafe = Number((somaHospedagemComCafe / diarias).toFixed(2));
 
-  const totalComCafePix = Number((somaHospedagemComCafe + adicionalTerceiroHospedeTotal).toFixed(2));
-  const totalSemCafePix = Number((somaHospedagemSemCafe + adicionalTerceiroHospedeTotal + taxaLimpezaSemCafe).toFixed(2));
+  const totalComCafePix = Number((somaHospedagemComCafe + adicionalTerceiroHospedeTotal + twinFee).toFixed(2));
+  const totalSemCafePix = Number((somaHospedagemSemCafe + adicionalTerceiroHospedeTotal + taxaLimpezaSemCafe + twinFee).toFixed(2));
 
   const totalComCafeCartao = computeCardAmountFromPix(totalComCafePix, cardMarkupPercent);
   const totalSemCafeCartao = computeCardAmountFromPix(totalSemCafePix, cardMarkupPercent);
@@ -1129,6 +1515,8 @@ function resolveAgentLivePricingQuote(db, checkin, checkout, hospedes) {
 
   return {
     diarias,
+    wantsTwin,
+    twinFee,
     valorCafeInternoPorPessoaDia,
     adicionalTerceiroHospedeTotal,
     taxaLimpezaSemCafe,
@@ -1152,21 +1540,130 @@ function resolveAgentLivePricingQuote(db, checkin, checkout, hospedes) {
 export const calcularOrcamentoTool = {
   name: 'calcular_orcamento',
   description:
-    'Calcula o orçamento oficial completo e detalhado (diárias com café da manhã servido no flat ou somente hospedagem, valores no PIX com desconto e no cartão) ' +
-    'para uma estadia na CorpFlats. Deve ser chamada sempre que o cliente pedir cotação ou valores para datas específicas.',
+    'Calcula o orçamento oficial completo e detalhado para 1 ou múltiplos flats (suportando datas de check-in/out, ocupação, configuração de cama e café da manhã independentes por flat, consolidando em 1 pagamento único).',
   allowedStates: ['COMERCIAL_VENDAS', 'PRE_CHECKIN', 'IN_STAY_CONCIERGE'],
   parametersSchema: {
     type: 'OBJECT',
     properties: {
       data_checkin: { type: 'STRING', description: 'Data de check-in no formato YYYY-MM-DD.' },
       data_checkout: { type: 'STRING', description: 'Data de check-out no formato YYYY-MM-DD.' },
-      quantidade_hospedes: { type: 'NUMBER', description: 'Quantidade total de hóspedes (padrão: 1).' },
+      quantidade_hospedes: { type: 'NUMBER', description: 'Quantidade de hóspedes (padrão: 1).' },
+      quantidade_flats: { type: 'NUMBER', description: 'Quantidade de flats no pacote (padrão: 1).' },
       incluir_cafe: { type: 'BOOLEAN', description: 'Se deve priorizar o plano com café da manhã servido no quarto.' },
+      preferencia_cama: { type: 'STRING', description: 'Preferência opcional de configuração de cama (casal, solteiro, indiferente).' },
+      flats: {
+        type: 'ARRAY',
+        description: 'Configuração opcional por flat quando o pacote tiver 2 ou mais flats.',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            data_checkin: { type: 'STRING' },
+            data_checkout: { type: 'STRING' },
+            quantidade_hospedes: { type: 'NUMBER' },
+            incluir_cafe: { type: 'BOOLEAN' },
+            preferencia_cama: { type: 'STRING' },
+          },
+        },
+      },
     },
     required: ['data_checkin', 'data_checkout'],
   },
   async execute(args, context) {
     try {
+      const db = context.runtime?.db;
+      const extraBedEnabled = Boolean(db?.siteConfig?.extraBedConfig?.enabled);
+      const maxGuestsPerFlat = extraBedEnabled ? 3 : 2;
+      const cardMarkupPct = Number(db?.siteConfig?.pricing?.cardMarkupPercent ?? db?.tariffSettings?.cardMarkupPercent ?? 5.0);
+      const requestedFlatsCount = Array.isArray(args.flats) && args.flats.length >= 2
+        ? args.flats.length
+        : Math.max(1, Number(args.quantidade_flats || 1));
+
+      if (requestedFlatsCount >= 2) {
+        const defaultIn = String(args.data_checkin || '').slice(0, 10);
+        const defaultOut = String(args.data_checkout || '').slice(0, 10);
+        const items = Array.isArray(args.flats) && args.flats.length >= 2
+          ? args.flats
+          : Array.from({ length: requestedFlatsCount }, (_, i) => {
+              const totalPax = Math.max(requestedFlatsCount, Number(args.quantidade_hospedes || requestedFlatsCount));
+              const basePax = Math.floor(totalPax / requestedFlatsCount);
+              const rem = totalPax % requestedFlatsCount;
+              return {
+                data_checkin: defaultIn,
+                data_checkout: defaultOut,
+                quantidade_hospedes: Math.min(maxGuestsPerFlat, basePax + (i < rem ? 1 : 0)),
+                incluir_cafe: args.incluir_cafe !== false,
+                preferencia_cama: args.preferencia_cama || 'casal',
+              };
+            });
+
+        let somaEscolhidaPix = 0;
+        let somaTodosComCafePix = 0;
+        let somaTodosSemCafePix = 0;
+        const detalhamento = [];
+
+        for (let idx = 0; idx < items.length; idx++) {
+          const it = items[idx] || {};
+          const fIn = String(it.data_checkin || defaultIn).slice(0, 10);
+          const fOut = String(it.data_checkout || defaultOut).slice(0, 10);
+          const fDiarias = diffDays(fIn, fOut);
+          const fPax = Math.max(1, Number(it.quantidade_hospedes || 1));
+          if (!fIn || !fOut || fDiarias <= 0) {
+            const msg = `Peça ao cliente datas válidas de entrada e saída para o Flat ${idx + 1}.`;
+            return { status: 'BLOQUEADO_PELA_REGRA', codigo_regra_bloqueio: 'PERIODO_ORCAMENTO_INVALIDO', instrucao_para_ia: msg, instrucao_resposta_ia: msg };
+          }
+          if (fPax > maxGuestsPerFlat) {
+            const msg = `Explique que o Flat ${idx + 1} excede o limite de ${maxGuestsPerFlat} hóspedes por flat e sugira acrescentar mais 1 flat ao pacote.`;
+            return { status: 'BLOQUEADO_PELA_REGRA', codigo_regra_bloqueio: 'CAPACIDADE_POR_FLAT_EXCEDIDA', instrucao_para_ia: msg, instrucao_resposta_ia: msg };
+          }
+          const qItem = resolveAgentLivePricingQuote(db, fIn, fOut, fPax, it.preferencia_cama || args.preferencia_cama);
+          const usaCafe = it.incluir_cafe !== undefined ? Boolean(it.incluir_cafe) : args.incluir_cafe !== false;
+          const unitPix = usaCafe ? qItem.totalComCafePix : qItem.totalSemCafePix;
+          const unitCard = usaCafe ? qItem.totalComCafeCartao : qItem.totalSemCafeCartao;
+
+          somaEscolhidaPix = Number((somaEscolhidaPix + unitPix).toFixed(2));
+          somaTodosComCafePix = Number((somaTodosComCafePix + qItem.totalComCafePix).toFixed(2));
+          somaTodosSemCafePix = Number((somaTodosSemCafePix + qItem.totalSemCafePix).toFixed(2));
+
+          detalhamento.push({
+            flat_ordem: idx + 1,
+            data_checkin: fIn,
+            data_checkout: fOut,
+            diarias: fDiarias,
+            quantidade_hospedes: fPax,
+            incluir_cafe: usaCafe,
+            preferencia_cama: qItem.wantsTwin ? 'solteiro' : 'casal',
+            taxa_camas_solteiro: qItem.twinFee,
+            valor_pix: unitPix,
+            valor_cartao: unitCard,
+          });
+        }
+
+        const somaEscolhidaCartao = computeCardAmountFromPix(somaEscolhidaPix, cardMarkupPct);
+
+        const linhas = detalhamento
+          .map((d) => `• Flat ${d.flat_ordem} (${d.data_checkin} a ${d.data_checkout}, ${d.diarias} diária(s), ${d.quantidade_hospedes} pax, ${d.incluir_cafe ? 'Com Café' : 'Sem Café'}, ${d.preferencia_cama === 'solteiro' ? '2 Solteiros' : 'Casal'}): R$ ${d.valor_pix.toFixed(2)} no PIX`)
+          .join('\n');
+        const msg =
+          `Apresente com clareza o orçamento do *Pacote com ${detalhamento.length} Flats (Pagamento Único)*:\n${linhas}\n` +
+          `💎 *Total Consolidado no PIX (com desconto): R$ ${somaEscolhidaPix.toFixed(2)}* | Cartão: R$ ${somaEscolhidaCartao.toFixed(2)}.\n` +
+          `Destaque que o solicitante paga 1 única vez e pode informar o Hóspede 1 e 2 de cada flat já agora ou depois pelo link único pós-pagamento. Pergunte se podemos gerar a pré-reserva unificada.`;
+
+        return {
+          status: 'SUCESSO_EXECUTADO',
+          dados: {
+            quantidade_flats: detalhamento.length,
+            flats: detalhamento,
+            valor_total_pacote_pix: somaEscolhidaPix,
+            valor_total_pacote_cartao: somaEscolhidaCartao,
+            todos_com_cafe_pix: somaTodosComCafePix,
+            todos_sem_cafe_pix: somaTodosSemCafePix,
+            moeda: 'BRL',
+          },
+          instrucao_para_ia: msg,
+          instrucao_resposta_ia: msg,
+        };
+      }
+
       const checkin = String(args.data_checkin || '').slice(0, 10);
       const checkout = String(args.data_checkout || '').slice(0, 10);
       const hospedes = Math.max(1, Number(args.quantidade_hospedes || 1));
@@ -1183,23 +1680,21 @@ export const calcularOrcamentoTool = {
         };
       }
 
-      const db = context.runtime?.db;
-      const extraBedEnabled = Boolean(db?.siteConfig?.extraBedConfig?.enabled);
-      const maxGuestsPerFlat = extraBedEnabled ? 3 : 2;
-
       if (hospedes > maxGuestsPerFlat) {
+        const flatsSug = Math.ceil(hospedes / maxGuestsPerFlat);
         const msg =
           hospedes === 3 && !extraBedEnabled
-            ? 'Explique educadamente ao cliente que o padrão oficial dos nossos flats comporta até 2 hóspedes. Pergunte se ele prefere cotar 2 apartamentos ou se deseja que você acione a gerência para avaliar uma exceção com adicional para 3ª pessoa.'
-            : `Explique ao cliente que nossos flats comportam no máximo ${maxGuestsPerFlat} hóspedes por unidade e sugira cotar 2 apartamentos para o grupo.`;
+            ? 'Explique educadamente ao cliente que o padrão oficial dos nossos flats comporta até 2 hóspedes. Pergunte se ele prefere cotar um pacote de 2 apartamentos (pagamento único) ou se deseja que você acione a gerência para avaliar uma exceção.'
+            : `Explique ao cliente que nossos flats comportam até ${maxGuestsPerFlat} hóspedes por unidade e sugira cotar um pacote unificado de *${flatsSug} flats* com pagamento único.`;
         return {
           status: 'BLOQUEADO_PELA_REGRA',
           codigo_regra_bloqueio: hospedes === 3 && !extraBedEnabled ? 'TERCEIRO_HOSPEDE_REQUER_EXCECAO' : 'CAPACIDADE_POR_FLAT_EXCEDIDA',
+          dados: { flats_sugeridos_pacote: flatsSug },
           instrucao_para_ia: msg,
           instrucao_resposta_ia: msg,
         };
       }
-      const q = resolveAgentLivePricingQuote(db, checkin, checkout, hospedes);
+      const q = resolveAgentLivePricingQuote(db, checkin, checkout, hospedes, args.preferencia_cama);
 
       const textoDesconto =
         q.descontoDuracaoPct > 0
@@ -1210,9 +1705,13 @@ export const calcularOrcamentoTool = {
         q.adicionalTerceiroHospedeTotal > 0
           ? ` (já inclui colchonete extra para 3º hóspede: R$ ${q.adicionalTerceiroHospedeTotal.toFixed(2)})`
           : '';
+      const textoTwin =
+        q.wantsTwin && q.twinFee > 0
+          ? ` (já inclui R$ ${q.twinFee.toFixed(2)} da montagem de 2 camas de solteiro)`
+          : '';
 
       const msg =
-        `Apresente ao cliente com clareza as duas opções oficiais para ${diarias} diária(s) (${checkin} a ${checkout}) para ${hospedes} pessoa(s)${textoExtra3}:\n` +
+        `Apresente ao cliente com clareza as duas opções oficiais para ${diarias} diária(s) (${checkin} a ${checkout}) para ${hospedes} pessoa(s)${textoExtra3}${textoTwin}:\n` +
         `1) *Plano com Café da Manhã Incluso no Flat (Recomendado):* Diária média de R$ ${q.diariaMediaComCafe.toFixed(2)} -> *No PIX (com desconto): R$ ${q.totalComCafePix.toFixed(2)}* | Cartão: R$ ${q.totalComCafeCartao.toFixed(2)}.\n` +
         `2) *Plano Somente Hospedagem (Sem Café):* Diária média de R$ ${q.diariaMediaSemCafe.toFixed(2)}${q.taxaLimpezaSemCafe > 0 ? ` + R$ ${q.taxaLimpezaSemCafe.toFixed(2)} taxa única de limpeza` : ''} -> *No PIX (com desconto): R$ ${q.totalSemCafePix.toFixed(2)}* | Cartão: R$ ${q.totalSemCafeCartao.toFixed(2)}.${textoDesconto}\n` +
         `REGRAS DE APRESENTAÇÃO OBRIGATÓRIAS: NUNCA mencione valor unitário de café separado e NUNCA use expressões como "isento de taxa de limpeza", "sem taxa de limpeza" ou "acréscimo no cartão" — apresente o valor do Cartão como preço padrão e o valor do PIX como preço com Desconto no PIX. Pergunte qual opção ele prefere para já gerar a reserva.`;
@@ -1224,12 +1723,15 @@ export const calcularOrcamentoTool = {
           data_checkout: checkout,
           diarias,
           quantidade_hospedes: hospedes,
+          preferencia_cama: q.wantsTwin ? 'solteiro' : 'casal',
+          taxa_camas_solteiro: q.twinFee,
           desconto_duracao_pct: Math.round(q.descontoDuracaoPct * 100),
           faixa_desconto: q.faixaDescontoLabel,
           valor_desconto_aplicado: q.economiaDesconto,
           opcao_com_cafe: {
             diaria: q.diariaMediaComCafe,
             taxa_limpeza: 0,
+            taxa_camas_solteiro: q.twinFee,
             valor_total: q.totalComCafePix,
             valor_pix: q.totalComCafePix,
             valor_cartao: q.totalComCafeCartao,
@@ -1238,6 +1740,7 @@ export const calcularOrcamentoTool = {
           opcao_sem_cafe: {
             diaria: q.diariaMediaSemCafe,
             taxa_limpeza: q.taxaLimpezaSemCafe,
+            taxa_camas_solteiro: q.twinFee,
             valor_total: q.totalSemCafePix,
             valor_pix: q.totalSemCafePix,
             valor_cartao: q.totalSemCafeCartao,
@@ -1271,36 +1774,63 @@ export const calcularOrcamentoTool = {
 export const gerarLinkReservaTool = {
   name: 'gerar_link_reserva',
   description:
-    'Gera a pré-reserva com bloqueio temporário de 30 minutos no calendário e fornece o link de pagamento / chave PIX Copia e Cola. ' +
-    'Quando o cliente no WhatsApp estiver reservando para outra pessoa ou empresa (solicitante diferente do hóspede), ' +
-    'os dados do hóspede são opcionais na criação (podem ser preenchidos depois via link seguro). ' +
+    'Gera a pré-reserva de 1 ou múltiplos flats (pacote unificado com 1 único PIX e link único de pagamento para o Solicitante, ' +
+    'permitindo datas, café, cama, veículo e Hóspede 1 e 2 independentes por flat ou marcados para "informar depois"). ' +
     'Exige duas etapas: passe confirmacao_hospede=FALSE para simular e confirmar os dados com o cliente, e TRUE após o de acordo dele.',
-  allowedStates: ['COMERCIAL_VENDAS'],
+  allowedStates: ['COMERCIAL_VENDAS', 'PRE_CHECKIN'],
   parametersSchema: {
     type: 'OBJECT',
     properties: {
-      data_checkin: { type: 'STRING', description: 'Data de entrada no formato YYYY-MM-DD.' },
-      data_checkout: { type: 'STRING', description: 'Data de saída no formato YYYY-MM-DD.' },
+      data_checkin: { type: 'STRING', description: 'Data principal de entrada no formato YYYY-MM-DD.' },
+      data_checkout: { type: 'STRING', description: 'Data principal de saída no formato YYYY-MM-DD.' },
       nome_hospede: {
         type: 'STRING',
         description:
-          'Nome completo do hóspede titular. Obrigatório quando o próprio hóspede reserva para si; opcional quando reserva_para_terceiro=TRUE.',
+          'Nome completo do hóspede titular (quando 1 flat para si) ou do solicitante caso ele também se hospede no Flat 1.',
       },
       reserva_para_terceiro: {
         type: 'BOOLEAN',
         description:
-          'Passe TRUE quando quem está conversando no WhatsApp (empresa, agência, secretária ou terceiro) NÃO é o próprio hóspede.',
+          'Passe TRUE quando quem está conversando no WhatsApp (empresa, agência, secretária ou terceiro) NÃO vai se hospedar.',
       },
       nome_solicitante: {
         type: 'STRING',
-        description: 'Nome do solicitante ou empresa responsável pela reserva quando reserva_para_terceiro=TRUE.',
+        description: 'Nome do solicitante único responsável pelo pacote ou reserva para terceiro.',
       },
       email_solicitante: {
         type: 'STRING',
         description: 'E-mail opcional do solicitante ou empresa para envio simultâneo da confirmação e link de dados do hóspede.',
       },
+      documento_solicitante: {
+        type: 'STRING',
+        description: 'CPF ou CNPJ opcional do solicitante (permite emissão posterior de 1 NFS-e única).',
+      },
       quantidade_hospedes: { type: 'NUMBER', description: 'Quantidade de hóspedes (padrão: 1).' },
+      quantidade_flats: { type: 'NUMBER', description: 'Quantidade de flats no pacote com pagamento único (padrão: 1).' },
       incluir_cafe: { type: 'BOOLEAN', description: 'TRUE para plano com café da manhã incluso, FALSE para somente hospedagem.' },
+      preferencia_cama: { type: 'STRING', description: 'Preferência opcional de configuração de cama (casal, solteiro, indiferente).' },
+      flats: {
+        type: 'ARRAY',
+        description: 'Configuração individual de cada flat quando o pacote tiver 2 ou mais flats.',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            data_checkin: { type: 'STRING' },
+            data_checkout: { type: 'STRING' },
+            quantidade_hospedes: { type: 'NUMBER' },
+            incluir_cafe: { type: 'BOOLEAN' },
+            preferencia_cama: { type: 'STRING' },
+            solicitante_hospeda_aqui: { type: 'BOOLEAN' },
+            informar_hospedes_depois: { type: 'BOOLEAN' },
+            nome_hospede_1: { type: 'STRING' },
+            telefone_hospede_1: { type: 'STRING' },
+            nome_hospede_2: { type: 'STRING' },
+            telefone_hospede_2: { type: 'STRING' },
+            placa_veiculo: { type: 'STRING' },
+            modelo_veiculo: { type: 'STRING' },
+          },
+        },
+      },
       confirmacao_hospede: {
         type: 'BOOLEAN',
         description:
@@ -1312,6 +1842,303 @@ export const gerarLinkReservaTool = {
   },
   async execute(args, context) {
     try {
+      const db = context.runtime?.db;
+      const extraBedEnabled = Boolean(db?.siteConfig?.extraBedConfig?.enabled);
+      const maxGuestsPerFlat = extraBedEnabled ? 3 : 2;
+      const cardMarkupPct = Number(db?.siteConfig?.pricing?.cardMarkupPercent ?? db?.tariffSettings?.cardMarkupPercent ?? 5.0);
+      const requestedFlatsCount = Array.isArray(args.flats) && args.flats.length >= 2
+        ? args.flats.length
+        : Math.max(1, Number(args.quantidade_flats || 1));
+
+      if (requestedFlatsCount >= 2) {
+        const defaultIn = String(args.data_checkin || '').slice(0, 10);
+        const defaultOut = String(args.data_checkout || '').slice(0, 10);
+        const solNome = String(args.nome_solicitante || args.nome_hospede || context.hospede?.nome || '').trim();
+        const solEmail = String(args.email_solicitante || '').trim().toLowerCase();
+        const solDoc = String(args.documento_solicitante || '').trim();
+        const senderPhone = String(context.telefone_remetente || '').trim();
+
+        const rawItems = Array.isArray(args.flats) && args.flats.length >= 2
+          ? args.flats
+          : Array.from({ length: requestedFlatsCount }, (_, i) => {
+              const totalPax = Math.max(requestedFlatsCount, Number(args.quantidade_hospedes || requestedFlatsCount));
+              const basePax = Math.floor(totalPax / requestedFlatsCount);
+              const rem = totalPax % requestedFlatsCount;
+              return {
+                data_checkin: defaultIn,
+                data_checkout: defaultOut,
+                quantidade_hospedes: Math.min(maxGuestsPerFlat, basePax + (i < rem ? 1 : 0)),
+                incluir_cafe: args.incluir_cafe !== false,
+                preferencia_cama: args.preferencia_cama || 'casal',
+                solicitante_hospeda_aqui: i === 0 && !args.reserva_para_terceiro,
+                informar_hospedes_depois: i > 0 || Boolean(args.reserva_para_terceiro),
+              };
+            });
+
+        let pacotePixTotal = 0;
+        const normalizedPackageFlats = [];
+        const resumoLinhas = [];
+
+        for (let idx = 0; idx < rawItems.length; idx++) {
+          const it = rawItems[idx] || {};
+          const fIn = String(it.data_checkin || defaultIn).slice(0, 10);
+          const fOut = String(it.data_checkout || defaultOut).slice(0, 10);
+          const fDiarias = diffDays(fIn, fOut);
+          const fPax = Math.max(1, Number(it.quantidade_hospedes || 1));
+          if (!fIn || !fOut || fDiarias <= 0) {
+            const msg = `Peça ao cliente datas válidas de entrada e saída para o Flat ${idx + 1}.`;
+            return { status: 'BLOQUEADO_PELA_REGRA', codigo_regra_bloqueio: 'DATAS_INVALIDAS', instrucao_para_ia: msg, instrucao_resposta_ia: msg };
+          }
+          if (fPax > maxGuestsPerFlat) {
+            const msg = `Explique ao cliente que o Flat ${idx + 1} excede o limite de ${maxGuestsPerFlat} hóspedes por unidade.`;
+            return { status: 'BLOQUEADO_PELA_REGRA', codigo_regra_bloqueio: 'CAPACIDADE_POR_FLAT_EXCEDIDA', instrucao_para_ia: msg, instrucao_resposta_ia: msg };
+          }
+          const qItem = resolveAgentLivePricingQuote(db, fIn, fOut, fPax, it.preferencia_cama || args.preferencia_cama);
+          const fCafe = it.incluir_cafe !== undefined ? Boolean(it.incluir_cafe) : args.incluir_cafe !== false;
+          const fTwin = qItem.wantsTwin;
+          const unitPix = fCafe ? qItem.totalComCafePix : qItem.totalSemCafePix;
+          pacotePixTotal = Number((pacotePixTotal + unitPix).toFixed(2));
+
+          const solAqui = idx === 0 && Boolean(it.solicitante_hospeda_aqui ?? (!args.reserva_para_terceiro && !it.nome_hospede_1 && !it.informar_hospedes_depois));
+          const informarDepois = Boolean(it.informar_hospedes_depois || (!solAqui && !it.nome_hospede_1));
+
+          const itemCharges = [];
+          if (!fCafe && qItem.taxaLimpezaSemCafe > 0) {
+            itemCharges.push({ type: 'cleaning', title: 'Taxa de Limpeza', amount: qItem.taxaLimpezaSemCafe });
+          }
+          if (fTwin && qItem.twinFee > 0) {
+            itemCharges.push({ type: 'twin_beds', title: 'Montagem 2 Camas de Solteiro', amount: qItem.twinFee });
+          }
+
+          normalizedPackageFlats.push({
+            checkinDate: fIn,
+            checkoutDate: fOut,
+            guestCount: fPax,
+            includeBreakfast: fCafe,
+            twinBeds: fTwin,
+            requesterIsGuest1: solAqui,
+            informGuestsLater: informarDepois,
+            guestName: solAqui ? solNome : (it.nome_hospede_1 || ''),
+            guestPhone: solAqui ? senderPhone : (it.telefone_hospede_1 || ''),
+            guest2Name: it.nome_hospede_2 || '',
+            guest2Phone: it.telefone_hospede_2 || '',
+            guest2InformLater: fPax >= 2 && !it.nome_hospede_2,
+            vehiclePlate: it.placa_veiculo || '',
+            vehicleModel: it.modelo_veiculo || '',
+            dailyRate: fCafe ? qItem.diariaMediaComCafe : qItem.diariaMediaSemCafe,
+            cleaningFee: fCafe ? 0 : qItem.taxaLimpezaSemCafe,
+            twinFee: qItem.twinFee,
+            charges: itemCharges,
+            totalAmount: unitPix,
+          });
+
+          const descHosp = solAqui
+            ? `Solicitante (${solNome || 'a confirmar'})`
+            : informarDepois
+              ? 'Hóspedes a informar após pagamento'
+              : `${it.nome_hospede_1}${fPax >= 2 ? ` + ${it.nome_hospede_2 || 'Hóspede 2 a informar'}` : ''}`;
+
+          resumoLinhas.push(
+            `• Flat ${idx + 1}: ${fIn} a ${fOut} (${fDiarias} diária(s)), ${fPax} pax, ${fCafe ? 'Com Café' : 'Sem Café'}, ${fTwin ? '2 Solteiros' : 'Casal'} — ${descHosp} (R$ ${unitPix.toFixed(2)})`
+          );
+        }
+
+        const pacoteCartaoTotal = computeCardAmountFromPix(pacotePixTotal, cardMarkupPct);
+
+        if (!args.confirmacao_hospede || !solNome) {
+          const faltaNomeTxt = !solNome
+            ? 'Peça apenas o *nome completo do solicitante* responsável pelo pacote para gerar o bloqueio unificado.'
+            : `Pergunte se *${solNome}* confirma o bloqueio dos ${normalizedPackageFlats.length} flats por 30 minutos com 1 único PIX.`;
+          const msg =
+            `Apresente o resumo completo da pré-reserva de *${normalizedPackageFlats.length} Flats com Pagamento Único*:\n` +
+            `${resumoLinhas.join('\n')}\n` +
+            `💎 *Valor Único no PIX (com desconto): R$ ${pacotePixTotal.toFixed(2)}* (ou R$ ${pacoteCartaoTotal.toFixed(2)} no Cartão).\n` +
+            `${faltaNomeTxt}`;
+          return {
+            status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
+            dados: {
+              is_pacote_multi_flat: true,
+              quantidade_flats: normalizedPackageFlats.length,
+              flats: normalizedPackageFlats,
+              valor_total_pix: pacotePixTotal,
+              valor_total_cartao: pacoteCartaoTotal,
+              nome_solicitante: solNome || null,
+            },
+            instrucao_para_ia: msg,
+            instrucao_resposta_ia: msg,
+          };
+        }
+
+        const baseUrlPkg =
+          db?.settings?.baseUrl ||
+          (typeof process !== 'undefined' && (process.env?.APP_BASE_URL || process.env?.SERVER_BASE_URL)) ||
+          'https://corpflats.com.br';
+
+        let sum = null;
+        let pkgCode = '';
+        if (typeof globalThis.createSofiaMultiFlatPreReservation === 'function') {
+          const createdPkg = await globalThis.createSofiaMultiFlatPreReservation({
+            packageFlats: normalizedPackageFlats,
+            requesterType: normalizedPackageFlats[0]?.requesterIsGuest1 ? 'guest' : 'other_person',
+            requesterName: solNome,
+            requesterPhone: senderPhone,
+            requesterEmail: solEmail,
+            requesterDocument: solDoc,
+            channel: 'whatsapp',
+            paymentMethod: 'pix',
+            status: 'pre_reserva',
+            holdDurationMinutes: 30,
+            baseUrl: baseUrlPkg,
+            sendWhatsapp: false,
+            suppressExternalSend: Boolean(context.runtime?.suppressExternalSend),
+          });
+          const stampIso = new Date().toISOString();
+          if (Array.isArray(createdPkg?.reservations)) {
+            for (const r of createdPkg.reservations) {
+              r._needsOfficialPreResDispatch = false;
+              r._preReservationRulerSentAt = stampIso;
+              r.packagePreResDispatchedAt = stampIso;
+            }
+          }
+          pkgCode = createdPkg.packageCode;
+          sum = createdPkg.summary;
+        } else if (db) {
+          if (!Array.isArray(db.reservations)) db.reservations = [];
+          pkgCode = generatePackageCode(db);
+          const allFlats = Array.isArray(db.flats) && db.flats.length > 0
+            ? db.flats.filter((f) => f && f.isActive !== false && f.status !== 'maintenance' && f.status !== 'manutencao_bloqueada')
+            : [{ id: 1, number: '113' }, { id: 2, number: '114' }, { id: 3, number: '212' }];
+          let nextId = db.reservations.length > 0 ? Math.max(...db.reservations.map((r) => Number(r.id) || 0)) + 1 : 1;
+          const nowMsPkg = Date.now() + Number(globalThis.__simulatedTimeOffsetMs || 0);
+          const nowIsoPkg = new Date(nowMsPkg).toISOString();
+          const expIsoPkg = new Date(nowMsPkg + 30 * 60000).toISOString();
+          const existingReservations = Array.isArray(db.reservations) ? db.reservations : [];
+          const twinAllowedPkg = (Array.isArray(db?.siteConfig?.bedConfig?.twinAllowedFlats) && db.siteConfig.bedConfig.twinAllowedFlats.length > 0
+            ? db.siteConfig.bedConfig.twinAllowedFlats
+            : ['113', '114', '115', '202', '905']
+          ).map((n) => String(n));
+          const used = [];
+          for (let idx = 0; idx < normalizedPackageFlats.length; idx++) {
+            const nf = normalizedPackageFlats[idx];
+            const candidate = allFlats.find((fl) => {
+              const fNum = String(fl.number || fl.id || '');
+              if (nf.twinBeds && twinAllowedPkg.length > 0 && !twinAllowedPkg.includes(fNum) && allFlats.some((x) => twinAllowedPkg.includes(String(x.number || x.id)))) {
+                return false;
+              }
+              if (used.some((u) => String(u.flatNumber) === fNum && nf.checkinDate < u.checkoutDate && nf.checkoutDate > u.checkinDate)) {
+                return false;
+              }
+              const conflictInDb = existingReservations.some((r) => {
+                if (!r) return false;
+                const st = String(r.status || '').toLowerCase();
+                if (['cancelada', 'cancelado', 'cancelled', 'expirada', 'expired', 'no_show'].includes(st)) return false;
+                const holdExp = r.expiresAt || r.holdExpiresAt;
+                if ((st === 'pre_reserva' || st === 'pendente' || r.isPreReservation) && holdExp && new Date(holdExp).getTime() < nowMsPkg && r.paymentStatus !== 'pago_total' && r.paymentStatus !== 'pago') return false;
+                if (String(r.flatNumber || r.flatId || '') !== fNum && String(r.flatId || '') !== String(fl.id || '')) return false;
+                const rIn = String(r.checkinDate || '').slice(0, 10);
+                const rOut = String(r.checkoutDate || '').slice(0, 10);
+                return nf.checkinDate < rOut && nf.checkoutDate > rIn;
+              });
+              return !conflictInDb;
+            });
+            if (!candidate) {
+              const msg = `Informe ao cliente que não há flats livres suficientes no período ${nf.checkinDate} a ${nf.checkoutDate}.`;
+              return { status: 'BLOQUEADO_PELA_REGRA', codigo_regra_bloqueio: 'SEM_DISPONIBILIDADE_MULTI_FLAT', instrucao_para_ia: msg, instrucao_resposta_ia: msg };
+            }
+            const rId = nextId++;
+            const rCode = `CF-${candidate.number}-${String(rId).padStart(4, '0')}`;
+            const gArr = [
+              { index: 1, isMain: true, name: nf.informGuestsLater ? '' : nf.guestName, phone: nf.guestPhone || '', informLater: nf.informGuestsLater },
+              ...(nf.guestCount >= 2 ? [{ index: 2, isMain: false, name: nf.guest2Name || '', phone: nf.guest2Phone || '', informLater: nf.guest2InformLater }] : []),
+            ];
+            const rec = {
+              id: rId,
+              code: rCode,
+              reservationCode: rCode,
+              packageId: pkgCode,
+              packageCode: pkgCode,
+              isPackageReservation: true,
+              packageIndex: idx + 1,
+              packageTotalFlats: normalizedPackageFlats.length,
+              isPackagePrimary: idx === 0,
+              requesterIsGuest1: nf.requesterIsGuest1,
+              informGuestsLater: nf.informGuestsLater,
+              guest2InformLater: nf.guest2InformLater,
+              hideFinancialForGuest: !nf.requesterIsGuest1,
+              nfHideFromGuest: !nf.requesterIsGuest1,
+              flatId: candidate.id || candidate.number,
+              flatNumber: String(candidate.number || candidate.id),
+              guestName: nf.informGuestsLater ? 'A Definir (Aguardando Solicitante)' : nf.guestName,
+              guestPending: nf.informGuestsLater,
+              guestPhone: nf.guestPhone || '',
+              guestCount: nf.guestCount,
+              adults: nf.guestCount,
+              guests: gArr,
+              requesterType: nf.requesterIsGuest1 ? 'guest' : 'other_person',
+              requesterName: solNome,
+              requesterPhone: senderPhone,
+              requesterEmail: solEmail,
+              requesterInfo: { type: 'other_person', name: solNome, phone: senderPhone, whatsapp: senderPhone, email: solEmail, cpf: solDoc },
+              checkinDate: nf.checkinDate,
+              checkoutDate: nf.checkoutDate,
+              status: 'pre_reserva',
+              paymentStatus: 'pendente',
+              paymentMethod: 'pix',
+              channel: 'whatsapp',
+              includeBreakfast: nf.includeBreakfast,
+              twinBeds: nf.twinBeds,
+              bedType: nf.twinBeds ? 'twin' : 'queen',
+              dailyRate: nf.dailyRate,
+              cleaningFee: nf.cleaningFee,
+              charges: nf.charges || [],
+              totalAmount: nf.totalAmount,
+              cardTotalAmount: computeCardAmountFromPix(nf.totalAmount, cardMarkupPct),
+              paidAmount: 0,
+              expiresAt: expIsoPkg,
+              holdDurationMinutes: 30,
+              holdDurationLabel: '30 minutos',
+              _needsOfficialPreResDispatch: false,
+              _preReservationRulerSentAt: nowIsoPkg,
+              packagePreResDispatchedAt: nowIsoPkg,
+              ...(nf.vehiclePlate ? { vehicle: { plate: nf.vehiclePlate.toUpperCase(), model: nf.vehicleModel || '' } } : {}),
+              createdAt: nowIsoPkg,
+              updatedAt: nowIsoPkg,
+            };
+            used.push(rec);
+            db.reservations.unshift(rec);
+          }
+          sum = await syncPackagePixAndPaymentLinks(db, pkgCode, {
+            baseUrl: baseUrlPkg,
+            createInterPixCob: globalThis.createInterPixCob,
+            generateStaticPixPayload,
+            computeCardAmountFromPix,
+            saveDatabase: context.runtime?.saveDatabase,
+          });
+        }
+
+        const msg =
+          `Confirme com entusiasmo que o pacote *${pkgCode}* com *${sum.activeFlatsCount} flats* (${sum.items.map((x) => `Flat ${x.flatNumber}`).join(', ')}) foi bloqueado por 30 minutos para *${solNome}*!\n` +
+          `Informe o valor único de *R$ ${sum.pendingAmount.toFixed(2)} no PIX* (ou R$ ${sum.cardPendingAmount.toFixed(2)} no Cartão), o código PIX único (\`${sum.pixCopiaECola}\`) e o painel unificado (${sum.packagePortalUrl}). ` +
+          `Avise que após o pagamento único ele receberá 1 recibo do pacote todo (com opção de 1 NFS-e única CPF/CNPJ) e 1 link único para cadastrar/revisar o Hóspede 1 e 2 de cada flat, e cada hóspede receberá apenas as instruções do seu flat sem ver valores.`;
+        return {
+          status: 'SUCESSO_EXECUTADO',
+          dados: {
+            is_pacote_multi_flat: true,
+            codigo_pacote: pkgCode,
+            quantidade_flats: sum.activeFlatsCount,
+            flats_alocados: sum.items.map((x) => x.flatNumber),
+            valor_total: sum.pendingAmount,
+            valor_cartao: sum.cardPendingAmount,
+            chave_pix: sum.pixCopiaECola,
+            link_pacote: sum.packagePortalUrl,
+            link_credenciamento_pos_pagamento: sum.batchCredentialUrl,
+            validade_bloqueio_minutos: 30,
+          },
+          instrucao_para_ia: msg,
+          instrucao_resposta_ia: msg,
+        };
+      }
+
       const checkin = String(args.data_checkin || '').slice(0, 10);
       const checkout = String(args.data_checkout || '').slice(0, 10);
       const diarias = diffDays(checkin, checkout);
@@ -1336,22 +2163,21 @@ export const gerarLinkReservaTool = {
         };
       }
 
-      const db = context.runtime?.db;
-      const extraBedEnabled = Boolean(db?.siteConfig?.extraBedConfig?.enabled);
-      const maxGuestsPerFlat = extraBedEnabled ? 3 : 2;
       if (hospedes > maxGuestsPerFlat) {
+        const flatsSug = Math.ceil(hospedes / maxGuestsPerFlat);
         const msg =
           hospedes === 3 && !extraBedEnabled
-            ? 'Explique educadamente ao cliente que o padrão oficial dos nossos flats comporta até 2 hóspedes, e pergunte se deseja cotar 2 apartamentos ou consultar a gerência para exceção.'
-            : `Explique ao cliente que cada flat comporta até ${maxGuestsPerFlat} hóspedes e sugira reservar 2 apartamentos.`;
+            ? 'Explique educadamente ao cliente que o padrão oficial dos nossos flats comporta até 2 hóspedes, e pergunte se deseja gerar um pacote de 2 apartamentos (com 1 único PIX) ou consultar a gerência para exceção.'
+            : `Explique ao cliente que cada flat comporta até ${maxGuestsPerFlat} hóspedes e ofereça gerar um pacote unificado de *${flatsSug} flats* com pagamento único.`;
         return {
           status: 'BLOQUEADO_PELA_REGRA',
           codigo_regra_bloqueio: hospedes === 3 && !extraBedEnabled ? 'TERCEIRO_HOSPEDE_REQUER_EXCECAO' : 'CAPACIDADE_POR_FLAT_EXCEDIDA',
+          dados: { flats_sugeridos_pacote: flatsSug },
           instrucao_para_ia: msg,
           instrucao_resposta_ia: msg,
         };
       }
-      const q = resolveAgentLivePricingQuote(db, checkin, checkout, hospedes);
+      const q = resolveAgentLivePricingQuote(db, checkin, checkout, hospedes, args.preferencia_cama);
       const valorTotal = comCafe ? q.totalComCafePix : q.totalSemCafePix;
       const valorCartaoSimulado = comCafe ? q.totalComCafeCartao : q.totalSemCafeCartao;
 
@@ -1373,7 +2199,7 @@ export const gerarLinkReservaTool = {
         const msg =
           `Informe ao cliente o resumo para bloqueio da pré-reserva: período de ${checkin} a ${checkout} (${diarias} diária(s)), ` +
           `total de hóspedes: *${hospedes}* (${hospedes === 1 ? '1 pessoa' : `${hospedes} pessoas`}), canal da reserva: *WhatsApp*, ` +
-          `plano ${comCafe ? 'COM café da manhã incluso no flat' : 'Somente Hospedagem'}, ` +
+          `plano ${comCafe ? 'COM café da manhã incluso no flat' : 'Somente Hospedagem'}${q.wantsTwin ? ' (2 camas de solteiro)' : ''}, ` +
           `no valor de *R$ ${valorTotal.toFixed(2)} no PIX (com desconto)* (ou R$ ${valorCartaoSimulado.toFixed(2)} no Cartão). ${orientacaoIdentificacao}`;
         return {
           status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
@@ -1384,6 +2210,8 @@ export const gerarLinkReservaTool = {
             quantidade_hospedes: hospedes,
             canal_reserva: 'WhatsApp',
             incluir_cafe: comCafe,
+            preferencia_cama: q.wantsTwin ? 'solteiro' : 'casal',
+            taxa_camas_solteiro: q.twinFee,
             valor_total: valorTotal,
             valor_cartao: valorCartaoSimulado,
             reserva_para_terceiro: paraTerceiro,
@@ -1410,7 +2238,7 @@ export const gerarLinkReservaTool = {
         delete context.runtime.conversation.pendingVehicle;
       }
 
-      const nowMsHold = Date.now();
+      const nowMsHold = Date.now() + Number(globalThis.__simulatedTimeOffsetMs || 0);
       const nowIso = new Date(nowMsHold).toISOString();
       const holdMinutes = 30;
       const expiresAt = new Date(nowMsHold + holdMinutes * 60 * 1000).toISOString();
@@ -1424,14 +2252,22 @@ export const gerarLinkReservaTool = {
         const allFlats = Array.isArray(db.flats) && db.flats.length > 0
           ? db.flats.filter((f) => f && f.isActive !== false && f.status !== 'maintenance' && f.status !== 'manutencao_bloqueada')
           : [{ id: 1, number: '113' }];
+        const twinAllowedSingle = (Array.isArray(db?.siteConfig?.bedConfig?.twinAllowedFlats) && db.siteConfig.bedConfig.twinAllowedFlats.length > 0
+          ? db.siteConfig.bedConfig.twinAllowedFlats
+          : ['113', '114', '115', '202', '905']
+        ).map((n) => String(n));
         const reservations = Array.isArray(db.reservations) ? db.reservations : [];
         const availableFlats = allFlats.filter((flat) => {
           const flatNum = String(flat.number || flat.id || '');
+          if (q.wantsTwin && !twinAllowedSingle.includes(flatNum) && allFlats.some((x) => twinAllowedSingle.includes(String(x.number || x.id)))) {
+            return false;
+          }
           const hasConflict = reservations.some((r) => {
             if (!r) return false;
             const st = String(r.status || '').toLowerCase();
-            if (['cancelada', 'cancelled', 'expirada', 'completed', 'checked_out', 'finalizada', 'concluida', 'checkout', 'no_show'].includes(st)) return false;
-            if ((st === 'pre_reserva' || st === 'pendente') && r.expiresAt && new Date(r.expiresAt).getTime() < nowMsHold && r.paymentStatus !== 'pago_total') return false;
+            if (['cancelada', 'cancelado', 'cancelled', 'expirada', 'expired', 'completed', 'checked_out', 'finalizada', 'concluida', 'checkout', 'no_show'].includes(st)) return false;
+            const holdExp = r.expiresAt || r.holdExpiresAt;
+            if ((st === 'pre_reserva' || st === 'pendente' || r.isPreReservation) && holdExp && new Date(holdExp).getTime() < nowMsHold && r.paymentStatus !== 'pago_total' && r.paymentStatus !== 'pago') return false;
             if (String(r.flatNumber || r.flatId || '') !== flatNum && String(r.flatId || '') !== String(flat.id || '')) return false;
             const rIn = String(r.checkinDate || '').slice(0, 10);
             const rOut = String(r.checkoutDate || '').slice(0, 10);
@@ -1458,14 +2294,24 @@ export const gerarLinkReservaTool = {
 
       if (typeof globalThis.createInterPixCob === 'function') {
         try {
-          const interCob = await globalThis.createInterPixCob(
-            db?.settings?.interConfig,
-            cleanTxId,
-            valorTotal,
-            nomePagador,
-            '',
-            `Reserva ${codigoPreReserva} - Flat ${selectedFlat.number || selectedFlat.id}`
-          );
+          const cobDesc = `Reserva ${codigoPreReserva} - Flat ${selectedFlat.number || selectedFlat.id}`;
+          const docSolSingle = String(args.documento_solicitante || '').trim();
+          const interCob = globalThis.createInterPixCob.length >= 3
+            ? await globalThis.createInterPixCob(
+                db?.settings?.interConfig,
+                cleanTxId,
+                valorTotal,
+                nomePagador,
+                docSolSingle,
+                cobDesc
+              )
+            : await globalThis.createInterPixCob({
+                amount: valorTotal,
+                description: cobDesc,
+                debtorName: nomePagador,
+                debtorDocument: docSolSingle,
+                reservationCode: codigoPreReserva,
+              });
           if (interCob && interCob.pixCopiaECola) {
             chavePix = interCob.pixCopiaECola;
             resolvedPixTxId = interCob.txid || cleanTxId;
@@ -1478,7 +2324,7 @@ export const gerarLinkReservaTool = {
       const linkPagamento = `${baseUrl}/minha-reserva/${encodeURIComponent(codigoPreReserva)}`;
       const cardTotalAmount = valorCartaoSimulado;
       const cleaningFee = comCafe ? 0 : q.taxaLimpezaSemCafe;
-      const netRoomTotal = Math.max(0, valorTotal - cleaningFee - q.adicionalTerceiroHospedeTotal);
+      const netRoomTotal = Math.max(0, valorTotal - cleaningFee - q.adicionalTerceiroHospedeTotal - q.twinFee);
       const dailyRate = Math.round((netRoomTotal / diarias) * 100) / 100;
       const inD = new Date(`${checkin}T12:00:00Z`);
       const nightlyArr = comCafe ? q.comCafeNightlyRates : q.discountedNightlyRates;
@@ -1542,14 +2388,23 @@ export const gerarLinkReservaTool = {
         const nextResId = db.reservations.length > 0
           ? Math.max(...db.reservations.map((r) => Number(r.id) || 0)) + 1
           : 1;
-        const charges = cleaningFee > 0
-          ? [{
-              id: `charge_cleaning_${nextResId}`,
-              type: 'cleaning',
-              title: 'Taxa de Limpeza',
-              amount: cleaningFee,
-            }]
-          : [];
+        const charges = [];
+        if (cleaningFee > 0) {
+          charges.push({
+            id: `charge_cleaning_${nextResId}`,
+            type: 'cleaning',
+            title: 'Taxa de Limpeza',
+            amount: cleaningFee,
+          });
+        }
+        if (q.twinFee > 0) {
+          charges.push({
+            id: `charge_twin_${nextResId}`,
+            type: 'twin_beds',
+            title: 'Preparação 2 Camas de Solteiro',
+            amount: q.twinFee,
+          });
+        }
 
         const preparedGuests = Array.from({ length: hospedes }, (_, idx) => ({
           index: idx + 1,
@@ -1576,6 +2431,7 @@ export const gerarLinkReservaTool = {
           guestEmail: '',
           guestDocument: '',
           guestCpf: '',
+          hideFinancialForGuest: paraTerceiro,
           requesterType: paraTerceiro ? 'other_person' : 'guest',
           ...(paraTerceiro
             ? {
@@ -1604,6 +2460,8 @@ export const gerarLinkReservaTool = {
           ratePlan: comCafe ? 'with_breakfast' : 'room_only',
           includeBreakfast: comCafe,
           breakfastIncluded: comCafe,
+          twinBeds: Boolean(q.wantsTwin),
+          bedType: q.wantsTwin ? 'twin' : 'queen',
           guestsCount: hospedes,
           guestCount: hospedes,
           numGuests: hospedes,
@@ -1671,7 +2529,7 @@ export const gerarLinkReservaTool = {
           await context.runtime.saveDatabase();
         }
 
-        if (typeof triggerImmediateWhatsApp === 'function') {
+        if (typeof triggerImmediateWhatsApp === 'function' && !context.runtime?.suppressExternalSend) {
           try {
             await triggerImmediateWhatsApp(
               db,
@@ -1776,19 +2634,151 @@ export const consultarDetalhesReservaTool = {
         };
       }
 
-      const baseUrl =
-        context.runtime?.db?.settings?.baseUrl ||
-        (typeof process !== 'undefined' && process.env?.SERVER_BASE_URL) ||
-        'https://corpflats.com.br';
+      const db = context.runtime?.db;
+      const baseUrl = String(
+        db?.settings?.baseUrl ||
+        (typeof process !== 'undefined' && (process.env?.APP_BASE_URL || process.env?.SERVER_BASE_URL)) ||
+        'https://corpflats.com.br'
+      ).replace(/\/+$/, '');
+
+      const targetRes = Array.isArray(db?.reservations)
+        ? db.reservations.find((r) => matchesSessionReservation(r, reserva))
+        : null;
+      const privacyEval = targetRes
+        ? evaluateReservationFinancialPrivacy(targetRes, context.telefone_remetente)
+        : null;
+      const ocultarFinanceiro = Boolean(
+        reserva.ocultar_financeiro === true || privacyEval?.ocultarFinanceiro
+      );
+
       const isPreResUnpaid =
         reserva.status_reserva === 'PRE_RESERVA' ||
-        reserva.status_pagamento === 'PENDENTE';
-      const linkPreCheckin = isPreResUnpaid ? null : `${baseUrl}/pre-checkin/${reserva.id}`;
-      const linkPortalReserva = `${baseUrl}/minha-reserva/${reserva.id}`;
+        reserva.status_pagamento === 'PENDENTE' ||
+        (targetRes && String(targetRes.status || '').toLowerCase() === 'pre_reserva' && !isReservationSettledInPackage(targetRes));
+
+      const guestIdx = Number(reserva.indice_hospede) > 1
+        ? Number(reserva.indice_hospede)
+        : (privacyEval?.isCompanionSender ? privacyEval.matchedCompanionGuestNumber : 1);
+      const guestQuery = guestIdx > 1 ? `?guest=${guestIdx}` : '';
+      const linkPreCheckin = isPreResUnpaid
+        ? null
+        : (reserva.link_pre_checkin || `${baseUrl}/pre-checkin/${reserva.id}${guestQuery}`);
+      const linkPortalHospede = reserva.link_portal_hospede || `${baseUrl}/minha-reserva/${reserva.id}${guestQuery}`;
       const linkCafe = (!isPreResUnpaid && reserva.cafe_incluso !== false) ? `${baseUrl}/minha-reserva/${reserva.id}/cafe` : null;
       const qtdHospedes = Number(reserva.quantidade_hospedes || 1);
       const canalLabel = reserva.canal_reserva_nome || formatReservationChannelLabel(reserva.canal_reserva || 'whatsapp');
 
+      // CENÁRIO 1: Privacidade Financeira ativa (Hóspede não-solicitante ou Acompanhante)
+      if (ocultarFinanceiro) {
+        const msgPriv = isPreResUnpaid
+          ? `Apresente ao hóspede o resumo operacional da reserva *${reserva.id}* no *${reserva.nome_imovel}*: ` +
+            `Check-in em ${reserva.data_checkin}, Check-out em ${reserva.data_checkout}, Total de Hóspedes: *${qtdHospedes}*, Canal: *${canalLabel}*. ` +
+            `Informe que a reserva está em processo de confirmação junto ao Solicitante responsável (NUNCA mencione valores, PIX, saldo ou comprovante de pagamento).`
+          : `Apresente ao hóspede o resumo operacional da sua estadia *${reserva.id}* no *${reserva.nome_imovel}* (SEM mencionar qualquer valor financeiro, diária, status de pagamento ou recibo, pois pertencem exclusivamente ao Solicitante): ` +
+            `Check-in em ${reserva.data_checkin}, Check-out em ${reserva.data_checkout}, Total de Hóspedes: *${qtdHospedes}*, Canal: *${canalLabel}*, ` +
+            `Wi-Fi rede "${reserva.wifi_rede}" (senha: "${reserva.wifi_senha}")` +
+            (linkPreCheckin ? `, Link de Pré-Check-in Digital: ${linkPreCheckin}` : '') +
+            `, Portal exclusivo de instruções do flat: ${linkPortalHospede}.`;
+
+        return {
+          status: 'SUCESSO_EXECUTADO',
+          dados: {
+            reserva_id: reserva.id,
+            nome_imovel: reserva.nome_imovel,
+            data_checkin: reserva.data_checkin,
+            data_checkout: reserva.data_checkout,
+            ocultar_financeiro: true,
+            quantidade_hospedes: qtdHospedes,
+            canal_reserva: canalLabel,
+            wifi_rede: isPreResUnpaid ? null : reserva.wifi_rede,
+            wifi_senha: isPreResUnpaid ? null : reserva.wifi_senha,
+            link_pre_checkin: linkPreCheckin,
+            link_portal_hospede: linkPortalHospede,
+            link_agendamento_cafe: linkCafe,
+          },
+          instrucao_para_ia: msgPriv,
+          instrucao_resposta_ia: msgPriv,
+        };
+      }
+
+      // CENÁRIO 2: Solicitante de Pacote Multi-Flat
+      const pkgCtx =
+        reserva.pacote_multi_flat ||
+        (targetRes && (targetRes.packageId || targetRes.packageCode) && db
+          ? (() => {
+              const s = computePackageSummary(db, targetRes.packageId || targetRes.packageCode, {
+                baseUrl,
+                computeCardAmountFromPix,
+              });
+              if (!s) return null;
+              return {
+                packageCode: s.packageCode,
+                package_code: s.packageCode,
+                codigo_pacote: s.packageCode,
+                quantidade_flats_ativos: s.activeFlatsCount,
+                totalAmount: s.totalAmount,
+                paidAmount: s.paidAmount,
+                pendingAmount: s.pendingAmount,
+                valor_total_pacote: s.totalAmount,
+                valor_pago_pacote: s.paidAmount,
+                valor_pendente_pacote: s.pendingAmount,
+                chave_pix_unica: s.pixCopiaECola || null,
+                packagePortalUrl: s.packagePortalUrl,
+                batchCredentialUrl: s.batchCredentialUrl,
+                link_pacote: s.packagePortalUrl,
+                link_credenciamento: s.batchCredentialUrl,
+                flats: s.items.filter((it) => it.isActive).map((it) => ({
+                  codigo_reserva: it.code,
+                  flat: it.flatNumber,
+                  data_checkin: it.checkinDate,
+                  data_checkout: it.checkoutDate,
+                  quantidade_hospedes: it.guestCount,
+                  hospede_titular: it.informGuestsLater ? 'A informar após pagamento' : it.guestName,
+                  valor_flat: it.totalAmount,
+                })),
+              };
+            })()
+          : null);
+
+      if (pkgCtx) {
+        const flatsTxt = (pkgCtx.flats || [])
+          .map((f) => `Flat ${f.flat} (${f.data_checkin} a ${f.data_checkout}, ${f.hospede_titular}, R$ ${Number(f.valor_flat || 0).toFixed(2)})`)
+          .join('; ');
+        const isPkgPaid = Number(pkgCtx.pendingAmount ?? pkgCtx.valor_pendente_pacote ?? 0) <= 0.01;
+        const msgPkg = !isPkgPaid
+          ? `Apresente ao solicitante o resumo consolidado do pacote *${pkgCtx.packageCode || pkgCtx.codigo_pacote}* (${pkgCtx.quantidade_flats_ativos} flats: ${flatsTxt}), ` +
+            `com valor pendente unificado de *R$ ${Number(pkgCtx.pendingAmount ?? pkgCtx.valor_pendente_pacote ?? 0).toFixed(2)}* no PIX, ` +
+            `painel único de pagamento (${pkgCtx.link_pacote}) e link único de cadastro dos hóspedes (${pkgCtx.link_credenciamento}).`
+          : `Apresente ao solicitante o resumo consolidado do pacote confirmado *${pkgCtx.packageCode || pkgCtx.codigo_pacote}* (${pkgCtx.quantidade_flats_ativos} flats: ${flatsTxt}), ` +
+            `valor total pago de *R$ ${Number(pkgCtx.totalAmount ?? pkgCtx.valor_total_pacote ?? 0).toFixed(2)}*, ` +
+            `painel do recibo único / 1 NFS-e consolidada (${pkgCtx.link_pacote}) e link único de cadastro/revisão do Hóspede 1 e 2 de cada flat (${pkgCtx.link_credenciamento}).`;
+
+        return {
+          status: 'SUCESSO_EXECUTADO',
+          dados: {
+            reserva_id: reserva.id,
+            codigo_pacote: pkgCtx.packageCode || pkgCtx.codigo_pacote,
+            nome_imovel: reserva.nome_imovel,
+            data_checkin: reserva.data_checkin,
+            data_checkout: reserva.data_checkout,
+            status_pagamento: isPkgPaid ? 'PAGO_INTEGRALMENTE' : 'PENDENTE',
+            valor_total: Number(pkgCtx.totalAmount ?? pkgCtx.valor_total_pacote ?? 0),
+            quantidade_hospedes: qtdHospedes,
+            canal_reserva: canalLabel,
+            wifi_rede: !isPkgPaid ? null : reserva.wifi_rede,
+            wifi_senha: !isPkgPaid ? null : reserva.wifi_senha,
+            link_pre_checkin: linkPreCheckin,
+            link_comprovante_pagamento: pkgCtx.link_pacote,
+            link_credenciamento_hospedes: pkgCtx.link_credenciamento,
+            pacote_multi_flat: pkgCtx,
+          },
+          instrucao_para_ia: msgPkg,
+          instrucao_resposta_ia: msgPkg,
+        };
+      }
+
+      // CENÁRIO 3: Reserva Individual com Acesso Financeiro Permitido
+      const linkPortalReserva = reserva.link_comprovante_pagamento || `${baseUrl}/minha-reserva/${reserva.id}`;
       const msg = isPreResUnpaid
         ? `Apresente ao cliente o resumo completo da pré-reserva *${reserva.id}* no *${reserva.nome_imovel}*, informando obrigatoriamente: ` +
           `Check-in em ${reserva.data_checkin}, Check-out em ${reserva.data_checkout}, ` +
@@ -1798,7 +2788,7 @@ export const consultarDetalhesReservaTool = {
         : `Apresente ao hóspede com clareza o resumo completo da reserva *${reserva.id}* no *${reserva.nome_imovel}*, informando obrigatoriamente: ` +
           `Check-in em ${reserva.data_checkin}, Check-out em ${reserva.data_checkout}, ` +
           `Total de Hóspedes: *${qtdHospedes}*, Canal da Reserva: *${canalLabel}*, ` +
-          `Status de pagamento: ${reserva.status_pagamento}, Wi-Fi rede "${reserva.wifi_rede}" (senha: "${reserva.wifi_senha}"), ` +
+          `Status de pagamento: ${reserva.status_pagamento || 'PAGO_INTEGRALMENTE'}, Wi-Fi rede "${reserva.wifi_rede}" (senha: "${reserva.wifi_senha}"), ` +
           `Link oficial para Pré-Check-in Digital (FNRH, foto do documento e assinatura): ${linkPreCheckin}, ` +
           `Link do Portal do Hóspede / Comprovante de Pagamento (Recibo): ${linkPortalReserva}.`;
 
@@ -1809,7 +2799,9 @@ export const consultarDetalhesReservaTool = {
           nome_imovel: reserva.nome_imovel,
           data_checkin: reserva.data_checkin,
           data_checkout: reserva.data_checkout,
-          status_pagamento: reserva.status_pagamento,
+          status_pagamento: reserva.status_pagamento || (isPreResUnpaid ? 'PENDENTE' : 'PAGO_INTEGRALMENTE'),
+          valor_diaria: reserva.valor_diaria ?? Number(targetRes?.dailyRate || 237),
+          valor_total: reserva.valor_total ?? Number(targetRes?.totalAmount || 0),
           quantidade_hospedes: qtdHospedes,
           canal_reserva: canalLabel,
           wifi_rede: isPreResUnpaid ? null : reserva.wifi_rede,
@@ -2762,6 +3754,11 @@ export const alterarDatasReservaTool = {
           'Passe FALSE primeiro para apenas simular valores e disponibilidade. ' +
           'Passe TRUE somente após o hóspede confirmar explicitamente na conversa que aceita a alteração e eventual diferença tarifária.',
       },
+      flat_alvo: {
+        type: 'STRING',
+        description:
+          'Opcional (apenas para pacotes multi-flat): número do flat ou código da reserva filha que terá as datas alteradas (ex: "502" ou "RES-102").',
+      },
     },
     required: ['nova_data_checkin', 'nova_data_checkout', 'efetivar_alteracao'],
   },
@@ -2779,28 +3776,86 @@ export const alterarDatasReservaTool = {
         };
       }
 
+      const db = context.runtime?.db;
+      let targetRes = Array.isArray(db?.reservations)
+        ? db.reservations.find((r) => matchesSessionReservation(r, reserva))
+        : null;
+
+      const ocultarFinanceiro = Boolean(
+        reserva.ocultar_financeiro ||
+          (targetRes && evaluateReservationFinancialPrivacy(targetRes, context.telefone_remetente).ocultarFinanceiro)
+      );
+      if (ocultarFinanceiro) {
+        const nomeSolicitanteRef =
+          targetRes?.requesterInfo?.name ||
+          targetRes?.requesterName ||
+          targetRes?.companyName ||
+          targetRes?.agencyName ||
+          'o solicitante responsável pela reserva';
+        const msgPriv =
+          `Explique educadamente que, por se tratar de uma reserva vinculada a *${nomeSolicitanteRef}*, ` +
+          `alterações de datas e ajustes tarifários são gerenciados exclusivamente pelo solicitante responsável pela reserva. ` +
+          `NÃO informe valores de diárias ou totais na resposta.`;
+        return {
+          status: 'BLOQUEADO_PELA_REGRA',
+          codigo_regra_bloqueio: 'PRIVACIDADE_FINANCEIRA_EXCLUSIVO_SOLICITANTE',
+          dados: { ocultar_financeiro: true },
+          instrucao_para_ia: msgPriv,
+          instrucao_resposta_ia: msgPriv,
+        };
+      }
+
+      const pkgCodeAlt = String(
+        targetRes?.packageCode || targetRes?.packageId || reserva?.pacote_multi_flat?.package_code || ''
+      )
+        .trim()
+        .toUpperCase();
+      if (pkgCodeAlt && args.flat_alvo && db) {
+        const alvoNorm = String(args.flat_alvo).replace(/^Flat\s+/i, '').trim().toUpperCase();
+        const pkgSiblings = getPackageReservations(db, pkgCodeAlt).filter((r) => isPackageItemActive(r));
+        const matchedSibling = pkgSiblings.find(
+          (r) =>
+            String(r.flatNumber || '').toUpperCase() === alvoNorm ||
+            String(r.code || '').toUpperCase() === alvoNorm ||
+            String(r.id || '') === alvoNorm
+        );
+        if (matchedSibling) {
+          targetRes = matchedSibling;
+        }
+      }
+
+      const refCheckinAtual = String(targetRes?.checkinDate || reserva.data_checkin).slice(0, 10);
+      const refCheckoutAtual = String(targetRes?.checkoutDate || reserva.data_checkout).slice(0, 10);
+      const refNomeImovel = targetRes?.flatNumber ? `Flat ${targetRes.flatNumber}` : reserva.nome_imovel;
+      const refReservaCodigo = String(targetRes?.code || reserva.id);
+
       const novaEntrada =
-        resolveNaturalDateInput(args.nova_data_checkin, context.data_hora_atual, reserva.data_checkin) ||
-        String(args.nova_data_checkin || reserva.data_checkin).slice(0, 10);
+        resolveNaturalDateInput(args.nova_data_checkin, context.data_hora_atual, refCheckinAtual) ||
+        String(args.nova_data_checkin || refCheckinAtual).slice(0, 10);
       const novaSaida =
-        resolveNaturalDateInput(args.nova_data_checkout, context.data_hora_atual, reserva.data_checkout) ||
-        String(args.nova_data_checkout || reserva.data_checkout).slice(0, 10);
+        resolveNaturalDateInput(args.nova_data_checkout, context.data_hora_atual, refCheckoutAtual) ||
+        String(args.nova_data_checkout || refCheckoutAtual).slice(0, 10);
       const confirmado = Boolean(args.efetivar_alteracao ?? args.confirmacao_hospede ?? false);
 
-      // Trava de 24 horas de antecedência antes do check-in para alteração de data de entrada
-      if (novaEntrada !== reserva.data_checkin) {
+      const isUnpaidPreRes =
+        targetRes &&
+        String(targetRes.status || '').toLowerCase() === 'pre_reserva' &&
+        !isReservationSettledInPackage(targetRes);
+
+      // Trava de 24 horas de antecedência antes do check-in para alteração de data de entrada (exceto pré-reserva ainda pendente)
+      if (!isUnpaidPreRes && novaEntrada !== refCheckinAtual) {
         const nowMs = new Date(context.data_hora_atual || Date.now()).getTime();
-        const checkinMs = new Date(`${reserva.data_checkin}T14:00:00-03:00`).getTime();
+        const checkinMs = new Date(`${refCheckinAtual}T14:00:00-03:00`).getTime();
         const hoursUntilCheckin = (checkinMs - nowMs) / (1000 * 60 * 60);
         if (!Number.isNaN(hoursUntilCheckin) && hoursUntilCheckin < 24) {
           const msg24h =
-            `Explique ao hóspede com empatia que a nossa regra de alteração de data de check-in exige antecedência mínima de *24 horas* antes do horário de entrada (14:00h do dia ${reserva.data_checkin}). ` +
+            `Explique ao hóspede com empatia que a nossa regra de alteração de data de check-in exige antecedência mínima de *24 horas* antes do horário de entrada (14:00h do dia ${refCheckinAtual}). ` +
             `Informe que, se ele precisar de uma análise de exceção pela gerência, você pode acionar o gestor no WhatsApp agora mesmo.`;
           return {
             status: 'BLOQUEADO_PELA_REGRA',
             codigo_regra_bloqueio: 'ANTECEDENCIA_MINIMA_24H_ALTERACAO',
             dados: {
-              data_checkin_atual: reserva.data_checkin,
+              data_checkin_atual: refCheckinAtual,
               horas_restantes_para_checkin: Math.round(hoursUntilCheckin * 10) / 10,
               antecedencia_minima_horas: 24,
             },
@@ -2823,17 +3878,25 @@ export const alterarDatasReservaTool = {
         };
       }
 
-      const db = context.runtime?.db;
-      const flatNumber = reserva.nome_imovel.replace(/^Flat\s+/i, '').trim();
+      const flatNumber = refNomeImovel.replace(/^Flat\s+/i, '').trim();
+      const targetFlatId = targetRes?.flatId || reserva.imovel_id;
+      const nowCheckMs = Date.now();
 
       let conflitoReserva = null;
       if (Array.isArray(db?.reservations)) {
         conflitoReserva = db.reservations.find((r) => {
-          if (!r || r.status === 'cancelada' || r.status === 'cancelled' || r.status === 'completed' || r.status === 'concluida' || r.status === 'checked_out' || r.checkoutCompleted || r.checkoutDone) return false;
-          if (matchesSessionReservation(r, reserva)) return false;
+          if (!r) return false;
+          const st = String(r.status || '').toLowerCase().trim();
+          if (['cancelada', 'cancelado', 'cancelled', 'expirada', 'expired', 'no_show', 'completed', 'concluida', 'checked_out'].includes(st) || r.checkoutCompleted || r.checkoutDone) return false;
+          const expRaw = r.expiresAt || r.holdExpiresAt;
+          if (st === 'pre_reserva' && expRaw) {
+            const expMs = new Date(expRaw).getTime();
+            if (!Number.isNaN(expMs) && expMs <= nowCheckMs) return false;
+          }
+          if (targetRes ? String(r.id) === String(targetRes.id) : matchesSessionReservation(r, reserva)) return false;
           const sameFlat =
             String(r.flatNumber || '') === flatNumber ||
-            String(r.flatId || '') === String(reserva.imovel_id);
+            String(r.flatId || '') === String(targetFlatId);
           if (!sameFlat) return false;
           const rIn = String(r.checkinDate || '').slice(0, 10);
           const rOut = String(r.checkoutDate || '').slice(0, 10);
@@ -2843,18 +3906,123 @@ export const alterarDatasReservaTool = {
 
       if (conflitoReserva) {
         const msg =
-          `Informe ao hóspede com empatia que o ${reserva.nome_imovel} já possui outra reserva confirmada conflitando com o período de ${novaEntrada} a ${novaSaida}. ` +
+          `Informe ao hóspede com empatia que o ${refNomeImovel} já possui outra reserva confirmada conflitando com o período de ${novaEntrada} a ${novaSaida}. ` +
           `Pergunte se ele gostaria que você verificasse a disponibilidade de outro flat equivalente para essas novas datas.`;
         return {
           status: 'BLOQUEADO_PELA_REGRA',
           codigo_regra_bloqueio: 'CONFLITO_CALENDARIO_IMOVEL',
           dados: {
-            imovel: reserva.nome_imovel,
+            imovel: refNomeImovel,
             nova_data_checkin: novaEntrada,
             nova_data_checkout: novaSaida,
           },
           instrucao_para_ia: msg,
           instrucao_resposta_ia: msg,
+        };
+      }
+
+      // Fluxo especial: Item de Pacote Multi-Flat ainda pendente de pagamento -> Recalcula o PIX único do pacote!
+      if (pkgCodeAlt && targetRes && !isReservationSettledInPackage(targetRes)) {
+        const baseUrlPkg =
+          db?.settings?.baseUrl ||
+          (typeof process !== 'undefined' && process.env?.SERVER_BASE_URL) ||
+          'https://corpflats.com.br';
+        const guestCountItem = Math.max(1, Number(targetRes.guestCount || targetRes.adults) || 1);
+        const twinPrefItem = targetRes.twinBeds || targetRes.bedType === 'twin' ? 'solteiro' : 'casal';
+        const comCafeItem = Boolean(targetRes.includeBreakfast || targetRes.breakfastIncluded || targetRes.ratePlan === 'with_breakfast');
+        const qItem = resolveAgentLivePricingQuote(db, novaEntrada, novaSaida, guestCountItem, twinPrefItem);
+        const newItemTotal = comCafeItem ? qItem.totalComCafePix : qItem.totalSemCafePix;
+        const oldItemTotal = Number(targetRes.totalAmount) || 0;
+        const pkgBefore = computePackageSummary(db, pkgCodeAlt, { baseUrl: baseUrlPkg, computeCardAmountFromPix });
+        const projectedPkgTotal = Math.max(
+          0,
+          Number((((pkgBefore?.totalAmount ?? oldItemTotal) - oldItemTotal) + newItemTotal).toFixed(2))
+        );
+        const projectedPkgCard = computeCardAmountFromPix(projectedPkgTotal);
+
+        if (!confirmado) {
+          const msgPkgSim =
+            `Informe ao solicitante que o *${refNomeImovel}* (${refReservaCodigo}) do pacote *${pkgCodeAlt}* está disponível para o novo período de *${novaEntrada} a ${novaSaida}* (${novasDiarias} diária(s)). ` +
+            `O valor deste flat passa de R$ ${oldItemTotal.toFixed(2)} para *R$ ${newItemTotal.toFixed(2)}*, e o novo total consolidado do pacote ficará em *R$ ${projectedPkgTotal.toFixed(2)}* no PIX único (ou R$ ${projectedPkgCard.toFixed(2)} no Cartão). ` +
+            `Pergunte se ele confirma a alteração para você já atualizar o pacote e recalcular o PIX único.`;
+          return {
+            status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
+            dados: {
+              package_code: pkgCodeAlt,
+              reserva_id: refReservaCodigo,
+              imovel: refNomeImovel,
+              nova_data_checkin: novaEntrada,
+              nova_data_checkout: novaSaida,
+              novas_diarias: novasDiarias,
+              valor_anterior_flat: oldItemTotal,
+              novo_valor_flat: newItemTotal,
+              novo_total_pacote_pix: projectedPkgTotal,
+              novo_total_pacote_cartao: projectedPkgCard,
+              moeda: 'BRL',
+            },
+            instrucao_para_ia: msgPkgSim,
+            instrucao_resposta_ia: msgPkgSim,
+          };
+        }
+
+        const cleaningFeeItem = comCafeItem ? 0 : qItem.taxaLimpezaSemCafe;
+        const netRoomItem = Math.max(0, newItemTotal - cleaningFeeItem - qItem.adicionalTerceiroHospedeTotal - qItem.twinFee);
+        const dailyRateItem = Math.round((netRoomItem / novasDiarias) * 100) / 100;
+        const inDateItem = new Date(`${novaEntrada}T12:00:00Z`);
+        const nightlyArrItem = comCafeItem ? qItem.comCafeNightlyRates : qItem.discountedNightlyRates;
+        targetRes.checkinDate = novaEntrada;
+        targetRes.checkoutDate = novaSaida;
+        targetRes.nights = novasDiarias;
+        targetRes.totalAmount = newItemTotal;
+        targetRes.cardTotalAmount = computeCardAmountFromPix(newItemTotal);
+        targetRes.dailyRate = dailyRateItem;
+        targetRes.cleaningFee = cleaningFeeItem;
+        targetRes.dailyRates = Array.from({ length: novasDiarias }, (_, i) => ({
+          date: new Date(inDateItem.getTime() + i * 86400000).toISOString().slice(0, 10),
+          rate: nightlyArrItem[i] ?? dailyRateItem,
+          channel: targetRes.channel || 'whatsapp',
+        }));
+        targetRes.updatedAt = new Date().toISOString();
+
+        const syncedPkg = await syncPackagePixAndPaymentLinks(db, pkgCodeAlt, {
+          baseUrl: baseUrlPkg,
+          createInterPixCob: globalThis.createInterPixCob,
+          generateStaticPixPayload,
+          computeCardAmountFromPix,
+          saveDatabase: context.runtime?.saveDatabase,
+          forceRegeneratePix: true,
+        });
+        if (typeof context.runtime?.saveDatabase === 'function') {
+          await context.runtime.saveDatabase();
+        }
+
+        const updatedPending = syncedPkg?.pendingAmount ?? projectedPkgTotal;
+        const updatedCard = syncedPkg?.cardPendingAmount ?? computeCardAmountFromPix(updatedPending);
+        const updatedPix = syncedPkg?.pixCopiaECola || '';
+        const updatedPortal = syncedPkg?.packagePortalUrl || `${baseUrlPkg}/minha-reserva/${encodeURIComponent(pkgCodeAlt)}?requester=1`;
+        const msgPkgDone =
+          `Confirme com cordialidade que o *${refNomeImovel}* (${refReservaCodigo}) no pacote *${pkgCodeAlt}* foi atualizado para *${novaEntrada} a ${novaSaida}* (${novasDiarias} diária(s))! ` +
+          `O novo saldo consolidado do pacote (${syncedPkg?.activeFlatsCount || 1} flat(s)) foi recalculado para *R$ ${updatedPending.toFixed(2)}* no PIX único (ou R$ ${updatedCard.toFixed(2)} no Cartão). ` +
+          (updatedPix ? `Envie o código PIX único recalculado (\`${updatedPix}\`) e o link do painel do pacote (${updatedPortal}).` : `Envie o link do painel do pacote (${updatedPortal}).`);
+
+        return {
+          status: 'SUCESSO_EXECUTADO',
+          dados: {
+            package_code: pkgCodeAlt,
+            reserva_id: refReservaCodigo,
+            imovel: refNomeImovel,
+            nova_data_checkin: novaEntrada,
+            nova_data_checkout: novaSaida,
+            novas_diarias: novasDiarias,
+            novo_valor_flat: newItemTotal,
+            novo_total_pacote: syncedPkg?.totalAmount ?? projectedPkgTotal,
+            valor_pendente_pacote: updatedPending,
+            valor_cartao_pacote: updatedCard,
+            pix_copia_e_cola: updatedPix,
+            link_pagamento: updatedPortal,
+          },
+          instrucao_para_ia: msgPkgDone,
+          instrucao_resposta_ia: msgPkgDone,
         };
       }
 
@@ -2957,7 +4125,7 @@ export const alterarDatasReservaTool = {
 
             const newTotalAlt = Number(((typeof targetRes.totalAmount === 'number' ? targetRes.totalAmount : origTotalAlt) + diferencaValor).toFixed(2));
             targetRes.totalAmount = newTotalAlt;
-            targetRes.cardTotalAmount = Number((newTotalAlt / 0.95).toFixed(2));
+            targetRes.cardTotalAmount = computeCardAmountFromPix(newTotalAlt);
             targetRes.pixCopiaECola = pixChargeAlt.pixCopiaECola;
             targetRes.pixTxId = pixChargeAlt.txid;
             targetRes.pixChargedAmount = diferencaValor;
@@ -3168,6 +4336,31 @@ export const estenderEstadiaTool = {
       const targetRes = Array.isArray(db?.reservations)
         ? db.reservations.find((r) => matchesSessionReservation(r, reserva))
         : null;
+
+      const ocultarFinanceiroExt = Boolean(
+        reserva.ocultar_financeiro ||
+          (targetRes && evaluateReservationFinancialPrivacy(targetRes, context.telefone_remetente).ocultarFinanceiro)
+      );
+      if (ocultarFinanceiroExt) {
+        const nomeSolicitanteExt =
+          targetRes?.requesterInfo?.name ||
+          targetRes?.requesterName ||
+          targetRes?.companyName ||
+          targetRes?.agencyName ||
+          'o solicitante responsável pela reserva';
+        const msgPrivExt =
+          `Explique educadamente que, por se tratar de uma reserva vinculada a *${nomeSolicitanteExt}*, ` +
+          `solicitações de prorrogação de estadia e diárias adicionais devem ser tratadas pelo solicitante responsável pela reserva (ou você pode acionar a gerência caso ele precise de apoio). ` +
+          `NÃO informe valores de diárias ou totais na resposta.`;
+        return {
+          status: 'BLOQUEADO_PELA_REGRA',
+          codigo_regra_bloqueio: 'PRIVACIDADE_FINANCEIRA_EXCLUSIVO_SOLICITANTE',
+          dados: { ocultar_financeiro: true },
+          instrucao_para_ia: msgPrivExt,
+          instrucao_resposta_ia: msgPrivExt,
+        };
+      }
+
       const tarifaDiaria = Number(targetRes?.dailyRate || reserva.valor_diaria || 237.0);
 
       const dataCheckin = String(reserva.data_checkin || '').slice(0, 10);
@@ -3229,9 +4422,17 @@ export const estenderEstadiaTool = {
       }
 
       // Verifica se há conflito no flat atual para o período de extensão (baseCheckoutRef até novaSaida)
+      const nowExtMs = Date.now();
       const conflitoReserva = Array.isArray(db?.reservations)
         ? db.reservations.find((r) => {
-            if (!r || r.status === 'cancelada' || r.status === 'cancelled' || r.status === 'completed' || r.status === 'concluida' || r.status === 'checked_out' || r.checkoutCompleted || r.checkoutDone) return false;
+            if (!r) return false;
+            const st = String(r.status || '').toLowerCase().trim();
+            if (['cancelada', 'cancelado', 'cancelled', 'expirada', 'expired', 'no_show', 'completed', 'concluida', 'checked_out'].includes(st) || r.checkoutCompleted || r.checkoutDone) return false;
+            const expRaw = r.expiresAt || r.holdExpiresAt;
+            if (st === 'pre_reserva' && expRaw) {
+              const expMs = new Date(expRaw).getTime();
+              if (!Number.isNaN(expMs) && expMs <= nowExtMs) return false;
+            }
             if (matchesSessionReservation(r, reserva)) return false;
             const sameFlat =
               String(r.flatNumber || '') === flatNumber ||
@@ -3435,7 +4636,7 @@ export const estenderEstadiaTool = {
         targetRes.checkoutDate = novaSaida;
         targetRes.nights = novasDiariasTotais;
         targetRes.totalAmount = Number(((Number(targetRes.totalAmount) || 0) + valorAdicional).toFixed(2));
-        targetRes.cardTotalAmount = Number((targetRes.totalAmount / 0.95).toFixed(2));
+        targetRes.cardTotalAmount = computeCardAmountFromPix(targetRes.totalAmount);
         targetRes.pixCopiaECola = pixCharge.pixCopiaECola;
         targetRes.pixTxId = pixCharge.txid;
         targetRes.pixChargedAmount = valorAdicional;
@@ -4004,19 +5205,64 @@ export const gerenciarNotaFiscalNfseTool = {
         ? db.reservations.find((r) => matchesSessionReservation(r, reserva))
         : null;
 
+      // TRAVA DE PRIVACIDADE FINANCEIRA: Hóspede não-solicitante ou acompanhante não pode ver valores, recibo ou emitir NFS-e!
+      const ocultarFinanceiro = Boolean(
+        reserva.ocultar_financeiro ||
+          (targetRes && evaluateReservationFinancialPrivacy(targetRes, context.telefone_remetente).ocultarFinanceiro)
+      );
+      if (ocultarFinanceiro) {
+        const nomeSolicitante =
+          targetRes?.requesterInfo?.name ||
+          targetRes?.requesterName ||
+          targetRes?.companyName ||
+          targetRes?.agencyName ||
+          'o solicitante responsável pela reserva';
+        const msgPriv =
+          `Explique com muita cordialidade e educação que, como esta reserva foi realizada por *${nomeSolicitante}*, ` +
+          `por política de privacidade financeira e conformidade fiscal, o comprovante de pagamento (recibo) e a Nota Fiscal Eletrônica (NFS-e) pertencem exclusivamente ao solicitante responsável pela reserva. ` +
+          `Oriente o hóspede a solicitar o documento diretamente ao solicitante ou empresa responsável, sem mencionar valores financeiros na resposta.`;
+        return {
+          status: 'BLOQUEADO_PELA_REGRA',
+          codigo_regra_bloqueio: 'PRIVACIDADE_FINANCEIRA_EXCLUSIVO_SOLICITANTE',
+          dados: {
+            reserva_id: reserva.id,
+            ocultar_financeiro: true,
+          },
+          instrucao_para_ia: msgPriv,
+          instrucao_resposta_ia: msgPriv,
+        };
+      }
+
+      const baseUrl =
+        db?.settings?.baseUrl ||
+        (typeof process !== 'undefined' && process.env?.SERVER_BASE_URL) ||
+        'https://corpflats.com.br';
+      const pkgCode = String(
+        targetRes?.packageCode || targetRes?.packageId || reserva?.pacote_multi_flat?.package_code || ''
+      )
+        .trim()
+        .toUpperCase();
+      const pkgSummary =
+        pkgCode && db
+          ? computePackageSummary(db, pkgCode, { baseUrl, computeCardAmountFromPix })
+          : null;
+      const isPackageConsolidated = Boolean(pkgSummary && pkgSummary.activeFlatsCount > 0);
+
       if (args.acao === 'SOLICITAR_RECIBO_COMPROVANTE') {
-        const baseUrl =
-          db?.settings?.baseUrl ||
-          (typeof process !== 'undefined' && process.env?.SERVER_BASE_URL) ||
-          'https://corpflats.com.br';
-        const linkComprovante = `${baseUrl}/minha-reserva/${reserva.id}`;
+        const linkComprovante = isPackageConsolidated
+          ? `${baseUrl}/minha-reserva/${encodeURIComponent(pkgCode)}?requester=1`
+          : `${baseUrl}/minha-reserva/${reserva.id}`;
+        const labelAlvo = isPackageConsolidated
+          ? `do pacote *${pkgCode}* (${pkgSummary.activeFlatsCount} flat(s))`
+          : `da estadia no ${reserva.nome_imovel}`;
         const msg =
-          `Envie ao hóspede o link oficial do Portal do Hóspede (${linkComprovante}) onde ele pode visualizar e baixar imediatamente o *Comprovante de Pagamento / Reserva* oficial da estadia no ${reserva.nome_imovel}. ` +
-          `Pergunte também se ele deseja agendar a emissão da Nota Fiscal de Serviço Eletrônica (NFS-e).`;
+          `Envie ao solicitante/hóspede o link oficial do Portal (${linkComprovante}) onde ele pode visualizar e baixar imediatamente o *Comprovante de Pagamento / Reserva* oficial ${labelAlvo}. ` +
+          `Pergunte também se ele deseja agendar a emissão da Nota Fiscal de Serviço Eletrônica (NFS-e)${isPackageConsolidated ? ' consolidada do pacote' : ''}.`;
         return {
           status: 'SUCESSO_EXECUTADO',
           dados: {
             reserva_id: reserva.id,
+            ...(isPackageConsolidated ? { package_code: pkgCode } : {}),
             link_comprovante_pagamento: linkComprovante,
           },
           instrucao_para_ia: msg,
@@ -4041,14 +5287,38 @@ export const gerenciarNotaFiscalNfseTool = {
       const existingState = conv?.fiscalConferenceState || targetRes?.confirmedFiscalData || {};
       const titularPadrao =
         existingState.tomadorNome ||
+        (isPackageConsolidated
+          ? pkgSummary.requesterName || targetRes?.companyName || targetRes?.requesterName
+          : null) ||
+        targetRes?.companyName ||
+        targetRes?.requesterInfo?.name ||
+        targetRes?.requesterName ||
         targetRes?.guestName ||
         context.hospede?.nome ||
         'Hóspede';
+      const docPadrao =
+        existingState.tomadorCpfCnpj ||
+        (isPackageConsolidated ? pkgSummary.requesterDocument : '') ||
+        targetRes?.companyCnpj ||
+        targetRes?.agencyCnpj ||
+        targetRes?.requesterInfo?.cpf ||
+        targetRes?.guestDocument ||
+        targetRes?.guestCpf ||
+        'Não informado';
+      const emailPadrao =
+        existingState.tomadorEmail ||
+        (isPackageConsolidated ? pkgSummary.requesterEmail : '') ||
+        targetRes?.requesterInfo?.email ||
+        targetRes?.requesterEmail ||
+        targetRes?.guestEmail ||
+        'Não informado';
       const valorOriginal = Number(
-        existingState.valorOriginal ||
-          existingState.valorServico ||
-          targetRes?.totalAmount ||
-          237.0
+        isPackageConsolidated
+          ? pkgSummary.totalAmount || existingState.valorOriginal || 237.0
+          : existingState.valorOriginal ||
+              existingState.valorServico ||
+              targetRes?.totalAmount ||
+              237.0
       );
 
       if (
@@ -4060,13 +5330,13 @@ export const gerenciarNotaFiscalNfseTool = {
           categoria: 'FINANCEIRO',
           hospede_nome: titularPadrao,
           telefone: context.telefone_remetente,
-          imovel: reserva.nome_imovel,
-          resumo: `Hóspede solicitou alteração do valor da NFS-e de R$ ${valorOriginal.toFixed(2)} para R$ ${args.novo_valor_solicitado.toFixed(2)} na reserva ${reserva.id}.`,
+          imovel: isPackageConsolidated ? `Pacote ${pkgCode}` : reserva.nome_imovel,
+          resumo: `Solicitante pediu alteração do valor da NFS-e de R$ ${valorOriginal.toFixed(2)} para R$ ${args.novo_valor_solicitado.toFixed(2)} (${isPackageConsolidated ? pkgCode : reserva.id}).`,
           context,
         });
 
         const msg =
-          `Explique ao hóspede com cordialidade que, por conformidade contábil e segurança fiscal, qualquer alteração no valor original da hospedagem ` +
+          `Explique com cordialidade que, por conformidade contábil e segurança fiscal, qualquer alteração no valor original da hospedagem ` +
           `(de R$ ${valorOriginal.toFixed(2)} para R$ ${args.novo_valor_solicitado.toFixed(2)}) exige autorização da gerência. ` +
           `Avise que você já enviou um alerta automático para o WhatsApp do gestor aprovar a alteração.`;
 
@@ -4082,24 +5352,62 @@ export const gerenciarNotaFiscalNfseTool = {
         };
       }
 
+      const defaultPkgGuests = isPackageConsolidated
+        ? Array.from(
+            new Set(
+              pkgSummary.items
+                .filter((it) => it.isActive)
+                .flatMap((it) => [it.guestName, it.guest2Name])
+                .map((n) => String(n || '').trim())
+                .filter((n) => n && !isPlaceholderGuestName(n))
+            )
+          )
+        : [];
       const listaHospedes =
         Array.isArray(args.hospedes_na_descricao) && args.hospedes_na_descricao.length > 0
           ? args.hospedes_na_descricao
-          : existingState.hospedesLista || [targetRes?.guestName || context.hospede?.nome || titularPadrao];
+          : existingState.hospedesLista ||
+            (defaultPkgGuests.length > 0
+              ? defaultPkgGuests
+              : [targetRes?.guestName || context.hospede?.nome || titularPadrao]);
+
+      const shouldRebuildDesc =
+        Array.isArray(args.hospedes_na_descricao) ||
+        Boolean(args.observacao_adicional_descricao) ||
+        !existingState.descricaoServico ||
+        (isPackageConsolidated && !existingState.isPackageConsolidated);
 
       const novaDescricao =
         args.descricao_servico_completa ||
-        (Array.isArray(args.hospedes_na_descricao) ||
-        args.observacao_adicional_descricao ||
-        !existingState.descricaoServico
-          ? buildStandardStayDescription({
-              guestNames: listaHospedes,
-              flatNumber,
-              checkinDate: reserva.data_checkin,
-              checkoutDate: reserva.data_checkout,
-              extraNotes: args.observacao_adicional_descricao,
-            })
+        (shouldRebuildDesc
+          ? isPackageConsolidated
+            ? buildConsolidatedPackageStayDescription({
+                packageCode: pkgCode,
+                items: pkgSummary.items,
+                guestNamesOverride: Array.isArray(args.hospedes_na_descricao) ? args.hospedes_na_descricao : null,
+                extraNotes: args.observacao_adicional_descricao,
+              })
+            : buildStandardStayDescription({
+                guestNames: listaHospedes,
+                flatNumber,
+                checkinDate: reserva.data_checkin,
+                checkoutDate: reserva.data_checkout,
+                extraNotes: args.observacao_adicional_descricao,
+              })
           : existingState.descricaoServico);
+
+      const rawCpfCnpjInput = args.tomador_cpf_cnpj
+        ? String(args.tomador_cpf_cnpj).trim()
+        : '';
+      const cleanDocDigits = rawCpfCnpjInput.replace(/\D+/g, '');
+      const tipoTomadorDoc =
+        cleanDocDigits.length === 14
+          ? 'CNPJ'
+          : cleanDocDigits.length === 11
+          ? 'CPF'
+          : String(docPadrao).replace(/\D+/g, '').length === 14
+          ? 'CNPJ'
+          : 'CPF';
 
       const updatedState = {
         ...existingState,
@@ -4109,21 +5417,23 @@ export const gerenciarNotaFiscalNfseTool = {
             : 'awaiting_confirmation',
         reservationId: targetRes?.id || reserva.id,
         reservationCode: reserva.id,
+        ...(isPackageConsolidated
+          ? {
+              packageCode: pkgCode,
+              isPackageConsolidated: true,
+              consolidatePackage: true,
+              activeFlatsCount: pkgSummary.activeFlatsCount,
+            }
+          : {}),
         flatNumber,
         tomadorNome: args.tomador_nome || existingState.tomadorNome || titularPadrao,
-        tomadorCpfCnpj:
-          args.tomador_cpf_cnpj ||
-          existingState.tomadorCpfCnpj ||
-          targetRes?.guestCpf ||
-          'Não informado',
-        tomadorEmail:
-          args.tomador_email ||
-          existingState.tomadorEmail ||
-          targetRes?.guestEmail ||
-          'Não informado',
+        tomadorCpfCnpj: rawCpfCnpjInput || docPadrao,
+        tipoDocumentoTomador: tipoTomadorDoc,
+        tomadorEmail: args.tomador_email || emailPadrao,
         tomadorEndereco:
           args.tomador_endereco ||
           existingState.tomadorEndereco ||
+          targetRes?.requesterInfo?.address ||
           targetRes?.guestAddress ||
           'Endereço cadastrado',
         hospedesLista: listaHospedes,
@@ -4136,7 +5446,19 @@ export const gerenciarNotaFiscalNfseTool = {
       if (conv) {
         conv.fiscalConferenceState = updatedState;
       }
-      if (targetRes) {
+      if (isPackageConsolidated && db) {
+        const pkgItemsAll = getPackageReservations(db, pkgCode).filter((r) => isPackageItemActive(r));
+        for (const rItem of pkgItemsAll) {
+          rItem.confirmedFiscalData = { ...updatedState };
+          rItem.consolidatePackageInvoice = true;
+          if (args.acao === 'CONFIRMAR_DADOS_NOTA') {
+            rItem.autoEmitInvoice = true;
+          }
+        }
+        if (typeof context.runtime?.saveDatabase === 'function') {
+          await context.runtime.saveDatabase();
+        }
+      } else if (targetRes) {
         targetRes.confirmedFiscalData = { ...updatedState };
         if (args.acao === 'CONFIRMAR_DADOS_NOTA') {
           targetRes.autoEmitInvoice = true;
@@ -4146,10 +5468,14 @@ export const gerenciarNotaFiscalNfseTool = {
         }
       }
 
+      const refFiscalLabel = isPackageConsolidated
+        ? `consolidada do pacote *${pkgCode}* (${pkgSummary.activeFlatsCount} flat(s))`
+        : `da reserva *${reserva.id}*`;
+
       if (args.acao === 'CONFIRMAR_DADOS_NOTA') {
         const msg =
-          `Confirme com entusiasmo que os dados da Nota Fiscal (NFS-e) da reserva *${reserva.id}* foram validados e agendados com sucesso ` +
-          `(Tomador: ${updatedState.tomadorNome} | Valor: R$ ${valorOriginal.toFixed(2)}) e que a nota será emitida e enviada automaticamente no check-out.`;
+          `Confirme com entusiasmo que os dados da Nota Fiscal (NFS-e) ${refFiscalLabel} foram validados e agendados com sucesso ` +
+          `(Tomador: ${updatedState.tomadorNome} | ${updatedState.tipoDocumentoTomador}: ${updatedState.tomadorCpfCnpj} | Valor Total: R$ ${valorOriginal.toFixed(2)}) e que a nota única será emitida e enviada automaticamente após o check-out.`;
         return {
           status: 'SUCESSO_EXECUTADO',
           dados: updatedState,
@@ -4159,14 +5485,14 @@ export const gerenciarNotaFiscalNfseTool = {
       }
 
       const msg =
-        `Apresente ao hóspede o resumo atualizado para conferência da Nota Fiscal (NFS-e):\n` +
+        `Apresente ao solicitante/hóspede o resumo atualizado para conferência da Nota Fiscal (NFS-e) ${refFiscalLabel}:\n` +
         `• *Tomador:* ${updatedState.tomadorNome}\n` +
         `• *CPF/CNPJ:* ${updatedState.tomadorCpfCnpj}\n` +
         `• *Endereço:* ${updatedState.tomadorEndereco}\n` +
         `• *E-mail:* ${updatedState.tomadorEmail}\n` +
         `• *Descrição dos Serviços:*\n${updatedState.descricaoServico}\n` +
         `• *Valor Total:* R$ ${valorOriginal.toFixed(2)}\n` +
-        `Pergunte se todos os dados estão corretos e se ele confirma para deixarmos a emissão agendada automaticamente para o check-out.`;
+        `Pergunte se todos os dados estão corretos (pode emitir em CPF ou CNPJ) e se ele confirma para deixarmos a emissão agendada automaticamente para o check-out.`;
 
       return {
         status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
@@ -4731,7 +6057,17 @@ export const processarCancelamentoTool = {
       confirmacao_hospede: {
         type: 'BOOLEAN',
         description:
-          'Para cancelamento gratuito (mais de 24h antes do check-in): passe FALSE primeiro para confirmar se o hóspede realmente deseja cancelar, e TRUE após o "sim" dele.',
+          'Para cancelamento gratuito (mais de 24h antes do check-in ou pré-reserva pendente): passe FALSE primeiro para confirmar se o hóspede realmente deseja cancelar, e TRUE após o "sim" dele.',
+      },
+      flat_alvo: {
+        type: 'STRING',
+        description:
+          'Opcional (apenas para pacotes multi-flat): número do flat ou código da reserva filha a cancelar (ex: "502" ou "RES-102") quando o solicitante quiser remover/cancelar apenas 1 flat mantendo os demais.',
+      },
+      cancelar_pacote_inteiro: {
+        type: 'BOOLEAN',
+        description:
+          'Opcional (apenas para pacotes multi-flat): passe TRUE quando o solicitante desejar cancelar todos os flats do pacote, ou FALSE quando desejar cancelar apenas o flat indicado em flat_alvo.',
       },
     },
     required: [],
@@ -4751,36 +6087,247 @@ export const processarCancelamentoTool = {
       }
 
       const db = context.runtime?.db;
-      const flatNumber = reserva.nome_imovel.replace(/^Flat\s+/i, '').trim();
-      const targetRes = Array.isArray(db?.reservations)
+      let targetRes = Array.isArray(db?.reservations)
         ? db.reservations.find((r) => matchesSessionReservation(r, reserva))
         : null;
+
+      // TRAVA DE PRIVACIDADE E PERMISSÃO: Hóspede não-solicitante ou acompanhante não pode cancelar nem ver valores de reservas corporativas/pacotes!
+      const ocultarFinanceiro = Boolean(
+        reserva.ocultar_financeiro ||
+          (targetRes && evaluateReservationFinancialPrivacy(targetRes, context.telefone_remetente).ocultarFinanceiro)
+      );
+      if (ocultarFinanceiro) {
+        const nomeSolicitante =
+          targetRes?.requesterInfo?.name ||
+          targetRes?.requesterName ||
+          targetRes?.companyName ||
+          targetRes?.agencyName ||
+          'o solicitante responsável pela reserva';
+        const msgPriv =
+          `Explique com muita educação e empatia que, como esta hospedagem foi reservada por *${nomeSolicitante}*, ` +
+          `qualquer solicitação de cancelamento ou alteração contratual deve ser realizada diretamente pelo solicitante responsável pela reserva. ` +
+          `NÃO informe valores financeiros, tarifas ou condições de estorno ao hóspede.`;
+        return {
+          status: 'BLOQUEADO_PELA_REGRA',
+          codigo_regra_bloqueio: 'PRIVACIDADE_FINANCEIRA_EXCLUSIVO_SOLICITANTE',
+          dados: {
+            reserva_id: reserva.id,
+            ocultar_financeiro: true,
+          },
+          instrucao_para_ia: msgPriv,
+          instrucao_resposta_ia: msgPriv,
+        };
+      }
+
+      const baseUrlPkg =
+        db?.settings?.baseUrl ||
+        (typeof process !== 'undefined' && process.env?.SERVER_BASE_URL) ||
+        'https://corpflats.com.br';
+      const pkgCode = String(
+        targetRes?.packageCode || targetRes?.packageId || reserva?.pacote_multi_flat?.package_code || ''
+      )
+        .trim()
+        .toUpperCase();
+      const pkgActiveItems =
+        pkgCode && db
+          ? getPackageReservations(db, pkgCode).filter((r) => isPackageItemActive(r))
+          : [];
+
+      if (pkgCode && args.flat_alvo && pkgActiveItems.length > 0) {
+        const alvoNorm = String(args.flat_alvo).replace(/^Flat\s+/i, '').trim().toUpperCase();
+        const foundSibling = pkgActiveItems.find(
+          (r) =>
+            String(r.flatNumber || '').toUpperCase() === alvoNorm ||
+            String(r.code || '').toUpperCase() === alvoNorm ||
+            String(r.id || '') === alvoNorm
+        );
+        if (foundSibling) {
+          targetRes = foundSibling;
+        }
+      }
+
+      const flatNumber = targetRes?.flatNumber
+        ? String(targetRes.flatNumber)
+        : reserva.nome_imovel.replace(/^Flat\s+/i, '').trim();
+      const refCheckinDate = String(targetRes?.checkinDate || reserva.data_checkin).slice(0, 10);
+      const refCheckoutDate = String(targetRes?.checkoutDate || reserva.data_checkout).slice(0, 10);
+      const refCodigoRes = String(targetRes?.code || reserva.id);
+      const cancelWholePackage =
+        pkgCode && pkgActiveItems.length > 1
+          ? Boolean(args.cancelar_pacote_inteiro ?? (!args.flat_alvo))
+          : true;
+
+      // CASO ESPECIAL PACOTE PENDENTE (PRÉ-RESERVA NÃO PAGA): Cancela 1 flat (recalculando PIX único) ou pacote todo sem multa!
+      if (pkgCode && targetRes && !isReservationSettledInPackage(targetRes)) {
+        const pkgBefore = computePackageSummary(db, pkgCode, { baseUrl: baseUrlPkg, computeCardAmountFromPix });
+        const itemAmt = Number(targetRes.totalAmount) || 0;
+        const projectedRemaining = Math.max(0, Number(((pkgBefore?.pendingAmount || 0) - itemAmt).toFixed(2)));
+
+        if (!args.confirmacao_hospede) {
+          const msgUnpaidSim = cancelWholePackage
+            ? `Confirme com o solicitante se ele deseja realmente cancelar toda a pré-reserva do pacote *${pkgCode}* (${pkgActiveItems.length} flat(s)) sem nenhum custo.`
+            : `Informe ao solicitante que podemos remover o *Flat ${flatNumber}* (${refCodigoRes}, R$ ${itemAmt.toFixed(2)}) do pacote *${pkgCode}* sem custos, ` +
+              `mantendo os outros *${pkgActiveItems.length - 1} flat(s)* ativos e recalculando o PIX único para *R$ ${projectedRemaining.toFixed(2)}*. ` +
+              `Pergunte se ele confirma a remoção apenas do Flat ${flatNumber}.`;
+          return {
+            status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
+            dados: {
+              package_code: pkgCode,
+              cancelar_pacote_inteiro: cancelWholePackage,
+              reserva_id: refCodigoRes,
+              flat_number: flatNumber,
+              novo_saldo_pacote_estimado: cancelWholePackage ? 0 : projectedRemaining,
+              multa_aplicavel_pct: 0,
+            },
+            instrucao_para_ia: msgUnpaidSim,
+            instrucao_resposta_ia: msgUnpaidSim,
+          };
+        }
+
+        const cancelRes = await cancelSinglePackageFlat(
+          db,
+          targetRes,
+          {
+            cancelWholePackage,
+            reason: args.motivo_cancelamento || 'Cancelado pelo solicitante via WhatsApp antes do pagamento',
+            actor: { name: 'Sofia IA', role: 'ai', type: 'system' },
+            source: 'WhatsApp IA',
+          },
+          {
+            baseUrl: baseUrlPkg,
+            createInterPixCob: globalThis.createInterPixCob,
+            generateStaticPixPayload,
+            computeCardAmountFromPix,
+            saveDatabase: context.runtime?.saveDatabase,
+          }
+        );
+        if (typeof context.runtime?.saveDatabase === 'function') {
+          await context.runtime.saveDatabase();
+        }
+
+        const remSummary = cancelRes?.summary;
+        if (remSummary && remSummary.activeFlatsCount > 0) {
+          const msgRecalc =
+            `Confirme com cordialidade que o *Flat ${flatNumber}* (${refCodigoRes}) foi removido do pacote *${pkgCode}*! ` +
+            `Os demais *${remSummary.activeFlatsCount} flat(s)* permanecem reservados, e o PIX único foi recalculado automaticamente para *R$ ${remSummary.pendingAmount.toFixed(2)}* (ou R$ ${remSummary.cardPendingAmount.toFixed(2)} no Cartão). ` +
+            (remSummary.pixCopiaECola
+              ? `Envie a nova chave PIX única (\`${remSummary.pixCopiaECola}\`) e o link atualizado do pacote (${remSummary.packagePortalUrl}).`
+              : `Envie o link atualizado do pacote (${remSummary.packagePortalUrl}).`);
+          return {
+            status: 'SUCESSO_EXECUTADO',
+            dados: {
+              package_code: pkgCode,
+              flat_cancelado: flatNumber,
+              reserva_cancelada: refCodigoRes,
+              flats_ativos_restantes: remSummary.activeFlatsCount,
+              valor_pendente_pacote: remSummary.pendingAmount,
+              valor_cartao_pacote: remSummary.cardPendingAmount,
+              pix_copia_e_cola: remSummary.pixCopiaECola,
+              link_pagamento: remSummary.packagePortalUrl,
+            },
+            instrucao_para_ia: msgRecalc,
+            instrucao_resposta_ia: msgRecalc,
+          };
+        }
+
+        const msgAllUnpaidCanc =
+          `Confirme com cordialidade que a pré-reserva do pacote *${pkgCode}* foi cancelada sem custos conforme solicitado.`;
+        return {
+          status: 'SUCESSO_EXECUTADO',
+          dados: {
+            package_code: pkgCode,
+            status_reserva: 'cancelada',
+            flats_ativos_restantes: 0,
+            multa_aplicavel_pct: 0,
+          },
+          instrucao_para_ia: msgAllUnpaidCanc,
+          instrucao_resposta_ia: msgAllUnpaidCanc,
+        };
+      }
 
       const freeCancelHours = Math.max(
         0,
         Number(db?.siteConfig?.cancellationPolicy?.freeCancellationHours ?? db?.settings?.cancellationPolicy?.freeCancellationHours ?? 24)
       );
       const nowMs = new Date(context.data_hora_atual || Date.now()).getTime();
-      const checkinMs = new Date(`${reserva.data_checkin}T14:00:00-03:00`).getTime();
+      const checkinMs = new Date(`${refCheckinDate}T14:00:00-03:00`).getTime();
       const hoursUntilCheckin = (checkinMs - nowMs) / (1000 * 60 * 60);
       const dentroDoPrazoGratuito = !Number.isNaN(hoursUntilCheckin) && hoursUntilCheckin >= freeCancelHours;
 
-      // CASO 1: Dentro do prazo gratuito antes do check-in -> Cancelamento Gratuito
+      // CASO 1: Dentro do prazo gratuito antes do check-in -> Cancelamento Gratuito (suporta cancelamento parcial de 1 flat no pacote!)
       if (dentroDoPrazoGratuito) {
         if (!args.confirmacao_hospede) {
           const msgSim =
-            `Informe ao hóspede que, como faltam mais de ${freeCancelHours} horas para o check-in (${reserva.data_checkin} às 14:00h), o cancelamento da reserva *${reserva.id}* no *${reserva.nome_imovel}* é *gratuito e sem multa*. ` +
-            `Pergunte se ele confirma o cancelamento definitivo ou se prefere apenas remarcar as datas.`;
+            pkgCode && pkgActiveItems.length > 1 && !cancelWholePackage
+              ? `Informe ao solicitante que, como faltam mais de ${freeCancelHours} horas para o check-in (${refCheckinDate} às 14:00h), o cancelamento apenas do *Flat ${flatNumber}* (${refCodigoRes}) no pacote *${pkgCode}* é *gratuito e sem multa*, mantendo os demais *${pkgActiveItems.length - 1} flat(s)* 100% confirmados e pagos. Pergunte se ele confirma o cancelamento apenas do Flat ${flatNumber}.`
+              : pkgCode && pkgActiveItems.length > 1
+              ? `Informe ao solicitante que, como faltam mais de ${freeCancelHours} horas para o check-in, o cancelamento do pacote *${pkgCode}* (${pkgActiveItems.length} flat(s)) é *gratuito e sem multa* (ou se preferir, pode cancelar apenas 1 flat específico informando o número do flat). Pergunte se ele confirma o cancelamento.`
+              : `Informe ao hóspede que, como faltam mais de ${freeCancelHours} horas para o check-in (${refCheckinDate} às 14:00h), o cancelamento da reserva *${refCodigoRes}* no *Flat ${flatNumber}* é *gratuito e sem multa*. ` +
+                `Pergunte se ele confirma o cancelamento definitivo ou se prefere apenas remarcar as datas.`;
           return {
             status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
             dados: {
-              reserva_id: reserva.id,
+              reserva_id: refCodigoRes,
+              ...(pkgCode ? { package_code: pkgCode, cancelar_pacote_inteiro: cancelWholePackage } : {}),
               dentro_prazo_24h: true,
               horas_restantes_para_checkin: Math.round(hoursUntilCheckin),
               multa_aplicavel_pct: 0,
             },
             instrucao_para_ia: msgSim,
             instrucao_resposta_ia: msgSim,
+          };
+        }
+
+        if (pkgCode && targetRes && db) {
+          const cancelPaidRes = await cancelSinglePackageFlat(
+            db,
+            targetRes,
+            {
+              cancelWholePackage,
+              refundResolution: 'partial_refund',
+              reason: args.motivo_cancelamento || 'Cancelado pelo solicitante via WhatsApp (>24h antes do check-in)',
+              actor: { name: 'Sofia IA', role: 'ai', type: 'system' },
+              source: 'WhatsApp IA',
+            },
+            {
+              baseUrl: baseUrlPkg,
+              createInterPixCob: globalThis.createInterPixCob,
+              generateStaticPixPayload,
+              computeCardAmountFromPix,
+              saveDatabase: context.runtime?.saveDatabase,
+            }
+          );
+          if (typeof context.runtime?.saveDatabase === 'function') {
+            await context.runtime.saveDatabase();
+          }
+          const remCount = cancelPaidRes?.summary?.activeFlatsCount ?? 0;
+          await notifyAdminWhatsApp({
+            nivel_urgencia: 'BAIXA',
+            categoria: 'FINANCEIRO',
+            hospede_nome: cancelPaidRes?.summary?.requesterName || targetRes.guestName || 'Solicitante',
+            telefone: context.telefone_remetente,
+            imovel: cancelWholePackage ? `Pacote ${pkgCode}` : `Flat ${flatNumber} (${pkgCode})`,
+            resumo: cancelWholePackage
+              ? `Pacote ${pkgCode} cancelado integralmente dentro do prazo gratuito (>24h).`
+              : `Flat ${flatNumber} (${refCodigoRes}) cancelado parcialmente do pacote ${pkgCode} (>24h); ${remCount} flat(s) permanecem ativos e pagos.`,
+            context,
+          });
+          const msgPkgPaidCanc = cancelWholePackage
+            ? `Confirme com cordialidade que o pacote *${pkgCode}* foi cancelado sem multa conforme a política de ${freeCancelHours}h e que o estorno cabível já foi encaminhado à administração.`
+            : `Confirme com cordialidade que apenas o *Flat ${flatNumber}* (${refCodigoRes}) foi cancelado sem multa do pacote *${pkgCode}*, mantendo os demais *${remCount} flat(s)* 100% confirmados e pagos, e que o estorno parcial referente ao Flat ${flatNumber} já foi encaminhado à administração.`;
+          return {
+            status: 'SUCESSO_EXECUTADO',
+            dados: {
+              package_code: pkgCode,
+              reserva_id: refCodigoRes,
+              cancelar_pacote_inteiro: cancelWholePackage,
+              flats_ativos_restantes: remCount,
+              status_reserva: 'cancelada',
+              dentro_prazo_24h: true,
+              multa_aplicavel_pct: 0,
+            },
+            instrucao_para_ia: msgPkgPaidCanc,
+            instrucao_resposta_ia: msgPkgPaidCanc,
           };
         }
 
@@ -4799,18 +6346,18 @@ export const processarCancelamentoTool = {
           categoria: 'FINANCEIRO',
           hospede_nome: targetRes?.guestName || context.hospede?.nome || 'Hóspede',
           telefone: context.telefone_remetente,
-          imovel: reserva.nome_imovel,
-          resumo: `Reserva ${reserva.id} (${reserva.data_checkin} a ${reserva.data_checkout}) cancelada dentro do prazo gratuito (>24h antes do check-in). Motivo: ${args.motivo_cancelamento || 'Não informado'}.`,
+          imovel: `Flat ${flatNumber}`,
+          resumo: `Reserva ${refCodigoRes} (${refCheckinDate} a ${refCheckoutDate}) cancelada dentro do prazo gratuito (>24h antes do check-in). Motivo: ${args.motivo_cancelamento || 'Não informado'}.`,
           context,
         });
 
         const msgCancelada =
-          `Confirme com cordialidade que a reserva *${reserva.id}* no *${reserva.nome_imovel}* foi cancelada sem custos conforme a política de 24h e que a administração já foi avisada para processar eventual estorno cabível.`;
+          `Confirme com cordialidade que a reserva *${refCodigoRes}* no *Flat ${flatNumber}* foi cancelada sem custos conforme a política de 24h e que a administração já foi avisada para processar eventual estorno cabível.`;
 
         return {
           status: 'SUCESSO_EXECUTADO',
           dados: {
-            reserva_id: reserva.id,
+            reserva_id: refCodigoRes,
             status_reserva: 'cancelada',
             dentro_prazo_24h: true,
             multa_aplicavel_pct: 0,
@@ -5691,6 +7238,7 @@ export function buildStateRoutedPrompt(context, manualImovel = '') {
     `5. **Simulação antes da Efetivação:** Para alterações que envolvam custos ou mudanças de data, chame a ferramenta primeiro em modo de simulação/consulta (\`confirmacao_hospede: false\` ou \`efetivar_alteracao: false\`), informe as condições ao hóspede e só efetive após o "sim" explícito dele.`,
     `6. **Obediência Estrita ao Retorno Instrucional da API:** Ao chamar uma ferramenta, leia atentamente o campo \`instrucao_para_ia\` retornado pelo sistema. Use os fatos e limites exatos daquele retorno para construir sua resposta. Nunca invente motivos técnicos e nunca contorne um status \`BLOQUEADO_PELA_REGRA\`.`,
     `7. **Escalonamento Inteligente (\`notificar_administrador\`):** Se uma ação for bloqueada pelo sistema e o hóspede insistir, pedir uma exceção, relatar um defeito físico no imóvel ou demonstrar frustração, chame IMEDIATAMENTE a ferramenta \`notificar_administrador\` para avisar o gestor no WhatsApp dele.`,
+    `8. **Privacidade Financeira Estrita (\`ocultar_financeiro: true\`) e Pacotes Multi-Flat (\`pacote_multi_flat\`):** Quando \`ocultar_financeiro: true\` constar na reserva injetada (hóspede de reserva corporativa/terceiro ou acompanhante), NUNCA mencione valores de diárias, totais, links de pagamento/recibo ou dados de Nota Fiscal (pertencem exclusivamente ao Solicitante). Quando \`pacote_multi_flat\` estiver presente para o Solicitante, utilize a visão consolidada do pacote (\`PKG-...\`) com PIX único e Nota Fiscal única.`,
     manualImovel ? `\n# MANUAL DO IMÓVEL ATUAL\n${manualImovel}` : '',
   ]
     .filter(Boolean)

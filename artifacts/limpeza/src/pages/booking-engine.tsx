@@ -58,10 +58,30 @@ const preloadBookingFunnelModal = () => {
 }
 const LazyBookingFunnelModal = lazy(loadBookingFunnelModalModule)
 
+export interface RoomGuestEntry {
+  name?: string
+  phone?: string
+  document?: string
+  email?: string
+  informLater?: boolean
+}
+
 export interface RoomConfig {
   id: number
   bedType: "queen" | "twin"
   adults: number
+  customDates?: boolean
+  checkinDate?: string
+  checkoutDate?: string
+  ratePlan?: "with_breakfast" | "room_only"
+  hasVehicle?: boolean
+  vehiclePlate?: string
+  vehicleModel?: string
+  requesterIsGuest1?: boolean
+  informGuestsLater?: boolean
+  guest2InformLater?: boolean
+  guest1?: RoomGuestEntry
+  guest2?: RoomGuestEntry
 }
 
 export function formatDisplayDate(isoDate: string): string {
@@ -640,16 +660,31 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
   }, [checkin, isCutoffActive, isThirdGuestEnabled, siteConfig?.bedConfig?.allowTwinBeds])
 
   const addRoom = () => {
-    const maxAvailable = availabilityData?.totalAvailableFlats || 5
-    if (rooms.length >= maxAvailable) {
+    const maxUnitsInProperty = Math.max(2, Number(availabilityData?.totalFlatsCount || availabilityData?.totalUnits || 10))
+    if (rooms.length >= maxUnitsInProperty) {
       toast({
-        title: "Limite de disponibilidade atingido",
-        description: `No momento há ${maxAvailable} flats disponíveis para as datas selecionadas.`,
+        title: "Limite máximo de apartamentos atingido",
+        description: `Você pode incluir até ${maxUnitsInProperty} flats em um mesmo pacote (datas independentes por flat são permitidas).`,
       })
       return
     }
     const newId = rooms.length > 0 ? Math.max(...rooms.map(r => r.id)) + 1 : 1
-    setRooms([...rooms, { id: newId, bedType: "queen", adults: 2 }])
+    setRooms([
+      ...rooms.map((r, idx) =>
+        idx === 0 && r.requesterIsGuest1 === undefined
+          ? { ...r, requesterIsGuest1: true }
+          : r
+      ),
+      {
+        id: newId,
+        bedType: "queen",
+        adults: 2,
+        checkinDate: checkin,
+        checkoutDate: checkout,
+        informGuestsLater: true,
+        guest2InformLater: true
+      }
+    ])
   }
 
   const removeRoom = (id: number) => {
@@ -657,7 +692,7 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
     setRooms(rooms.filter(r => r.id !== id))
   }
 
-  const updateRoom = (id: number, field: "bedType" | "adults", value: any) => {
+  const updateRoom = (id: number, field: keyof RoomConfig | string, value: any) => {
     if (field === "adults" && Number(value) > 2 && !isThirdGuestEnabled) {
       if (siteConfig?.extraBedConfig?.enabled === true && isCheckinToday) {
         toast({
@@ -677,7 +712,11 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
         return
       }
     }
-    setRooms(rooms.map(r => r.id === id ? { ...r, [field]: value } : r))
+    if (field === "__patch__" && value && typeof value === "object") {
+      setRooms(prev => prev.map(r => r.id === id ? { ...r, ...value } : r))
+      return
+    }
+    setRooms(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r))
   }
 
   const formatBrl = (val: number) =>
@@ -1762,6 +1801,53 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
                   </div>
                 </div>
 
+                {/* Atalho visível para Pacote Multi-Flat (2+ apartamentos com pagamento único) */}
+                <div className="pt-0.5">
+                  {rooms.length === 1 ? (
+                    <button
+                      type="button"
+                      onClick={() => addRoom()}
+                      className="w-full py-2 px-3 rounded-xl border border-dashed border-[#0F3D4C]/45 bg-[#0F3D4C]/[0.04] hover:bg-[#0F3D4C]/[0.09] text-[#0F3D4C] text-[11px] font-bold transition-colors flex items-center justify-center gap-1.5"
+                    >
+                      <Building2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                      <span>+ Adicionar mais flats (Pacote c/ pagamento único)</span>
+                    </button>
+                  ) : (
+                    <div className="p-2.5 rounded-xl border border-[#0F3D4C]/35 bg-[#0F3D4C]/[0.06] space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-extrabold text-[#091E26] flex items-center gap-1.5">
+                          <Building2 className="w-3.5 h-3.5 text-[#0F3D4C] shrink-0" aria-hidden="true" />
+                          <span>Pacote: {rooms.length} Flats • Pagamento Único</span>
+                        </span>
+                        <div className="inline-flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => removeRoom(rooms[rooms.length - 1].id)}
+                            aria-label="Remover um flat do pacote"
+                            className="h-6 px-2 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-[11px] font-bold"
+                          >
+                            − 1
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => addRoom()}
+                            aria-label="Adicionar mais um flat ao pacote"
+                            className="h-6 px-2 rounded-lg bg-[#0F3D4C] hover:bg-[#091E26] text-white text-[11px] font-bold"
+                          >
+                            + Flat
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 text-[10.5px] text-slate-600">
+                        <span>Datas, café e hóspedes ajustáveis por flat</span>
+                        <span translate="no" className="font-extrabold text-[#0F3D4C] shrink-0">
+                          Total PIX: R$ {formatBrl(pixTotalAmount)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* Barra de Economia Estável (anti-CLS) + Selos de Venda Direta */}
                 <div className="space-y-1.5 pt-0.5">
                   <div className="min-h-[30px] flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-emerald-50/90 border border-emerald-200/80 text-[10.5px] text-emerald-800 font-semibold">
@@ -1799,7 +1885,11 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
                   disabled={availabilityData?.available === false}
                   className="w-full bg-gradient-to-r from-[#091E26] via-[#0F3D4C] to-[#091E26] hover:brightness-110 text-white border border-[#C5A059]/50 font-bold text-xs sm:text-sm min-h-[46px] rounded-xl shadow-md shadow-[#091E26]/20 transition-all flex items-center justify-center gap-2"
                 >
-                  <span>{lpSpec.ctaButtonText || "Reservar agora"}</span>
+                  <span>
+                    {rooms.length > 1
+                      ? `Reservar Pacote (${rooms.length} Flats)`
+                      : (lpSpec.ctaButtonText || "Reservar agora")}
+                  </span>
                   <ArrowRight className="w-4 h-4 text-[#E5C98B] shrink-0" aria-hidden="true" />
                 </Button>
 
