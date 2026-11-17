@@ -715,6 +715,7 @@ export default function AnserveRestockPage() {
       };
     } else {
       setLoading(false);
+      return undefined;
     }
   }, [isAuthenticated, localToken]);
 

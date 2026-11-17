@@ -227,7 +227,7 @@ export default function GuestMinibar() {
   const [dndFeedback, setDndFeedback] = useState<string | null>(null);
 
   // Novo Modo Operacional: Extrato Diário Lançado pela Repositora + Trava de Pagamento Pré-Checkout
-  const [, setIsCheckedOut] = useState<boolean>(false);
+  const [isCheckedOut, setIsCheckedOut] = useState<boolean>(false);
   const [hasFinalCheckoutInspection, setHasFinalCheckoutInspection] = useState<boolean>(false);
   const [, setCheckoutTime] = useState<string>("");
   const [dailyLaunches, setDailyLaunches] = useState<DailyLaunchGroup[]>([]);
