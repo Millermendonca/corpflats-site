@@ -592,10 +592,15 @@ app.use(serverMonitorMiddleware);
 
 const staticUploadsOpts = {
   setHeaders: (res, filePath) => {
-    if (typeof filePath === "string" && filePath.toLowerCase().endsWith(".pdf")) {
-      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-      res.setHeader("Pragma", "no-cache");
-      res.setHeader("Expires", "0");
+    if (typeof filePath === "string") {
+      const lower = filePath.toLowerCase();
+      if (lower.endsWith(".pdf")) {
+        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+        res.setHeader("Pragma", "no-cache");
+        res.setHeader("Expires", "0");
+      } else if (/\.(avif|webp|jpg|jpeg|png|gif|svg)$/i.test(lower)) {
+        res.setHeader("Cache-Control", "public, max-age=604800, stale-while-revalidate=86400");
+      }
     }
   }
 };
@@ -6259,10 +6264,30 @@ export function reconcileUniversalIntegrity(incomingState = null) {
     }
 
     // 1.X Minibar Orders (db.minibarOrders)
+    const deletedMinibarOrderIds = new Set(
+      Array.isArray(db._deletedMinibarOrderIds) ? db._deletedMinibarOrderIds.map(String) : []
+    );
+    if (Array.isArray(incomingState._deletedMinibarOrderIds)) {
+      if (!Array.isArray(db._deletedMinibarOrderIds)) db._deletedMinibarOrderIds = [];
+      incomingState._deletedMinibarOrderIds.forEach(delId => {
+        const s = String(delId || "").trim();
+        if (s && !deletedMinibarOrderIds.has(s)) {
+          deletedMinibarOrderIds.add(s);
+          db._deletedMinibarOrderIds.push(s);
+          changed = true;
+        }
+      });
+    }
+    if (deletedMinibarOrderIds.size > 0 && Array.isArray(db.minibarOrders)) {
+      const beforeOrdLen = db.minibarOrders.length;
+      db.minibarOrders = db.minibarOrders.filter(o => o && !deletedMinibarOrderIds.has(String(o.id)));
+      if (db.minibarOrders.length !== beforeOrdLen) changed = true;
+    }
     if (Array.isArray(incomingState.minibarOrders) && incomingState.minibarOrders.length > 0) {
       if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
       incomingState.minibarOrders.forEach(incOrder => {
         if (!incOrder || !incOrder.id) return;
+        if (deletedMinibarOrderIds.has(String(incOrder.id))) return;
         const existingIdx = db.minibarOrders.findIndex(o => String(o.id) === String(incOrder.id));
         if (existingIdx === -1) {
           db.minibarOrders.push({ ...incOrder });
@@ -6280,10 +6305,30 @@ export function reconcileUniversalIntegrity(incomingState = null) {
     }
 
     // 1.Y Minibar Inspections (db.minibarInspections)
+    const deletedMinibarInspectionIds = new Set(
+      Array.isArray(db._deletedMinibarInspectionIds) ? db._deletedMinibarInspectionIds.map(String) : []
+    );
+    if (Array.isArray(incomingState._deletedMinibarInspectionIds)) {
+      if (!Array.isArray(db._deletedMinibarInspectionIds)) db._deletedMinibarInspectionIds = [];
+      incomingState._deletedMinibarInspectionIds.forEach(delId => {
+        const s = String(delId || "").trim();
+        if (s && !deletedMinibarInspectionIds.has(s)) {
+          deletedMinibarInspectionIds.add(s);
+          db._deletedMinibarInspectionIds.push(s);
+          changed = true;
+        }
+      });
+    }
+    if (deletedMinibarInspectionIds.size > 0 && Array.isArray(db.minibarInspections)) {
+      const beforeInspLen = db.minibarInspections.length;
+      db.minibarInspections = db.minibarInspections.filter(i => i && !deletedMinibarInspectionIds.has(String(i.id)));
+      if (db.minibarInspections.length !== beforeInspLen) changed = true;
+    }
     if (Array.isArray(incomingState.minibarInspections) && incomingState.minibarInspections.length > 0) {
       if (!Array.isArray(db.minibarInspections)) db.minibarInspections = [];
       incomingState.minibarInspections.forEach(incInsp => {
         if (!incInsp || !incInsp.id) return;
+        if (deletedMinibarInspectionIds.has(String(incInsp.id))) return;
         const existingIdx = db.minibarInspections.findIndex(i => String(i.id) === String(incInsp.id));
         if (existingIdx === -1) {
           db.minibarInspections.push({ ...incInsp });
@@ -7824,9 +7869,208 @@ function sanitizeContaminatedSmokingFlags(targetDb = db) {
   return cleaned;
 }
 
+function purgeMinibarOrdersByIds(targetDb, orderIdsInput = []) {
+  if (!targetDb || typeof targetDb !== "object") {
+    return { removedOrderIds: [], removedOrders: [], removedInspectionIds: [], mutated: false };
+  }
+  const targetIds = new Set(
+    (Array.isArray(orderIdsInput) ? orderIdsInput : [orderIdsInput])
+      .map(id => String(id || "").trim())
+      .filter(Boolean)
+  );
+  if (targetIds.size === 0) {
+    return { removedOrderIds: [], removedOrders: [], removedInspectionIds: [], mutated: false };
+  }
+
+  let mutated = false;
+  if (!Array.isArray(targetDb._deletedMinibarOrderIds)) targetDb._deletedMinibarOrderIds = [];
+  if (!Array.isArray(targetDb._deletedMinibarInspectionIds)) targetDb._deletedMinibarInspectionIds = [];
+
+  for (const tid of targetIds) {
+    if (!targetDb._deletedMinibarOrderIds.includes(tid)) {
+      targetDb._deletedMinibarOrderIds.push(tid);
+      mutated = true;
+    }
+  }
+
+  const removedOrders = [];
+  if (Array.isArray(targetDb.minibarOrders)) {
+    const keptOrders = [];
+    for (const ord of targetDb.minibarOrders) {
+      if (ord && targetIds.has(String(ord.id))) {
+        removedOrders.push(ord);
+        mutated = true;
+      } else if (ord) {
+        keptOrders.push(ord);
+      }
+    }
+    targetDb.minibarOrders = keptOrders;
+  }
+
+  // Se um pedido pago de split (ORD-MB-SPLIT-...) foi removido isoladamente sem remover o lançamento original,
+  // estorna as quantidades quitadas no lançamento remanescente para manter consistência matemática.
+  for (const remOrd of removedOrders) {
+    if (remOrd.paymentStatus === "pago" && Array.isArray(remOrd.items) && Array.isArray(targetDb.minibarOrders)) {
+      const gIdxKey = String(remOrd.guestIndex || remOrd.consumerGuestIndex || 1);
+      for (const paidItem of remOrd.items) {
+        const launchOrdId = paidItem.launchOrderId || paidItem.orderId;
+        if (!launchOrdId || targetIds.has(String(launchOrdId))) continue;
+        const parentLaunch = targetDb.minibarOrders.find(o => o && String(o.id) === String(launchOrdId));
+        if (!parentLaunch || !Array.isArray(parentLaunch.items)) continue;
+        const matchIt = parentLaunch.items.find(it => it && it.productId === paidItem.productId);
+        if (matchIt) {
+          const revQty = Math.max(0, Number(paidItem.quantity) || 0);
+          matchIt.paidQuantity = Math.max(0, (Number(matchIt.paidQuantity) || 0) - revQty);
+          matchIt.remainingQuantity = Math.max(0, (Number(matchIt.quantity) || 0) - matchIt.paidQuantity);
+          if (matchIt.paidByGuest && typeof matchIt.paidByGuest === "object" && matchIt.paidByGuest[gIdxKey] !== undefined) {
+            matchIt.paidByGuest[gIdxKey] = Math.max(0, (Number(matchIt.paidByGuest[gIdxKey]) || 0) - revQty);
+            if (matchIt.paidByGuest[gIdxKey] === 0) delete matchIt.paidByGuest[gIdxKey];
+          }
+        }
+        const newRemAmt = parentLaunch.items.reduce(
+          (sum, it) => sum + (Number(it.remainingQuantity ?? it.quantity) || 0) * (Number(it.unitPrice) || 0),
+          0
+        );
+        parentLaunch.remainingAmount = Number(newRemAmt.toFixed(2));
+        if (parentLaunch.remainingAmount > 0.01 && parentLaunch.paymentStatus === "lancamento_quitado") {
+          parentLaunch.paymentStatus = "pendente";
+        }
+        parentLaunch.updatedAt = new Date().toISOString();
+        mutated = true;
+      }
+    }
+  }
+
+  const removedInspectionIds = [];
+  if (Array.isArray(targetDb.minibarInspections)) {
+    const keptInspections = [];
+    for (const insp of targetDb.minibarInspections) {
+      if (!insp) continue;
+      if (insp.chargeOrderId && targetIds.has(String(insp.chargeOrderId))) {
+        const waterCups = Number(insp.welcomeKitConsumption?.waterCups ?? insp.welcomeKitConsumption?.waterCupsConsumed) || 0;
+        const peanuts = Number(insp.welcomeKitConsumption?.mendoratoPeanuts ?? insp.welcomeKitConsumption?.peanutsConsumed) || 0;
+        const courtesyCost = Number(insp.restockedCourtesyTotalCost) || 0;
+        if (waterCups === 0 && peanuts === 0 && courtesyCost === 0) {
+          removedInspectionIds.push(String(insp.id));
+          if (!targetDb._deletedMinibarInspectionIds.includes(String(insp.id))) {
+            targetDb._deletedMinibarInspectionIds.push(String(insp.id));
+          }
+          mutated = true;
+          continue;
+        } else {
+          insp.chargeOrderId = null;
+          insp.hasDiscrepancy = false;
+          insp.discrepancyPaid = false;
+          insp.discrepancyResolved = true;
+          insp.discrepancyItems = [];
+          insp.missingItems = [];
+          insp.discrepancyTotalAmount = 0;
+          if (insp.status === "divergencia" || insp.status === "lancamento_diario") {
+            insp.status = "conforme";
+          }
+          insp.updatedAt = new Date().toISOString();
+          mutated = true;
+        }
+      }
+      if (Array.isArray(insp.autoSplitOrderIds) && insp.autoSplitOrderIds.some(aid => targetIds.has(String(aid)))) {
+        insp.autoSplitOrderIds = insp.autoSplitOrderIds.filter(aid => !targetIds.has(String(aid)));
+        mutated = true;
+      }
+      keptInspections.push(insp);
+    }
+    targetDb.minibarInspections = keptInspections;
+  }
+
+  const affectedReservationCodes = new Set(
+    removedOrders.map(o => String(o.reservationCode || "").trim()).filter(Boolean)
+  );
+  for (const tid of targetIds) {
+    const m = tid.match(/^ORD-MB-SPLIT-(RES-[A-Z0-9-]+)-G\d+$/i);
+    if (m && m[1]) affectedReservationCodes.add(m[1]);
+  }
+
+  if (Array.isArray(targetDb.reservations)) {
+    for (const r of targetDb.reservations) {
+      if (!r) continue;
+      if (Array.isArray(r.minibarPayments)) {
+        const beforeLen = r.minibarPayments.length;
+        r.minibarPayments = r.minibarPayments.filter(mp => !mp || !targetIds.has(String(mp.orderId || "")));
+        if (r.minibarPayments.length !== beforeLen) mutated = true;
+      }
+      if (Array.isArray(r.minibarOrders)) {
+        const beforeLen = r.minibarOrders.length;
+        r.minibarOrders = r.minibarOrders.filter(mo => !mo || !targetIds.has(String(mo.id || "")));
+        if (r.minibarOrders.length !== beforeLen) mutated = true;
+      }
+      if (Array.isArray(r.timeline)) {
+        const beforeLen = r.timeline.length;
+        r.timeline = r.timeline.filter(tl => {
+          if (!tl) return false;
+          const tlId = String(tl.id || "");
+          if (tlId.startsWith("tl_mb_") && targetIds.has(tlId.slice(6))) return false;
+          if (tl.type === "minibar_payment" && [...targetIds].some(oid => String(tl.description || "").includes(oid))) {
+            return false;
+          }
+          return true;
+        });
+        if (r.timeline.length !== beforeLen) mutated = true;
+      }
+      if (r.minibarSplitConfig?.itemAssignments && typeof r.minibarSplitConfig.itemAssignments === "object") {
+        for (const key of Object.keys(r.minibarSplitConfig.itemAssignments)) {
+          if ([...targetIds].some(oid => key.startsWith(`${oid}::`))) {
+            delete r.minibarSplitConfig.itemAssignments[key];
+            mutated = true;
+          }
+        }
+      }
+      if (r.code && affectedReservationCodes.has(String(r.code)) && r.finalMinibarInspectionAt) {
+        const stillHasInsp = (targetDb.minibarInspections || []).some(
+          i => i && (i.reservationCode === r.code || (r.id && String(i.reservationId) === String(r.id)))
+        );
+        const stillHasOrd = (targetDb.minibarOrders || []).some(
+          o => o && (o.reservationCode === r.code || (r.id && String(o.reservationId) === String(r.id)))
+        );
+        if (!stillHasInsp && !stillHasOrd) {
+          delete r.finalMinibarInspectionAt;
+          mutated = true;
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(targetDb.notifications)) {
+    const beforeNotifLen = targetDb.notifications.length;
+    targetDb.notifications = targetDb.notifications.filter(
+      n => !n || !n.metadata?.orderId || !targetIds.has(String(n.metadata.orderId))
+    );
+    if (targetDb.notifications.length !== beforeNotifLen) mutated = true;
+  }
+
+  return {
+    removedOrderIds: removedOrders.map(o => String(o.id)),
+    removedOrders,
+    removedInspectionIds,
+    mutated
+  };
+}
+
 function sanitizeReservationFlags() {
   sanitizeMaidUsers();
   sanitizePeriodicTasks();
+  if (!db.settings) db.settings = {};
+  if (!db.settings.purgedTestMinibarOrdersNov02V1) {
+    const purgeRes = purgeMinibarOrdersByIds(db, [
+      "ORD-MB-SPLIT-RES-212-0587-G1",
+      "ORD-MB-DIV-1793656763136"
+    ]);
+    db.settings.purgedTestMinibarOrdersNov02V1 = true;
+    try {
+      saveDatabase("purge_test_minibar_orders_nov02_v1");
+      console.log(
+        `[Auto-Fix] Pedidos de teste do frigobar expurgados (${purgeRes.removedOrderIds.length} pedidos, ${purgeRes.removedInspectionIds.length} inspeções).`
+      );
+    } catch (_) {}
+  }
   if (sanitizeContaminatedSmokingFlags(db)) {
     try {
       saveDatabase("clean_smoking_false_positives_v1");
@@ -80873,8 +81117,11 @@ export function setSmartAssetCacheHeaders(res, filePath) {
     return;
   }
 
-  // 2.1 Fotos otimizadas da galeria pública (/photos/*.avif, .webp, .jpg): cache público de 30 dias com revalidação suave
-  if (normalized.includes("/photos/") && /\.(avif|webp|jpg|jpeg|png)$/i.test(fileName)) {
+  // 2.1 Fotos otimizadas da galeria pública e do cardápio (/photos/* e /images/*): cache público de 30 dias com revalidação suave
+  if (
+    (normalized.includes("/photos/") || normalized.includes("/images/")) &&
+    /\.(avif|webp|jpg|jpeg|png)$/i.test(fileName)
+  ) {
     res.setHeader("Cache-Control", "public, max-age=2592000, stale-while-revalidate=86400");
     return;
   }
@@ -86832,6 +87079,53 @@ app.get("/api/minibar/orders/:id/status", async (req, res) => {
       status: order.paymentStatus,
       paidAt: order.paidAt || null,
       order: sanitizeMinibarOrderForResponse(order)
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Exclusão administrativa de pedidos de frigobar (ex: pedidos de teste)
+app.delete("/api/minibar/orders/:id", (req, res) => {
+  try {
+    const userAuth = getAuthUser(req);
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+    if (!isTestBypass && (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev"))) {
+      return res.status(403).json({ success: false, error: "Acesso restrito à administração CorpFlats." });
+    }
+
+    const orderId = String(req.params.id || "").trim();
+    if (!orderId) {
+      return res.status(400).json({ success: false, error: "ID do pedido inválido." });
+    }
+
+    const existsBefore = (db.minibarOrders || []).some(o => o && String(o.id) === orderId);
+    if (!existsBefore) {
+      return res.status(404).json({ success: false, error: "Pedido de frigobar não encontrado." });
+    }
+
+    const purgeResult = purgeMinibarOrdersByIds(db, [orderId]);
+    saveDatabase("minibar_order_deleted");
+
+    logAuditEvent({
+      level: "info",
+      category: "financial",
+      action: "MINIBAR_ORDER_DELETED",
+      actor: userAuth
+        ? { id: userAuth.id, name: userAuth.username || userAuth.name || "admin", role: userAuth.role }
+        : { id: 0, name: "system", role: "admin" },
+      details: {
+        orderId,
+        removedOrderIds: purgeResult.removedOrderIds,
+        removedInspectionIds: purgeResult.removedInspectionIds
+      }
+    });
+
+    res.json({
+      success: true,
+      message: `Pedido ${orderId} excluído do histórico de frigobar com sucesso.`,
+      removedOrderIds: purgeResult.removedOrderIds,
+      removedInspectionIds: purgeResult.removedInspectionIds
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

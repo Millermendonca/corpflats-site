@@ -192,6 +192,7 @@ function downloadCsvFile(filename: string, headers: string[], rows: Array<Array<
 export default function AnserveDashboardPage() {
   const { data: user } = useGetMe();
   const { toast } = useToast();
+  const canDeleteOrders = user?.role === "admin" || user?.role === "dev";
 
   const [activeTab, setActiveTab] = useState<"vendas" | "equipe" | "estoque">("vendas");
 
@@ -735,6 +736,42 @@ export default function AnserveDashboardPage() {
         toast({
           title: "Erro ao excluir",
           description: data.error || "Não foi possível remover este cadastro.",
+          variant: "destructive"
+        });
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro de conexão",
+        description: err.message,
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleDeleteMinibarOrder = async (order: any) => {
+    if (
+      !confirm(
+        `Tem certeza que deseja excluir permanentemente o pedido "${order.id}" (Flat ${order.flatNumber} — R$ ${Number(order.totalAmount || 0).toFixed(2)}) do histórico de frigobar?`
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/minibar/orders/${encodeURIComponent(order.id)}`, {
+        method: "DELETE",
+        credentials: "include"
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast({
+          title: "Pedido excluído",
+          description: data.message || `O pedido ${order.id} foi removido do histórico.`
+        });
+        loadAllData();
+      } else {
+        toast({
+          title: "Erro ao excluir pedido",
+          description: data.error || "Não foi possível excluir este pedido.",
           variant: "destructive"
         });
       }
@@ -1328,12 +1365,13 @@ export default function AnserveDashboardPage() {
                       <th className="p-3.5">Pagamento</th>
                       <th className="p-3.5">Nota Fiscal</th>
                       <th className="p-3.5 text-right">Valor</th>
+                      {canDeleteOrders && <th className="p-3.5 text-center w-14">Ações</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
                     {filteredReportOrders.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                        <td colSpan={canDeleteOrders ? 8 : 7} className="p-8 text-center text-muted-foreground">
                           Nenhuma venda encontrada para os filtros selecionados.
                         </td>
                       </tr>
@@ -1400,6 +1438,20 @@ export default function AnserveDashboardPage() {
                           <td className="p-3.5 text-right font-mono font-black text-foreground">
                             R$ {Number(o.totalAmount || 0).toFixed(2)}
                           </td>
+                          {canDeleteOrders && (
+                            <td className="p-3.5 text-center">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleDeleteMinibarOrder(o)}
+                                title="Excluir pedido do histórico (apenas Admin)"
+                                className="h-7 w-7 rounded-lg text-muted-foreground hover:text-rose-600 hover:bg-rose-500/10"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </td>
+                          )}
                         </tr>
                       ))
                     )}
