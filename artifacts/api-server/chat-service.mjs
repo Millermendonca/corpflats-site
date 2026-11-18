@@ -6,6 +6,7 @@ import {
   enrichCrmEntityWithCnpjData
 } from "./lookup.mjs";
 import { isValidCpf, isValidCnpj, normalizeTomadorAddressFields } from "./national-nfse.mjs";
+import { parseEmailList, getPrimaryEmail } from "./mail-service.mjs";
 
 export function onlyDigits(str = "") {
   return String(str || "").replace(/\D/g, "");
@@ -314,10 +315,16 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     return Boolean(phoneLast8 && aPhone && aPhone.endsWith(phoneLast8));
   });
 
+  const reqDocForFilter = onlyDigits(r?.requesterInfo?.cpf || r?.requesterInfo?.document || r?.requesterDocument || "");
   const prevInvoices = allInvoices.filter(inv => {
     if (!inv || inv.status === "cancelada" || inv.status === "cancelled") return false;
-    if (primaryGuest?.id && inv.guestId && String(inv.guestId) === String(primaryGuest.id)) return true;
+    const invRecType = String(inv.invoiceRecipientType || "").trim().toLowerCase();
+    if (["requester", "requester_pf", "other_person", "third_party", "company", "agency"].includes(invRecType)) return false;
     const iDoc = onlyDigits(inv.tomadorCpfCnpj || "");
+    if (iDoc.length === 14) return false;
+    if (reqDocForFilter && !r?.requesterIsGuest1 && iDoc && iDoc === reqDocForFilter && iDoc !== primaryGuestDoc) return false;
+    if (primaryGuestDoc && primaryGuestDoc.length >= 11 && iDoc && iDoc !== primaryGuestDoc) return false;
+    if (primaryGuest?.id && inv.guestId && String(inv.guestId) === String(primaryGuest.id)) return true;
     if (primaryGuestDoc && primaryGuestDoc.length >= 11 && iDoc === primaryGuestDoc) return true;
     const iPhone = onlyDigits(inv.tomadorTelefone || "");
     return Boolean(phoneLast8 && iPhone && iPhone.endsWith(phoneLast8));
@@ -455,6 +462,119 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     guestDoc === "12585736792" ? "22998505276" : ""
   ));
 
+  const hideFromGuest = Boolean(r?.nfHideFromGuest || options?.nfHideFromGuest);
+
+  const guestPersonalEmailSources = [
+    r?.guestEmail,
+    r?.email,
+    firstResSlot?.email,
+    checkinInfo?.email,
+    primaryGuest?.email,
+    primaryGuest?.financialEmail,
+    ...matchingGuests.flatMap(g => [g.email, g.guestEmail, g.financialEmail]),
+    ...matchingAccounts.flatMap(a => [a.email, a.guestEmail]),
+    ...prevInvoices.filter(i => onlyDigits(i.tomadorCpfCnpj).length === 11).map(i => i.tomadorEmail),
+    guestDoc === "12585736792" ? "millerpessanha@gmail.com" : ""
+  ];
+  const guestPersonalPhoneSet = new Set();
+  const guestPersonalPhoneTails = new Set();
+  const addGuestPersonalPhone = (raw) => {
+    const p = onlyDigits(raw || "");
+    if (!p || p.length < 8) return;
+    guestPersonalPhoneSet.add(p);
+    if (p.length >= 12 && p.startsWith("55")) guestPersonalPhoneSet.add(p.slice(2));
+    guestPersonalPhoneTails.add(p.slice(-8));
+  };
+  const isGuestPersonalPhoneLocal = (raw) => {
+    const p = onlyDigits(raw || "");
+    if (!p || p.length < 8) return false;
+    const localP = (p.length >= 12 && p.startsWith("55")) ? p.slice(2) : p;
+    return guestPersonalPhoneSet.has(p) || guestPersonalPhoneSet.has(localP) || guestPersonalPhoneTails.has(p.slice(-8));
+  };
+
+  const gpIds = new Set();
+  const gpDocs = new Set();
+  const addGuestPersonalDoc = (raw) => {
+    const d = onlyDigits(raw || "");
+    if (d && d.length !== 14) gpDocs.add(d);
+  };
+  if (r?.guestId) gpIds.add(Number(r.guestId));
+  if (primaryGuest?.id) gpIds.add(Number(primaryGuest.id));
+  addGuestPersonalDoc(resDocDigits);
+  addGuestPersonalDoc(primaryGuestDoc);
+  addGuestPersonalPhone(resGuestPhoneNum);
+  addGuestPersonalPhone(guestPhone);
+  addGuestPersonalPhone(checkinInfo?.phone || checkinInfo?.telefone);
+  for (const g of matchingGuests) {
+    if (g.id) gpIds.add(Number(g.id));
+    addGuestPersonalDoc(g.documentNumber || g.document || g.cpf || g.cpfCnpj);
+    addGuestPersonalPhone(g.phone || g.phoneNumber || g.whatsapp);
+  }
+  for (const a of matchingAccounts) {
+    if (a.guestId) gpIds.add(Number(a.guestId));
+    addGuestPersonalDoc(a.documentNumber || a.document || a.cpf);
+    addGuestPersonalPhone(a.phone || a.phoneNumber || a.whatsapp);
+  }
+  if (r?.requesterIsGuest1) {
+    if (r.requesterEmail) guestPersonalEmailSources.push(r.requesterEmail);
+    if (r.requesterInfo?.email) guestPersonalEmailSources.push(r.requesterInfo.email);
+    if (r.requesterInfo?.guestId) gpIds.add(Number(r.requesterInfo.guestId));
+    addGuestPersonalDoc(r.requesterInfo?.cpf || r.requesterInfo?.document || r.requesterDocument);
+    addGuestPersonalPhone(r.requesterPhone || r.requesterInfo?.phone || r.requesterInfo?.whatsapp);
+  }
+  if (Array.isArray(r?.guests)) {
+    for (const rg of r.guests) {
+      if (!rg) continue;
+      if (rg.email) guestPersonalEmailSources.push(rg.email);
+      if (rg.guestEmail) guestPersonalEmailSources.push(rg.guestEmail);
+      if (rg.guestId) gpIds.add(Number(rg.guestId));
+      addGuestPersonalDoc(rg.cpf || rg.document || rg.documentNumber);
+      addGuestPersonalPhone(rg.phone || rg.phoneNumber || rg.whatsapp);
+    }
+  }
+  for (const g of allGuests) {
+    if (!g) continue;
+    const gId = g.id ? Number(g.id) : null;
+    const gDoc = onlyDigits(g.documentNumber || g.document || g.cpf || g.cpfCnpj || "");
+    const gPh = onlyDigits(g.phone || g.phoneNumber || g.whatsapp || "");
+    if ((gId && gpIds.has(gId)) || (gDoc && gpDocs.has(gDoc)) || isGuestPersonalPhoneLocal(gPh)) {
+      if (gId) gpIds.add(gId);
+      addGuestPersonalDoc(gDoc);
+      addGuestPersonalPhone(gPh);
+      if (g.email) guestPersonalEmailSources.push(g.email);
+      if (g.guestEmail) guestPersonalEmailSources.push(g.guestEmail);
+      if (g.financialEmail) guestPersonalEmailSources.push(g.financialEmail);
+    }
+  }
+  for (const acc of allAccounts) {
+    if (!acc) continue;
+    const aGid = acc.guestId ? Number(acc.guestId) : null;
+    const aDoc = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+    const aPh = onlyDigits(acc.phone || acc.phoneNumber || acc.whatsapp || "");
+    if ((aGid && gpIds.has(aGid)) || (aDoc && gpDocs.has(aDoc)) || isGuestPersonalPhoneLocal(aPh)) {
+      addGuestPersonalPhone(aPh);
+      if (acc.email) guestPersonalEmailSources.push(acc.email);
+      if (acc.guestEmail) guestPersonalEmailSources.push(acc.guestEmail);
+    }
+  }
+  if (guestDoc === "12585736792") addGuestPersonalPhone("22998505276");
+
+  const guestPersonalEmailSet = new Set(parseEmailList(guestPersonalEmailSources));
+  const maskEmailForDraft = (raw) => {
+    const list = parseEmailList(raw);
+    return getPrimaryEmail(
+      hideFromGuest && guestPersonalEmailSet.size > 0
+        ? list.filter(e => !guestPersonalEmailSet.has(e))
+        : list
+    );
+  };
+  const maskPhoneForDraft = (raw) => {
+    const p = onlyDigits(raw || "");
+    if (!p) return "";
+    if (hideFromGuest && isGuestPersonalPhoneLocal(p)) return "";
+    return p;
+  };
+
   const normGuestAddr = extractNormalizedGuestAddress(mergedGuestSource, guestDoc);
 
   // Localiza Empresa (PJ) e Agência B2B (PJ) exatamente como o /notas faz
@@ -471,7 +591,7 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     corporateName: r.companyName,
     tradeName: r.companyName,
     cnpj: r.companyCnpj || "",
-    financialEmail: (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || "",
+    financialEmail: parseEmailList(r?.nfDeliveryEmails).join("; "),
     address: r.companyAddress || "",
     logradouro: r.companyAddress || "",
     number: r.companyNumber || "",
@@ -498,7 +618,7 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     corporateName: r.agencyName || r.agencyTradeName,
     tradeName: r.agencyTradeName || r.agencyName,
     cnpj: r.agencyCnpj || "",
-    financialEmail: r.agencyAgentEmail || (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || "",
+    financialEmail: r.agencyAgentEmail || parseEmailList(r?.nfDeliveryEmails).join("; "),
     phone: r.agencyAgentPhone || "",
     address: r.agencyAddress || "",
     logradouro: r.agencyAddress || "",
@@ -561,8 +681,8 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     doc: guestDoc,
     tomadorNome: toTitleCaseLocal(guestName),
     tomadorCpfCnpj: guestDoc,
-    tomadorEmail: guestEmail,
-    tomadorTelefone: guestPhone,
+    tomadorEmail: maskEmailForDraft(guestEmail),
+    tomadorTelefone: maskPhoneForDraft(guestPhone),
     tomadorEndereco: normGuestAddr.logradouro,
     tomadorNumero: normGuestAddr.numero,
     tomadorComplemento: normGuestAddr.complemento,
@@ -596,8 +716,17 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     doc: companyDoc,
     tomadorNome: toTitleCaseLocal(crmComp?.corporateName || crmComp?.tradeName || crmComp?.razaoSocial || crmComp?.name || r?.companyName || primaryGuest?.companyName || knownCompFallback?.razaoSocial || "Empresa"),
     tomadorCpfCnpj: companyDoc,
-    tomadorEmail: (crmComp?.financialEmail || crmComp?.email || (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || guestEmail || "").trim().toLowerCase(),
-    tomadorTelefone: onlyDigits(crmComp?.phone || knownCompFallback?.telefone || guestPhone || ""),
+    tomadorEmail: maskEmailForDraft([
+      crmComp?.financialEmail,
+      crmComp?.email,
+      r?.nfDeliveryEmails,
+      !hideFromGuest ? guestEmail : ""
+    ]),
+    tomadorTelefone: maskPhoneForDraft(
+      hideFromGuest
+        ? (crmComp?.phone || knownCompFallback?.telefone || "")
+        : (crmComp?.phone || knownCompFallback?.telefone || guestPhone || "")
+    ),
     tomadorEndereco: String(compAddrSource?.address || compAddrSource?.logradouro || compAddrSource?.street || compAddrSource?.endereco || "").trim(),
     tomadorNumero: String(compAddrSource?.number || compAddrSource?.numero || compAddrSource?.streetNumber || "").trim(),
     tomadorComplemento: String(compAddrSource?.complement || compAddrSource?.complemento || "").trim(),
@@ -631,8 +760,17 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     doc: agencyDoc,
     tomadorNome: toTitleCaseLocal(crmAgency?.corporateName || crmAgency?.razaoSocial || crmAgency?.tradeName || crmAgency?.name || r?.agencyName || knownAgFallback?.razaoSocial || "Agência de Viagens"),
     tomadorCpfCnpj: agencyDoc,
-    tomadorEmail: (crmAgency?.financialEmail || crmAgency?.email || r?.agencyAgentEmail || (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || "").trim().toLowerCase(),
-    tomadorTelefone: onlyDigits(crmAgency?.phone || r?.agencyAgentPhone || knownAgFallback?.telefone || guestPhone || ""),
+    tomadorEmail: maskEmailForDraft([
+      crmAgency?.financialEmail,
+      crmAgency?.email,
+      r?.agencyAgentEmail,
+      r?.nfDeliveryEmails
+    ]),
+    tomadorTelefone: maskPhoneForDraft(
+      hideFromGuest
+        ? (crmAgency?.phone || r?.agencyAgentPhone || knownAgFallback?.telefone || "")
+        : (crmAgency?.phone || r?.agencyAgentPhone || knownAgFallback?.telefone || guestPhone || "")
+    ),
     tomadorEndereco: String(agAddrSource?.address || agAddrSource?.logradouro || agAddrSource?.endereco || "").trim(),
     tomadorNumero: String(agAddrSource?.number || agAddrSource?.numero || "").trim(),
     tomadorComplemento: String(agAddrSource?.complement || agAddrSource?.complemento || "").trim(),
@@ -670,8 +808,8 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     doc: reqDoc,
     tomadorNome: toTitleCaseLocal(reqName || "Solicitante"),
     tomadorCpfCnpj: reqDoc,
-    tomadorEmail: pickNonEmpty(r?.requesterInfo?.email, reqCrmGuest?.email, reqCrmGuest?.financialEmail).toLowerCase(),
-    tomadorTelefone: onlyDigits(pickNonEmpty(r?.requesterInfo?.phone, r?.requesterInfo?.whatsapp, reqCrmGuest?.phone, callerPhoneNum)),
+    tomadorEmail: maskEmailForDraft([r?.requesterInfo?.email, reqCrmGuest?.email, reqCrmGuest?.financialEmail]),
+    tomadorTelefone: maskPhoneForDraft(pickNonEmpty(r?.requesterInfo?.phone, r?.requesterInfo?.whatsapp, reqCrmGuest?.phone, !hideFromGuest ? callerPhoneNum : "")),
     tomadorEndereco: normReqAddr.logradouro,
     tomadorNumero: normReqAddr.numero,
     tomadorComplemento: normReqAddr.complemento,
@@ -778,6 +916,22 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
       if (ovIbge) activeOption.tomadorCodigoMunicipio = ovIbge;
     }
   }
+
+  if (hideFromGuest) {
+    activeOption.tomadorEmail = maskEmailForDraft(activeOption.tomadorEmail);
+    activeOption.tomadorTelefone = maskPhoneForDraft(activeOption.tomadorTelefone);
+  }
+
+  const rawDraftDeliveryEmails = parseEmailList([
+    r?.nfDeliveryEmails,
+    activeOption.type === "company" ? [crmComp?.financialEmail, crmComp?.email] : "",
+    activeOption.type === "agency" ? [r?.agencyAgentEmail, crmAgency?.financialEmail, crmAgency?.email] : "",
+    activeOption.type === "requester" ? r?.requesterInfo?.email : "",
+    activeOption.tomadorEmail
+  ]);
+  const draftNfDeliveryEmails = hideFromGuest && guestPersonalEmailSet.size > 0
+    ? rawDraftDeliveryEmails.filter(e => !guestPersonalEmailSet.has(e))
+    : rawDraftDeliveryEmails;
 
   // Discriminação Oficial do Studio /notas:
   // 1) Se a reserva já possui descrição confirmada/editada (e não é o formato legado antigo), preserva;
@@ -887,6 +1041,8 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     discriminacao: descricaoServico,
     discriminacaoSugerida: descricaoServico,
     invoiceRecipientType: recipientType,
+    nfHideFromGuest: hideFromGuest,
+    nfDeliveryEmails: draftNfDeliveryEmails,
     guestName,
     guestId: guestOption.guestId,
     companyId: companyOption?.companyId || null,

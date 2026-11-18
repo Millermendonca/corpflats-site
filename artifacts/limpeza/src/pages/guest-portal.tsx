@@ -25,6 +25,7 @@ import { DirectBookingPerkCard } from "@/components/direct-booking-perk-card"
 import { generateLodgingJsonLd } from "@/lib/calendar-helper"
 import { calculateCancellationPolicy } from "@/lib/cancellation-helper"
 import { FrozenSlot, useStableCallback } from "@/lib/render-freeze"
+import { validateEmailList, parseEmailList, getPrimaryEmail } from "@/lib/email-utils"
 
 const HoldCountdownBadge = memo(function HoldCountdownBadge({
   expiresAt,
@@ -609,6 +610,15 @@ export default function GuestPortal() {
       setPkgNfseMessage("Informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido para emitir a NFS-e única.")
       return
     }
+    const emailValidation = validateEmailList(pkgNfseEmail)
+    if (!emailValidation.valid) {
+      setPkgNfseMessage(
+        `E-mail inválido (${emailValidation.invalidTokens.join(", ")}). Para múltiplos destinatários, separe por ";".`
+      )
+      return
+    }
+    const primaryEmail = getPrimaryEmail(pkgNfseEmail)
+    const deliveryEmails = parseEmailList(pkgNfseEmail)
     setEmittingPkgNfse(true)
     setPkgNfseMessage(null)
     try {
@@ -619,7 +629,8 @@ export default function GuestPortal() {
           packageId: pkgCode,
           tomadorCpfCnpj: cleanDoc,
           tomadorNome: pkgNfseName.trim() || undefined,
-          tomadorEmail: pkgNfseEmail.trim() || undefined
+          tomadorEmail: primaryEmail || undefined,
+          nfDeliveryEmails: deliveryEmails.length > 0 ? deliveryEmails : undefined
         })
       })
       const json = await res.json()
@@ -4056,6 +4067,7 @@ export default function GuestPortal() {
                       setPkgNfseDoc(data.packageSummary.requesterDocument || "")
                       setPkgNfseName(data.packageSummary.requesterName || "")
                       setPkgNfseEmail(data.packageSummary.requesterEmail || "")
+                      setPkgNfseMessage(null)
                       setPkgNfseOpen(!pkgNfseOpen)
                     }}
                     className="border-emerald-300 text-emerald-900 hover:bg-emerald-50 font-bold text-xs rounded-xl h-10 px-4"
@@ -4094,10 +4106,14 @@ export default function GuestPortal() {
                     className="bg-white text-xs h-9"
                   />
                   <Input
-                    type="email"
+                    type="text"
+                    inputMode="email"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     value={pkgNfseEmail}
-                    onChange={(e) => setPkgNfseEmail(e.target.value)}
-                    placeholder="E-mail para envio da NFS-e"
+                    onChange={(e) => { setPkgNfseEmail(e.target.value); setPkgNfseMessage(null) }}
+                    placeholder="E-mail(s) para envio da NFS-e (separe por ;)"
                     className="bg-white text-xs h-9"
                   />
                 </div>

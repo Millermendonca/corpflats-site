@@ -29,6 +29,7 @@ import { useToast } from "@/hooks/use-toast"
 import { useBackLayer, useBackTabState } from "@/lib/back-navigation"
 import { sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildDirectWaWebUrl } from "@/hooks/use-quick-messages"
 import { formatSmartPhone } from "@/lib/phone-mask"
+import { parseEmailList, validateEmailList, formatEmailList } from "@/lib/email-utils"
 
 export default function CrmGuests() {
   const [, setLocation] = useLocation()
@@ -649,7 +650,10 @@ export default function CrmGuests() {
           if (data.razaoSocial) setCompCorporateName(data.razaoSocial)
           if (data.nomeFantasia) setCompTradeName(data.nomeFantasia)
           if (data.fromCrmOrDirectory) {
-            if (data.email) setCompFinancialEmail(data.email)
+            if (data.email) {
+              const normalized = formatEmailList(data.email)
+              setCompFinancialEmail(normalized || String(data.email).trim())
+            }
             if (data.telefone) setCompPhone(data.telefone)
           }
           if (data.cep) setCompCep(data.cep)
@@ -755,7 +759,8 @@ export default function CrmGuests() {
     setFormBoletoConsumptionMode(g.defaultBoletoConsumptionMode === "separate" ? "separate" : "single")
     const fr = g.financialResponsible || {}
     setFormFinRespName(fr.name || "")
-    setFormFinRespEmail(fr.email || "")
+    const rawFrEmail = fr.email || g.financialResponsibleEmail || ""
+    setFormFinRespEmail(formatEmailList(rawFrEmail) || rawFrEmail)
     setFormFinRespPhone(fr.phone || "")
     const dr = g.defaultBillingRecipients || {}
     setFormRecGuest(dr.guest !== false)
@@ -768,6 +773,16 @@ export default function CrmGuests() {
   const handleSaveGuest = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!formName.trim()) return
+
+    const finRespEmailCheck = validateEmailList(formFinRespEmail)
+    if (!finRespEmailCheck.valid) {
+      toast({
+        title: "E-mail do Responsável Financeiro inválido",
+        description: `Corrija: ${finRespEmailCheck.invalidTokens.join(", ")}. Separe múltiplos e-mails por ";".`,
+        variant: "destructive"
+      })
+      return
+    }
 
     setSavingGuest(true)
     try {
@@ -805,7 +820,7 @@ export default function CrmGuests() {
         defaultBoletoConsumptionMode: formBoletoConsumptionMode,
         financialResponsible: {
           name: formFinRespName.trim(),
-          email: formFinRespEmail.trim(),
+          email: formatEmailList(formFinRespEmail),
           phone: formFinRespPhone.trim()
         },
         defaultBillingRecipients: {
@@ -825,20 +840,27 @@ export default function CrmGuests() {
         }
       }
 
-      if (editingGuest) {
-        await fetch(`/api/pms/guests/${editingGuest.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          credentials: "include"
+      const res = editingGuest
+        ? await fetch(`/api/pms/guests/${editingGuest.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            credentials: "include"
+          })
+        : await fetch("/api/pms/guests", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            credentials: "include"
+          })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        toast({
+          title: "Erro ao salvar hóspede",
+          description: errData.error || "Não foi possível salvar os dados do hóspede.",
+          variant: "destructive"
         })
-      } else {
-        await fetch("/api/pms/guests", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          credentials: "include"
-        })
+        return
       }
       setGuestModalOpen(false); if (editingGuest && activeGuest && activeGuest.id === editingGuest.id) { handleOpenDetail({ ...activeGuest, ...payload }) }
       fetchGuests()
@@ -893,7 +915,8 @@ export default function CrmGuests() {
     setCompCnpj(c.cnpj || "")
     setCompStateReg(c.stateRegistration || c.inscricaoEstadual || "")
     setCompMunReg(c.municipalRegistration || c.inscricaoMunicipal || "")
-    setCompFinancialEmail(c.financialEmail || c.emailFinanceiro || "")
+    const rawCompEmail = c.financialEmail || c.emailFinanceiro || ""
+    setCompFinancialEmail(formatEmailList(rawCompEmail) || rawCompEmail)
     setCompPhone(c.phone || c.telefone || "")
     setCompContactPerson(c.contactPerson || c.contato || "")
     setCompAllowsDirectReservations(!isInvOnly)
@@ -915,7 +938,8 @@ export default function CrmGuests() {
     setCompConsumptionTermDays(String(c.defaultConsumptionTermDays ?? 15))
     const fr = c.financialResponsible || {}
     setCompFinRespName(fr.name || "")
-    setCompFinRespEmail(fr.email || "")
+    const rawCompFrEmail = fr.email || c.financialResponsibleEmail || ""
+    setCompFinRespEmail(formatEmailList(rawCompFrEmail) || rawCompFrEmail)
     setCompFinRespPhone(fr.phone || "")
     const dr = c.defaultBillingRecipients || {}
     setCompRecGuest(Boolean(dr.guest))
@@ -929,6 +953,25 @@ export default function CrmGuests() {
     e.preventDefault()
     if (!compCorporateName.trim() || !compCnpj.trim()) return
 
+    const compEmailCheck = validateEmailList(compFinancialEmail)
+    if (!compEmailCheck.valid) {
+      toast({
+        title: "E-mail financeiro inválido",
+        description: `Corrija: ${compEmailCheck.invalidTokens.join(", ")}. Use endereços válidos separados por ";".`,
+        variant: "destructive"
+      })
+      return
+    }
+    const compFrEmailCheck = validateEmailList(compFinRespEmail)
+    if (!compFrEmailCheck.valid) {
+      toast({
+        title: "E-mail do Responsável Financeiro inválido",
+        description: `Corrija: ${compFrEmailCheck.invalidTokens.join(", ")}. Use endereços válidos separados por ";".`,
+        variant: "destructive"
+      })
+      return
+    }
+
     setSavingCompany(true)
     try {
       const termDaysNum = Number(compBoletoTermDays) || 28
@@ -940,7 +983,7 @@ export default function CrmGuests() {
         cnpj: compCnpj.trim(),
         stateRegistration: compStateReg.trim(),
         municipalRegistration: compMunReg.trim(),
-        financialEmail: compFinancialEmail.trim(),
+        financialEmail: formatEmailList(compFinancialEmail),
         phone: compPhone.trim(),
         contactPerson: compContactPerson.trim(),
         companyRole: compAllowsDirectReservations ? "booking_partner" : "invoice_only",
@@ -971,7 +1014,7 @@ export default function CrmGuests() {
         defaultConsumptionTermDays: Number(compConsumptionTermDays) || termDaysNum,
         financialResponsible: {
           name: compFinRespName.trim(),
-          email: compFinRespEmail.trim(),
+          email: formatEmailList(compFinRespEmail),
           phone: compFinRespPhone.trim()
         },
         defaultBillingRecipients: {
@@ -984,20 +1027,27 @@ export default function CrmGuests() {
         }
       }
 
-      if (editingCompany) {
-        await fetch(`/api/companies/${editingCompany.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          credentials: "include"
+      const res = editingCompany
+        ? await fetch(`/api/companies/${editingCompany.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            credentials: "include"
+          })
+        : await fetch("/api/companies", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            credentials: "include"
+          })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        toast({
+          title: "Erro ao salvar empresa",
+          description: errData.error || "Verifique os dados informados.",
+          variant: "destructive"
         })
-      } else {
-        await fetch("/api/companies", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          credentials: "include"
-        })
+        return
       }
       setCompanyModalOpen(false)
       fetchCompanies()
@@ -1053,7 +1103,10 @@ export default function CrmGuests() {
           const data = await res.json()
           if (data.razaoSocial) setAgencyCorporateName(data.razaoSocial)
           if (data.nomeFantasia) setAgencyTradeName(data.nomeFantasia)
-          if (data.email) setAgencyFinancialEmail(data.email)
+          if (data.email) {
+            const normalized = formatEmailList(data.email)
+            setAgencyFinancialEmail(normalized || String(data.email).trim())
+          }
           if (data.telefone) setAgencyPhone(data.telefone)
           if (data.cep) setAgencyCep(data.cep)
           if (data.logradouro) setAgencyAddress(data.logradouro)
@@ -1115,7 +1168,8 @@ export default function CrmGuests() {
     setAgencyCnpj(ag.cnpj || "")
     setAgencyStateReg(ag.stateRegistration || "")
     setAgencyMunReg(ag.municipalRegistration || "")
-    setAgencyFinancialEmail(ag.financialEmail || "")
+    const rawAgEmail = ag.financialEmail || ag.emailFinanceiro || ""
+    setAgencyFinancialEmail(formatEmailList(rawAgEmail) || rawAgEmail)
     setAgencyPhone(ag.phone || "")
     setAgencyContactPerson(ag.contactPerson || "")
     setAgencyBillingTerms(ag.billingTerms || "Cartão Virtual VCN / 15 dias")
@@ -1137,7 +1191,8 @@ export default function CrmGuests() {
     setAgencyBoletoConsumptionMode(ag.defaultBoletoConsumptionMode === "separate" ? "separate" : "single")
     const fr = ag.financialResponsible || {}
     setAgencyFinRespName(fr.name || "")
-    setAgencyFinRespEmail(fr.email || "")
+    const rawAgFrEmail = fr.email || ag.financialResponsibleEmail || ""
+    setAgencyFinRespEmail(formatEmailList(rawAgFrEmail) || rawAgFrEmail)
     setAgencyFinRespPhone(fr.phone || "")
     const dr = ag.defaultBillingRecipients || {}
     setAgencyRecGuest(Boolean(dr.guest))
@@ -1151,6 +1206,25 @@ export default function CrmGuests() {
     e.preventDefault()
     if (!agencyCorporateName.trim() || !agencyCnpj.trim()) return
 
+    const agEmailCheck = validateEmailList(agencyFinancialEmail)
+    if (!agEmailCheck.valid) {
+      toast({
+        title: "E-mail financeiro da agência inválido",
+        description: `Corrija: ${agEmailCheck.invalidTokens.join(", ")}. Use endereços válidos separados por ";".`,
+        variant: "destructive"
+      })
+      return
+    }
+    const agFrEmailCheck = validateEmailList(agencyFinRespEmail)
+    if (!agFrEmailCheck.valid) {
+      toast({
+        title: "E-mail do Responsável Financeiro inválido",
+        description: `Corrija: ${agFrEmailCheck.invalidTokens.join(", ")}. Use endereços válidos separados por ";".`,
+        variant: "destructive"
+      })
+      return
+    }
+
     setSavingAgency(true)
     try {
       const payload = {
@@ -1161,7 +1235,7 @@ export default function CrmGuests() {
         cnpj: agencyCnpj.trim(),
         stateRegistration: agencyStateReg.trim(),
         municipalRegistration: agencyMunReg.trim(),
-        financialEmail: agencyFinancialEmail.trim(),
+        financialEmail: formatEmailList(agencyFinancialEmail),
         phone: agencyPhone.trim(),
         contactPerson: agencyContactPerson.trim(),
         billingTerms: agencyBillingTerms.trim(),
@@ -1190,7 +1264,7 @@ export default function CrmGuests() {
         defaultBoletoConsumptionMode: agencyBoletoConsumptionMode,
         financialResponsible: {
           name: agencyFinRespName.trim(),
-          email: agencyFinRespEmail.trim(),
+          email: formatEmailList(agencyFinRespEmail),
           phone: agencyFinRespPhone.trim()
         },
         defaultBillingRecipients: {
@@ -1203,20 +1277,27 @@ export default function CrmGuests() {
         }
       }
 
-      if (editingAgency) {
-        await fetch(`/api/agencies/${editingAgency.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          credentials: "include"
+      const res = editingAgency
+        ? await fetch(`/api/agencies/${editingAgency.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            credentials: "include"
+          })
+        : await fetch("/api/agencies", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            credentials: "include"
+          })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        toast({
+          title: "Erro ao salvar agência",
+          description: errData.error || "Verifique os dados informados.",
+          variant: "destructive"
         })
-      } else {
-        await fetch("/api/agencies", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          credentials: "include"
-        })
+        return
       }
       setAgencyModalOpen(false)
       fetchAgencies()
@@ -1308,6 +1389,7 @@ export default function CrmGuests() {
         (g.fullName || g.name || "").toLowerCase().includes(term) ||
         (g.phone || "").toLowerCase().includes(term) ||
         (g.email || "").toLowerCase().includes(term) ||
+        (g.financialResponsible?.email || g.financialResponsibleEmail || "").toLowerCase().includes(term) ||
         (g.documentNumber || g.document || "").includes(term) ||
         (g.city || "").toLowerCase().includes(term) ||
         (g.companyName || "").toLowerCase().includes(term)
@@ -1340,9 +1422,13 @@ export default function CrmGuests() {
     const term = search.toLowerCase()
     return companies.filter(c => (
       (c.corporateName || "").toLowerCase().includes(term) ||
+      (c.razaoSocial || "").toLowerCase().includes(term) ||
       (c.tradeName || "").toLowerCase().includes(term) ||
+      (c.nomeFantasia || "").toLowerCase().includes(term) ||
       (c.cnpj || "").includes(term) ||
-      (c.contactPerson || "").toLowerCase().includes(term)
+      (c.contactPerson || "").toLowerCase().includes(term) ||
+      (c.financialEmail || c.emailFinanceiro || "").toLowerCase().includes(term) ||
+      (c.financialResponsible?.email || c.financialResponsibleEmail || "").toLowerCase().includes(term)
     ))
   }, [companies, search])
 
@@ -1357,6 +1443,7 @@ export default function CrmGuests() {
         (a.tradeName || "").toLowerCase().includes(term) ||
         (a.cnpj || "").includes(term) ||
         (a.financialEmail || "").toLowerCase().includes(term) ||
+        (a.financialResponsible?.email || a.financialResponsibleEmail || "").toLowerCase().includes(term) ||
         (a.contactPerson || "").toLowerCase().includes(term) ||
         posStr.includes(term) ||
         agentsStr.includes(term)
@@ -1960,12 +2047,33 @@ export default function CrmGuests() {
 
                           <td className="p-3.5">
                             <div className="font-semibold text-foreground">{c.contactPerson || "—"}</div>
-                            {c.financialEmail ? (
-                              <div className="text-[10px] text-muted-foreground">{c.financialEmail}</div>
-                            ) : (
-                              <div className="text-[10px] text-muted-foreground/70 italic">NFS-e enviada ao hóspede</div>
-                            )}
-                            {c.phone && <div className="text-[10px] text-muted-foreground">{c.phone}</div>}
+                            {(() => {
+                              const rawFin = c.financialEmail || c.emailFinanceiro || ""
+                              const finEmails = parseEmailList(rawFin)
+                              const respEmails = parseEmailList(c.financialResponsible?.email || c.financialResponsibleEmail || "").filter(em => !finEmails.includes(em))
+                              const allEmails = [...finEmails, ...respEmails]
+                              if (allEmails.length > 0) {
+                                return (
+                                  <div className="flex flex-wrap gap-1 mt-0.5 max-w-[280px]">
+                                    {allEmails.map(em => (
+                                      <Badge
+                                        key={em}
+                                        variant="outline"
+                                        title={em}
+                                        className="text-[10px] font-normal px-1.5 py-0 max-w-[260px] truncate"
+                                      >
+                                        {em}
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                )
+                              }
+                              if (rawFin) {
+                                return <div className="text-[10px] text-muted-foreground break-all">{rawFin}</div>
+                              }
+                              return <div className="text-[10px] text-muted-foreground/70 italic">NFS-e enviada ao hóspede</div>
+                            })()}
+                            {c.phone && <div className="text-[10px] text-muted-foreground mt-0.5">{c.phone}</div>}
                           </td>
 
                           <td className="p-3.5">
@@ -3405,7 +3513,7 @@ export default function CrmGuests() {
                   <Input
                     value={formFinRespEmail}
                     onChange={e => setFormFinRespEmail(e.target.value)}
-                    placeholder="E-mail Notas/Boletos"
+                    placeholder="E-mails Notas/Boletos (separe por ;)"
                     className="h-8 text-xs rounded-xl"
                   />
                   <Input
@@ -3612,7 +3720,15 @@ export default function CrmGuests() {
                 <Label className="font-bold">
                   {compBillingEnabled ? "E-mail Financeiro" : "E-mail da Empresa (Opcional — deixe vazio p/ enviar NFS-e só ao hóspede)"}
                 </Label>
-                <Input value={compFinancialEmail} onChange={e => setCompFinancialEmail(e.target.value)} placeholder={compBillingEnabled ? "financeiro@empresa.com" : "Opcional"} className="h-9 text-xs rounded-xl" />
+                <Input
+                  value={compFinancialEmail}
+                  onChange={e => setCompFinancialEmail(e.target.value)}
+                  placeholder={compBillingEnabled ? "financeiro@empresa.com; fiscal@empresa.com" : "Opcional — separe múltiplos por ;"}
+                  className="h-9 text-xs rounded-xl"
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Aceita múltiplos e-mails separados por ponto e vírgula (<code className="font-mono">;</code>).
+                </p>
               </div>
 
               {/* Endereço Fiscal da Empresa */}
@@ -3798,7 +3914,7 @@ export default function CrmGuests() {
 
                     <div className="grid grid-cols-3 gap-1.5">
                       <Input value={compFinRespName} onChange={e => setCompFinRespName(e.target.value)} placeholder="Nome Resp. Financeiro" className="h-8 text-xs rounded-xl" />
-                      <Input value={compFinRespEmail} onChange={e => setCompFinRespEmail(e.target.value)} placeholder="E-mail Notas/Boletos" className="h-8 text-xs rounded-xl" />
+                      <Input value={compFinRespEmail} onChange={e => setCompFinRespEmail(e.target.value)} placeholder="E-mails Notas/Boletos (separe por ;)" className="h-8 text-xs rounded-xl" />
                       <Input type="tel" inputMode="tel" value={compFinRespPhone} onChange={e => setCompFinRespPhone(formatSmartPhone(e.target.value))} placeholder="WhatsApp Resp. Fin." className="h-8 text-xs rounded-xl font-mono" />
                     </div>
                     <div className="flex flex-wrap gap-3 text-[11px] font-semibold pt-0.5">
@@ -3877,7 +3993,8 @@ export default function CrmGuests() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <div className="space-y-1">
                   <Label className="font-bold">E-mail Faturamento / Conciliação</Label>
-                  <Input value={agencyFinancialEmail} onChange={e => setAgencyFinancialEmail(e.target.value)} placeholder="faturamento@agencia.com.br" className="h-9 text-xs rounded-xl" />
+                  <Input value={agencyFinancialEmail} onChange={e => setAgencyFinancialEmail(e.target.value)} placeholder="faturamento@agencia.com.br; fiscal@agencia.com.br" className="h-9 text-xs rounded-xl" />
+                  <p className="text-[10px] text-muted-foreground">Separe múltiplos por <code className="font-mono">;</code>.</p>
                 </div>
                 <div className="space-y-1">
                   <Label className="font-bold">Responsável / Gestor</Label>
@@ -3964,7 +4081,7 @@ export default function CrmGuests() {
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   <Input value={agencyFinRespName} onChange={e => setAgencyFinRespName(e.target.value)} placeholder="Nome Resp. Financeiro" className="h-8 text-xs rounded-xl" />
-                  <Input value={agencyFinRespEmail} onChange={e => setAgencyFinRespEmail(e.target.value)} placeholder="E-mail Notas/Boletos" className="h-8 text-xs rounded-xl" />
+                  <Input value={agencyFinRespEmail} onChange={e => setAgencyFinRespEmail(e.target.value)} placeholder="E-mails Notas/Boletos (separe por ;)" className="h-8 text-xs rounded-xl" />
                   <Input type="tel" inputMode="tel" value={agencyFinRespPhone} onChange={e => setAgencyFinRespPhone(formatSmartPhone(e.target.value))} placeholder="WhatsApp Resp. Fin." className="h-8 text-xs rounded-xl font-mono" />
                 </div>
                 <div className="flex flex-wrap gap-3 text-[11px] font-semibold pt-0.5">
@@ -4573,9 +4690,35 @@ export default function CrmGuests() {
                     <div className="text-xs font-bold text-foreground mt-0.5 truncate">
                       {activeCompanyDetail.financialResponsible?.name || activeCompanyDetail.contactPerson || "Não definido"}
                     </div>
-                    <div className="text-[10px] text-muted-foreground truncate">
-                      {activeCompanyDetail.financialResponsible?.email || activeCompanyDetail.financialEmail || "—"}
-                    </div>
+                    {(() => {
+                      const rawResp = activeCompanyDetail.financialResponsible?.email || activeCompanyDetail.financialResponsibleEmail || ""
+                      const rawComp = activeCompanyDetail.financialEmail || activeCompanyDetail.emailFinanceiro || ""
+                      const respEmails = parseEmailList(rawResp)
+                      const compEmails = parseEmailList(rawComp).filter(em => !respEmails.includes(em))
+                      const allEmails = [...respEmails, ...compEmails]
+                      if (allEmails.length > 0) {
+                        return (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {allEmails.map(em => (
+                              <Badge
+                                key={em}
+                                variant="outline"
+                                title={em}
+                                className="text-[10px] font-normal px-1.5 py-0 max-w-full break-all"
+                              >
+                                {em}
+                              </Badge>
+                            ))}
+                          </div>
+                        )
+                      }
+                      const rawFallback = rawResp || rawComp
+                      return (
+                        <div className="text-[10px] text-muted-foreground mt-0.5 break-all">
+                          {rawFallback || "—"}
+                        </div>
+                      )
+                    })()}
                   </Card>
                 </div>
 

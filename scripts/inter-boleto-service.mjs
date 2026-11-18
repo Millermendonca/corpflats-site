@@ -16,6 +16,7 @@ import crypto from "crypto";
 import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
 import { getInterCredentials, isInterConfigured, INTER_ENV, BASE_URL } from "./inter-pix-service.mjs";
+import { getPrimaryEmail } from "./mail-service.mjs";
 
 let _boletoTokenCache = null;
 let _boletoTokenExpiresAt = 0;
@@ -294,7 +295,7 @@ export function normalizeInterBoletoPayer(rawPayer = {}) {
     cpfCnpj,
     tipoPessoa,
     nome: String(rawPayer.name || rawPayer.nome || rawPayer.corporateName || "Cliente Faturado").trim().slice(0, 100),
-    email: String(rawPayer.email || "").trim().slice(0, 100),
+    email: getPrimaryEmail(rawPayer.email).slice(0, 100),
     ddd,
     telefone,
     endereco: String(rawPayer.street || rawPayer.endereco || rawPayer.address || "Rua Voluntários da Pátria").trim().slice(0, 90) || "Rua Voluntários da Pátria",

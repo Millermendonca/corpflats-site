@@ -26,6 +26,7 @@ import {
 import { useToast } from "@/hooks/use-toast"
 import { sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildDirectWaWebUrl } from "@/hooks/use-quick-messages"
 import { formatSmartPhone } from "@/lib/phone-mask"
+import { parseEmailList, validateEmailList, formatEmailList, getPrimaryEmail } from "@/lib/email-utils"
 
 interface ChatMessage {
   role: "user" | "assistant"
@@ -174,6 +175,7 @@ export default function FiscalInvoicesPage() {
   const [tomadorMode, setTomadorMode] = useState<"pj" | "pf" | "agency" | "requester">("pf")
   const [formNfHideFromGuest, setFormNfHideFromGuest] = useState(false)
   const [formNfDeliveryEmails, setFormNfDeliveryEmails] = useState("")
+  const [replaceDraftMeta, setReplaceDraftMeta] = useState<any | null>(null)
   const guestComboboxRef = useRef<HTMLDivElement>(null)
 
   // ── Configurações Fiscais e Template de Tags ────────────────────────────────
@@ -407,7 +409,8 @@ export default function FiscalInvoicesPage() {
     setEbConsumptionPayerDoc(res.boletoConsumptionPayerDoc || res.guestDocument || "")
     const fr = res.financialResponsible || res.company?.financialResponsible || res.agency?.financialResponsible || res.guest?.financialResponsible || {}
     setEbFinRespName(fr.name || res.financialResponsibleName || "")
-    setEbFinRespEmail(fr.email || res.financialResponsibleEmail || "")
+    const rawEbEmail = fr.email || res.financialResponsibleEmail || ""
+    setEbFinRespEmail(formatEmailList(rawEbEmail) || rawEbEmail)
     setEbFinRespPhone(fr.phone || res.financialResponsiblePhone || "")
     setEbFinRespDoc(fr.document || res.financialResponsibleDoc || "")
     const dr = res.billingDeliveryRecipients || res.company?.defaultBillingRecipients || res.agency?.defaultBillingRecipients || res.guest?.defaultBillingRecipients || {}
@@ -425,6 +428,15 @@ export default function FiscalInvoicesPage() {
   const handleConfirmEmitBoletoPackage = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!emitBoletoTargetRes) return
+    const finEmailCheck = validateEmailList(ebFinRespEmail)
+    if (!finEmailCheck.valid) {
+      toast({
+        title: "E-mail do Responsável Financeiro inválido",
+        description: `Corrija: ${finEmailCheck.invalidTokens.join(", ")}. Separe múltiplos e-mails por ";".`,
+        variant: "destructive"
+      })
+      return
+    }
     setEmittingBoletoPackage(true)
     try {
       const resp = await fetch("/api/boletos/emit", {
@@ -447,7 +459,7 @@ export default function FiscalInvoicesPage() {
           jurosMonthlyPct: Number(ebJurosMonthlyPct) || 1,
           financialResponsible: {
             name: ebFinRespName.trim(),
-            email: ebFinRespEmail.trim(),
+            email: formatEmailList(ebFinRespEmail),
             phone: ebFinRespPhone.trim(),
             document: ebFinRespDoc.trim()
           },
@@ -927,7 +939,8 @@ export default function FiscalInvoicesPage() {
     const compDoc = (comp?.cnpj || r?.companyCnpj || "").replace(/\D/g, "")
     const knownPj = compDoc.length === 14 ? KNOWN_PJ_DIRECTORY_FRONTEND[compDoc] : undefined
     const compName = comp?.corporateName || comp?.tradeName || comp?.razaoSocial || comp?.name || r?.companyName || knownPj?.razaoSocial || "Empresa"
-    const compEmail = comp?.financialEmail || comp?.email || (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || ""
+    const rawCompEmail = comp?.financialEmail || comp?.email || formatEmailList(r?.nfDeliveryEmails) || ""
+    const compEmail = formatEmailList(rawCompEmail) || rawCompEmail
     const guestWhatsApp = (guestInfo?.phone || r?.guestPhone || formTomadorTelefone || "").replace(/\D/g, "")
     const rawCompTel = (comp?.phone || "").replace(/\D/g, "")
     const compTel = (!formNfHideFromGuest && guestWhatsApp) ? guestWhatsApp : (rawCompTel || guestWhatsApp)
@@ -990,6 +1003,7 @@ export default function FiscalInvoicesPage() {
     setFormTomadorNome(compName)
     setFormTomadorDoc(compDoc)
     setFormTomadorEmail(compEmail)
+    if (parseEmailList(compEmail).length > 1 && !formNfDeliveryEmails) setFormNfDeliveryEmails(compEmail)
     setFormTomadorTelefone(compTel)
     setFormTomadorEndereco(compEnd)
     setFormTomadorNumero(compNum)
@@ -1054,7 +1068,8 @@ export default function FiscalInvoicesPage() {
     const agDoc = (ag?.cnpj || r?.agencyCnpj || "").replace(/\D/g, "")
     const knownAg = agDoc.length === 14 ? KNOWN_PJ_DIRECTORY_FRONTEND[agDoc] : undefined
     const agName = ag?.corporateName || ag?.razaoSocial || ag?.tradeName || ag?.name || r?.agencyName || knownAg?.razaoSocial || "Agência de Viagens"
-    const agEmail = ag?.financialEmail || ag?.email || r?.agencyAgentEmail || (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || ""
+    const rawAgEmail = ag?.financialEmail || ag?.email || r?.agencyAgentEmail || formatEmailList(r?.nfDeliveryEmails) || ""
+    const agEmail = formatEmailList(rawAgEmail) || rawAgEmail
     const agTel = (ag?.phone || r?.agencyAgentPhone || "").replace(/\D/g, "")
 
     const rawAgEnd = ag?.address || ag?.logradouro || ag?.endereco || r?.agencyAddress || ""
@@ -1125,7 +1140,7 @@ export default function FiscalInvoicesPage() {
     setFormTomadorIbge(agIbge)
     setFormDescricao(desc)
     setFormNfHideFromGuest(true)
-    if (agEmail && !formNfDeliveryEmails) setFormNfDeliveryEmails(agEmail)
+    if (agEmail && !formNfDeliveryEmails) setFormNfDeliveryEmails(formatEmailList(agEmail) || agEmail)
     if (flat) setFormFlatNumber(flat)
     if (checkin) setFormCheckin(checkin)
     if (checkout) setFormCheckout(checkout)
@@ -1560,7 +1575,7 @@ export default function FiscalInvoicesPage() {
       corporateName: res.agencyName || res.agencyTradeName,
       tradeName: res.agencyTradeName || res.agencyName,
       cnpj: res.agencyCnpj || "",
-      financialEmail: res.agencyAgentEmail || (Array.isArray(res.nfDeliveryEmails) ? res.nfDeliveryEmails[0] : "") || "",
+      financialEmail: res.agencyAgentEmail || formatEmailList(res.nfDeliveryEmails) || "",
       phone: res.agencyAgentPhone || "",
       address: res.agencyAddress || "",
       number: res.agencyNumber || "",
@@ -1583,7 +1598,7 @@ export default function FiscalInvoicesPage() {
       corporateName: res.companyName,
       tradeName: res.companyName,
       cnpj: res.companyCnpj || "",
-      financialEmail: (Array.isArray(res.nfDeliveryEmails) ? res.nfDeliveryEmails[0] : "") || "",
+      financialEmail: formatEmailList(res.nfDeliveryEmails) || "",
       address: res.companyAddress || "",
       number: res.companyNumber || "",
       complement: res.companyComplement || "",
@@ -1597,7 +1612,7 @@ export default function FiscalInvoicesPage() {
     setLinkedAgency(foundAgency)
     setLinkedCompany(foundComp)
     setFormNfHideFromGuest(Boolean(res.nfHideFromGuest ?? (res.channel === "b2b")))
-    setFormNfDeliveryEmails(Array.isArray(res.nfDeliveryEmails) ? res.nfDeliveryEmails.join(", ") : "")
+    setFormNfDeliveryEmails(formatEmailList(res.nfDeliveryEmails))
 
     const stayInfo = {
       flatNumber: flat,
@@ -1880,7 +1895,7 @@ export default function FiscalInvoicesPage() {
       if (!q) return true
       const nameMatch = (a.corporateName || a.tradeName || a.name || "").toLowerCase().includes(q)
       const cnpjMatch = qDigits ? (a.cnpj || "").replace(/\D/g, "").includes(qDigits) : false
-      const emailMatch = (a.financialEmail || a.email || "").toLowerCase().includes(q)
+      const emailMatch = `${a.financialEmail || ""} ${a.email || ""} ${a.financialResponsible?.email || a.financialResponsibleEmail || ""}`.toLowerCase().includes(q)
       return nameMatch || cnpjMatch || emailMatch
     }).slice(0, q ? 8 : 4).map(a => ({
       id: `agency-${a.id}`,
@@ -1895,7 +1910,7 @@ export default function FiscalInvoicesPage() {
       if (!q) return true
       const nameMatch = (c.corporateName || c.tradeName || c.razaoSocial || c.name || "").toLowerCase().includes(q)
       const cnpjMatch = qDigits ? (c.cnpj || "").replace(/\D/g, "").includes(qDigits) : false
-      const emailMatch = (c.financialEmail || c.email || "").toLowerCase().includes(q)
+      const emailMatch = `${c.financialEmail || c.emailFinanceiro || ""} ${c.email || ""} ${c.financialResponsible?.email || c.financialResponsibleEmail || ""}`.toLowerCase().includes(q)
       return nameMatch || cnpjMatch || emailMatch
     }).slice(0, q ? 10 : 5).map(c => ({
       id: `comp-${c.id}`,
@@ -1941,6 +1956,7 @@ export default function FiscalInvoicesPage() {
   }, [agencies, companies, guests, reservations, guestSearchQuery])
 
   const handleSelectEntity = (item: CrmSearchItem) => {
+    setReplaceDraftMeta(null)
     setSelectedEntity(item)
     setGuestDropdownOpen(false)
     setGuestSearchQuery(item.title)
@@ -2077,7 +2093,7 @@ export default function FiscalInvoicesPage() {
         // Sincroniza de volta para o formulário estruturado
         if (merged.tomadorNome) setFormTomadorNome(merged.tomadorNome)
         if (merged.tomadorCpfCnpj) setFormTomadorDoc(merged.tomadorCpfCnpj)
-        if (merged.tomadorEmail) setFormTomadorEmail(merged.tomadorEmail)
+        if (merged.tomadorEmail) setFormTomadorEmail(formatEmailList(merged.tomadorEmail) || merged.tomadorEmail)
         if (merged.tomadorTelefone) setFormTomadorTelefone(formatSmartPhone(merged.tomadorTelefone))
         if (merged.tomadorEndereco) setFormTomadorEndereco(merged.tomadorEndereco)
         if (merged.tomadorNumero) setFormTomadorNumero(merged.tomadorNumero)
@@ -2117,26 +2133,72 @@ export default function FiscalInvoicesPage() {
     setIsEmitting(true)
     setEmissionErrorData(null)
 
-    const deliveryEmailsList = formNfDeliveryEmails
-      .split(/[;,]/)
-      .map(s => s.trim())
-      .filter(Boolean)
+    const rawTomadorEmail = formTomadorEmail || extractedData.tomadorEmail || ""
+    if (!paramsOverride) {
+      const tomadorEmailCheck = validateEmailList(rawTomadorEmail)
+      if (!tomadorEmailCheck.valid) {
+        toast({
+          title: "E-mail Principal do Tomador inválido",
+          description: `Corrija: ${tomadorEmailCheck.invalidTokens.join(", ")}. Separe múltiplos e-mails por ";".`,
+          variant: "destructive"
+        })
+        setIsEmitting(false)
+        return
+      }
+      const deliveryEmailCheck = validateEmailList(formNfDeliveryEmails)
+      if (!deliveryEmailCheck.valid) {
+        toast({
+          title: "E-mail(s) de faturamento inválido(s)",
+          description: `Corrija: ${deliveryEmailCheck.invalidTokens.join(", ")}. Separe múltiplos e-mails por ";".`,
+          variant: "destructive"
+        })
+        setIsEmitting(false)
+        return
+      }
+    }
+
+    const tomadorTokens = parseEmailList(rawTomadorEmail)
+    const primaryTomadorEmail = getPrimaryEmail(rawTomadorEmail)
+    const explicitDelivery = parseEmailList(formNfDeliveryEmails)
+    const deliveryEmailsList = explicitDelivery.length > 0
+      ? parseEmailList([...explicitDelivery, ...(tomadorTokens.length > 1 ? tomadorTokens : [])])
+      : (tomadorTokens.length > 1 ? tomadorTokens : [])
 
     const payload = paramsOverride || {
       sistemaEmissor,
-      reservationId: linkedReservation?.id || undefined,
-      reservationCode: linkedReservation?.code || undefined,
+      reservationId: linkedReservation?.id || replaceDraftMeta?.reservationId || undefined,
+      reservationCode: linkedReservation?.code || replaceDraftMeta?.reservationCode || undefined,
       invoiceRecipientType: tomadorMode === "agency" ? "agency" : tomadorMode === "pj" ? "company" : tomadorMode === "requester" ? "requester" : "guest",
-      agencyId: tomadorMode === "agency" ? (linkedAgency?.id || linkedReservation?.agencyId || undefined) : (linkedReservation?.agencyId || undefined),
-      companyId: tomadorMode === "pj" ? (linkedCompany?.id || linkedReservation?.companyId || undefined) : (linkedReservation?.companyId || undefined),
-      guestId: linkedGuest?.id || selectedGuest?.id || linkedReservation?.guestId || undefined,
+      agencyId: tomadorMode === "agency"
+        ? (linkedAgency?.id || linkedReservation?.agencyId || replaceDraftMeta?.agencyId || undefined)
+        : (linkedReservation?.agencyId || replaceDraftMeta?.agencyId || undefined),
+      companyId: tomadorMode === "pj"
+        ? (linkedCompany?.id || linkedReservation?.companyId || replaceDraftMeta?.companyId || undefined)
+        : (linkedReservation?.companyId || replaceDraftMeta?.companyId || undefined),
+      guestId: linkedGuest?.id || selectedGuest?.id || linkedReservation?.guestId || replaceDraftMeta?.guestId || undefined,
       guestName: linkedGuest?.fullName || linkedGuest?.name || selectedGuest?.fullName || selectedGuest?.name || linkedReservation?.guestName || undefined,
       guestPhone: (linkedGuest?.phone || selectedGuest?.phone || linkedReservation?.guestPhone || "").replace(/\D/g, "") || undefined,
+      requesterIsGuest1: replaceDraftMeta?.requesterIsGuest1 !== undefined ? replaceDraftMeta.requesterIsGuest1 : linkedReservation?.requesterIsGuest1,
+      ...(replaceDraftMeta?.isConsolidated ? {
+        isConsolidated: true,
+        reservationIds: replaceDraftMeta.reservationIds,
+        reservationCodes: replaceDraftMeta.reservationCodes,
+        packageId: replaceDraftMeta.packageId || undefined
+      } : {}),
+      ...(replaceDraftMeta?.substituiNfseId ? {
+        substituiNfseId: replaceDraftMeta.substituiNfseId,
+        substituiNumeroNfse: replaceDraftMeta.substituiNumeroNfse,
+        substituiChaveAcesso: replaceDraftMeta.substituiChaveAcesso || undefined
+      } : {}),
+      ...(replaceDraftMeta?.regraFiscalId ? { regraFiscalId: replaceDraftMeta.regraFiscalId } : {}),
+      ...(replaceDraftMeta?.cnae ? { cnae: replaceDraftMeta.cnae } : {}),
+      ...(replaceDraftMeta?.codigoServico ? { codigoServico: replaceDraftMeta.codigoServico } : {}),
+      ...(replaceDraftMeta?.codigoTributacaoMunicipio ? { codigoTributacaoMunicipio: replaceDraftMeta.codigoTributacaoMunicipio } : {}),
       nfHideFromGuest: formNfHideFromGuest,
       nfDeliveryEmails: deliveryEmailsList.length > 0 ? deliveryEmailsList : undefined,
       tomadorNome: formTomadorNome || extractedData.tomadorNome,
       tomadorCpfCnpj: formTomadorDoc || extractedData.tomadorCpfCnpj,
-      tomadorEmail: formTomadorEmail || extractedData.tomadorEmail,
+      tomadorEmail: primaryTomadorEmail || undefined,
       tomadorTelefone: formTomadorTelefone || extractedData.tomadorTelefone,
       tomadorEndereco: formTomadorEndereco || extractedData.tomadorEndereco,
       tomadorNumero: formTomadorNumero || extractedData.tomadorNumero,
@@ -2172,6 +2234,10 @@ export default function FiscalInvoicesPage() {
           variant: "destructive"
         })
         return
+      }
+
+      if (!paramsOverride) {
+        setReplaceDraftMeta(null)
       }
 
       const inv = data.invoice || data
@@ -2230,6 +2296,36 @@ export default function FiscalInvoicesPage() {
     if (silent && !tomadorFormDirtyRef.current && Object.keys(overrides).length === 0) {
       return
     }
+    const rawTomadorEmailVal = overrides.tomadorEmail !== undefined ? overrides.tomadorEmail : formTomadorEmail
+    const rawDeliveryEmailsVal = overrides.nfDeliveryEmails !== undefined ? overrides.nfDeliveryEmails : formNfDeliveryEmails
+    const tomadorEmailCheck = validateEmailList(rawTomadorEmailVal)
+    if (!tomadorEmailCheck.valid) {
+      if (!silent) {
+        toast({
+          title: "E-mail Principal do Tomador inválido",
+          description: `Corrija: ${tomadorEmailCheck.invalidTokens.join(", ")}. Separe múltiplos e-mails por ";".`,
+          variant: "destructive"
+        })
+      }
+      return
+    }
+    const deliveryEmailCheck = validateEmailList(rawDeliveryEmailsVal)
+    if (!deliveryEmailCheck.valid) {
+      if (!silent) {
+        toast({
+          title: "E-mail(s) de faturamento inválido(s)",
+          description: `Corrija: ${deliveryEmailCheck.invalidTokens.join(", ")}. Separe múltiplos e-mails por ";".`,
+          variant: "destructive"
+        })
+      }
+      return
+    }
+    const normalizedTomadorEmail =
+      tomadorMode === "pj" || tomadorMode === "agency"
+        ? formatEmailList(rawTomadorEmailVal)
+        : (getPrimaryEmail(rawTomadorEmailVal) || formatEmailList(rawTomadorEmailVal))
+    const normalizedDeliveryEmails = formatEmailList(rawDeliveryEmailsVal)
+
     const activeGuestObj = linkedGuest || selectedGuest
     const payload = {
       tomadorMode,
@@ -2241,11 +2337,11 @@ export default function FiscalInvoicesPage() {
       companyId: linkedCompany?.id || linkedReservation?.companyId || undefined,
       agencyId: linkedAgency?.id || linkedReservation?.agencyId || undefined,
       nfHideFromGuest: overrides.nfHideFromGuest !== undefined ? overrides.nfHideFromGuest : formNfHideFromGuest,
-      nfDeliveryEmails: overrides.nfDeliveryEmails !== undefined ? overrides.nfDeliveryEmails : formNfDeliveryEmails,
+      nfDeliveryEmails: normalizedDeliveryEmails,
       descricaoServico: overrides.descricaoServico !== undefined ? overrides.descricaoServico : formDescricao,
       tomadorNome: overrides.tomadorNome !== undefined ? overrides.tomadorNome : formTomadorNome,
       tomadorCpfCnpj: overrides.tomadorCpfCnpj !== undefined ? overrides.tomadorCpfCnpj : formTomadorDoc,
-      tomadorEmail: overrides.tomadorEmail !== undefined ? overrides.tomadorEmail : formTomadorEmail,
+      tomadorEmail: normalizedTomadorEmail,
       tomadorTelefone: overrides.tomadorTelefone !== undefined ? overrides.tomadorTelefone : formTomadorTelefone,
       tomadorEndereco: overrides.tomadorEndereco !== undefined ? overrides.tomadorEndereco : formTomadorEndereco,
       tomadorNumero: overrides.tomadorNumero !== undefined ? overrides.tomadorNumero : formTomadorNumero,
@@ -2351,7 +2447,11 @@ export default function FiscalInvoicesPage() {
           if (data.uf) { setFormTomadorUf(data.uf); nextOverrides.tomadorUf = data.uf }
           const resolvedIbge = data.codigoMunicipio || data.ibge || data.ibgeCode
           if (resolvedIbge) { setFormTomadorIbge(resolvedIbge); nextOverrides.tomadorCodigoMunicipio = resolvedIbge }
-          if (data.email) { setFormTomadorEmail(data.email); nextOverrides.tomadorEmail = data.email }
+          if (data.email) {
+            const normalizedEmail = formatEmailList(data.email) || String(data.email).trim()
+            setFormTomadorEmail(normalizedEmail)
+            nextOverrides.tomadorEmail = normalizedEmail
+          }
           if (data.telefone) {
             const maskedTel = formatSmartPhone(data.telefone)
             setFormTomadorTelefone(maskedTel)
@@ -2399,8 +2499,9 @@ export default function FiscalInvoicesPage() {
       const resolvedIbge = data.codigoMunicipio || data.ibge || data.ibgeCode
       if (resolvedIbge) { setFormTomadorIbge(String(resolvedIbge)); nextOverrides.tomadorCodigoMunicipio = String(resolvedIbge) }
       if (data.fromCrmOrDirectory && data.email && !formTomadorEmail) {
-        setFormTomadorEmail(data.email)
-        nextOverrides.tomadorEmail = data.email
+        const normalizedEmail = formatEmailList(data.email) || String(data.email).trim()
+        setFormTomadorEmail(normalizedEmail)
+        nextOverrides.tomadorEmail = normalizedEmail
       }
       const guestMobileFallback = !formNfHideFromGuest
         ? formatSmartPhone(linkedGuest?.phone || selectedGuest?.phone || linkedReservation?.guestPhone || "")
@@ -2820,6 +2921,15 @@ export default function FiscalInvoicesPage() {
       } catch {}
     }
 
+    const rawPendingTomadorEmail = isAgency
+      ? (res.agency?.financialEmail || res.agency?.email || res.agencyAgentEmail || formatEmailList(res.nfDeliveryEmails) || "")
+      : isComp
+        ? (res.company?.financialEmail || res.company?.email || formatEmailList(res.nfDeliveryEmails) || res.guest?.email || "")
+        : (res.guestEmail || res.guest?.email || "")
+    const pendingDeliveryEmails = parseEmailList(
+      isAgency || isComp ? [res.nfDeliveryEmails, rawPendingTomadorEmail] : res.nfDeliveryEmails
+    )
+
     const payload = {
       sistemaEmissor,
       reservationId: res.id,
@@ -2829,14 +2939,10 @@ export default function FiscalInvoicesPage() {
       companyId: res.company?.id || res.companyId || null,
       guestId: res.guest?.id || res.guestId || null,
       nfHideFromGuest: Boolean(res.nfHideFromGuest ?? (isAgency || res.channel === "b2b")),
-      nfDeliveryEmails: Array.isArray(res.nfDeliveryEmails) ? res.nfDeliveryEmails : undefined,
+      nfDeliveryEmails: pendingDeliveryEmails.length > 0 ? pendingDeliveryEmails : undefined,
       tomadorNome: res.tomadorDefaultName,
       tomadorCpfCnpj: res.doc,
-      tomadorEmail: isAgency
-        ? (res.agency?.financialEmail || res.agency?.email || res.agencyAgentEmail || (Array.isArray(res.nfDeliveryEmails) ? res.nfDeliveryEmails[0] : "") || "")
-        : isComp
-          ? (res.company?.financialEmail || res.company?.email || (Array.isArray(res.nfDeliveryEmails) ? res.nfDeliveryEmails[0] : "") || res.guest?.email || "")
-          : (res.guestEmail || res.guest?.email || ""),
+      tomadorEmail: getPrimaryEmail(rawPendingTomadorEmail) || undefined,
       tomadorTelefone: isAgency
         ? (res.agency?.phone || res.agencyAgentPhone || "")
         : isComp
@@ -2866,6 +2972,7 @@ export default function FiscalInvoicesPage() {
 
   // Carregar Reserva Pendente no Studio
   const handleLoadToStudio = (res: any) => {
+    setReplaceDraftMeta(null)
     setLinkedReservation(res)
     populateStayFromReservation(res)
     setActiveTab("studio")
@@ -2920,6 +3027,12 @@ export default function FiscalInvoicesPage() {
           companyName: item.company?.corporateName || item.companyName || undefined,
           agencyName: item.agency?.tradeName || item.agency?.corporateName || item.agencyName || undefined
         }
+        const itemDeliveryEmails = parseEmailList(item.nfDeliveryEmails)
+        const rawItemEmail = item.activeTomadorType === "agency"
+          ? (item.agency?.financialEmail || item.agency?.email || item.agencyAgentEmail || "")
+          : item.activeTomadorType === "company"
+            ? (item.company?.financialEmail || item.company?.email || "")
+            : (item.guestEmail || item.guest?.email || "")
         const emitRes = await fetch("/api/nfse/emit", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -2931,7 +3044,8 @@ export default function FiscalInvoicesPage() {
             agencyId: item.agency?.id || item.agencyId || null,
             companyId: item.company?.id || item.companyId || null,
             nfHideFromGuest: Boolean(item.nfHideFromGuest ?? (item.channel === "b2b")),
-            nfDeliveryEmails: Array.isArray(item.nfDeliveryEmails) ? item.nfDeliveryEmails : undefined,
+            nfDeliveryEmails: itemDeliveryEmails.length > 0 ? itemDeliveryEmails : undefined,
+            tomadorEmail: getPrimaryEmail(rawItemEmail) || undefined,
             tomadorNome: item.tomadorDefaultName,
             tomadorCpfCnpj: item.tomadorDefaultDoc,
             flatNumber: String(item.flatNumber),
@@ -3008,6 +3122,32 @@ export default function FiscalInvoicesPage() {
       return
     }
 
+    const rawEntityEmails = [
+      targetEntity.financialEmail,
+      targetEntity.emailFinanceiro,
+      targetEntity.email,
+      targetEntity.financialResponsible?.email,
+      targetEntity.financialResponsibleEmail
+    ].filter(Boolean)
+    const entityEmailCheck = validateEmailList(rawEntityEmails)
+    const tomadorEmail = getPrimaryEmail(rawEntityEmails)
+    const consolidatedDeliveryEmails = parseEmailList(rawEntityEmails)
+    if (!entityEmailCheck.valid && consolidatedDeliveryEmails.length === 0) {
+      toast({
+        title: "E-mail do tomador B2B inválido",
+        description: `Corrija os e-mails cadastrados (${entityEmailCheck.invalidTokens.join(", ")}) antes de emitir a nota consolidada.`,
+        variant: "destructive"
+      })
+      return
+    }
+    if (!entityEmailCheck.valid) {
+      toast({
+        title: "Atenção: e-mail(s) ignorado(s)",
+        description: `Alguns tokens inválidos foram ignorados (${entityEmailCheck.invalidTokens.join(", ")}); enviando para: ${consolidatedDeliveryEmails.join("; ")}.`,
+        variant: "destructive"
+      })
+    }
+
     setConsolidatedEmitting(true)
     const totalVal = selectedB2BItems.reduce((acc, i) => acc + Number(i.totalAmount || 0), 0)
 
@@ -3024,7 +3164,6 @@ export default function FiscalInvoicesPage() {
 
     const tomadorNome = targetEntity.corporateName || targetEntity.tradeName || targetEntity.name
     const tomadorCpfCnpj = (targetEntity.cnpj || "").replace(/\D/g, "")
-    const tomadorEmail = targetEntity.financialEmail || targetEntity.email
 
     try {
       const res = await fetch("/api/nfse/emit-consolidated", {
@@ -3038,7 +3177,8 @@ export default function FiscalInvoicesPage() {
           reservationIds: selectedPendingIds,
           tomadorNome,
           tomadorCpfCnpj,
-          tomadorEmail,
+          tomadorEmail: tomadorEmail || undefined,
+          nfDeliveryEmails: consolidatedDeliveryEmails.length > 0 ? consolidatedDeliveryEmails : undefined,
           tomadorTelefone: targetEntity.phone,
           valorServico: totalVal,
           descricaoServico: corporateDesc
@@ -3070,7 +3210,8 @@ export default function FiscalInvoicesPage() {
             reservationIds: selectedPendingIds,
             tomadorNome,
             tomadorCpfCnpj,
-            tomadorEmail,
+            tomadorEmail: tomadorEmail || undefined,
+            nfDeliveryEmails: consolidatedDeliveryEmails.length > 0 ? consolidatedDeliveryEmails : undefined,
             tomadorTelefone: targetEntity.phone,
             valorServico: totalVal,
             descricaoServico: corporateDesc
@@ -3272,17 +3413,153 @@ export default function FiscalInvoicesPage() {
         })
 
         const draft = data.draft || inv
-        setFormTomadorNome(draft.tomadorNome || "")
-        setFormTomadorDoc(draft.tomadorCpfCnpj || "")
-        setFormTomadorEmail(draft.tomadorEmail || "")
-        setFormTomadorTelefone(draft.tomadorTelefone || "")
+        const rawRecipientType = String(draft.invoiceRecipientType || "").toLowerCase()
+        const cleanReplaceDoc = String(draft.tomadorCpfCnpj || "").replace(/\D/g, "")
+        const resolvedMode: "pf" | "pj" | "agency" | "requester" =
+          rawRecipientType === "agency"
+            ? "agency"
+            : rawRecipientType === "company"
+              ? "pj"
+              : rawRecipientType === "requester"
+                ? "requester"
+                : (rawRecipientType === "guest" || rawRecipientType === "requester_pf")
+                  ? "pf"
+                  : draft.agencyId
+                    ? "agency"
+                    : (draft.companyId || cleanReplaceDoc.length === 14)
+                      ? "pj"
+                      : "pf"
+        setTomadorMode(resolvedMode)
+
+        const matchedRes = reservations.find(r =>
+          (draft.reservationId && String(r.id) === String(draft.reservationId)) ||
+          (draft.reservationCode && String(r.code) === String(draft.reservationCode))
+        ) || null
+        setLinkedReservation(matchedRes)
+
+        const matchedComp = companies.find(c =>
+          (draft.companyId && String(c.id) === String(draft.companyId)) ||
+          (cleanReplaceDoc.length === 14 && resolvedMode === "pj" && String(c.cnpj || "").replace(/\D/g, "") === cleanReplaceDoc)
+        ) || null
+        setLinkedCompany(matchedComp)
+
+        const matchedAgency = agencies.find(a =>
+          (draft.agencyId && String(a.id) === String(draft.agencyId)) ||
+          (cleanReplaceDoc.length === 14 && resolvedMode === "agency" && String(a.cnpj || "").replace(/\D/g, "") === cleanReplaceDoc)
+        ) || null
+        setLinkedAgency(matchedAgency)
+
+        const matchedGuest = guests.find(g =>
+          (draft.guestId && String(g.id) === String(draft.guestId)) ||
+          (cleanReplaceDoc.length === 11 && resolvedMode === "pf" && String(g.documentNumber || g.document || g.cpf || "").replace(/\D/g, "") === cleanReplaceDoc)
+        ) || null
+        setLinkedGuest(matchedGuest)
+        setSelectedGuest(matchedGuest || null)
+        setLinkedRequester(
+          resolvedMode === "requester"
+            ? (guests.find(g => cleanReplaceDoc.length === 11 && String(g.documentNumber || g.document || g.cpf || "").replace(/\D/g, "") === cleanReplaceDoc) || matchedRes?.requesterInfo || null)
+            : null
+        )
+
+        const checkinRaw = draft.checkinDate || draft.checkIn || ""
+        const checkoutRaw = draft.checkoutDate || draft.checkOut || ""
+        const checkin = checkinRaw ? String(checkinRaw).substring(0, 10) : ""
+        const checkout = checkoutRaw ? String(checkoutRaw).substring(0, 10) : ""
+        const desc = draft.discriminacao || draft.descricaoServico || ""
+        const aliq = String(draft.aliquota ?? draft.aliquotaIss ?? "2.00")
+        let diarias = Number(draft.quantidadeDiarias || 0)
+        if (!diarias && checkin && checkout) {
+          const t1 = new Date(checkin).getTime()
+          const t2 = new Date(checkout).getTime()
+          if (t2 > t1) {
+            diarias = Math.max(1, Math.round((t2 - t1) / (1000 * 60 * 60 * 24)))
+          }
+        }
+        if (!diarias) diarias = 1
+
+        const replaceTomadorNome = draft.tomadorNome || ""
+        const replaceTomadorDoc = draft.tomadorCpfCnpj || ""
+        const replaceTomadorEmail = getPrimaryEmail(draft.tomadorEmail) || draft.tomadorEmail || ""
+        const replaceTomadorTel = draft.tomadorTelefone ? formatSmartPhone(draft.tomadorTelefone) : ""
+        const replaceEnd = draft.tomadorEndereco || draft.tomadorLogradouro || ""
+        const replaceNum = draft.tomadorNumero || ""
+        const replaceComp = draft.tomadorComplemento || ""
+        const replaceBairro = draft.tomadorBairro || ""
+        const replaceCep = draft.tomadorCep || ""
+        const replaceCidade = draft.tomadorCidade || "Campos dos Goytacazes"
+        const replaceUf = draft.tomadorUf || "RJ"
+        const replaceIbge = draft.tomadorCodigoMunicipio || "3301009"
+        const replaceDeliveryEmails = formatEmailList(draft.nfDeliveryEmails)
+        const replaceHideFromGuest = Boolean(draft.nfHideFromGuest)
+
+        setFormTomadorNome(replaceTomadorNome)
+        setFormTomadorDoc(replaceTomadorDoc)
+        setFormTomadorEmail(replaceTomadorEmail)
+        setFormTomadorTelefone(replaceTomadorTel)
+        setFormTomadorEndereco(replaceEnd)
+        setFormTomadorNumero(replaceNum)
+        setFormTomadorComplemento(replaceComp)
+        setFormTomadorBairro(replaceBairro)
+        setFormTomadorCep(replaceCep)
+        setFormTomadorCidade(replaceCidade)
+        setFormTomadorUf(replaceUf)
+        setFormTomadorIbge(replaceIbge)
+        setFormNfHideFromGuest(replaceHideFromGuest)
+        setFormNfDeliveryEmails(replaceDeliveryEmails)
         setFormFlatNumber(draft.flatNumber || "")
-        setFormCheckin(draft.checkIn || "")
-        setFormCheckout(draft.checkOut || "")
-        setFormDiarias(draft.quantidadeDiarias || 1)
+        setFormCheckin(checkin)
+        setFormCheckout(checkout)
+        setFormDiarias(diarias)
+        setRawFormDiarias(undefined)
         setFormValor(String(draft.valorServico || ""))
-        setFormDescricao(draft.descricaoServico || "")
-        setExtractedData(draft)
+        setFormDescricao(desc)
+        setFormAliquota(aliq)
+        setExtractedData({
+          ...draft,
+          tomadorNome: replaceTomadorNome,
+          tomadorCpfCnpj: replaceTomadorDoc,
+          tomadorEmail: replaceTomadorEmail,
+          tomadorTelefone: replaceTomadorTel,
+          tomadorEndereco: replaceEnd,
+          tomadorNumero: replaceNum,
+          tomadorComplemento: replaceComp,
+          tomadorBairro: replaceBairro,
+          tomadorCep: replaceCep,
+          tomadorCidade: replaceCidade,
+          tomadorUf: replaceUf,
+          tomadorCodigoMunicipio: replaceIbge,
+          checkIn: checkin,
+          checkOut: checkout,
+          quantidadeDiarias: diarias,
+          descricaoServico: desc,
+          aliquotaIss: aliq,
+        })
+        setReplaceDraftMeta({
+          isConsolidated: Boolean(draft.isConsolidated),
+          reservationIds: Array.isArray(draft.reservationIds) ? draft.reservationIds : [],
+          reservationCodes: Array.isArray(draft.reservationCodes) ? draft.reservationCodes : [],
+          packageId: draft.packageId || null,
+          requesterIsGuest1: draft.requesterIsGuest1,
+          companyId: draft.companyId || null,
+          agencyId: draft.agencyId || null,
+          guestId: draft.guestId || null,
+          reservationId: draft.reservationId || null,
+          reservationCode: draft.reservationCode || null,
+          substituiNfseId: draft.substituiNfseId || inv.id || null,
+          substituiNumeroNfse: draft.substituiNumeroNfse || inv.numeroNfse || null,
+          substituiChaveAcesso: draft.substituiChaveAcesso || inv.chaveAcesso || null,
+          regraFiscalId: draft.regraFiscalId || undefined,
+          cnae: draft.cnae || undefined,
+          codigoServico: draft.codigoServico || undefined,
+          codigoTributacaoMunicipio: draft.codigoTributacaoMunicipio || undefined,
+        })
+        setIsReadyToEmit(
+          Boolean(
+            String(replaceTomadorNome).trim() &&
+            cleanReplaceDoc.length >= 11 &&
+            Number(draft.valorServico) > 0
+          )
+        )
 
         setMessages(prev => [
           ...prev,
@@ -3292,6 +3569,7 @@ export default function FiscalInvoicesPage() {
           }
         ])
 
+        setStudioInputMode("form")
         setActiveTab("studio")
         fetchInvoices()
       } else {
@@ -3964,6 +4242,7 @@ export default function FiscalInvoicesPage() {
                     <button
                       onClick={() => {
                         setGuestSearchQuery("")
+                        setReplaceDraftMeta(null)
                         setSelectedGuest(null)
                         setSelectedEntity(null)
                         setLinkedCompany(null)
@@ -4302,8 +4581,9 @@ export default function FiscalInvoicesPage() {
                             <div className="sm:col-span-6 space-y-1">
                               <Label className="text-[11px] font-bold">E-mail Principal do Tomador</Label>
                               <Input 
-                                type="email"
-                                placeholder="financeiro@empresa.com"
+                                type="text"
+                                inputMode="email"
+                                placeholder="financeiro@empresa.com; fiscal@empresa.com"
                                 value={formTomadorEmail}
                                 onChange={e => {
                                   const val = e.target.value
@@ -4314,6 +4594,9 @@ export default function FiscalInvoicesPage() {
                                 onBlur={() => handleSaveTomadorToCrm(true)}
                                 className="h-9 text-xs rounded-xl"
                               />
+                              <p className="text-[10px] text-muted-foreground">
+                                Aceita múltiplos e-mails separados por <code className="font-mono">;</code> (o 1º vai na DPS/XML).
+                              </p>
                             </div>
 
                             <div className="sm:col-span-6 space-y-1">
@@ -4358,10 +4641,10 @@ export default function FiscalInvoicesPage() {
                               </div>
                               <div className="space-y-1">
                                 <Label className="text-[10px] font-semibold text-muted-foreground">
-                                  E-mails de Faturamento / Conciliação B2B (separados por vírgula)
+                                  E-mails de Faturamento / Conciliação B2B (separados por ; ou vírgula)
                                 </Label>
                                 <Input
-                                  placeholder="Ex: faturamento@agencia.com.br, conciliacao@empresa.com.br"
+                                  placeholder="Ex: faturamento@agencia.com.br; conciliacao@empresa.com.br"
                                   value={formNfDeliveryEmails}
                                   onChange={e => {
                                     tomadorFormDirtyRef.current = true
@@ -6057,7 +6340,7 @@ export default function FiscalInvoicesPage() {
                     <Input
                       value={ebFinRespEmail}
                       onChange={e => setEbFinRespEmail(e.target.value)}
-                      placeholder="E-mail p/ Nota e Boleto"
+                      placeholder="E-mail(s) p/ Nota e Boleto (separe por ;)"
                       className="h-8 text-xs rounded-xl"
                     />
                     <Input

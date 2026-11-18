@@ -9,6 +9,7 @@ import { SignedXml } from "xml-crypto";
 import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
 import { inferIbgeAndValidCep, resolveValidCepAndIbge } from "./lookup.mjs";
+import { getPrimaryEmail } from "./mail-service.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -563,7 +564,7 @@ export function buildNationalDpsPayload({
         ender: enderObj,
         end: enderObj,
         fone: tomadorTelefoneSanitizado || undefined,
-        email: (tomador.email || "").trim().toLowerCase() || undefined
+        email: getPrimaryEmail(tomador.email) || undefined
       },
       serv: {
         locPrest: {
@@ -734,8 +735,9 @@ async function transmitViaMunicipalAdnIntegrator({
   const identDoc = isCnpj ? `<CpfCnpj><Cnpj>${tomaDoc}</Cnpj></CpfCnpj>` : `<CpfCnpj><Cpf>${tomaDoc}</Cpf></CpfCnpj>`;
   const endComp = xCplToma ? `<Complemento>${escXml(xCplToma)}</Complemento>` : "";
   const endBlk = `<Endereco><Endereco>${escXml(xLgrToma)}</Endereco><Numero>${escXml(nroToma)}</Numero>${endComp}<Bairro>${escXml(xBairroToma)}</Bairro><CodigoMunicipio>${cMunToma}</CodigoMunicipio><Uf>RJ</Uf><Cep>${cepToma}</Cep></Endereco>`;
-  const contatoBlk = (emailToma || foneToma)
-    ? `<Contato>${foneToma ? `<Telefone>${foneToma}</Telefone>` : ""}${emailToma ? `<Email>${escXml(emailToma)}</Email>` : ""}</Contato>`
+  const cleanEmailToma = getPrimaryEmail(emailToma);
+  const contatoBlk = (cleanEmailToma || foneToma)
+    ? `<Contato>${foneToma ? `<Telefone>${foneToma}</Telefone>` : ""}${cleanEmailToma ? `<Email>${escXml(cleanEmailToma)}</Email>` : ""}</Contato>`
     : "";
   const tomadorXml = `<TomadorServico><IdentificacaoTomador>${identDoc}</IdentificacaoTomador><RazaoSocial>${escXml(tomaNome)}</RazaoSocial>${endBlk}${contatoBlk}</TomadorServico>`;
 
@@ -888,7 +890,7 @@ export async function processNationalInvoiceEmission({
   const xCplToma = ender.xCpl ? String(ender.xCpl).trim().substring(0, 156) : "";
   const xBairroToma = String(ender.xBairro || "Pelinca").trim().substring(0, 60) || "Pelinca";
   const foneToma = cleanPhone(dps.toma?.fone || "");
-  const emailToma = String(dps.toma?.email || "").trim().toLowerCase();
+  const emailToma = getPrimaryEmail(dps.toma?.email);
 
   // Valida e reconcilia CEP + IBGE (cMun) antes de montar o XML para prevenir rejeição [E0240]
   const resolvedGeo = await resolveValidCepAndIbge({

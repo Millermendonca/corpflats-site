@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react"
 import { format, parseISO, differenceInDays } from "date-fns"
 import { useToast } from "@/hooks/use-toast"
 import { getCheckinUrl } from "@/lib/checkin-url"
+import { formatEmailList } from "@/lib/email-utils"
 
 export interface ButtonAction {
   id: string
@@ -114,12 +115,18 @@ export function isPureBillingQuickMessage(qm?: Partial<WhatsAppQuickMessage> | n
   )
 }
 
+function normalizeRecipientEmailString(raw?: string | null): string {
+  const trimmed = String(raw || "").trim()
+  if (!trimmed) return ""
+  return formatEmailList(trimmed) || trimmed.toLowerCase()
+}
+
 export function getReservationRecipients(resItem: any, companies: any[] = []): ReservationRecipients {
   const guestName = (resItem?.guestName || resItem?.guests?.[0]?.name || "Hóspede").trim()
   const guestFirstName = guestName.split(" ")[0] || guestName
   const rawGuestPhone = resItem?.guestPhone || resItem?.guests?.[0]?.phone || ""
   const cleanGuestDigits = String(rawGuestPhone).replace(/\D/g, "")
-  const guestEmail = String(resItem?.guestEmail || resItem?.guests?.[0]?.email || "").trim().toLowerCase()
+  const guestEmail = normalizeRecipientEmailString(resItem?.guestEmail || resItem?.guests?.[0]?.email)
 
   let requesterName = ""
   let requesterPhone = ""
@@ -156,7 +163,7 @@ export function getReservationRecipients(resItem: any, companies: any[] = []): R
   if (requesterType === "other_person") {
     requesterName = (resItem?.requesterInfo?.name || resItem?.requesterName || "").trim()
     requesterPhone = (resItem?.requesterInfo?.phone || resItem?.requesterPhone || "").trim()
-    requesterEmail = String(resItem?.requesterInfo?.email || resItem?.requesterEmail || "").trim().toLowerCase()
+    requesterEmail = normalizeRecipientEmailString(resItem?.requesterInfo?.email || resItem?.requesterEmail)
   } else if (requesterType === "company") {
     if (isB2bOrAgency) {
       const rawAgent = String(resItem?.agencyAgentName || "").trim()
@@ -166,7 +173,7 @@ export function getReservationRecipients(resItem: any, companies: any[] = []): R
       requesterCompany = (resItem?.agencyTradeName || resItem?.agencyName || resItem?.companyName || "Agência B2B").trim()
       requesterName = (validAgent || validReqInfo || requesterCompany || "Agência B2B").trim()
       requesterPhone = (resItem?.agencyAgentPhone || resItem?.requesterInfo?.phone || resItem?.requesterPhone || "").trim()
-      requesterEmail = String(resItem?.agencyAgentEmail || resItem?.requesterInfo?.email || resItem?.requesterEmail || "").trim().toLowerCase()
+      requesterEmail = normalizeRecipientEmailString(resItem?.agencyAgentEmail || resItem?.requesterInfo?.email || resItem?.requesterEmail)
     } else {
       requesterCompany = resItem?.companyName || ""
       let companyObj = null
@@ -181,11 +188,15 @@ export function getReservationRecipients(resItem: any, companies: any[] = []): R
       }
       const explicitReqName = (resItem?.requesterInfo?.name || resItem?.requesterName || "").trim()
       const explicitReqPhone = (resItem?.requesterInfo?.phone || resItem?.requesterPhone || "").trim()
-      const explicitReqEmail = String(resItem?.requesterInfo?.email || resItem?.requesterEmail || "").trim().toLowerCase()
+      const explicitReqEmail = normalizeRecipientEmailString(resItem?.requesterInfo?.email || resItem?.requesterEmail)
       if (companyObj) {
         requesterName = (explicitReqName || companyObj.contactPerson || companyObj.tradeName || resItem.companyName || "Solicitante Corporativo").trim()
         requesterPhone = (explicitReqPhone || companyObj.phone || "").trim()
-        requesterEmail = (explicitReqEmail || String(companyObj.email || companyObj.financialEmail || "").trim().toLowerCase())
+        const companyEmailRaw =
+          String(companyObj.email || "").trim() ||
+          String(companyObj.financialEmail || "").trim() ||
+          String(companyObj.emailFinanceiro || "").trim()
+        requesterEmail = explicitReqEmail || normalizeRecipientEmailString(companyEmailRaw)
         requesterCompany = companyObj.tradeName || companyObj.corporateName || requesterCompany
       } else {
         requesterName = (explicitReqName || resItem.companyName || "Solicitante Corporativo").trim()
@@ -227,7 +238,7 @@ export function getReservationRecipients(resItem: any, companies: any[] = []): R
       const guestIndex = Number(g.index) > 1 ? Number(g.index) : idx + 1
       const rawP = String(g.phone || g.whatsapp || "").trim()
       const digits = rawP.replace(/\D/g, "")
-      const email = String(g.email || "").trim().toLowerCase()
+      const email = normalizeRecipientEmailString(g.email)
       if (!digits && !email) return
       const rawName = String(g.name || "").trim()
       const isPlaceholder = !rawName || /^h[óo]spede\s*\d*$/i.test(rawName)

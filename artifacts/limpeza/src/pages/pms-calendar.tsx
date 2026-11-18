@@ -60,6 +60,7 @@ import { QuickMessageConfirmDialog } from "@/components/quick-message-confirm-di
 import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients, sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildQuickMessageWaWebUrl, buildDirectWaWebUrl, cleanWhatsAppPhone, formatReservationChannelLabel, resolveReservationGuestCount } from "@/hooks/use-quick-messages"
 import { PaymentMethodsModal, PaymentMethod } from "@/components/payment-methods-modal"
 import { formatSmartPhone, formatPhoneForWhatsAppCheck } from "@/lib/phone-mask"
+import { validateEmailList, formatEmailList, parseEmailList, getPrimaryEmail } from "@/lib/email-utils"
 
 const DEFAULT_CLIENT_PAYMENT_METHODS: PaymentMethod[] = [
   { id: "booking", name: "Booking.com", gatewayFeeRate: 0, commissionRate: 0, active: true, isSystem: true },
@@ -137,6 +138,203 @@ const MemoCrmGuestSelect = memo(function MemoCrmGuestSelect({
         {items}
       </SelectContent>
     </Select>
+  )
+})
+
+const CrmGuestFieldsBlock = memo(function CrmGuestFieldsBlock({
+  guestIndex,
+  label,
+  optional = false,
+  guestId,
+  name,
+  cpf,
+  phone,
+  email,
+  onChangeField,
+  onSelectCrmGuest,
+  onMarkManual,
+  crmGuests,
+  searchIndexedCrm,
+  onVerifyPhone,
+}: {
+  guestIndex: 1 | 2 | 3
+  label: string
+  optional?: boolean
+  guestId: string
+  name: string
+  cpf: string
+  phone: string
+  email: string
+  onChangeField: (field: "name" | "cpf" | "phone" | "email", value: string) => void
+  onSelectCrmGuest: (guest: any) => void
+  onMarkManual: (clearFields?: boolean) => void
+  crmGuests: any[]
+  searchIndexedCrm: (query: string, includeCompany: boolean, limit?: number) => any[]
+  onVerifyPhone?: (phone: string) => void
+}) {
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const matches = useMemo(
+    () => (name.trim().length > 0 ? searchIndexedCrm(name, true, 8) : []),
+    [name, searchIndexedCrm]
+  )
+
+  return (
+    <div className="p-2.5 bg-background/90 border border-border rounded-xl space-y-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-[11px] font-bold text-foreground flex items-center gap-1.5">
+          <User className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+          <span>{label}</span>
+          {guestId && guestId !== "manual" && (
+            <Badge variant="outline" className="text-[9px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30">
+              ✓ CRM
+            </Badge>
+          )}
+        </span>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="w-40 sm:w-48">
+            <MemoCrmGuestSelect
+              value={guestId}
+              onValueChange={(val) => {
+                if (!val || val === "manual") {
+                  onMarkManual(true)
+                  return
+                }
+                const g = crmGuests.find((item) => String(item.id) === String(val))
+                if (g) onSelectCrmGuest(g)
+              }}
+              guests={crmGuests}
+              placeholder="Puxar do CRM..."
+              manualLabel="➕ Novo Hóspede (Manual)"
+              triggerClassName="text-[10px] h-6 px-2"
+              contentClassName="max-h-60"
+              compact
+            />
+          </div>
+          {guestId && guestId !== "manual" && (
+            <button
+              type="button"
+              onClick={() => onMarkManual(true)}
+              className="text-[10px] text-muted-foreground hover:text-rose-600 underline font-semibold cursor-pointer"
+            >
+              Desvincular
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div className="relative">
+          <Input
+            value={name}
+            onChange={(e) => {
+              onChangeField("name", e.target.value)
+              setShowSuggestions(true)
+            }}
+            onFocus={() => {
+              if (name.trim().length > 0) setShowSuggestions(true)
+            }}
+            onBlur={() => {
+              setTimeout(() => setShowSuggestions(false), 120)
+            }}
+            placeholder={optional ? `Nome do ${guestIndex}º Hóspede (Opcional)` : `Nome Completo (${guestIndex}º Hóspede)`}
+            className="text-xs h-8"
+          />
+
+          {showSuggestions && name.trim().length > 0 && (
+            <div className="absolute left-0 right-0 top-full mt-1 bg-popover/95 backdrop-blur-sm border border-border shadow-2xl rounded-2xl z-50 overflow-hidden max-h-56 overflow-y-auto">
+              <div className="px-2.5 py-1 bg-muted/60 text-[10px] font-bold text-muted-foreground flex items-center justify-between border-b">
+                <span>Hóspedes no CRM ({matches.length})</span>
+                <span className="text-[9px]">Clique para preencher</span>
+              </div>
+              {matches.length > 0 ? (
+                <div className="divide-y divide-border/40">
+                  {matches.map((g: any) => (
+                    <button
+                      key={g.id}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        onSelectCrmGuest(g)
+                        setShowSuggestions(false)
+                      }}
+                      className="w-full text-left p-2 hover:bg-primary/10 transition-colors flex items-start gap-2 group cursor-pointer"
+                    >
+                      <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 mt-0.5">
+                        <User className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-bold text-foreground truncate">
+                          {g.name || g.fullName}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                          {g.documentNumber || g.document ? <span>CPF: {g.documentNumber || g.document}</span> : null}
+                          {g.phone ? <span>• Tel: {g.phone}</span> : null}
+                          {g.companyName ? <span className="text-indigo-600 dark:text-indigo-400 font-semibold">• {g.companyName}</span> : null}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-2.5 text-center text-[11px] text-muted-foreground">
+                  Nenhum hóspede localizado no CRM com este termo.
+                </div>
+              )}
+              <div className="p-1.5 bg-muted/30 border-t border-border">
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    onMarkManual(false)
+                    setShowSuggestions(false)
+                  }}
+                  className="w-full py-1 px-2 text-[11px] font-bold text-primary hover:bg-primary/10 rounded-lg flex items-center gap-1 justify-center cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Cadastrar como Novo Hóspede: "{name}"</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <Input
+          value={cpf}
+          onChange={(e) => onChangeField("cpf", e.target.value)}
+          placeholder={`CPF / Documento (${guestIndex}º Hóspede)`}
+          className="text-xs h-8"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <Input
+          type="tel"
+          inputMode="tel"
+          value={phone}
+          onChange={(e) => onChangeField("phone", formatBrazilPhone(e.target.value))}
+          onBlur={() => {
+            if (guestIndex === 1 && onVerifyPhone) {
+              const digitsLen = phone.replace(/\D/g, "").length
+              if (digitsLen >= 10 || (phone.trim().startsWith("+") && digitsLen >= 8)) {
+                onVerifyPhone(phone)
+              }
+            }
+          }}
+          placeholder={`WhatsApp (${guestIndex}º Hóspede)`}
+          className="text-xs h-8"
+        />
+        <Input
+          type="text"
+          value={email}
+          onChange={(e) => onChangeField("email", e.target.value)}
+          placeholder={`E-mail (${guestIndex}º Hóspede)`}
+          autoCorrect="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          className="text-xs h-8"
+        />
+      </div>
+    </div>
   )
 })
 
@@ -295,6 +493,46 @@ export interface ReservationPaymentItem {
   category?: string; // "quitacao" | "sinal" | "diarias" | "taxa_limpeza" | "consumo" | "outro"
   date: string;
   notes?: string;
+}
+
+export interface MultiFlatExtraItem {
+  uid: string;
+  flatId: string;
+  sameDatesAsPrimary: boolean;
+  checkinDate: string;
+  checkoutDate: string;
+  checkinTime: string;
+  checkoutTime: string;
+  guestCount: "1" | "2" | "3";
+  informGuestsLater: boolean;
+  guest2InformLater: boolean;
+  guestId: string;
+  guestName: string;
+  guestCpf: string;
+  guestPhone: string;
+  guestEmail: string;
+  guest2Id: string;
+  guest2Name: string;
+  guest2Cpf: string;
+  guest2Phone: string;
+  guest2Email: string;
+  guest3Id: string;
+  guest3Name: string;
+  guest3Cpf: string;
+  guest3Phone: string;
+  guest3Email: string;
+  includeBreakfast: boolean;
+  twinBeds: boolean;
+  extraMattress: boolean;
+  vehiclePlate: string;
+  vehicleBrand: string;
+  vehicleModel: string;
+  vehicleColor: string;
+  specialRequests: string;
+  notes: string;
+  dailyRate: string;
+  dailyRates: DailyRateItem[];
+  charges: ReservationChargeItem[];
 }
 
 export function buildReservationDailyRates(
@@ -1173,13 +1411,25 @@ export default function PmsCalendar(props?: {
   const handleSendManualEmail = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedRes || !manualRecipient.trim() || !manualSubject.trim() || !manualBody.trim()) return
+    const recCheck = validateEmailList(manualRecipient)
+    if (!recCheck.valid || recCheck.emails.length === 0) {
+      toast({
+        title: "E-mail(s) inválido(s)",
+        description: recCheck.invalidTokens.length > 0
+          ? `Verifique o(s) endereço(s): ${recCheck.invalidTokens.join(", ")}`
+          : "Informe ao menos um e-mail destinatário válido (separe múltiplos por ;).",
+        variant: "destructive"
+      })
+      return
+    }
+    const formattedRecipient = formatEmailList(manualRecipient)
     setSendingEmail(true)
     try {
       const res = await fetch(`/api/pms/reservations/${selectedRes.code || selectedRes.id}/communications/send-email`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          recipient: manualRecipient.trim(),
+          recipient: formattedRecipient,
           subject: manualSubject.trim(),
           body: manualBody.trim()
         }),
@@ -1187,7 +1437,7 @@ export default function PmsCalendar(props?: {
       })
       const json = await res.json()
       if (res.ok && json.success) {
-        toast({ title: "✓ E-mail enviado!", description: `Mensagem disparada para ${manualRecipient.trim()}` })
+        toast({ title: "✓ E-mail enviado!", description: `Mensagem disparada para ${formattedRecipient}` })
         setManualBody("")
         fetchCommunications(selectedRes.code || selectedRes.id)
       } else {
@@ -3728,9 +3978,17 @@ export default function PmsCalendar(props?: {
     const d1 = startDate <= endDate ? startDate : endDate
     const d2 = startDate <= endDate ? endDate : startDate
     setSelectedRes(null)
-    setIsMultiFlatPackageMode(false)
     setPkgEditNfseOpen(false)
     setPkgEditCancelOpen(false)
+    setFormCompanyCnpj("")
+    setInlineCompanyData(null)
+    setInlineCnpjExpanded(false)
+    setExtraPackageFlats([])
+    setPkgExtraCharges([])
+    setPackagePricingMode("sum")
+    setPackagePricingInput("")
+    setPackageEmitBoletoNow(false)
+    setPkgChargeTarget("package")
     isFlatManuallyChangedRef.current = true
     setFormFlatId(String(defaultFlatId))
     const cin = format(d1, "yyyy-MM-dd")
@@ -3958,38 +4216,6 @@ export default function PmsCalendar(props?: {
     return false
   }
 
-  // ── Estados do Construtor e Gestão de Pacote Multi-Flat (Pagamento Único) ──
-  const [isMultiFlatPackageMode, setIsMultiFlatPackageMode] = useState(false)
-  const [pkgSolName, setPkgSolName] = useState("")
-  const [pkgSolPhone, setPkgSolPhone] = useState("")
-  const [pkgSolEmail, setPkgSolEmail] = useState("")
-  const [pkgSolDoc, setPkgSolDoc] = useState("")
-  const [pkgStatusType, setPkgStatusType] = useState<"pre_reserva" | "confirmada" | "faturada">("pre_reserva")
-  const [pkgHoldMinutes, setPkgHoldMinutes] = useState("30")
-  const [pkgPricingMode, setPkgPricingMode] = useState<"sum" | "discount_amount" | "discount_pct" | "fixed_total">("sum")
-  const [pkgPricingInput, setPkgPricingInput] = useState("")
-  const [pkgEmitBoletoNow, setPkgEmitBoletoNow] = useState(true)
-  const [packageFlatsDraft, setPackageFlatsDraft] = useState<Array<{
-    uid: string
-    flatId: string
-    checkinDate: string
-    checkoutDate: string
-    guestCount: number
-    requesterIsGuest1: boolean
-    informGuestsLater: boolean
-    guest1Name: string
-    guest1Phone: string
-    guest1Doc: string
-    guest2InformLater: boolean
-    guest2Name: string
-    guest2Phone: string
-    guest2Doc: string
-    includeBreakfast: boolean
-    twinBeds: boolean
-    vehiclePlate: string
-    vehicleModel: string
-    dailyRate: string
-  }>>([])
   const [pkgEditNfseOpen, setPkgEditNfseOpen] = useState(false)
   const [pkgEditNfseDoc, setPkgEditNfseDoc] = useState("")
   const [pkgEditNfseName, setPkgEditNfseName] = useState("")
@@ -3998,47 +4224,35 @@ export default function PmsCalendar(props?: {
   const [pkgEditRefundAmount, setPkgEditRefundAmount] = useState("")
   const [pkgActionLoading, setPkgActionLoading] = useState(false)
 
-  const createDefaultPkgFlatDraft = (cin: string, cout: string, idx: number, defaultFid: string = "auto") => ({
-    uid: `pkg_flat_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
-    flatId: defaultFid || "auto",
-    checkinDate: cin,
-    checkoutDate: cout,
-    guestCount: 2,
-    requesterIsGuest1: idx === 0,
-    informGuestsLater: idx > 0,
-    guest1Name: "",
-    guest1Phone: "",
-    guest1Doc: "",
-    guest2InformLater: true,
-    guest2Name: "",
-    guest2Phone: "",
-    guest2Doc: "",
-    includeBreakfast: true,
-    twinBeds: false,
-    vehiclePlate: "",
-    vehicleModel: "",
-    dailyRate: "250"
-  })
+  // ── Estados Unificados Multi-Flat & Empresa/CNPJ Inline (dentro do formulário completo original) ──
+  const [extraPackageFlats, setExtraPackageFlats] = useState<MultiFlatExtraItem[]>([])
+  const [pkgExtraCharges, setPkgExtraCharges] = useState<ReservationChargeItem[]>([])
+  const [packagePricingMode, setPackagePricingMode] = useState<"sum" | "discount_amount" | "discount_pct" | "fixed_total">("sum")
+  const [packagePricingInput, setPackagePricingInput] = useState("")
+  const [packageEmitBoletoNow, setPackageEmitBoletoNow] = useState(false)
+  const [pkgChargeTarget, setPkgChargeTarget] = useState<string>("package")
+  const [formCompanyCnpj, setFormCompanyCnpj] = useState("")
+  const [inlineCompanyData, setInlineCompanyData] = useState<Record<string, any> | null>(null)
+  const [loadingInlineCnpj, setLoadingInlineCnpj] = useState(false)
+  const [inlineCnpjExpanded, setInlineCnpjExpanded] = useState(false)
+  const isMultiFlat = !selectedRes && extraPackageFlats.length > 0
 
   const handleOpenNewRes = (defaultFlatId?: number, defaultDate?: Date, initialChannel: string = "whatsapp") => {
     setMobileRangeStart(null)
     setSelectedRes(null)
-    setIsMultiFlatPackageMode(false)
     setPkgEditNfseOpen(false)
     setPkgEditCancelOpen(false)
+    setExtraPackageFlats([])
+    setPkgExtraCharges([])
+    setPackagePricingMode("sum")
+    setPackagePricingInput("")
+    setPackageEmitBoletoNow(false)
+    setPkgChargeTarget("package")
+    setFormCompanyCnpj("")
+    setInlineCompanyData(null)
+    setInlineCnpjExpanded(false)
     const cin = defaultDate ? format(defaultDate, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd")
     const cout = defaultDate ? format(addDays(defaultDate, 1), "yyyy-MM-dd") : format(addDays(new Date(), 1), "yyyy-MM-dd")
-    setPackageFlatsDraft([
-      createDefaultPkgFlatDraft(cin, cout, 0, defaultFlatId ? String(defaultFlatId) : "auto"),
-      createDefaultPkgFlatDraft(cin, cout, 1, "auto")
-    ])
-    setPkgSolName("")
-    setPkgSolPhone("")
-    setPkgSolEmail("")
-    setPkgSolDoc("")
-    setPkgStatusType("pre_reserva")
-    setPkgPricingMode("sum")
-    setPkgPricingInput("")
     setFormCheckin(cin)
     setFormCheckout(cout)
 
@@ -4292,7 +4506,6 @@ export default function PmsCalendar(props?: {
 
   const handleOpenEditRes = (resItem: any) => {
     setSelectedRes(resItem)
-    setIsMultiFlatPackageMode(false)
     setPkgEditNfseOpen(false)
     setPkgEditCancelOpen(false)
     const fallbackSolName =
@@ -4337,6 +4550,15 @@ export default function PmsCalendar(props?: {
         )
     setFormCompanyId(resItem.companyId ? String(resItem.companyId) : (matchedCompany ? String(matchedCompany.id) : ""))
     setFormCompanyName(resItem.companyName || matchedCompany?.tradeName || matchedCompany?.corporateName || "")
+    setFormCompanyCnpj(resItem.companyCnpj || matchedCompany?.cnpj || "")
+    setInlineCompanyData(null)
+    setInlineCnpjExpanded(false)
+    setExtraPackageFlats([])
+    setPkgExtraCharges([])
+    setPackagePricingMode("sum")
+    setPackagePricingInput("")
+    setPackageEmitBoletoNow(false)
+    setPkgChargeTarget("package")
 
     const cleanResAgCnpj = String(resItem.agencyCnpj || "").replace(/\D/g, "")
     const rawResAgName = String(resItem.agencyTradeName || resItem.agencyName || "").trim().toLowerCase()
@@ -4385,11 +4607,7 @@ export default function PmsCalendar(props?: {
             ? (resItem.b2bRatePolicy === "NET" && resItem.companyId ? "company" : "agency")
             : (resItem.requesterType === "company" && resItem.companyId ? "company" : "guest"))
     )
-    setFormNfDeliveryEmails(
-      Array.isArray(resItem.nfDeliveryEmails)
-        ? resItem.nfDeliveryEmails.join(", ")
-        : (resItem.nfDeliveryEmails || "")
-    )
+    setFormNfDeliveryEmails(formatEmailList(resItem.nfDeliveryEmails))
     setFormNfHideFromGuest(resItem.nfHideFromGuest !== undefined ? Boolean(resItem.nfHideFromGuest) : isB2bRes)
     setFormInvoicingInstructions(resItem.invoicingInstructions || "")
     setFormVoucherUrl(resItem.voucherUrl || resItem.b2bVoucherUrl || "")
@@ -5611,6 +5829,16 @@ export default function PmsCalendar(props?: {
       toast({ title: "Razão Social Obrigatória", description: "Informe o nome ou razão social da empresa.", variant: "destructive" })
       return
     }
+    const emailCheck = validateEmailList(newCompFinancialEmail)
+    if (!emailCheck.valid) {
+      toast({
+        title: "E-mail Financeiro inválido",
+        description: `Endereço(s) inválido(s): ${emailCheck.invalidTokens.join(", ")}. Separe múltiplos e-mails por ;`,
+        variant: "destructive"
+      })
+      return
+    }
+    const normalizedFinEmails = formatEmailList(newCompFinancialEmail)
 
     setSavingNewCompany(true)
     try {
@@ -5619,7 +5847,7 @@ export default function PmsCalendar(props?: {
         corporateName: newCompCorporateName.trim(),
         tradeName: (newCompTradeName || newCompCorporateName).trim(),
         cnpj: newCompCnpj.trim() || "Isento / Não informado",
-        financialEmail: newCompFinancialEmail.trim(),
+        financialEmail: normalizedFinEmails,
         phone: newCompPhone.trim(),
         contactPerson: newCompContactPerson.trim(),
         companyRole: newCompAllowsDirectReservations ? "booking_partner" : "invoice_only",
@@ -5728,6 +5956,17 @@ export default function PmsCalendar(props?: {
       toast({ title: "Nome da Agência Obrigatório", description: "Informe o nome ou razão social da agência B2B.", variant: "destructive" })
       return
     }
+    if (newAgencyEmail.trim()) {
+      const agEmailCheck = validateEmailList(newAgencyEmail)
+      if (!agEmailCheck.valid) {
+        toast({
+          title: "E-mail da Agência inválido",
+          description: `Endereço(s) inválido(s): ${agEmailCheck.invalidTokens.join(", ")}. Separe múltiplos e-mails usando ;`,
+          variant: "destructive"
+        })
+        return
+      }
+    }
     setSavingNewAgency(true)
     try {
       const resp = await fetch("/api/agencies", {
@@ -5738,7 +5977,7 @@ export default function PmsCalendar(props?: {
           corporateName: newAgencyName.trim().toUpperCase(),
           tradeName: newAgencyName.trim(),
           cnpj: newAgencyCnpj.trim(),
-          email: newAgencyEmail.trim(),
+          email: formatEmailList(newAgencyEmail),
           financialEmail: "",
           phone: newAgencyPhone.trim(),
           defaultRatePolicy: formB2bRatePolicy,
@@ -5850,7 +6089,7 @@ export default function PmsCalendar(props?: {
       if (p.invoicingInstructions) setFormInvoicingInstructions(p.invoicingInstructions)
       if (p.voucherUrl || p.b2bVoucherUrl) setFormVoucherUrl(p.voucherUrl || p.b2bVoucherUrl)
       if (p.invoiceRecipientType) setFormInvoiceRecipientType(p.invoiceRecipientType)
-      setFormNfDeliveryEmails(Array.isArray(p.nfDeliveryEmails) ? p.nfDeliveryEmails.join(", ") : "")
+      setFormNfDeliveryEmails(formatEmailList(p.nfDeliveryEmails))
       setFormNfHideFromGuest(Boolean(p.nfHideFromGuest))
       if (p.dailyRate || p.totalAmount) {
         const cin = p.checkinDate || formCheckin
@@ -5945,6 +6184,8 @@ export default function PmsCalendar(props?: {
     });
   };
 
+  const round2 = (v: number) => Math.round((Number(v) || 0) * 100) / 100
+
   const calculateTotal = () => {
     let nightsSubtotal = 0;
     if (formDailyRates && formDailyRates.length > 0) {
@@ -5963,22 +6204,280 @@ export default function PmsCalendar(props?: {
     return Number(Math.max(0, nightsSubtotal + chargesSubtotal).toFixed(2));
   }
 
+  const computeUnifiedReservationTotals = (
+    overrideExtras: MultiFlatExtraItem[] = extraPackageFlats,
+    overridePkgCharges: ReservationChargeItem[] = pkgExtraCharges,
+    overrideMode: "sum" | "discount_amount" | "discount_pct" | "fixed_total" = packagePricingMode,
+    overrideInput: string = packagePricingInput,
+    overrideDailyRates: DailyRateItem[] = formDailyRates,
+    overrideCharges: ReservationChargeItem[] = formCharges,
+    overridePayments: ReservationPaymentItem[] = formPayments,
+    overridePaidAmount: string = formPaidAmount,
+    overridePaymentStatus: string = formPaymentStatus,
+    overrideStatus: string = formStatus
+  ) => {
+    const multiActive = !selectedRes && overrideExtras.length > 0;
+    let flat1Sub = 0;
+    if (overrideDailyRates.length > 0) {
+      flat1Sub = Math.max(0, round2(
+        overrideDailyRates.reduce((s, d) => s + (Number(d.rate) || 0), 0) +
+        overrideCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0)
+      ));
+    } else {
+      flat1Sub = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+    }
+
+    let curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+    let rawSum = curTot;
+    let extraFlatsSub = 0;
+    let pkgChargesSub = 0;
+
+    if (multiActive) {
+      extraFlatsSub = round2(
+        overrideExtras.reduce((acc, ef) => {
+          const rSum = ef.dailyRates.reduce((s, d) => s + (Number(d.rate) || 0), 0);
+          const cSum = ef.charges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+          return acc + Math.max(0, rSum + cSum);
+        }, 0)
+      );
+      pkgChargesSub = round2(overridePkgCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0));
+      rawSum = Math.max(0, round2(flat1Sub + extraFlatsSub + pkgChargesSub));
+      const numVal = Math.max(0, Number(String(overrideInput || "").replace(",", ".")) || 0);
+      if (overrideMode === "discount_amount") {
+        curTot = Math.max(0, round2(rawSum - numVal));
+      } else if (overrideMode === "discount_pct") {
+        curTot = Math.max(0, round2(rawSum * (1 - Math.min(100, numVal) / 100)));
+      } else if (overrideMode === "fixed_total" && String(overrideInput || "").trim() !== "") {
+        curTot = round2(numVal);
+      } else {
+        curTot = rawSum;
+      }
+    }
+
+    const sumPay = round2(overridePayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0));
+    const isResPaid = !formIsFaturadoBoleto && (overridePaymentStatus === "pago_total" || overridePaymentStatus === "pago");
+    const curPaid = overrideStatus === "pre_reserva"
+      ? 0
+      : (isResPaid
+          ? Math.max(curTot, sumPay || Number(overridePaidAmount) || 0)
+          : (sumPay > 0 ? sumPay : (Number(overridePaidAmount) || 0)));
+    const remaining = formIsFaturadoBoleto ? 0 : (isResPaid ? 0 : Math.max(0, round2(curTot - curPaid)));
+    const cardRemaining = round2(remaining * 1.05);
+    return { curTot, rawSum, flat1Sub, extraFlatsSub, pkgChargesSub, curPaid, remaining, cardRemaining, isResPaid };
+  };
+
+  const syncMultiFlatTotalsAndPayments = (
+    nextExtras: MultiFlatExtraItem[] = extraPackageFlats,
+    nextPkgCharges: ReservationChargeItem[] = pkgExtraCharges,
+    nextMode: "sum" | "discount_amount" | "discount_pct" | "fixed_total" = packagePricingMode,
+    nextInput: string = packagePricingInput,
+    nextDailyRates: DailyRateItem[] = formDailyRates,
+    nextFlat1Charges: ReservationChargeItem[] = formCharges,
+    nextChannel: string = formChannel
+  ) => {
+    const totals = computeUnifiedReservationTotals(
+      nextExtras,
+      nextPkgCharges,
+      nextMode,
+      nextInput,
+      nextDailyRates,
+      nextFlat1Charges,
+      formPayments,
+      formPaidAmount,
+      formPaymentStatus,
+      formStatus
+    );
+    const newTot = totals.curTot;
+    const isOtaCh = nextChannel === "booking" || nextChannel === "airbnb";
+    if (formIsFaturadoBoleto || nextChannel === "b2b" || (formStatus === "pre_reserva" && !isOtaCh)) {
+      const nonSynth = formPayments.filter(p => p && !/^(pagamento integral|pagamento inicial)/i.test(String(p.notes || "").trim()));
+      if (nonSynth.length === 0) {
+        if (formPayments.length > 0) setFormPayments([]);
+        setFormPaidAmount("0");
+        setFormPaymentStatus("pendente");
+        return newTot;
+      }
+    }
+    if (isOtaCh) {
+      setFormPaymentMethod(nextChannel);
+      const otaLabel = nextChannel === "booking" ? "Booking.com" : "Airbnb";
+      if (formPayments.length <= 1 && (formPayments.length === 0 || /^(pagamento integral|pagamento inicial)/i.test(String(formPayments[0]?.notes || "").trim()))) {
+        setFormPayments([{
+          id: formPayments[0]?.id || `pay_${Date.now()}`,
+          amount: newTot,
+          method: nextChannel,
+          category: "quitacao",
+          date: formPayments[0]?.date || format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+          notes: `Pagamento integral ${otaLabel}`
+        }]);
+        setFormPaidAmount(String(newTot));
+        setFormPaymentStatus("pago_total");
+        return newTot;
+      }
+    }
+    if (formPayments.length === 1 && /^(pagamento integral|pagamento inicial)/i.test(String(formPayments[0]?.notes || "").trim()) && formPaymentStatus === "pago_total") {
+      setFormPayments([{ ...formPayments[0], amount: newTot }]);
+      setFormPaidAmount(String(newTot));
+      setFormPaymentStatus("pago_total");
+    } else {
+      const paidSum = round2(formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0));
+      setFormPaidAmount(String(paidSum));
+      if (paidSum >= newTot && newTot > 0) {
+        setFormPaymentStatus("pago_total");
+      } else if (paidSum > 0) {
+        setFormPaymentStatus("sinal_pago");
+      } else {
+        setFormPaymentStatus("pendente");
+      }
+    }
+    return newTot;
+  };
+
+  const suggestNextFreeFlatId = (excludedIds: string[], cin: string, cout: string): string => {
+    const excludedSet = new Set(excludedIds.map(id => String(id)));
+    if (fairShareResult && fairShareResult._checkin === cin && fairShareResult._checkout === cout && Array.isArray(fairShareResult.allStats)) {
+      const candidate = fairShareResult.allStats.find((s: any) =>
+        s?.isAvailable && s?.flat?.id != null && !excludedSet.has(String(s.flat.id))
+      );
+      if (candidate?.flat?.id) return String(candidate.flat.id);
+    }
+    const localFree = (data.flats || []).find((fl: any) => {
+      if (excludedSet.has(String(fl.id))) return false;
+      const hasResConf = (data.reservations || []).some((r: any) => {
+        if (Number(r.flatId) !== Number(fl.id) && String(r.flatNumber) !== String(fl.number)) return false;
+        const st = String(r.status || "").toLowerCase();
+        if (["cancelada", "cancelled", "no_show", "expirada"].includes(st)) return false;
+        if ((r.checkoutDone || r.earlyCheckout || ["completed", "checked_out", "finalizada", "concluida", "checkout"].includes(st)) && r.checkoutDate <= cin) return false;
+        return r.checkinDate < cout && r.checkoutDate > cin;
+      });
+      const hasBlkConf = (data.blocks || []).some((b: any) => {
+        if (Number(b.flatId) !== Number(fl.id) && String(b.flatNumber) !== String(fl.number)) return false;
+        return b.startDate < cout && b.endDate >= cin;
+      });
+      return !hasResConf && !hasBlkConf;
+    });
+    return localFree?.id ? String(localFree.id) : "auto";
+  };
+
+  const handleAddExtraPackageFlat = () => {
+    const cin = formCheckin || format(new Date(), "yyyy-MM-dd");
+    const cout = formCheckout && formCheckout > cin ? formCheckout : format(addDays(parseISO(cin), 1), "yyyy-MM-dd");
+    const excluded = [formFlatId, ...extraPackageFlats.map(f => f.flatId)].filter(v => v && v !== "auto");
+    const nextFid = suggestNextFreeFlatId(excluded, cin, cout);
+    const baseRate = Math.max(0, Number(String(formDailyRate || "250").replace(",", ".")) || 250);
+    const isOtaCh = formChannel === "booking" || formChannel === "airbnb";
+    const newItem: MultiFlatExtraItem = {
+      uid: `extra_flat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      flatId: nextFid,
+      sameDatesAsPrimary: true,
+      checkinDate: cin,
+      checkoutDate: cout,
+      checkinTime: formCheckinTime || defaultCheckinTime || "14:00",
+      checkoutTime: formCheckoutTime || defaultCheckoutTime || "12:00",
+      guestCount: "1",
+      informGuestsLater: formRequesterType !== "guest",
+      guest2InformLater: false,
+      guestId: "",
+      guestName: "",
+      guestCpf: "",
+      guestPhone: "",
+      guestEmail: "",
+      guest2Id: "",
+      guest2Name: "",
+      guest2Cpf: "",
+      guest2Phone: "",
+      guest2Email: "",
+      guest3Id: "",
+      guest3Name: "",
+      guest3Cpf: "",
+      guest3Phone: "",
+      guest3Email: "",
+      includeBreakfast: formIncludeBreakfast,
+      twinBeds: false,
+      extraMattress: false,
+      vehiclePlate: "",
+      vehicleBrand: "",
+      vehicleModel: "",
+      vehicleColor: "",
+      specialRequests: "",
+      notes: "",
+      dailyRate: String(baseRate),
+      dailyRates: buildReservationDailyRates(cin, cout, baseRate, formChannel || "whatsapp"),
+      charges: isOtaCh
+        ? [{ id: `charge_${Date.now()}_${Math.random().toString(36).slice(2, 5)}_clean`, type: "cleaning", title: "Taxa de Limpeza", amount: 50, notes: "" }]
+        : []
+    };
+    const nextExtras = [...extraPackageFlats, newItem];
+    setExtraPackageFlats(nextExtras);
+    syncMultiFlatTotalsAndPayments(nextExtras, pkgExtraCharges, packagePricingMode, packagePricingInput);
+    toast({
+      title: `Flat ${nextExtras.length + 1} adicionado ao pacote!`,
+      description: `Preencha hóspedes, ocupação e preferências deste flat abaixo.`
+    });
+  };
+
+  const handleUpdateExtraPackageFlat = (uid: string, patch: Partial<MultiFlatExtraItem>, resyncPayments = false) => {
+    const next = extraPackageFlats.map(item => (item.uid === uid ? { ...item, ...patch } : item));
+    setExtraPackageFlats(next);
+    if (resyncPayments) {
+      syncMultiFlatTotalsAndPayments(next, pkgExtraCharges, packagePricingMode, packagePricingInput);
+    }
+  };
+
+  const handleRemoveExtraPackageFlat = (uid: string) => {
+    const nextExtras = extraPackageFlats.filter(item => item.uid !== uid);
+    setExtraPackageFlats(nextExtras);
+    if (pkgChargeTarget === uid) setPkgChargeTarget("package");
+    if (nextExtras.length === 0) {
+      setPackagePricingMode("sum");
+      setPackagePricingInput("");
+      setPackageEmitBoletoNow(false);
+      if (pkgExtraCharges.length > 0) {
+        const mergedCharges = [...formCharges, ...pkgExtraCharges];
+        setFormCharges(mergedCharges);
+        setPkgExtraCharges([]);
+        syncCompositeTotalAndPaid(formDailyRates, mergedCharges, formChannel, undefined, nextExtras, "sum", "");
+      } else {
+        syncCompositeTotalAndPaid(formDailyRates, formCharges, formChannel, undefined, nextExtras, "sum", "");
+      }
+    } else {
+      syncMultiFlatTotalsAndPayments(nextExtras, pkgExtraCharges, packagePricingMode, packagePricingInput);
+    }
+  };
+
   // ── Helpers de Gerenciamento de Diárias & Pagamentos ──────────────
   // Sincroniza o Total Composto (diárias + taxas) e pré-preenche sempre o Valor Pago com o mesmo total composto
   const syncCompositeTotalAndPaid = (
     newDailyRates: DailyRateItem[] = formDailyRates,
     newCharges: ReservationChargeItem[] = formCharges,
     targetChannel: string = formChannel,
-    targetMethod?: string
+    targetMethod?: string,
+    overrideExtraFlats?: MultiFlatExtraItem[],
+    overridePricingMode?: "sum" | "discount_amount" | "discount_pct" | "fixed_total",
+    overridePricingInput?: string
   ) => {
     const subNights = newDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
     const subCharges = newCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
-    const newTot = Number(Math.max(0, subNights + subCharges).toFixed(2));
-    setFormTotalAmount(String(newTot));
-    setPackageTotalInput(newTot > 0 ? String(newTot) : "");
+    const flat1Tot = Number(Math.max(0, subNights + subCharges).toFixed(2));
+    setFormTotalAmount(String(flat1Tot));
+    setPackageTotalInput(flat1Tot > 0 ? String(flat1Tot) : "");
     if (newDailyRates.length > 0 && subNights > 0) {
       setFormDailyRate(String(Math.round((subNights / newDailyRates.length) * 100) / 100));
     }
+
+    const activeExtras = overrideExtraFlats !== undefined ? overrideExtraFlats : extraPackageFlats;
+    if (!selectedRes && activeExtras.length > 0) {
+      return syncMultiFlatTotalsAndPayments(
+        activeExtras,
+        pkgExtraCharges,
+        overridePricingMode !== undefined ? overridePricingMode : packagePricingMode,
+        overridePricingInput !== undefined ? overridePricingInput : packagePricingInput,
+        newDailyRates,
+        newCharges,
+        targetChannel
+      );
+    }
+    const newTot = flat1Tot;
 
     const isBooking = targetChannel === "booking";
     const isB2b = targetChannel === "b2b";
@@ -6002,7 +6501,7 @@ export default function PmsCalendar(props?: {
     } else if (isB2b || isFaturadoSync) {
       setFormPaymentMethod(isFaturadoSync && !isB2b ? "boleto_faturado" : resolvedMethod);
       const nonSyntheticPays = formPayments.filter(p =>
-        p && !(isFaturadoSync && /^(pagamento integral|pagamento inicial)$/i.test(String(p.notes || "").trim()))
+        p && !(isFaturadoSync && /^(pagamento integral|pagamento inicial)/i.test(String(p.notes || "").trim()))
       );
       if (nonSyntheticPays.length === 0) {
         if (formPayments.length > 0) setFormPayments([]);
@@ -6100,6 +6599,26 @@ export default function PmsCalendar(props?: {
     return newTot;
   };
 
+  const syncExtraFlatsDatesFromPrimary = (
+    newCin: string,
+    newCout: string,
+    nextChannel: string = formChannel
+  ): MultiFlatExtraItem[] => {
+    if (selectedRes || extraPackageFlats.length === 0) return extraPackageFlats;
+    const nextExtras = extraPackageFlats.map(ef => {
+      if (!ef.sameDatesAsPrimary) return ef;
+      const rateNum = Math.max(0, Number(String(ef.dailyRate || "250").replace(",", ".")) || 250);
+      return {
+        ...ef,
+        checkinDate: newCin,
+        checkoutDate: newCout,
+        dailyRates: buildReservationDailyRates(newCin, newCout, rateNum, nextChannel || "whatsapp", ef.dailyRates)
+      };
+    });
+    setExtraPackageFlats(nextExtras);
+    return nextExtras;
+  };
+
   // Sincronização centralizada de datas (via digitação manual ou calendário único)
   const handleDatesChange = (newCin: string, newCout: string) => {
     setFormCheckin(newCin);
@@ -6109,7 +6628,8 @@ export default function PmsCalendar(props?: {
     if (dCin && dCout && dCin < dCout) {
       const updated = buildReservationDailyRates(newCin, newCout, Number(formDailyRate) || 250, formChannel, formDailyRates);
       setFormDailyRates(updated);
-      syncCompositeTotalAndPaid(updated, formCharges, formChannel);
+      const nextExtras = syncExtraFlatsDatesFromPrimary(newCin, newCout, formChannel);
+      syncCompositeTotalAndPaid(updated, formCharges, formChannel, undefined, nextExtras);
     }
   };
 
@@ -6127,7 +6647,8 @@ export default function PmsCalendar(props?: {
     if (dCin && dCout && dCin < dCout) {
       const updated = buildReservationDailyRates(val, targetCout, Number(formDailyRate) || 250, formChannel, formDailyRates);
       setFormDailyRates(updated);
-      syncCompositeTotalAndPaid(updated, formCharges, formChannel);
+      const nextExtras = syncExtraFlatsDatesFromPrimary(val, targetCout, formChannel);
+      syncCompositeTotalAndPaid(updated, formCharges, formChannel, undefined, nextExtras);
     }
   };
 
@@ -6138,13 +6659,116 @@ export default function PmsCalendar(props?: {
     if (dCin && dCout && dCin < dCout) {
       const updated = buildReservationDailyRates(formCheckin, val, Number(formDailyRate) || 250, formChannel, formDailyRates);
       setFormDailyRates(updated);
-      syncCompositeTotalAndPaid(updated, formCharges, formChannel);
+      const nextExtras = syncExtraFlatsDatesFromPrimary(formCheckin, val, formChannel);
+      syncCompositeTotalAndPaid(updated, formCharges, formChannel, undefined, nextExtras);
     }
   };
 
   // ── Funções de Gestão de Taxas, Adicionais & Rateio Inteligente ──
   const handleAddCharge = (type: ReservationChargeItem["type"], defaultTitle: string, defaultAmount: number) => {
-    const amt = (type === "cleaning" && defaultAmount === 80) ? 50 : defaultAmount;
+    let amt = (type === "cleaning" && defaultAmount === 80) ? 50 : defaultAmount;
+
+    if (isMultiFlat && pkgChargeTarget === "package" && (type === "discount" || amt < 0)) {
+      const absAmt = Math.abs(amt);
+      const nextDiscount = packagePricingMode === "discount_amount"
+        ? round2((Number(String(packagePricingInput || "").replace(",", ".")) || 0) + absAmt)
+        : round2(absAmt);
+      const nextDiscountStr = String(nextDiscount);
+      setPackagePricingMode("discount_amount");
+      setPackagePricingInput(nextDiscountStr);
+      syncMultiFlatTotalsAndPayments(extraPackageFlats, pkgExtraCharges, "discount_amount", nextDiscountStr);
+      toast({
+        title: "Desconto no Pacote Aplicado",
+        description: `Desconto de R$ ${nextDiscount.toFixed(2)} aplicado proporcionalmente em todo o pacote (rateio automático).`
+      });
+      return;
+    }
+
+    if (isMultiFlat && pkgChargeTarget === "package") {
+      const anyFlatHasCleaning = formCharges.some(c => c.type === "cleaning") ||
+        extraPackageFlats.some(ef => (ef.charges || []).some(c => c.type === "cleaning"));
+      const isConvertedCleaning = type === "cleaning" && anyFlatHasCleaning;
+      const pkgCharge: ReservationChargeItem = {
+        id: `charge_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        type: isConvertedCleaning ? "other" : type,
+        title: isConvertedCleaning && defaultTitle === "Taxa de Limpeza" ? "Taxa de Limpeza (Pacote)" : defaultTitle,
+        amount: amt,
+        notes: ""
+      };
+      const nextPkgCharges = [...pkgExtraCharges, pkgCharge];
+      setPkgExtraCharges(nextPkgCharges);
+      syncMultiFlatTotalsAndPayments(extraPackageFlats, nextPkgCharges, packagePricingMode, packagePricingInput);
+      toast({
+        title: isConvertedCleaning ? "Taxa de Limpeza (Pacote) Adicionada" : "Taxa do Pacote Adicionada",
+        description: isConvertedCleaning
+          ? `${pkgCharge.title} (R$ ${amt.toFixed(2)}) lançada no pacote para somar além da limpeza por flat.`
+          : `${pkgCharge.title} (R$ ${amt > 0 ? amt.toFixed(2) : `-${Math.abs(amt).toFixed(2)}`}) incluída no pacote.`
+      });
+      return;
+    }
+
+    if (isMultiFlat && pkgChargeTarget !== "flat_0") {
+      const targetEf = extraPackageFlats.find(ef => ef.uid === pkgChargeTarget);
+      if (targetEf && amt < 0) {
+        const efRatesSum = (targetEf.dailyRates || []).reduce((s, d) => s + (Number(d.rate) || 0), 0);
+        const efChargesSum = (targetEf.charges || []).reduce((s, c) => s + (Number(c.amount) || 0), 0);
+        const efAvailable = round2(efRatesSum + efChargesSum);
+        if (efAvailable <= 0) {
+          toast({
+            title: "Desconto não permitido",
+            description: "O subtotal deste flat já está zerado.",
+            variant: "destructive"
+          });
+          return;
+        }
+        if (efAvailable + amt < 0) {
+          amt = -efAvailable;
+          toast({
+            title: "Desconto ajustado ao limite do flat",
+            description: `Desconto limitado a -R$ ${efAvailable.toFixed(2)} para não negativar o flat.`
+          });
+        }
+      }
+      const newCharge: ReservationChargeItem = {
+        id: `charge_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        type,
+        title: defaultTitle,
+        amount: amt,
+        notes: ""
+      };
+      const nextExtras = extraPackageFlats.map(ef =>
+        ef.uid === pkgChargeTarget ? { ...ef, charges: [...ef.charges, newCharge] } : ef
+      );
+      setExtraPackageFlats(nextExtras);
+      syncMultiFlatTotalsAndPayments(nextExtras, pkgExtraCharges, packagePricingMode, packagePricingInput);
+      toast({
+        title: "Taxa do Flat Adicionada",
+        description: `${defaultTitle} (R$ ${amt > 0 ? amt.toFixed(2) : `-${Math.abs(amt).toFixed(2)}`}) incluída no flat selecionado.`
+      });
+      return;
+    }
+
+    if (isMultiFlat && amt < 0) {
+      const f1RatesSum = formDailyRates.reduce((s, d) => s + (Number(d.rate) || 0), 0);
+      const f1ChargesSum = formCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+      const f1Available = round2(f1RatesSum + f1ChargesSum);
+      if (f1Available <= 0) {
+        toast({
+          title: "Desconto não permitido",
+          description: "O subtotal do Flat 1 já está zerado.",
+          variant: "destructive"
+        });
+        return;
+      }
+      if (f1Available + amt < 0) {
+        amt = -f1Available;
+        toast({
+          title: "Desconto ajustado ao limite do Flat 1",
+          description: `Desconto limitado a -R$ ${f1Available.toFixed(2)} para não negativar o Flat 1.`
+        });
+      }
+    }
+
     const newCharge: ReservationChargeItem = {
       id: `charge_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       type,
@@ -6161,16 +6785,77 @@ export default function PmsCalendar(props?: {
     });
   };
 
-  const handleRemoveCharge = (chargeId: string) => {
+  const handleRemoveCharge = (chargeId: string, scope: "flat_0" | "package" | string = "flat_0") => {
+    if (scope === "package") {
+      const nextPkgCharges = pkgExtraCharges.filter(c => c.id !== chargeId);
+      setPkgExtraCharges(nextPkgCharges);
+      syncMultiFlatTotalsAndPayments(extraPackageFlats, nextPkgCharges, packagePricingMode, packagePricingInput);
+      return;
+    }
+    if (scope !== "flat_0") {
+      const nextExtras = extraPackageFlats.map(ef =>
+        ef.uid === scope ? { ...ef, charges: ef.charges.filter(c => c.id !== chargeId) } : ef
+      );
+      setExtraPackageFlats(nextExtras);
+      syncMultiFlatTotalsAndPayments(nextExtras, pkgExtraCharges, packagePricingMode, packagePricingInput);
+      return;
+    }
     const updated = formCharges.filter(c => c.id !== chargeId);
     setFormCharges(updated);
     syncCompositeTotalAndPaid(formDailyRates, updated, formChannel);
   };
 
-  const handleUpdateCharge = (chargeId: string, field: keyof ReservationChargeItem, value: any) => {
+  const handleUpdateCharge = (chargeId: string, field: keyof ReservationChargeItem, value: any, scope: "flat_0" | "package" | string = "flat_0") => {
+    if (scope === "package") {
+      let nextVal = value;
+      if (field === "amount" && isMultiFlat && Number(value) < 0) {
+        const f1SubNow = round2(
+          formDailyRates.reduce((s, d) => s + (Number(d.rate) || 0), 0) +
+          formCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0)
+        );
+        const otherPkgSum = pkgExtraCharges.filter(c => c.id !== chargeId).reduce((s, c) => s + (Number(c.amount) || 0), 0);
+        const maxNeg = -Math.max(0, round2(f1SubNow + otherPkgSum));
+        if (Number(value) < maxNeg) {
+          nextVal = maxNeg;
+        }
+      }
+      const nextPkgCharges = pkgExtraCharges.map(c => (c.id === chargeId ? { ...c, [field]: nextVal } : c));
+      setPkgExtraCharges(nextPkgCharges);
+      syncMultiFlatTotalsAndPayments(extraPackageFlats, nextPkgCharges, packagePricingMode, packagePricingInput);
+      return;
+    }
+    if (scope !== "flat_0") {
+      const targetEf = extraPackageFlats.find(ef => ef.uid === scope);
+      let nextVal = value;
+      if (field === "amount" && isMultiFlat && targetEf && Number(value) < 0) {
+        const efRatesSum = (targetEf.dailyRates || []).reduce((s, d) => s + (Number(d.rate) || 0), 0);
+        const otherChargesSum = (targetEf.charges || []).filter(c => c.id !== chargeId).reduce((s, c) => s + (Number(c.amount) || 0), 0);
+        const maxNeg = -Math.max(0, round2(efRatesSum + otherChargesSum));
+        if (Number(value) < maxNeg) {
+          nextVal = maxNeg;
+        }
+      }
+      const nextExtras = extraPackageFlats.map(ef =>
+        ef.uid === scope
+          ? { ...ef, charges: ef.charges.map(c => (c.id === chargeId ? { ...c, [field]: nextVal } : c)) }
+          : ef
+      );
+      setExtraPackageFlats(nextExtras);
+      syncMultiFlatTotalsAndPayments(nextExtras, pkgExtraCharges, packagePricingMode, packagePricingInput);
+      return;
+    }
+    let nextVal = value;
+    if (field === "amount" && isMultiFlat && Number(value) < 0) {
+      const f1RatesSum = formDailyRates.reduce((s, d) => s + (Number(d.rate) || 0), 0);
+      const otherChargesSum = formCharges.filter(c => c.id !== chargeId).reduce((s, c) => s + (Number(c.amount) || 0), 0);
+      const maxNeg = -Math.max(0, round2(f1RatesSum + otherChargesSum));
+      if (Number(value) < maxNeg) {
+        nextVal = maxNeg;
+      }
+    }
     const updated = formCharges.map(c => {
       if (c.id === chargeId) {
-        return { ...c, [field]: value };
+        return { ...c, [field]: nextVal };
       }
       return c;
     });
@@ -6249,7 +6934,7 @@ export default function PmsCalendar(props?: {
     }
     const curPaid = formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
     if (curPaid > 0) return // mantém sinal/quitação já lançados
-    const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal()
+    const { curTot } = computeUnifiedReservationTotals()
     if (curTot <= 0) return
     const isBooking = formChannel === "booking"
     const isAirbnb = formChannel === "airbnb"
@@ -6266,9 +6951,9 @@ export default function PmsCalendar(props?: {
   }
 
   const handleAddPayment = (customAmount?: number, customMethod?: string, customNotes?: string) => {
-    const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal()
+    const { curTot } = computeUnifiedReservationTotals()
     const curPaid = formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
-    const remaining = Math.max(0, curTot - curPaid)
+    const remaining = Math.max(0, round2(curTot - curPaid))
     const amt = customAmount !== undefined ? customAmount : (remaining > 0 ? remaining : (Number(formDailyRate) || 250))
     const newPay: ReservationPaymentItem = {
       id: `pay_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -6279,7 +6964,7 @@ export default function PmsCalendar(props?: {
     }
     const updated = [...formPayments, newPay]
     setFormPayments(updated)
-    const newPaidSum = updated.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+    const newPaidSum = round2(updated.reduce((acc, p) => acc + (Number(p.amount) || 0), 0))
     setFormPaidAmount(String(newPaidSum))
     if (newPaidSum >= curTot && curTot > 0) {
       setFormPaymentStatus("pago_total")
@@ -6293,10 +6978,10 @@ export default function PmsCalendar(props?: {
   }
 
   const handleRemovePayment = (payId: string) => {
-    const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal()
+    const { curTot } = computeUnifiedReservationTotals()
     const updated = formPayments.filter(p => p.id !== payId)
     setFormPayments(updated)
-    const newPaidSum = updated.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+    const newPaidSum = round2(updated.reduce((acc, p) => acc + (Number(p.amount) || 0), 0))
     setFormPaidAmount(String(newPaidSum))
     if (newPaidSum >= curTot && curTot > 0) {
       setFormPaymentStatus("pago_total")
@@ -6310,7 +6995,7 @@ export default function PmsCalendar(props?: {
   }
 
   const handleUpdatePayment = (payId: string, field: keyof ReservationPaymentItem, value: any) => {
-    const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal()
+    const { curTot } = computeUnifiedReservationTotals()
     const updated = formPayments.map(p => {
       if (p.id === payId) {
         return { ...p, [field]: value }
@@ -6318,7 +7003,7 @@ export default function PmsCalendar(props?: {
       return p
     })
     setFormPayments(updated)
-    const newPaidSum = updated.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+    const newPaidSum = round2(updated.reduce((acc, p) => acc + (Number(p.amount) || 0), 0))
     setFormPaidAmount(String(newPaidSum))
     if (newPaidSum >= curTot && curTot > 0) {
       setFormPaymentStatus("pago_total")
@@ -6354,7 +7039,9 @@ export default function PmsCalendar(props?: {
       const updatedRates = [...currentRates, newNightItem]
       setFormDailyRates(updatedRates)
       setFormCheckout(newCheckoutStr)
-      syncCompositeTotalAndPaid(updatedRates, formCharges, formChannel)
+      const nextCin = updatedRates[0]?.date || formCheckin
+      const nextExtras = syncExtraFlatsDatesFromPrimary(nextCin, newCheckoutStr, formChannel)
+      syncCompositeTotalAndPaid(updatedRates, formCharges, formChannel, undefined, nextExtras)
       toast({ title: "Diária Adicionada", description: `Nova diária em ${format(parseISO(nextDateStr), "dd/MM")}. Check-out ajustado para ${format(parseISO(newCheckoutStr), "dd/MM")}.` })
     } catch (e: any) {
       console.error(e)
@@ -6371,112 +7058,16 @@ export default function PmsCalendar(props?: {
     const newCheckoutStr = format(addDays(parseISO(lastRemaining.date), 1), "yyyy-MM-dd")
     setFormDailyRates(updatedRates)
     setFormCheckout(newCheckoutStr)
-    syncCompositeTotalAndPaid(updatedRates, formCharges, formChannel)
+    const nextCin = updatedRates[0]?.date || formCheckin
+    const nextExtras = syncExtraFlatsDatesFromPrimary(nextCin, newCheckoutStr, formChannel)
+    syncCompositeTotalAndPaid(updatedRates, formCharges, formChannel, undefined, nextExtras)
     toast({ title: "Diária Removida", description: `Check-out ajustado para ${format(parseISO(newCheckoutStr), "dd/MM")}.` })
   }
 
   const handleSaveRes = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    // ── Fluxo de Criação de Pacote Multi-Flat (Pagamento Único) ──────────────
-    if (!selectedRes && isMultiFlatPackageMode) {
-      if (packageFlatsDraft.length < 2) {
-        toast({ title: "Adicione ao menos 2 flats", description: "Para 1 único flat utilize o modo reserva individual.", variant: "destructive" })
-        return
-      }
-      const resolvedSolName = pkgSolName.trim() || formRequesterName.trim() || formCompanyName.trim() || formGuestName.trim()
-      if (!resolvedSolName) {
-        toast({ title: "Solicitante obrigatório", description: "Informe o Nome do Solicitante / Empresa responsável pelo pacote.", variant: "destructive" })
-        return
-      }
-      for (let i = 0; i < packageFlatsDraft.length; i++) {
-        const fl = packageFlatsDraft[i]
-        if (!fl.checkinDate || !fl.checkoutDate || fl.checkoutDate <= fl.checkinDate) {
-          toast({ title: `Datas inválidas no Flat #${i + 1}`, description: "O check-out deve ser posterior ao check-in em cada flat.", variant: "destructive" })
-          return
-        }
-      }
-      setSavingRes(true)
-      try {
-        const numVal = Number(String(pkgPricingInput || "").replace(",", ".")) || 0
-        const pkgPayload = {
-          requesterType: formCompanyId || formCompanyName.trim() ? "company" : (formAgencyId || formAgencyName.trim() ? "agency_b2b" : "other_person"),
-          requesterName: resolvedSolName,
-          requesterPhone: pkgSolPhone.trim() || formRequesterPhone.trim() || formGuestPhone.trim(),
-          requesterEmail: pkgSolEmail.trim() || formRequesterEmail.trim() || formGuestEmail.trim(),
-          requesterDocument: pkgSolDoc.trim() || formRequesterCpf.trim() || formGuest1Cpf.trim(),
-          companyId: formCompanyId || null,
-          companyName: formCompanyName.trim(),
-          agencyId: formAgencyId || null,
-          agencyName: formAgencyName.trim(),
-          channel: formChannel || "whatsapp",
-          status: pkgStatusType === "pre_reserva" ? "pre_reserva" : "confirmada",
-          paymentStatus: pkgStatusType === "confirmada" ? "pago_total" : "pendente",
-          markAsPaid: pkgStatusType === "confirmada",
-          paymentMethod: pkgStatusType === "faturada" ? "boleto_faturado" : (formPaymentMethod || "pix"),
-          isFaturadoBoleto: pkgStatusType === "faturada",
-          emitConsolidatedBoletoNow: pkgStatusType === "faturada" && pkgEmitBoletoNow,
-          boletoTermDays: Number(formBoletoTermDays) || 15,
-          boletoCustomDueDate: formBoletoCustomDueDate || null,
-          holdDurationMinutes: Number(pkgHoldMinutes) || 30,
-          packagePricingMode: pkgPricingMode,
-          packageDiscountAmount: pkgPricingMode === "discount_amount" ? numVal : 0,
-          packageDiscountPct: pkgPricingMode === "discount_pct" ? numVal : 0,
-          packageFixedTotal: pkgPricingMode === "fixed_total" ? numVal : null,
-          notes: formNotes,
-          receptionNotes: formReceptionNotes,
-          packageFlats: packageFlatsDraft.map((fl, idx) => ({
-            flatId: fl.flatId && fl.flatId !== "auto" ? Number(fl.flatId) : null,
-            checkinDate: fl.checkinDate,
-            checkoutDate: fl.checkoutDate,
-            guestCount: fl.guestCount,
-            requesterIsGuest1: idx === 0 && fl.requesterIsGuest1,
-            informGuestsLater: idx === 0 && fl.requesterIsGuest1 ? false : fl.informGuestsLater,
-            guestName: idx === 0 && fl.requesterIsGuest1 ? resolvedSolName : fl.guest1Name.trim(),
-            guestPhone: idx === 0 && fl.requesterIsGuest1 ? (pkgSolPhone.trim() || formRequesterPhone.trim()) : fl.guest1Phone.trim(),
-            guestDocument: idx === 0 && fl.requesterIsGuest1 ? pkgSolDoc.trim() : fl.guest1Doc.trim(),
-            guest2InformLater: fl.guestCount >= 2 ? fl.guest2InformLater : false,
-            guest2Name: fl.guest2Name.trim(),
-            guest2Phone: fl.guest2Phone.trim(),
-            guest2Document: fl.guest2Doc.trim(),
-            includeBreakfast: fl.includeBreakfast,
-            twinBeds: fl.twinBeds,
-            vehiclePlate: fl.vehiclePlate.trim(),
-            vehicleModel: fl.vehicleModel.trim(),
-            dailyRate: String(fl.dailyRate ?? "").trim() !== ""
-              ? Math.max(0, Number(String(fl.dailyRate).replace(",", ".")) || 0)
-              : 250
-          }))
-        }
-
-        const resp = await fetch("/api/pms/reservations/package", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify(pkgPayload)
-        })
-        const json = await resp.json().catch(() => ({}))
-        if (!resp.ok) {
-          toast({ title: "Erro ao criar pacote multi-flat", description: json.error || "Verifique os flats e datas informados.", variant: "destructive" })
-          return
-        }
-        toast({
-          title: `Pacote ${json.packageCode} criado com sucesso!`,
-          description: `${json.reservations?.length || packageFlatsDraft.length} flats vinculados • Total: R$ ${Number(json.packageSummary?.totalAmount || 0).toFixed(2)}`
-        })
-        setResModalOpen(false)
-        setIsMultiFlatPackageMode(false)
-        await fetchData()
-        fetchCrmGuests()
-        notifyCalendarUpdated()
-        return
-      } catch (err: any) {
-        toast({ title: "Erro de conexão", description: err?.message || "Falha ao criar pacote.", variant: "destructive" })
-        return
-      } finally {
-        setSavingRes(false)
-      }
-    }
+    const isMultiFlatSubmit = !selectedRes && extraPackageFlats.length > 0
 
     if (!formFlatId) {
       toast({
@@ -6486,6 +7077,7 @@ export default function PmsCalendar(props?: {
       })
       return
     }
+    const hasInlineCompanyForReq = Boolean(!formCompanyId && inlineCompanyData && (String(inlineCompanyData.corporateName || "").trim() || String(inlineCompanyData.cnpj || "").replace(/\D/g, "").length === 14))
     const hasSeparateRequester = formRequesterType !== "guest" || formChannel === "b2b"
     if (!formGuestName.trim() && !hasSeparateRequester) {
       toast({
@@ -6504,15 +7096,15 @@ export default function PmsCalendar(props?: {
         })
         return
       }
-      if (formRequesterType === "company" && !formCompanyId && !formCompanyName.trim()) {
+      if (formRequesterType === "company" && !formCompanyId && !formCompanyName.trim() && !hasInlineCompanyForReq) {
         toast({
           title: "Empresa obrigatória",
-          description: "Selecione a Empresa Solicitante (ou preencha o nome do hóspede).",
+          description: "Selecione a Empresa Solicitante ou informe o CNPJ/Razão Social (ou preencha o nome do hóspede).",
           variant: "destructive"
         })
         return
       }
-      if ((formRequesterType === "agency_b2b" || formChannel === "b2b") && !formAgencyId && !formAgencyName.trim() && !formCompanyId && !formCompanyName.trim()) {
+      if ((formRequesterType === "agency_b2b" || formChannel === "b2b") && !formAgencyId && !formAgencyName.trim() && !formCompanyId && !formCompanyName.trim() && !hasInlineCompanyForReq) {
         toast({
           title: "Agência / Empresa B2B obrigatória",
           description: "Selecione a Agência ou Empresa B2B (ou preencha o nome do hóspede).",
@@ -6538,6 +7130,131 @@ export default function PmsCalendar(props?: {
       return
     }
 
+    if (isMultiFlatSubmit) {
+      for (let i = 0; i < extraPackageFlats.length; i++) {
+        const ef = extraPackageFlats[i]
+        const efCin = ef.sameDatesAsPrimary ? formCheckin : ef.checkinDate
+        const efCout = ef.sameDatesAsPrimary ? formCheckout : ef.checkoutDate
+        if (!efCin || !efCout || efCout <= efCin) {
+          toast({
+            title: `Datas inválidas no Flat ${i + 2}`,
+            description: "O check-out deve ser posterior ao check-in em cada flat do pacote.",
+            variant: "destructive"
+          })
+          return
+        }
+      }
+      const allFlatsCheck = [
+        { label: "Flat 1", flatId: formFlatId, cin: formCheckin, cout: formCheckout },
+        ...extraPackageFlats.map((ef, idx) => ({
+          label: `Flat ${idx + 2}`,
+          flatId: ef.flatId,
+          cin: ef.sameDatesAsPrimary ? formCheckin : ef.checkinDate,
+          cout: ef.sameDatesAsPrimary ? formCheckout : ef.checkoutDate
+        }))
+      ]
+      for (let a = 0; a < allFlatsCheck.length; a++) {
+        for (let b = a + 1; b < allFlatsCheck.length; b++) {
+          const itemA = allFlatsCheck[a]
+          const itemB = allFlatsCheck[b]
+          if (itemA.flatId && itemA.flatId !== "auto" && itemB.flatId && itemB.flatId !== "auto" && Number(itemA.flatId) === Number(itemB.flatId)) {
+            if (itemA.cin < itemB.cout && itemA.cout > itemB.cin) {
+              const dupFlatNum = data.flats.find(f => String(f.id) === String(itemA.flatId))?.number || itemA.flatId
+              toast({
+                title: "Flat duplicado no mesmo período",
+                description: `O Apt ${dupFlatNum} foi selecionado tanto no ${itemA.label} quanto no ${itemB.label} com datas sobrepostas. Escolha outro apartamento ou selecione Automático.`,
+                variant: "destructive"
+              })
+              return
+            }
+          }
+        }
+      }
+    }
+
+    // Validação R4 de múltiplos e-mails separados por ';'
+    const numGuestsValidation = Number(formGuestCount) || 1
+    const emailFieldsToValidate: Array<{ label: string; value: string }> = [
+      ...(formRequesterType === "other_person" || formRequesterType === "company"
+        ? [{ label: "E-mail do Solicitante", value: formRequesterEmail }]
+        : []),
+      { label: "E-mail do Hóspede 1", value: formGuestEmail },
+      ...(numGuestsValidation >= 2 ? [{ label: "E-mail do Hóspede 2", value: formGuest2Email }] : []),
+      ...(numGuestsValidation === 3 ? [{ label: "E-mail do Hóspede 3", value: formGuest3Email }] : []),
+      ...((formChannel === "b2b" || formRequesterType === "agency_b2b")
+        ? [{ label: "E-mail do Agente B2B", value: formAgencyAgentEmail }]
+        : []),
+      { label: "E-mail do Responsável Financeiro", value: formFinRespEmail },
+      { label: "E-mails p/ Envio da NFS-e", value: formNfDeliveryEmails },
+      { label: "E-mail Financeiro da Empresa (CNPJ Inline)", value: String(inlineCompanyData?.financialEmail || "") },
+      ...(isMultiFlatSubmit
+        ? extraPackageFlats.flatMap((ef, idx) => {
+            if (ef.informGuestsLater) return []
+            const occ = Number(ef.guestCount) || 1
+            return [
+              { label: `E-mail do Hóspede 1 (Flat ${idx + 2})`, value: ef.guestEmail },
+              ...(occ >= 2 && !ef.guest2InformLater ? [{ label: `E-mail do Hóspede 2 (Flat ${idx + 2})`, value: ef.guest2Email }] : []),
+              ...(occ === 3 ? [{ label: `E-mail do Hóspede 3 (Flat ${idx + 2})`, value: ef.guest3Email }] : []),
+            ]
+          })
+        : []),
+    ]
+    for (const efField of emailFieldsToValidate) {
+      if (efField.value && efField.value.trim()) {
+        const check = validateEmailList(efField.value)
+        if (!check.valid) {
+          toast({
+            title: `${efField.label} inválido`,
+            description: `Endereço(s) inválido(s): ${check.invalidTokens.join(", ")}. Separe múltiplos e-mails usando ;`,
+            variant: "destructive"
+          })
+          return
+        }
+      }
+    }
+    if (isMultiFlatSubmit) {
+      const f1RatesSumCheck = formDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
+      const f1ChargesSumCheck = formCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+      if (round2(f1RatesSumCheck + f1ChargesSumCheck) < 0) {
+        toast({
+          title: "Subtotal inválido no Flat 1",
+          description: "Os descontos aplicados no Flat 1 excedem o valor das diárias. Ajuste o desconto antes de salvar.",
+          variant: "destructive"
+        })
+        return
+      }
+      for (let i = 0; i < extraPackageFlats.length; i++) {
+        const ef = extraPackageFlats[i]
+        const efRatesSumCheck = (ef.dailyRates || []).reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
+        const efChargesSumCheck = (ef.charges || []).reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+        if (round2(efRatesSumCheck + efChargesSumCheck) < 0) {
+          toast({
+            title: `Subtotal inválido no Flat ${i + 2}`,
+            description: `Os descontos aplicados no Flat ${i + 2} excedem o valor das diárias. Ajuste o desconto antes de salvar.`,
+            variant: "destructive"
+          })
+          return
+        }
+      }
+      const pkgNegChargesSum = pkgExtraCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+      if (pkgNegChargesSum < 0 && round2(f1RatesSumCheck + f1ChargesSumCheck + pkgNegChargesSum) < 0) {
+        toast({
+          title: "Desconto do pacote excede o Flat 1",
+          description: "Use o modo 'Desconto Direto no Pacote (R$)' na barra de precificação para ratear descontos maiores em todo o pacote.",
+          variant: "destructive"
+        })
+        return
+      }
+    }
+    if (inlineCompanyData && String(inlineCompanyData.cnpj || formCompanyCnpj || "").replace(/\D/g, "").length === 14 && !String(inlineCompanyData.corporateName || formCompanyName || "").trim()) {
+      toast({
+        title: "Razão Social da Empresa obrigatória",
+        description: "Preencha a Razão Social da nova empresa informada via CNPJ para salvá-la no CRM.",
+        variant: "destructive"
+      })
+      return
+    }
+
     if (activeServiceBlockConflict) {
       const flatObj = data.flats.find(f => String(f.id) === String(formFlatId));
       const flatNum = flatObj?.number || formFlatId;
@@ -6551,6 +7268,31 @@ export default function PmsCalendar(props?: {
       );
       if (!proceed) {
         return;
+      }
+    }
+
+    if (isMultiFlatSubmit) {
+      for (let i = 0; i < extraPackageFlats.length; i++) {
+        const ef = extraPackageFlats[i]
+        if (!ef.flatId || ef.flatId === "auto") continue
+        const efCin = ef.sameDatesAsPrimary ? formCheckin : ef.checkinDate
+        const efCout = ef.sameDatesAsPrimary ? formCheckout : ef.checkoutDate
+        const blk = (data.blocks || []).find((b: any) => {
+          const isService = Boolean(b.isServiceBlock || b.reason === "service_order")
+          if (!isService) return false
+          const sameFlat = Number(b.flatId) === Number(ef.flatId) || String(b.flatNumber) === String(ef.flatId)
+          return sameFlat && b.startDate <= efCout && b.endDate >= efCin
+        })
+        if (blk) {
+          const flatNum = data.flats.find(f => String(f.id) === String(ef.flatId))?.number || ef.flatId
+          const servTitle = blk.serviceTitle || blk.title || "Serviço Externo"
+          const proceed = confirm(
+            `⚠️ AVISO DE CONFLITO COM SERVIÇO EXTERNO (Flat ${i + 2})\n\n` +
+            `O Apt ${flatNum} possui serviço externo agendado/em andamento neste período: ${servTitle}.\n\n` +
+            `Deseja prosseguir e salvar o pacote mesmo assim?`
+          )
+          if (!proceed) return
+        }
       }
     }
 
@@ -6578,9 +7320,11 @@ export default function PmsCalendar(props?: {
       const nightsSubInSave = formDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
       const chargesSubInSave = formCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
       const rawFormTot = Number(formTotalAmount) || 0
-      const totalAmount = (!selectedRes?.earlyCheckout && chargesSubInSave !== 0 && Math.abs(rawFormTot - nightsSubInSave) < 0.05)
+      const flat1TotalAmount = (!selectedRes?.earlyCheckout && chargesSubInSave !== 0 && Math.abs(rawFormTot - nightsSubInSave) < 0.05)
         ? calcTot
         : (rawFormTot > 0 ? rawFormTot : calcTot)
+      const unifiedTotals = computeUnifiedReservationTotals()
+      const totalAmount = isMultiFlatSubmit ? unifiedTotals.curTot : flat1TotalAmount
       const isOta = formChannel === "booking" || formChannel === "airbnb"
       const isB2b = formChannel === "b2b" || formRequesterType === "agency_b2b"
       const cleanedFormPayments = formIsFaturadoBoleto && !selectedRes?.pixEndToEndId && !selectedRes?.mpPaymentId
@@ -6594,12 +7338,12 @@ export default function PmsCalendar(props?: {
       const sumPaidFromList = cleanedFormPayments.length > 0
         ? cleanedFormPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
         : (formIsFaturadoBoleto ? 0 : (Number(formPaidAmount) || 0))
-      let resolvedPaidAmount = sumPaidFromList
+      let resolvedPaidAmount = round2(sumPaidFromList)
       let resolvedMethod = formIsFaturadoBoleto ? "boleto_faturado" : formPaymentMethod
       let normalizedPayments = cleanedFormPayments
       let resolvedPaymentStatus = "pendente"
 
-      const hasOtaPartialExtensionInForm = isOta && Boolean(
+      const hasOtaPartialExtensionInForm = !isMultiFlatSubmit && isOta && Boolean(
         sumPaidFromList > 0 && sumPaidFromList < totalAmount - 0.01 && (
           formPaymentStatus === "sinal_pago" ||
           formPaymentStatus === "parcial" ||
@@ -6724,12 +7468,36 @@ export default function PmsCalendar(props?: {
 
       const selectedComp = companies.find(c => String(c.id) === formCompanyId)
       const selectedAg = agencies.find((a: any) => String(a.id) === formAgencyId)
-      const resolvedReqType = formRequesterType || (isB2b ? "agency_b2b" : (formCompanyId || formCompanyName ? "company" : "guest"))
+      const resolvedReqType = formRequesterType || (isB2b ? "agency_b2b" : (formCompanyId || formCompanyName || hasInlineCompanyForReq ? "company" : "guest"))
       const resolvedCompName = (
         selectedRes && String(selectedRes.companyId || "") === String(formCompanyId || "") && selectedRes.companyName
           ? selectedRes.companyName
-          : (selectedComp ? (selectedComp.tradeName || selectedComp.corporateName) : formCompanyName)
+          : (selectedComp ? (selectedComp.tradeName || selectedComp.corporateName) : (inlineCompanyData?.tradeName || inlineCompanyData?.corporateName || formCompanyName))
       ) || ""
+      const cleanInlineCnpjDigits = String(formCompanyCnpj || inlineCompanyData?.cnpj || "").replace(/\D/g, "")
+      const hasInlineCompanyPayload = Boolean(!formCompanyId && (inlineCompanyData || cleanInlineCnpjDigits.length === 14))
+      const inlineCompanyPayload = hasInlineCompanyPayload
+        ? {
+            cnpj: cleanInlineCnpjDigits || inlineCompanyData?.cnpj || "",
+            corporateName: String(inlineCompanyData?.corporateName || formCompanyName || "").trim(),
+            tradeName: String(inlineCompanyData?.tradeName || inlineCompanyData?.corporateName || formCompanyName || "").trim(),
+            financialEmail: formatEmailList(inlineCompanyData?.financialEmail || formNfDeliveryEmails || (resolvedReqType === "company" ? formRequesterEmail : "") || ""),
+            phone: String(inlineCompanyData?.phone || (resolvedReqType === "company" ? formRequesterPhone : "") || "").trim(),
+            contactPerson: String(inlineCompanyData?.contactPerson || (resolvedReqType === "company" ? formRequesterName : "") || "").trim(),
+            address: inlineCompanyData?.address || "",
+            number: inlineCompanyData?.number || "S/N",
+            complement: inlineCompanyData?.complement || "",
+            neighborhood: inlineCompanyData?.neighborhood || "",
+            cep: inlineCompanyData?.cep || "",
+            city: inlineCompanyData?.city || "",
+            state: inlineCompanyData?.state || "RJ",
+            ibgeCode: inlineCompanyData?.ibgeCode || "",
+            allowsDirectReservations: resolvedReqType === "company" || isB2b,
+            isInvoiceOnly: resolvedReqType !== "company" && !isB2b,
+            billingEnabled: Boolean(formIsFaturadoBoleto),
+            defaultBoletoTermDays: Number(formBoletoTermDays) || 28,
+          }
+        : undefined
       const resolvedAgName = (selectedAg ? (selectedAg.tradeName || selectedAg.corporateName) : formAgencyName) || ""
       const resolvedAgCnpj = (selectedAg ? selectedAg.cnpj : formAgencyCnpj) || ""
       const commPct = formB2bRatePolicy === "NET" ? 0 : (Number(formB2bCommissionPct) || 0)
@@ -6770,7 +7538,7 @@ export default function PmsCalendar(props?: {
           ? computeHoldExpirationInfo()
           : null
       const isReactivatingNow = Boolean(isReactivatingRes || selectedRes?.status === "expirada")
-      const hasCompanyLink = Boolean(resolvedReqType === "company" || formInvoiceRecipientType === "company" || isB2b)
+      const hasCompanyLink = Boolean(resolvedReqType === "company" || formInvoiceRecipientType === "company" || isB2b || hasInlineCompanyPayload)
       const resolvedInvRecType: "company" | "agency" | "guest" | "requester" = isB2b
         ? formInvoiceRecipientType
         : (formInvoiceRecipientType === "agency"
@@ -6779,7 +7547,53 @@ export default function PmsCalendar(props?: {
                 ? "guest"
                 : formInvoiceRecipientType))
 
-      const payload: any = {
+      const isGuestSelfRequester = resolvedReqType === "guest" && !isB2b
+      const formattedReqEmail = isGuestSelfRequester
+        ? ""
+        : (formatEmailList(formRequesterEmail) || (resolvedReqType === "company" ? String(inlineCompanyPayload?.financialEmail || "") : ""))
+      const formattedFinRespEmail = formatEmailList(formFinRespEmail)
+      const resolvedDeliveryEmails = parseEmailList(
+        hasCompanyLink && inlineCompanyPayload?.financialEmail
+          ? `${formNfDeliveryEmails}; ${inlineCompanyPayload.financialEmail}`
+          : formNfDeliveryEmails
+      )
+
+      const resolvedRequesterNameForPkg = isGuestSelfRequester
+        ? formGuestName.trim()
+        : (
+            formRequesterName.trim() ||
+            (resolvedReqType === "company" ? (selectedComp?.contactPerson || resolvedCompName) : "") ||
+            (isB2b ? (formAgencyAgentName.trim() || resolvedAgName) : "") ||
+            formGuestName.trim()
+          )
+      const resolvedRequesterPhoneForPkg = isGuestSelfRequester
+        ? formGuestPhone.trim()
+        : (
+            formRequesterPhone.trim() ||
+            (resolvedReqType === "company" ? (selectedComp?.phone || (selectedComp as any)?.telefone || inlineCompanyPayload?.phone || "") : "") ||
+            (isB2b ? formAgencyAgentPhone.trim() : "") ||
+            formGuestPhone.trim()
+          )
+      const resolvedRequesterEmailForPkg = isGuestSelfRequester
+        ? formatEmailList(formGuestEmail)
+        : (formattedReqEmail || (isB2b ? formatEmailList(formAgencyAgentEmail) : "") || formatEmailList(formGuestEmail))
+      const resolvedRequesterDocForPkg = isGuestSelfRequester
+        ? formGuest1Cpf.trim()
+        : (formRequesterCpf.trim() || formGuest1Cpf.trim())
+
+      const anyFlatHasCleaningInPkg = isMultiFlatSubmit && (
+        formCharges.some(c => c.type === "cleaning") ||
+        extraPackageFlats.some(ef => (ef.charges || []).some(c => c.type === "cleaning"))
+      )
+      const normalizedPkgExtraCharges = anyFlatHasCleaningInPkg
+        ? pkgExtraCharges.map(c =>
+            c.type === "cleaning"
+              ? { ...c, type: "other" as const, title: c.title === "Taxa de Limpeza" ? "Taxa de Limpeza (Pacote)" : c.title }
+              : c
+          )
+        : pkgExtraCharges
+
+      const basePayload: any = {
         flatId: Number(formFlatId),
         guestId: resolvedGuest1Id,
         guestName: formGuestName.trim(),
@@ -6789,20 +7603,26 @@ export default function PmsCalendar(props?: {
         guestCount: numG,
         guests: guestsPayload,
         requesterType: resolvedReqType,
+        requesterName: resolvedRequesterNameForPkg,
+        requesterPhone: resolvedRequesterPhoneForPkg,
+        requesterEmail: resolvedRequesterEmailForPkg,
+        requesterDocument: resolvedRequesterDocForPkg,
         requesterInfo: (resolvedReqType === "other_person" || resolvedReqType === "company") ? {
           guestId: resolvedRequesterGuestId,
           name: formRequesterName.trim() || (resolvedReqType === "company" ? (selectedComp?.contactPerson || resolvedCompName) : ""),
           cpf: formRequesterCpf.trim(),
-          phone: formRequesterPhone.trim() || (resolvedReqType === "company" ? (selectedComp?.phone || (selectedComp as any)?.telefone || "") : ""),
-          email: formRequesterEmail.trim() || (resolvedReqType === "company" ? ((selectedComp as any)?.email || selectedComp?.financialEmail || (selectedComp as any)?.emailFinanceiro || "") : "")
+          phone: formRequesterPhone.trim() || (resolvedReqType === "company" ? (selectedComp?.phone || (selectedComp as any)?.telefone || inlineCompanyPayload?.phone || "") : ""),
+          email: formattedReqEmail || (resolvedReqType === "company" ? (formatEmailList((selectedComp as any)?.email || selectedComp?.financialEmail || (selectedComp as any)?.emailFinanceiro || inlineCompanyPayload?.financialEmail || "")) : "")
         } : (isB2b ? {
           name: formAgencyAgentName.trim() || resolvedAgName,
           phone: formAgencyAgentPhone.trim(),
-          email: formAgencyAgentEmail.trim()
+          email: formatEmailList(formAgencyAgentEmail)
         } : null),
         companyId: hasCompanyLink && formCompanyId ? Number(formCompanyId) : null,
         companyName: hasCompanyLink ? resolvedCompName : "",
-        companyCnpj: hasCompanyLink && selectedComp?.cnpj ? selectedComp.cnpj : undefined,
+        companyCnpj: hasCompanyLink ? (selectedComp?.cnpj || inlineCompanyPayload?.cnpj || (cleanInlineCnpjDigits.length === 14 ? cleanInlineCnpjDigits : undefined)) : undefined,
+        companyEmail: hasCompanyLink ? (formatEmailList(inlineCompanyPayload?.financialEmail || selectedComp?.financialEmail || (selectedComp as any)?.emailFinanceiro || (selectedComp as any)?.email || "") || undefined) : undefined,
+        companyData: hasCompanyLink && inlineCompanyPayload ? inlineCompanyPayload : undefined,
         costCenter: formCostCenter.trim() || undefined,
         agencyId: isB2b && formAgencyId ? Number(formAgencyId) : (selectedRes?.agencyId || null),
         agencyName: isB2b ? (selectedAg?.corporateName || resolvedAgName) : undefined,
@@ -6833,9 +7653,7 @@ export default function PmsCalendar(props?: {
         b2bVoucherUrl: isB2b ? formVoucherUrl.trim() : undefined,
         invoiceRecipientType: resolvedInvRecType,
         nfRecipientType: resolvedInvRecType,
-        nfDeliveryEmails: (isB2b || formNfDeliveryEmails.trim())
-          ? formNfDeliveryEmails.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean)
-          : undefined,
+        nfDeliveryEmails: resolvedDeliveryEmails.length > 0 ? resolvedDeliveryEmails : undefined,
         nfHideFromGuest: (isB2b || resolvedReqType === "company" || resolvedInvRecType === "company") ? Boolean(formNfHideFromGuest) : false,
         checkinDate: formCheckin,
         checkoutDate: formCheckout,
@@ -6880,7 +7698,7 @@ export default function PmsCalendar(props?: {
         autoReminderEnabled: Boolean(formAutoReminderEnabled),
         financialResponsible: {
           name: formFinRespName.trim(),
-          email: formFinRespEmail.trim(),
+          email: formattedFinRespEmail,
           phone: formFinRespPhone.trim(),
           whatsapp: formFinRespPhone.trim(),
           document: formFinRespDoc.trim()
@@ -6897,8 +7715,8 @@ export default function PmsCalendar(props?: {
           ? Math.round((nightsSubInSave / formDailyRates.length) * 100) / 100
           : (Number(formDailyRate) || 0),
         dailyRates: formDailyRates,
-        charges: formCharges,
-        cleaningFee: formCharges
+        charges: isMultiFlatSubmit ? normalizedPkgExtraCharges : formCharges,
+        cleaningFee: (isMultiFlatSubmit ? normalizedPkgExtraCharges : formCharges)
           .filter(c => c.type === "cleaning")
           .reduce((acc, c) => acc + (Number(c.amount) || 0), 0),
         payments: normalizedPayments,
@@ -6918,7 +7736,9 @@ export default function PmsCalendar(props?: {
         clientType: formIsMonthlyGuest
           ? "mensalista"
           : ((isB2b || resolvedReqType === "company" || formIsFaturadoBoleto || selectedRes?.clientType === "corporativo") ? "corporativo" : "avulso"),
-        source: selectedRes ? "PMS Calendário (Edição Manual)" : "PMS Calendário (Nova Reserva)",
+        source: selectedRes
+          ? "PMS Calendário (Edição Manual)"
+          : (isMultiFlatSubmit ? "PMS Calendário (Pacote Multi-Flat)" : "PMS Calendário (Nova Reserva)"),
         docPhotoUrl: formDocPhotoUrl || undefined,
         hasMinor: formHasMinor,
         isCamposResident: formIsCamposResident,
@@ -6933,6 +7753,153 @@ export default function PmsCalendar(props?: {
           color: formVehicleColor.trim()
         } : null
       }
+
+      const serializeExtraFlatForPackage = (ef: MultiFlatExtraItem) => {
+        const efCin = ef.sameDatesAsPrimary ? formCheckin : ef.checkinDate
+        const efCout = ef.sameDatesAsPrimary ? formCheckout : ef.checkoutDate
+        const efOcc = Math.max(1, Math.min(3, Number(ef.guestCount) || 1))
+        const efRates = ef.dailyRates && ef.dailyRates.length > 0
+          ? ef.dailyRates
+          : buildReservationDailyRates(efCin, efCout, Math.max(0, Number(String(ef.dailyRate || "250").replace(",", ".")) || 250), formChannel || "whatsapp")
+        const efRatesSum = round2(efRates.reduce((s, d) => s + (Number(d.rate) || 0), 0))
+        const efChargesSum = round2(ef.charges.reduce((s, c) => s + (Number(c.amount) || 0), 0))
+        const efTotal = Math.max(0, round2(efRatesSum + efChargesSum))
+        const efAvgRate = efRates.length > 0 ? round2(efRatesSum / efRates.length) : Math.max(0, Number(ef.dailyRate) || 0)
+        const efG1Id = ef.guestId && ef.guestId !== "manual" ? Number(ef.guestId) : null
+        const efG2Id = ef.guest2Id && ef.guest2Id !== "manual" ? Number(ef.guest2Id) : null
+        const efG3Id = ef.guest3Id && ef.guest3Id !== "manual" ? Number(ef.guest3Id) : null
+        const efInformLater = Boolean(ef.informGuestsLater) || !ef.guestName.trim()
+        const efG2InformLater = efOcc >= 2 && (Boolean(ef.guest2InformLater) || !ef.guest2Name.trim())
+        const efGuests: any[] = [
+          {
+            index: 1,
+            guestId: efG1Id,
+            name: ef.guestName.trim(),
+            cpf: ef.guestCpf.trim(),
+            phone: ef.guestPhone.trim(),
+            email: ef.guestEmail.trim(),
+            informLater: efInformLater
+          }
+        ]
+        if (efOcc >= 2) {
+          efGuests.push({
+            index: 2,
+            guestId: efG2Id,
+            name: ef.guest2Name.trim() || "Hóspede 2",
+            cpf: ef.guest2Cpf.trim(),
+            phone: ef.guest2Phone.trim(),
+            email: ef.guest2Email.trim(),
+            informLater: efG2InformLater
+          })
+        }
+        if (efOcc === 3) {
+          efGuests.push({
+            index: 3,
+            guestId: efG3Id,
+            name: ef.guest3Name.trim() || "Hóspede 3",
+            cpf: ef.guest3Cpf.trim(),
+            phone: ef.guest3Phone.trim(),
+            email: ef.guest3Email.trim(),
+            informLater: !ef.guest3Name.trim()
+          })
+        }
+        return {
+          flatId: ef.flatId && ef.flatId !== "auto" ? Number(ef.flatId) : "auto",
+          checkinDate: efCin,
+          checkoutDate: efCout,
+          checkinTime: ef.checkinTime || formCheckinTime || defaultCheckinTime || "14:00",
+          checkoutTime: ef.checkoutTime || formCheckoutTime || defaultCheckoutTime || "12:00",
+          guestCount: efOcc,
+          requesterIsGuest1: false,
+          informGuestsLater: efInformLater,
+          guestId: efG1Id,
+          guestName: ef.guestName.trim(),
+          guestPhone: ef.guestPhone.trim(),
+          guestEmail: ef.guestEmail.trim(),
+          guestDocument: ef.guestCpf.trim(),
+          guest2InformLater: efG2InformLater,
+          guest2Id: efG2Id,
+          guest2Name: ef.guest2Name.trim(),
+          guest2Phone: ef.guest2Phone.trim(),
+          guest2Email: ef.guest2Email.trim(),
+          guest2Document: ef.guest2Cpf.trim(),
+          guests: efGuests,
+          includeBreakfast: Boolean(ef.includeBreakfast),
+          twinBeds: Boolean(ef.twinBeds),
+          extraMattress: Boolean(ef.extraMattress) || efOcc >= 3,
+          dailyRate: efAvgRate,
+          dailyRates: efRates,
+          charges: ef.charges,
+          cleaningFee: ef.charges.filter(c => c.type === "cleaning").reduce((acc, c) => acc + (Number(c.amount) || 0), 0),
+          totalAmount: efTotal,
+          specialRequests: ef.specialRequests.trim() || formSpecialRequests.trim() || "",
+          notes: ef.notes.trim() || formNotes.trim() || "",
+          receptionNotes: formReceptionNotes,
+          vehicle: ef.vehiclePlate.trim() ? {
+            plate: ef.vehiclePlate.trim().toUpperCase(),
+            brand: ef.vehicleBrand.trim(),
+            model: ef.vehicleModel.trim(),
+            color: ef.vehicleColor.trim()
+          } : null
+        }
+      }
+
+      const pkgPricingNumVal = Math.max(0, Number(String(packagePricingInput || "").replace(",", ".")) || 0)
+      const flat1ForPackage = {
+        flatId: Number(formFlatId),
+        checkinDate: formCheckin,
+        checkoutDate: formCheckout,
+        checkinTime: formCheckinTime || defaultCheckinTime || "14:00",
+        checkoutTime: formCheckoutTime || defaultCheckoutTime || "12:00",
+        guestCount: numG,
+        requesterIsGuest1: resolvedReqType === "guest",
+        informGuestsLater: resolvedReqType !== "guest" && !formGuestName.trim(),
+        guestId: resolvedGuest1Id,
+        guestName: formGuestName.trim(),
+        guestPhone: formGuestPhone.trim(),
+        guestEmail: formGuestEmail.trim(),
+        guestDocument: formGuest1Cpf.trim(),
+        guest2InformLater: numG >= 2 && !formGuest2Name.trim(),
+        guest2Id: guestsPayload[1]?.guestId || null,
+        guest2Name: guestsPayload[1]?.name || "",
+        guest2Phone: guestsPayload[1]?.phone || "",
+        guest2Email: guestsPayload[1]?.email || "",
+        guest2Document: guestsPayload[1]?.cpf || "",
+        guests: guestsPayload,
+        includeBreakfast: formIncludeBreakfast,
+        twinBeds: formTwinBeds,
+        extraMattress: formExtraMattress || numG >= 3,
+        dailyRate: formDailyRates.length > 0 ? round2(nightsSubInSave / formDailyRates.length) : (Number(formDailyRate) || 0),
+        dailyRates: formDailyRates,
+        charges: formCharges,
+        cleaningFee: formCharges.filter(c => c.type === "cleaning").reduce((acc, c) => acc + (Number(c.amount) || 0), 0),
+        totalAmount: flat1TotalAmount,
+        specialRequests: formSpecialRequests.trim() || formNotes.trim() || "",
+        notes: formNotes.trim() || formSpecialRequests.trim() || "",
+        receptionNotes: formReceptionNotes,
+        vehicle: formVehiclePlate.trim() ? {
+          plate: formVehiclePlate.trim().toUpperCase(),
+          brand: formVehicleBrand.trim(),
+          model: formVehicleModel.trim(),
+          color: formVehicleColor.trim()
+        } : null
+      }
+
+      const effectivePackagePricingMode =
+        packagePricingMode === "fixed_total" && packagePricingInput.trim() === ""
+          ? "sum"
+          : packagePricingMode
+      const payload: any = isMultiFlatSubmit
+        ? {
+            ...basePayload,
+            packagePricingMode: effectivePackagePricingMode,
+            packageDiscountAmount: effectivePackagePricingMode === "discount_amount" ? pkgPricingNumVal : 0,
+            packageDiscountPct: effectivePackagePricingMode === "discount_pct" ? Math.min(100, pkgPricingNumVal) : 0,
+            packageFixedTotal: effectivePackagePricingMode === "fixed_total" ? pkgPricingNumVal : null,
+            emitConsolidatedBoletoNow: Boolean(formIsFaturadoBoleto && packageEmitBoletoNow),
+            packageFlats: [flat1ForPackage, ...extraPackageFlats.map(serializeExtraFlatForPackage)],
+          }
+        : basePayload
 
       const sendSaveRequest = async (bodyPayload: any) => {
         if (selectedRes) {
@@ -6955,8 +7922,11 @@ export default function PmsCalendar(props?: {
 
       if (resp.status === 409) {
         const errJson = await resp.json().catch(() => ({}))
+        const conflictSummary = Array.isArray(errJson?.conflicts) && errJson.conflicts.length > 0
+          ? `\n\nConflitos: ${errJson.conflicts.map((c: any) => `Flat ${c.flatNumber || c.flatId || "?"} (${c.guestName || c.reason || "ocupado"})`).slice(0, 4).join(", ")}`
+          : ""
         const shouldForce = window.confirm(
-          `${errJson.error || "Este flat já possui outra reserva ativa neste período!"}\n\nDeseja FORÇAR o encaixe (Overbooking) neste flat e notificar a gestão imediatamente?`
+          `${errJson.error || "Este flat já possui outra reserva ativa neste período!"}${conflictSummary}\n\nDeseja FORÇAR o encaixe (Overbooking) e notificar a gestão imediatamente?`
         )
         if (!shouldForce) {
           toast({
@@ -6981,21 +7951,36 @@ export default function PmsCalendar(props?: {
       }
 
       const savedRes = await resp.json().catch(() => null)
-      if (savedRes && savedRes.id) {
-        setData(prev => ({
-          ...prev,
-          reservations: prev.reservations.map(r => r.id === savedRes.id ? { ...r, ...savedRes } : r)
-        }))
-        setSelectedRes(savedRes)
+      if (savedRes?.isPackage && savedRes?.packageSummary) {
+        const pkgSum = savedRes.packageSummary
+        const flatsCount = savedRes.reservations?.length || (1 + extraPackageFlats.length)
+        const pendingVal = Number(pkgSum.pendingAmount ?? 0)
+        const totVal = Number(pkgSum.totalAmount ?? totalAmount)
+        const balanceLabel = formIsFaturadoBoleto
+          ? "Faturado (Boleto)"
+          : (pendingVal > 0.01 ? `Restante PIX/Link: R$ ${pendingVal.toFixed(2)}` : "Quitado")
+        toast({
+          title: `Pacote ${savedRes.packageCode} criado com sucesso!`,
+          description: `${flatsCount} flats vinculados • Total: R$ ${totVal.toFixed(2)} • ${balanceLabel}`
+        })
+      } else {
+        if (savedRes && savedRes.id) {
+          setData(prev => ({
+            ...prev,
+            reservations: prev.reservations.map(r => r.id === savedRes.id ? { ...r, ...savedRes } : r)
+          }))
+          setSelectedRes(savedRes)
+        }
+        toast({
+          title: selectedRes ? "Reserva Atualizada" : "Reserva Criada com Sucesso",
+          description: `${payload.guestName || resolvedRequesterNameForPkg} • Flat ${data.flats.find(f => f.id === Number(formFlatId))?.number || formFlatId}`
+        })
       }
 
-      toast({
-        title: selectedRes ? "Reserva Atualizada" : "Reserva Criada com Sucesso",
-        description: `${payload.guestName} • Flat ${data.flats.find(f => f.id === Number(formFlatId))?.number || formFlatId}`
-      })
       setResModalOpen(false)
       fetchData()
       fetchCrmGuests()
+      fetchCompanies()
       notifyCalendarUpdated()
     } catch (err: any) {
       console.error("[PMS Calendar] Erro ao salvar reserva:", err)
@@ -7465,15 +8450,237 @@ export default function PmsCalendar(props?: {
   const stableSelectGuest3 = useStableCallback(handleSelectGuest3)
   const stableSelectAgency = useStableCallback(handleSelectAgency)
 
+  const handleLookupInlineCompanyCnpj = async (rawCnpj: string) => {
+    const clean = String(rawCnpj || "").replace(/\D/g, "")
+    if (clean.length !== 14) return
+    setLoadingInlineCnpj(true)
+    try {
+      const res = await fetch(`/api/invoices/lookup-cnpj/${clean}`, { credentials: "include" })
+      if (!res.ok) {
+        toast({ title: "CNPJ não localizado", description: "Preencha os dados da empresa manualmente abaixo.", variant: "destructive" })
+        return
+      }
+      const resData = await res.json().catch(() => ({}))
+      if (resData.companyId) {
+        const matched = companies.find((c: any) => String(c.id) === String(resData.companyId))
+        const cName = matched?.tradeName || matched?.corporateName || resData.nomeFantasia || resData.razaoSocial || ""
+        setFormCompanyId(String(resData.companyId))
+        setFormCompanyName(cName)
+        setFormCompanyCnpj(clean)
+        setInlineCompanyData(null)
+        setInlineCnpjExpanded(false)
+        if (matched && formRequesterType === "company") {
+          applyCompanyBillingDefaultsToForm(matched)
+        }
+        const crmMail = formatEmailList(matched?.financialEmail || (matched as any)?.emailFinanceiro || resData.email || "")
+        if (crmMail && !formNfDeliveryEmails.trim()) setFormNfDeliveryEmails(crmMail)
+        if (crmMail && formRequesterType === "company" && !formRequesterEmail.trim()) setFormRequesterEmail(crmMail)
+        toast({ title: "Empresa localizada no CRM!", description: `${cName} vinculada automaticamente.` })
+        return
+      }
+
+      const isFallbackOnly = resData.source === "fallback" && resData.razaoSocial === "Empresa"
+      const corpName = isFallbackOnly ? "" : (resData.razaoSocial || resData.corporateName || resData.razao_social || "")
+      const tradeName = isFallbackOnly ? "" : (resData.nomeFantasia || resData.tradeName || resData.nome_fantasia || corpName)
+      const emailStr = formatEmailList(resData.email || "")
+      const phoneStr = resData.telefone || resData.ddd_telefone_1 || ""
+
+      setFormCompanyId("")
+      setFormCompanyCnpj(clean)
+      if (tradeName || corpName) setFormCompanyName(tradeName || corpName)
+      setInlineCompanyData({
+        cnpj: clean,
+        corporateName: corpName,
+        tradeName: tradeName || corpName,
+        financialEmail: emailStr,
+        phone: phoneStr,
+        contactPerson: formRequesterName || "",
+        address: resData.logradouro || resData.address || resData.endereco || "",
+        number: resData.numero || resData.number || "S/N",
+        complement: resData.complemento || resData.complement || "",
+        neighborhood: resData.bairro || resData.neighborhood || "",
+        cep: resData.cep || "",
+        city: resData.cidade || resData.city || resData.municipio || "",
+        state: resData.uf || resData.state || "RJ",
+        ibgeCode: resData.codigoMunicipio || resData.ibgeCode || resData.ibge || "",
+        allowsDirectReservations: formRequesterType === "company" || formRequesterType === "agency_b2b",
+        isInvoiceOnly: formRequesterType !== "company" && formRequesterType !== "agency_b2b",
+        billingEnabled: formIsFaturadoBoleto,
+      })
+      setInlineCnpjExpanded(true)
+      if (emailStr && !formNfDeliveryEmails.trim()) setFormNfDeliveryEmails(emailStr)
+      if (emailStr && formRequesterType === "company" && !formRequesterEmail.trim()) setFormRequesterEmail(emailStr)
+      toast({
+        title: isFallbackOnly ? "CNPJ sem retorno automático" : "Dados da Empresa Localizados!",
+        description: isFallbackOnly
+          ? "Informe a Razão Social e e-mails abaixo; será salva no CRM ao criar a reserva."
+          : `${corpName || tradeName} preenchida — será salva automaticamente no CRM ao concluir.`
+      })
+    } catch {
+      toast({ title: "Erro ao consultar CNPJ", description: "Preencha os dados manualmente abaixo.", variant: "destructive" })
+    } finally {
+      setLoadingInlineCnpj(false)
+    }
+  }
+
+  const renderInlineCnpjBox = (ctx: "requester_corporate" | "invoice_only" | "b2b_client") => {
+    const cleanDigits = String(formCompanyCnpj || "").replace(/\D/g, "")
+    return (
+      <div className="p-2 bg-muted/40 border border-dashed border-indigo-300 dark:border-indigo-700/70 rounded-xl space-y-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <span className="text-[10.5px] font-bold text-indigo-800 dark:text-indigo-200">
+            Ou digite o CNPJ para cadastrar/vincular na hora:
+          </span>
+          {inlineCompanyData && (
+            <button
+              type="button"
+              onClick={() => {
+                setInlineCompanyData(null)
+                setFormCompanyCnpj("")
+                setInlineCnpjExpanded(false)
+              }}
+              className="text-[10px] text-rose-600 hover:underline font-semibold cursor-pointer"
+            >
+              Limpar CNPJ inline
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Input
+            value={formCompanyCnpj}
+            onChange={(e) => {
+              const v = e.target.value
+              setFormCompanyCnpj(v)
+              const d = v.replace(/\D/g, "")
+              if (d.length === 14) {
+                handleLookupInlineCompanyCnpj(v)
+              }
+            }}
+            placeholder="00.000.000/0000-00"
+            className="h-8 text-xs font-mono bg-background flex-1"
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={loadingInlineCnpj || cleanDigits.length !== 14}
+            onClick={() => handleLookupInlineCompanyCnpj(formCompanyCnpj)}
+            className="h-8 px-2.5 text-[11px] font-bold border-indigo-300 text-indigo-700 dark:text-indigo-300 shrink-0"
+          >
+            {loadingInlineCnpj ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : <Search className="w-3 h-3 mr-1" />}
+            <span>{loadingInlineCnpj ? "Buscando..." : "Buscar CNPJ"}</span>
+          </Button>
+          {!inlineCompanyData && !inlineCnpjExpanded && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setInlineCnpjExpanded(true)
+                setFormCompanyId("")
+                setInlineCompanyData({
+                  cnpj: cleanDigits,
+                  corporateName: formCompanyName || "",
+                  tradeName: formCompanyName || "",
+                  financialEmail: formNfDeliveryEmails || "",
+                  phone: "",
+                  contactPerson: formRequesterName || "",
+                  address: "",
+                  number: "S/N",
+                  complement: "",
+                  neighborhood: "",
+                  cep: "",
+                  city: "",
+                  state: "RJ",
+                  ibgeCode: "",
+                  allowsDirectReservations: ctx !== "invoice_only",
+                  isInvoiceOnly: ctx === "invoice_only",
+                  billingEnabled: formIsFaturadoBoleto,
+                })
+              }}
+              className="h-8 px-2 text-[10.5px] font-bold text-indigo-600 shrink-0"
+            >
+              + Manual
+            </Button>
+          )}
+        </div>
+
+        {inlineCompanyData && (
+          <div className="p-2.5 bg-background border border-indigo-200 dark:border-indigo-800 rounded-xl space-y-2 animate-in fade-in">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span className="text-[10px] font-black uppercase text-emerald-700 dark:text-emerald-300">
+                ✓ Nova Empresa Inline (será salva automaticamente no CRM ao concluir)
+              </span>
+              {(inlineCompanyData.city || inlineCompanyData.cep) && (
+                <span className="text-[10px] text-muted-foreground">
+                  {[inlineCompanyData.city, inlineCompanyData.state, inlineCompanyData.cep].filter(Boolean).join(" • ")}
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <Input
+                value={inlineCompanyData.corporateName || ""}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setInlineCompanyData((prev) => ({ ...(prev || {}), corporateName: val }))
+                  if (!inlineCompanyData.tradeName) setFormCompanyName(val)
+                }}
+                placeholder="Razão Social *"
+                className="h-7 text-xs"
+              />
+              <Input
+                value={inlineCompanyData.tradeName || ""}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setInlineCompanyData((prev) => ({ ...(prev || {}), tradeName: val }))
+                  setFormCompanyName(val || inlineCompanyData.corporateName || "")
+                }}
+                placeholder="Nome Fantasia"
+                className="h-7 text-xs"
+              />
+              <Input
+                type="text"
+                value={inlineCompanyData.financialEmail || ""}
+                onChange={(e) => {
+                  const val = e.target.value
+                  const prevInlineEmail = inlineCompanyData?.financialEmail || ""
+                  setInlineCompanyData((prev) => ({ ...(prev || {}), financialEmail: val }))
+                  if (!formNfDeliveryEmails.trim() || formatEmailList(formNfDeliveryEmails) === formatEmailList(prevInlineEmail)) {
+                    setFormNfDeliveryEmails(val)
+                  }
+                }}
+                placeholder="E-mail(s) Financeiro / NFS-e (separe por ;)"
+                className="h-7 text-xs"
+              />
+              <Input
+                type="tel"
+                inputMode="tel"
+                value={inlineCompanyData.phone || ""}
+                onChange={(e) => setInlineCompanyData((prev) => ({ ...(prev || {}), phone: formatBrazilPhone(e.target.value) }))}
+                placeholder="Telefone / WhatsApp da Empresa"
+                className="h-7 text-xs"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const stableSelectCompanySimple = useStableCallback((val: string) => {
     if (val === "__NEW_COMPANY__") {
       handleOpenNewCompanyModal("b2b_client")
       return
     }
     setFormCompanyId(val)
+    setInlineCompanyData(null)
+    setInlineCnpjExpanded(false)
     const c = companies.find(comp => String(comp.id) === val) as any
     if (c) {
       setFormCompanyName(c.tradeName || c.corporateName)
+      setFormCompanyCnpj(c.cnpj || "")
+      const compEmails = formatEmailList(c.financialEmail || c.emailFinanceiro || c.email || "")
+      if (compEmails && !formNfDeliveryEmails.trim()) setFormNfDeliveryEmails(compEmails)
     }
   })
 
@@ -7483,10 +8690,15 @@ export default function PmsCalendar(props?: {
       return
     }
     setFormCompanyId(val)
+    setInlineCompanyData(null)
+    setInlineCnpjExpanded(false)
     setFormInvoiceRecipientType("company")
     const c = companies.find(comp => String(comp.id) === val) as any
     if (c) {
       setFormCompanyName(c.tradeName || c.corporateName)
+      setFormCompanyCnpj(c.cnpj || "")
+      const compEmails = formatEmailList(c.financialEmail || c.emailFinanceiro || c.email || "")
+      if (compEmails && !formNfDeliveryEmails.trim()) setFormNfDeliveryEmails(compEmails)
     }
   })
 
@@ -7496,17 +8708,24 @@ export default function PmsCalendar(props?: {
       return
     }
     setFormCompanyId(val)
+    setInlineCompanyData(null)
+    setInlineCnpjExpanded(false)
     const c = companies.find(comp => String(comp.id) === val) as any
     if (c) {
       setFormCompanyName(c.tradeName || c.corporateName)
+      setFormCompanyCnpj(c.cnpj || "")
       if (!formRequesterName.trim() && (c.contactPerson || c.tradeName || c.corporateName)) {
         setFormRequesterName(c.contactPerson || c.tradeName || c.corporateName)
       }
       if (!formRequesterPhone.trim() && (c.phone || c.telefone)) {
         setFormRequesterPhone(c.phone || c.telefone)
       }
-      if (!formRequesterEmail.trim() && (c.email || c.financialEmail || c.emailFinanceiro)) {
-        setFormRequesterEmail(c.email || c.financialEmail || c.emailFinanceiro)
+      const compEmails = formatEmailList(c.email || c.financialEmail || c.emailFinanceiro || "")
+      if (!formRequesterEmail.trim() && compEmails) {
+        setFormRequesterEmail(compEmails)
+      }
+      if (!formNfDeliveryEmails.trim() && compEmails) {
+        setFormNfDeliveryEmails(compEmails)
       }
       applyCompanyBillingDefaultsToForm(c)
     }
@@ -9426,966 +10645,372 @@ export default function PmsCalendar(props?: {
             {(resModalTab === "reservation" || resModalTab === "details" || resModalTab === "payments") && (
               <form noValidate onSubmit={handleSaveRes}>
                 {(resModalTab === "reservation" || resModalTab === "details") && (
-                  <div className="pt-2 space-y-3">
-                    {/* 1. Seletor de Modo na Criação: 1 Flat vs Pacote Multi-Flat (Pagamento Único) */}
-                    {!selectedRes && (
-                      <div className="p-2.5 rounded-2xl border border-indigo-200 dark:border-indigo-800/70 bg-indigo-50/60 dark:bg-indigo-950/30 flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-8 h-8 rounded-xl bg-indigo-600/15 text-indigo-700 dark:text-indigo-300 flex items-center justify-center shrink-0">
-                            <Building2 className="w-4 h-4" />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                              Formato da Reserva
-                            </div>
-                            <div className="text-[11px] text-muted-foreground truncate">
-                              {isMultiFlatPackageMode
-                                ? "Vários flats para 1 Solicitante • 1 pagamento/PIX/Boleto/NFS-e única"
-                                : "Reserva tradicional de 1 apartamento"}
-                            </div>
-                          </div>
+
+              <div className="py-2.5 space-y-3">
+                {/* Painel de Gestão de Reserva Pertencente a Pacote Multi-Flat (Edição) */}
+                {selectedRes && Boolean(selectedRes.packageId || selectedRes.packageCode) && (() => {
+                  const pkgCode = String(selectedRes.packageCode || selectedRes.packageId || "")
+                  const pkgSiblings = (data.reservations || []).filter(
+                    (r: any) => String(r.packageCode || r.packageId || "") === pkgCode
+                  )
+                  const activeSiblings = pkgSiblings.filter(
+                    (r: any) => !["cancelada", "cancelled", "expirada"].includes(String(r.status || "").toLowerCase())
+                  )
+                  const pkgTotalVal = activeSiblings.reduce((acc: number, r: any) => acc + (Number(r.totalAmount) || 0), 0)
+                  const hasUnpaidSibling = activeSiblings.some(
+                    (r: any) => r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago"
+                  )
+                  const isCurrentFlatPaid =
+                    selectedRes.paymentStatus === "pago_total" || selectedRes.paymentStatus === "pago"
+
+                  return (
+                    <div className="p-3 rounded-2xl border-2 border-indigo-300 dark:border-indigo-800 bg-indigo-50/70 dark:bg-indigo-950/30 space-y-2.5 text-xs">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <Badge className="bg-indigo-600 text-white font-black text-[10px]">
+                            📦 {pkgCode}{selectedRes.packageIndex && selectedRes.packageTotalFlats ? ` (${selectedRes.packageIndex}/${selectedRes.packageTotalFlats})` : ""}
+                          </Badge>
+                          <span className="font-bold text-slate-900 dark:text-slate-100">
+                            {activeSiblings.length} flat(s) ativo(s) • Total Pacote: R$ {pkgTotalVal.toFixed(2)}
+                          </span>
                         </div>
-                        <div className="flex items-center gap-1.5 bg-white dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
-                          <button
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Button
                             type="button"
-                            onClick={() => setIsMultiFlatPackageMode(false)}
-                            className={cn(
-                              "px-2.5 py-1 rounded-lg text-xs font-bold transition-colors",
-                              !isMultiFlatPackageMode
-                                ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-2xs"
-                                : "text-muted-foreground hover:text-foreground"
-                            )}
-                          >
-                            1 Flat Individual
-                          </button>
-                          <button
-                            type="button"
+                            variant="outline"
+                            size="sm"
                             onClick={() => {
-                              setIsMultiFlatPackageMode(true)
-                              if (!pkgSolName && (formRequesterName || formCompanyName || formGuestName)) {
-                                setPkgSolName(formRequesterName || formCompanyName || formGuestName)
-                              }
-                              if (!pkgSolPhone && (formRequesterPhone || formGuestPhone)) {
-                                setPkgSolPhone(formRequesterPhone || formGuestPhone)
-                              }
-                              if (!pkgSolEmail && (formRequesterEmail || formGuestEmail)) {
-                                setPkgSolEmail(formRequesterEmail || formGuestEmail)
-                              }
-                              if (!pkgSolDoc && (formRequesterCpf || formGuest1Cpf)) {
-                                setPkgSolDoc(formRequesterCpf || formGuest1Cpf)
-                              }
-                              if (packageFlatsDraft.length < 2) {
-                                const cin = formCheckin || format(new Date(), "yyyy-MM-dd")
-                                const cout = formCheckout || format(addDays(new Date(), 1), "yyyy-MM-dd")
-                                setPackageFlatsDraft([
-                                  createDefaultPkgFlatDraft(cin, cout, 0, formFlatId || "auto"),
-                                  createDefaultPkgFlatDraft(cin, cout, 1, "auto"),
-                                ])
-                              }
+                              const url = `${window.location.origin}/minha-reserva/${encodeURIComponent(pkgCode)}?requester=1`
+                              navigator.clipboard.writeText(url)
+                              toast({ title: "Link único do Solicitante copiado!", description: url })
                             }}
-                            className={cn(
-                              "px-2.5 py-1 rounded-lg text-xs font-bold transition-colors flex items-center gap-1",
-                              isMultiFlatPackageMode
-                                ? "bg-indigo-600 text-white shadow-2xs"
-                                : "text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/50"
-                            )}
+                            className="h-7 px-2 text-[11px] font-bold gap-1"
                           >
-                            <Plus className="w-3.5 h-3.5" />
-                            <span>Pacote Multi-Flat</span>
-                          </button>
+                            <Copy className="w-3 h-3" />
+                            <span>PIX / Portal Único</span>
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              const url = `${window.location.origin}/copiar-pix/${encodeURIComponent(pkgCode)}`
+                              navigator.clipboard.writeText(url)
+                              toast({ title: "Link direto Copiar PIX copiado!", description: url })
+                            }}
+                            className="h-7 px-2 text-[11px] font-bold gap-1"
+                          >
+                            <CreditCard className="w-3 h-3" />
+                            <span>Copiar PIX</span>
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              const url = `${window.location.origin}/credenciamento/${encodeURIComponent(pkgCode)}`
+                              navigator.clipboard.writeText(url)
+                              toast({ title: "Link único de Hóspedes 1 e 2 copiado!", description: url })
+                            }}
+                            className="h-7 px-2 text-[11px] font-bold gap-1"
+                          >
+                            <Users className="w-3 h-3" />
+                            <span>Link Hóspedes</span>
+                          </Button>
+                          {hasUnpaidSibling && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={pkgActionLoading}
+                              onClick={async () => {
+                                setPkgActionLoading(true)
+                                try {
+                                  const r = await fetch(`/api/pms/packages/${encodeURIComponent(pkgCode)}/confirm-payment`, {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    credentials: "include",
+                                    body: JSON.stringify({ paymentMethod: "pix" }),
+                                  })
+                                  const j = await r.json().catch(() => ({}))
+                                  if (!r.ok) {
+                                    toast({ title: "Falha ao quitar pacote", description: j.error || "Tente novamente.", variant: "destructive" })
+                                    return
+                                  }
+                                  toast({ title: `Pagamento do pacote ${pkgCode} confirmado!`, description: "Todos os flats ativos foram quitados e liberados." })
+                                  await fetchData()
+                                  notifyCalendarUpdated()
+                                  setResModalOpen(false)
+                                } finally {
+                                  setPkgActionLoading(false)
+                                }
+                              }}
+                              className="h-7 px-2 text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
+                            >
+                              <CheckCircle2 className="w-3 h-3" />
+                              <span>Quitar Pacote</span>
+                            </Button>
+                          )}
                         </div>
                       </div>
-                    )}
 
-                    {/* 2. Construtor Completo de Pacote Multi-Flat (PMS) */}
-                    {!selectedRes && isMultiFlatPackageMode && (() => {
-                      const updatePkgFlat = (uid: string, patch: Partial<typeof packageFlatsDraft[number]>) => {
-                        setPackageFlatsDraft(prev => prev.map(item => item.uid === uid ? { ...item, ...patch } : item))
-                      }
-                      const rawStats = packageFlatsDraft.map((fl) => {
-                        const nights = fl.checkinDate && fl.checkoutDate && fl.checkoutDate > fl.checkinDate
-                          ? Math.max(1, differenceInCalendarDays(parseISO(fl.checkoutDate), parseISO(fl.checkinDate)))
-                          : 1
-                        const rate = Math.max(0, Number(String(fl.dailyRate || "0").replace(",", ".")) || 0)
-                        const subtotal = Math.round(nights * rate * 100) / 100
-                        return { nights, rate, subtotal }
-                      })
-                      const rawSum = Math.round(rawStats.reduce((s, item) => s + item.subtotal, 0) * 100) / 100
-                      const numInput = Math.max(0, Number(String(pkgPricingInput || "").replace(",", ".")) || 0)
-                      let finalPkgTotal = rawSum
-                      if (pkgPricingMode === "discount_amount") {
-                        finalPkgTotal = Math.max(0, Math.round((rawSum - numInput) * 100) / 100)
-                      } else if (pkgPricingMode === "discount_pct") {
-                        finalPkgTotal = Math.max(0, Math.round(rawSum * (1 - Math.min(100, numInput) / 100) * 100) / 100)
-                      } else if (pkgPricingMode === "fixed_total" && numInput > 0) {
-                        finalPkgTotal = Math.round(numInput * 100) / 100
-                      }
-                      const totalCents = Math.round(finalPkgTotal * 100)
-                      const baseCents = rawStats.map((st) =>
-                        rawSum > 0
-                          ? Math.floor((st.subtotal / rawSum) * totalCents)
-                          : Math.floor(totalCents / Math.max(1, packageFlatsDraft.length))
-                      )
-                      let remCents = totalCents - baseCents.reduce((a, b) => a + b, 0)
-                      const proratedFlats = baseCents.map((c) => {
-                        if (remCents > 0) {
-                          remCents -= 1
-                          return (c + 1) / 100
-                        }
-                        if (remCents < 0) {
-                          remCents += 1
-                          return Math.max(0, c - 1) / 100
-                        }
-                        return c / 100
-                      })
+                      {/* Lista rápida dos flats irmãos no pacote */}
+                      {pkgSiblings.length > 1 && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {pkgSiblings.map((sib: any) => {
+                            const isCurrent = Number(sib.id) === Number(selectedRes.id)
+                            const isCanceled = ["cancelada", "cancelled", "expirada"].includes(String(sib.status || "").toLowerCase())
+                            return (
+                              <button
+                                key={sib.id}
+                                type="button"
+                                onClick={() => handleOpenEditRes(sib)}
+                                className={cn(
+                                  "px-2 py-1 rounded-lg border text-[11px] font-semibold transition-colors",
+                                  isCurrent
+                                    ? "bg-indigo-600 text-white border-indigo-700"
+                                    : isCanceled
+                                      ? "bg-slate-100 dark:bg-slate-900 text-muted-foreground line-through border-slate-200 dark:border-slate-800"
+                                      : "bg-white dark:bg-slate-900 text-foreground border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100/50"
+                                )}
+                              >
+                                Flat {sib.flatNumber || sib.flatId} • R$ {Number(sib.totalAmount || 0).toFixed(2)}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
 
-                      return (
-                        <div className="space-y-3.5 pb-2">
-                          {/* Tipo da Reserva do Pacote */}
-                          <fieldset className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50 space-y-2.5">
-                            <legend className="px-1.5 text-[11px] font-black uppercase tracking-wider text-indigo-700 dark:text-indigo-300">
-                              1. Modalidade do Pacote no PMS
-                            </legend>
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                              {[
-                                { id: "pre_reserva", title: "Pré-Reserva (PIX Único)", desc: "Bloqueia flats + envia 1 PIX único" },
-                                { id: "confirmada", title: "Confirmada (Já Paga)", desc: "Confirma todos os flats pagos" },
-                                { id: "faturada", title: "Faturada (Boleto / Nota)", desc: "1 Boleto + 1 NFS-e única do pacote" },
-                              ].map((opt) => (
-                                <button
-                                  key={opt.id}
-                                  type="button"
-                                  onClick={() => setPkgStatusType(opt.id as any)}
-                                  className={cn(
-                                    "p-2.5 rounded-xl border text-left transition-all",
-                                    pkgStatusType === opt.id
-                                      ? "border-indigo-600 bg-indigo-600/10 dark:bg-indigo-500/20 ring-1 ring-indigo-600"
-                                      : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-indigo-300"
-                                  )}
-                                >
-                                  <div className="text-xs font-bold text-foreground">{opt.title}</div>
-                                  <div className="text-[10px] text-muted-foreground mt-0.5">{opt.desc}</div>
-                                </button>
-                              ))}
-                            </div>
+                      {/* Ações consolidadas: 1 NFS-e Única (CPF/CNPJ), 1 Boleto Único, Cancelar só este flat */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-indigo-200/70 dark:border-indigo-800/60">
+                        <span className="text-[11px] text-muted-foreground">
+                          {hasUnpaidSibling
+                            ? "Editar datas/diária deste flat recalcula automaticamente o mesmo PIX único."
+                            : "Pacote quitado • Hóspedes recebem instruções individuais sem valores."}
+                        </span>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setPkgEditNfseOpen((v) => !v)
+                              setPkgEditCancelOpen(false)
+                            }}
+                            className="h-7 px-2 text-[11px] font-bold gap-1"
+                          >
+                            <FileText className="w-3 h-3" />
+                            <span>1 NFS-e Única</span>
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={pkgActionLoading}
+                            onClick={async () => {
+                              setPkgActionLoading(true)
+                              try {
+                                const r = await fetch("/api/boletos/emit", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  credentials: "include",
+                                  body: JSON.stringify({
+                                    reservationId: selectedRes.id,
+                                    packageId: pkgCode,
+                                    consolidatePackage: true,
+                                  }),
+                                })
+                                const j = await r.json().catch(() => ({}))
+                                if (!r.ok) {
+                                  toast({ title: "Não foi possível emitir boleto único", description: j.error || "Verifique CPF/CNPJ do solicitante.", variant: "destructive" })
+                                  return
+                                }
+                                toast({ title: "Boleto único do pacote emitido!", description: `Total consolidado: R$ ${pkgTotalVal.toFixed(2)}` })
+                                await fetchData()
+                              } finally {
+                                setPkgActionLoading(false)
+                              }
+                            }}
+                            className="h-7 px-2 text-[11px] font-bold gap-1"
+                          >
+                            <CreditCard className="w-3 h-3" />
+                            <span>1 Boleto Único</span>
+                          </Button>
+                          {activeSiblings.length >= 2 && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setPkgEditCancelOpen((v) => {
+                                  const nextOpen = !v
+                                  if (nextOpen && !String(pkgEditRefundAmount || "").trim()) {
+                                    setPkgEditRefundAmount(String(Number(selectedRes.paidAmount || selectedRes.totalAmount || 0).toFixed(2)))
+                                  }
+                                  return nextOpen
+                                })
+                                setPkgEditNfseOpen(false)
+                              }}
+                              className="h-7 px-2 text-[11px] font-bold border-rose-300 text-rose-700 dark:text-rose-300 gap-1"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              <span>Cancelar Só Este Flat</span>
+                            </Button>
+                          )}
+                        </div>
+                      </div>
 
-                            {pkgStatusType === "pre_reserva" && (
-                              <div className="flex flex-wrap items-center gap-2 pt-1">
-                                <Label className="text-xs font-semibold">Prazo de expiração do PIX único:</Label>
-                                {[
-                                  { v: "30", l: "30 min" },
-                                  { v: "60", l: "1 hora" },
-                                  { v: "180", l: "3 horas" },
-                                  { v: "1440", l: "24 horas" },
-                                ].map((h) => (
-                                  <button
-                                    key={h.v}
-                                    type="button"
-                                    onClick={() => setPkgHoldMinutes(h.v)}
-                                    className={cn(
-                                      "px-2.5 py-1 rounded-lg text-[11px] font-bold border",
-                                      pkgHoldMinutes === h.v
-                                        ? "bg-amber-500 text-white border-amber-600"
-                                        : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-muted-foreground"
-                                    )}
-                                  >
-                                    {h.l}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
+                      {/* Painel inline: Emitir 1 NFS-e Única do Pacote (CPF ou CNPJ) */}
+                      {pkgEditNfseOpen && (
+                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 space-y-2">
+                          <div className="font-bold text-xs">Emitir 1 NFS-e Consolidada de Todo o Pacote (CPF ou CNPJ)</div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <Input
+                              value={pkgEditNfseDoc}
+                              onChange={(e) => setPkgEditNfseDoc(e.target.value)}
+                              placeholder="CPF (11 dígitos) ou CNPJ (14 dígitos)"
+                              className="h-8 text-xs"
+                            />
+                            <Input
+                              value={pkgEditNfseName}
+                              onChange={(e) => setPkgEditNfseName(e.target.value)}
+                              placeholder="Nome Completo ou Razão Social"
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                          <div className="flex justify-end gap-2">
+                            <Button type="button" variant="ghost" size="sm" onClick={() => setPkgEditNfseOpen(false)} className="h-7 text-xs">
+                              Fechar
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={pkgActionLoading}
+                              onClick={async () => {
+                                setPkgActionLoading(true)
+                                try {
+                                  const r = await fetch("/api/nfse/emit-consolidated", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    credentials: "include",
+                                    body: JSON.stringify({
+                                      packageId: pkgCode,
+                                      tomadorCpfCnpj: pkgEditNfseDoc,
+                                      tomadorDocumento: pkgEditNfseDoc,
+                                      tomadorNome: pkgEditNfseName,
+                                    }),
+                                  })
+                                  const j = await r.json().catch(() => ({}))
+                                  if (!r.ok) {
+                                    toast({ title: "Erro ao emitir NFS-e consolidada", description: j.error || "Verifique CPF/CNPJ.", variant: "destructive" })
+                                    return
+                                  }
+                                  toast({ title: "NFS-e única do pacote emitida!", description: `Protocolo/Nota gerada para ${pkgCode}.` })
+                                  setPkgEditNfseOpen(false)
+                                  await fetchData()
+                                } finally {
+                                  setPkgActionLoading(false)
+                                }
+                              }}
+                              className="h-7 text-xs font-bold bg-indigo-600 text-white"
+                            >
+                              Emitir 1 NFS-e (R$ {pkgTotalVal.toFixed(2)})
+                            </Button>
+                          </div>
+                        </div>
+                      )}
 
-                            {pkgStatusType === "faturada" && (
-                              <div className="pt-1 flex flex-wrap items-center justify-between gap-2 text-xs">
-                                <label className="flex items-center gap-2 font-semibold cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={pkgEmitBoletoNow}
-                                    onChange={(e) => setPkgEmitBoletoNow(e.target.checked)}
-                                    className="rounded border-slate-300"
-                                  />
-                                  <span>Emitir 1 Boleto Único + 1 NFS-e consolidada do pacote agora</span>
-                                </label>
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-[11px] text-muted-foreground">Prazo Boleto (dias):</span>
-                                  <Input
-                                    type="number"
-                                    min={1}
-                                    max={90}
-                                    value={formBoletoTermDays}
-                                    onChange={(e) => setFormBoletoTermDays(Math.max(1, Number(e.target.value) || 15))}
-                                    className="h-7 w-16 text-xs"
-                                  />
-                                </div>
-                              </div>
-                            )}
-                          </fieldset>
-
-                          {/* Solicitante Único */}
-                          <fieldset className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 space-y-2.5">
-                            <legend className="px-1.5 text-[11px] font-black uppercase tracking-wider text-indigo-700 dark:text-indigo-300">
-                              2. Solicitante / Pagador Único do Pacote
-                            </legend>
-                            {companies.length > 0 && (
-                              <div className="flex flex-wrap items-center gap-2">
-                                <Label className="text-[11px] text-muted-foreground">Vincular Empresa B2B (opcional):</Label>
+                      {/* Painel inline: Cancelar Apenas Este Flat */}
+                      {pkgEditCancelOpen && (
+                        <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 space-y-2">
+                          <div className="font-bold text-rose-900 dark:text-rose-200 text-xs">
+                            Cancelar apenas o Flat {selectedRes.flatNumber || selectedRes.flatId} mantendo os demais ativos
+                          </div>
+                          {isCurrentFlatPaid ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
+                              <div>
+                                <Label className="text-[11px] font-semibold">Tratamento financeiro deste flat pago:</Label>
                                 <select
-                                  value={formCompanyId}
-                                  onChange={(e) => {
-                                    const cid = e.target.value
-                                    setFormCompanyId(cid)
-                                    const comp = companies.find((c: any) => String(c.id) === cid)
-                                    if (comp) {
-                                      const cName = comp.tradeName || comp.corporateName || ""
-                                      setFormCompanyName(cName)
-                                      setPkgSolName(cName)
-                                      if (comp.cnpj) setPkgSolDoc(comp.cnpj)
-                                      if (comp.email) setPkgSolEmail(comp.email)
-                                      if (comp.phone) setPkgSolPhone(comp.phone)
-                                    } else {
-                                      setFormCompanyName("")
-                                    }
-                                  }}
-                                  className="h-7 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-2 text-xs"
+                                  value={pkgEditRefundResolution}
+                                  onChange={(e) => setPkgEditRefundResolution(e.target.value as any)}
+                                  className="mt-0.5 w-full h-8 rounded-lg border border-rose-300 bg-white dark:bg-slate-900 px-2 text-xs font-semibold"
                                 >
-                                  <option value="">Pessoa Física / Informar manualmente</option>
-                                  {companies.map((c: any) => (
-                                    <option key={c.id} value={String(c.id)}>
-                                      {c.tradeName || c.corporateName} {c.cnpj ? `(${c.cnpj})` : ""}
-                                    </option>
-                                  ))}
+                                  <option value="partial_refund">Estorno Parcial ao Solicitante</option>
+                                  <option value="credit">Converter em Crédito de Hospedagem</option>
+                                  <option value="no_refund">Sem Reembolso (Retenção)</option>
                                 </select>
                               </div>
-                            )}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                              <div>
-                                <Label className="text-[11px] font-semibold">Nome do Solicitante ou Empresa *</Label>
-                                <Input
-                                  value={pkgSolName}
-                                  onChange={(e) => setPkgSolName(e.target.value)}
-                                  placeholder="Ex: Maria Souza ou Tech Engenharia Ltda"
-                                  className="h-8 text-xs mt-0.5"
-                                />
-                              </div>
-                              <div>
-                                <Label className="text-[11px] font-semibold">WhatsApp do Solicitante (recebe 1 PIX único)</Label>
-                                <Input
-                                  value={pkgSolPhone}
-                                  onChange={(e) => setPkgSolPhone(e.target.value)}
-                                  placeholder="Ex: 22999998888"
-                                  className="h-8 text-xs mt-0.5"
-                                />
-                              </div>
-                              <div>
-                                <Label className="text-[11px] font-semibold">CPF ou CNPJ (PIX, Boleto e 1 NFS-e Única)</Label>
-                                <Input
-                                  value={pkgSolDoc}
-                                  onChange={(e) => setPkgSolDoc(e.target.value)}
-                                  placeholder="CPF (11 dígitos) ou CNPJ (14 dígitos)"
-                                  className="h-8 text-xs mt-0.5"
-                                />
-                              </div>
-                              <div>
-                                <Label className="text-[11px] font-semibold">E-mail Financeiro / Recibo</Label>
-                                <Input
-                                  type="email"
-                                  value={pkgSolEmail}
-                                  onChange={(e) => setPkgSolEmail(e.target.value)}
-                                  placeholder="financeiro@empresa.com.br"
-                                  className="h-8 text-xs mt-0.5"
-                                />
-                              </div>
-                            </div>
-                          </fieldset>
-
-                          {/* Lista de Flats do Pacote */}
-                          <div className="space-y-2.5">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-black uppercase tracking-wider text-indigo-700 dark:text-indigo-300">
-                                3. Flats do Pacote ({packageFlatsDraft.length} apartamentos)
-                              </span>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  const refFlat = packageFlatsDraft[packageFlatsDraft.length - 1]
-                                  const cin = refFlat?.checkinDate || formCheckin || format(new Date(), "yyyy-MM-dd")
-                                  const cout = refFlat?.checkoutDate || formCheckout || format(addDays(new Date(), 1), "yyyy-MM-dd")
-                                  setPackageFlatsDraft((prev) => [
-                                    ...prev,
-                                    createDefaultPkgFlatDraft(cin, cout, prev.length, "auto"),
-                                  ])
-                                }}
-                                className="h-7 text-xs font-bold border-indigo-300 text-indigo-700 dark:text-indigo-300 gap-1"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                                <span>Adicionar Flat</span>
-                              </Button>
-                            </div>
-
-                            {packageFlatsDraft.map((fl, idx) => {
-                              const st = rawStats[idx]
-                              const finalVal = proratedFlats[idx] ?? st.subtotal
-                              return (
-                                <fieldset
-                                  key={fl.uid}
-                                  className="p-3 rounded-2xl border border-indigo-200/80 dark:border-indigo-900/60 bg-indigo-50/25 dark:bg-slate-900/70 space-y-2.5"
-                                >
-                                  <legend className="px-2 text-xs font-black text-indigo-800 dark:text-indigo-200 flex items-center gap-2">
-                                    <span>Flat #{idx + 1}</span>
-                                    <span className="text-[11px] font-semibold text-muted-foreground">
-                                      • {st.nights} {st.nights === 1 ? "noite" : "noites"} • R$ {finalVal.toFixed(2)}
-                                    </span>
-                                  </legend>
-
-                                  <div className="flex items-center justify-between gap-2">
-                                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 flex-1">
-                                      <div>
-                                        <Label className="text-[10px] font-bold uppercase text-muted-foreground">Apartamento</Label>
-                                        <select
-                                          value={fl.flatId}
-                                          onChange={(e) => updatePkgFlat(fl.uid, { flatId: e.target.value })}
-                                          className="mt-0.5 w-full h-8 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 text-xs font-semibold"
-                                        >
-                                          <option value="auto">⚡ Automático (Livre)</option>
-                                          {(data.flats || []).map((fObj: any) => (
-                                            <option key={fObj.id} value={String(fObj.id)}>
-                                              Flat {fObj.number} {fObj.category ? `(${fObj.category})` : ""}
-                                            </option>
-                                          ))}
-                                        </select>
-                                      </div>
-                                      <div>
-                                        <Label className="text-[10px] font-bold uppercase text-muted-foreground">Check-in</Label>
-                                        <Input
-                                          type="date"
-                                          value={fl.checkinDate}
-                                          onChange={(e) => updatePkgFlat(fl.uid, { checkinDate: e.target.value })}
-                                          className="h-8 text-xs mt-0.5 bg-white dark:bg-slate-900"
-                                        />
-                                      </div>
-                                      <div>
-                                        <Label className="text-[10px] font-bold uppercase text-muted-foreground">Check-out</Label>
-                                        <Input
-                                          type="date"
-                                          value={fl.checkoutDate}
-                                          onChange={(e) => updatePkgFlat(fl.uid, { checkoutDate: e.target.value })}
-                                          className="h-8 text-xs mt-0.5 bg-white dark:bg-slate-900"
-                                        />
-                                      </div>
-                                      <div className="grid grid-cols-2 gap-1.5">
-                                        <div>
-                                          <Label className="text-[10px] font-bold uppercase text-muted-foreground">Ocupação</Label>
-                                          <select
-                                            value={String(fl.guestCount)}
-                                            onChange={(e) => updatePkgFlat(fl.uid, { guestCount: Number(e.target.value) || 1 })}
-                                            className="mt-0.5 w-full h-8 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-1.5 text-xs font-semibold"
-                                          >
-                                            <option value="1">1 Pessoa</option>
-                                            <option value="2">2 Pessoas</option>
-                                            <option value="3">3 Pessoas</option>
-                                          </select>
-                                        </div>
-                                        <div>
-                                          <Label className="text-[10px] font-bold uppercase text-muted-foreground">Diária R$</Label>
-                                          <Input
-                                            type="number"
-                                            step="0.01"
-                                            min="0"
-                                            value={fl.dailyRate}
-                                            onChange={(e) => updatePkgFlat(fl.uid, { dailyRate: e.target.value })}
-                                            className="h-8 text-xs mt-0.5 bg-white dark:bg-slate-900"
-                                          />
-                                        </div>
-                                      </div>
-                                    </div>
-                                    {packageFlatsDraft.length > 2 && (
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => setPackageFlatsDraft((prev) => prev.filter((item) => item.uid !== fl.uid))}
-                                        className="h-8 w-8 p-0 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 shrink-0 mt-4"
-                                        title="Remover flat do pacote"
-                                      >
-                                        <Trash2 className="w-4 h-4" />
-                                      </Button>
-                                    )}
-                                  </div>
-
-                                  {/* Opções independentes por flat: Café, Cama e Veículo */}
-                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 items-center">
-                                    <div className="flex flex-wrap items-center gap-3">
-                                      <label className="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
-                                        <input
-                                          type="checkbox"
-                                          checked={fl.includeBreakfast}
-                                          onChange={(e) => updatePkgFlat(fl.uid, { includeBreakfast: e.target.checked })}
-                                          className="rounded border-slate-300"
-                                        />
-                                        <Coffee className="w-3.5 h-3.5 text-amber-600" />
-                                        <span>Com Café</span>
-                                      </label>
-                                      <label className="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
-                                        <input
-                                          type="checkbox"
-                                          checked={fl.twinBeds}
-                                          onChange={(e) => updatePkgFlat(fl.uid, { twinBeds: e.target.checked })}
-                                          className="rounded border-slate-300"
-                                        />
-                                        <Bed className="w-3.5 h-3.5 text-indigo-600" />
-                                        <span>2 Solteiros</span>
-                                      </label>
-                                    </div>
-                                    <Input
-                                      value={fl.vehiclePlate}
-                                      onChange={(e) => updatePkgFlat(fl.uid, { vehiclePlate: e.target.value.toUpperCase() })}
-                                      placeholder="Placa Veículo (opcional)"
-                                      className="h-7 text-xs bg-white dark:bg-slate-900"
-                                    />
-                                    <Input
-                                      value={fl.vehicleModel}
-                                      onChange={(e) => updatePkgFlat(fl.uid, { vehicleModel: e.target.value })}
-                                      placeholder="Modelo / Cor do Veículo"
-                                      className="h-7 text-xs bg-white dark:bg-slate-900"
-                                    />
-                                  </div>
-
-                                  {/* Hóspede 1 e Hóspede 2 por Flat */}
-                                  <div className="pt-2 border-t border-indigo-200/60 dark:border-slate-800 space-y-2">
-                                    <div className="flex flex-wrap items-center justify-between gap-2">
-                                      <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                                        <Users className="w-3.5 h-3.5 text-indigo-600" />
-                                        <span>Hóspedes deste Flat (recebem instruções sem valores)</span>
-                                      </span>
-                                      <div className="flex flex-wrap items-center gap-2">
-                                        {idx === 0 && (
-                                          <label className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-lg border border-emerald-200 dark:border-emerald-800 cursor-pointer">
-                                            <input
-                                              type="checkbox"
-                                              checked={fl.requesterIsGuest1}
-                                              onChange={(e) =>
-                                                updatePkgFlat(fl.uid, {
-                                                  requesterIsGuest1: e.target.checked,
-                                                  informGuestsLater: e.target.checked ? false : fl.informGuestsLater,
-                                                })
-                                              }
-                                              className="rounded border-emerald-400"
-                                            />
-                                            <span>O próprio Solicitante ficará neste flat</span>
-                                          </label>
-                                        )}
-                                        {!(idx === 0 && fl.requesterIsGuest1) && (
-                                          <label className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-700 dark:text-amber-300 cursor-pointer">
-                                            <input
-                                              type="checkbox"
-                                              checked={fl.informGuestsLater}
-                                              onChange={(e) => updatePkgFlat(fl.uid, { informGuestsLater: e.target.checked })}
-                                              className="rounded border-amber-400"
-                                            />
-                                            <span>Informar depois (1 link único pós-pagamento)</span>
-                                          </label>
-                                        )}
-                                      </div>
-                                    </div>
-
-                                    {!(idx === 0 && fl.requesterIsGuest1) && !fl.informGuestsLater && (
-                                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                        <Input
-                                          value={fl.guest1Name}
-                                          onChange={(e) => updatePkgFlat(fl.uid, { guest1Name: e.target.value })}
-                                          placeholder="Nome do Hóspede 1"
-                                          className="h-7 text-xs bg-white dark:bg-slate-900"
-                                        />
-                                        <Input
-                                          value={fl.guest1Phone}
-                                          onChange={(e) => updatePkgFlat(fl.uid, { guest1Phone: e.target.value })}
-                                          placeholder="WhatsApp Hóspede 1"
-                                          className="h-7 text-xs bg-white dark:bg-slate-900"
-                                        />
-                                        <Input
-                                          value={fl.guest1Doc}
-                                          onChange={(e) => updatePkgFlat(fl.uid, { guest1Doc: e.target.value })}
-                                          placeholder="CPF Hóspede 1"
-                                          className="h-7 text-xs bg-white dark:bg-slate-900"
-                                        />
-                                      </div>
-                                    )}
-
-                                    {fl.guestCount >= 2 && !fl.informGuestsLater && (
-                                      <div className="space-y-1.5 pt-1">
-                                        <div className="flex items-center justify-between">
-                                          <span className="text-[10px] font-bold uppercase text-muted-foreground">
-                                            Hóspede 2 (Acompanhante)
-                                          </span>
-                                          <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer">
-                                            <input
-                                              type="checkbox"
-                                              checked={fl.guest2InformLater}
-                                              onChange={(e) => updatePkgFlat(fl.uid, { guest2InformLater: e.target.checked })}
-                                              className="rounded border-slate-300"
-                                            />
-                                            <span>Informar Hóspede 2 depois</span>
-                                          </label>
-                                        </div>
-                                        {!fl.guest2InformLater && (
-                                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                            <Input
-                                              value={fl.guest2Name}
-                                              onChange={(e) => updatePkgFlat(fl.uid, { guest2Name: e.target.value })}
-                                              placeholder="Nome do Hóspede 2"
-                                              className="h-7 text-xs bg-white dark:bg-slate-900"
-                                            />
-                                            <Input
-                                              value={fl.guest2Phone}
-                                              onChange={(e) => updatePkgFlat(fl.uid, { guest2Phone: e.target.value })}
-                                              placeholder="WhatsApp Hóspede 2"
-                                              className="h-7 text-xs bg-white dark:bg-slate-900"
-                                            />
-                                            <Input
-                                              value={fl.guest2Doc}
-                                              onChange={(e) => updatePkgFlat(fl.uid, { guest2Doc: e.target.value })}
-                                              placeholder="CPF Hóspede 2"
-                                              className="h-7 text-xs bg-white dark:bg-slate-900"
-                                            />
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                </fieldset>
-                              )
-                            })}
-                          </div>
-
-                          {/* Precificação e Rateio Automático do Pacote */}
-                          <fieldset className="p-3 rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/40 dark:bg-emerald-950/20 space-y-2.5">
-                            <legend className="px-1.5 text-[11px] font-black uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
-                              4. Precificação & Rateio Automático do Pacote
-                            </legend>
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              {[
-                                { id: "sum", label: "Soma Normal" },
-                                { id: "discount_amount", label: "Desconto (R$)" },
-                                { id: "discount_pct", label: "Desconto (%)" },
-                                { id: "fixed_total", label: "Valor Fechado no Pacote (R$)" },
-                              ].map((m) => (
-                                <button
-                                  key={m.id}
-                                  type="button"
-                                  onClick={() => setPkgPricingMode(m.id as any)}
-                                  className={cn(
-                                    "px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors",
-                                    pkgPricingMode === m.id
-                                      ? "bg-emerald-700 text-white border-emerald-800"
-                                      : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-muted-foreground"
-                                  )}
-                                >
-                                  {m.label}
-                                </button>
-                              ))}
-                              {pkgPricingMode !== "sum" && (
-                                <Input
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
-                                  value={pkgPricingInput}
-                                  onChange={(e) => setPkgPricingInput(e.target.value)}
-                                  placeholder={pkgPricingMode === "discount_pct" ? "Ex: 10 (%)" : "Valor R$"}
-                                  className="h-8 w-36 text-xs bg-white dark:bg-slate-900"
-                                />
-                              )}
-                            </div>
-
-                            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-emerald-200/60 dark:border-emerald-800/50 text-xs">
-                              <div className="text-muted-foreground">
-                                Soma bruta: <span className="font-semibold text-foreground">R$ {rawSum.toFixed(2)}</span>
-                                {finalPkgTotal !== rawSum && (
-                                  <span className="ml-2 text-emerald-700 dark:text-emerald-400 font-semibold">
-                                    (rateado automaticamente entre {packageFlatsDraft.length} flats)
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-sm font-black text-emerald-800 dark:text-emerald-300">
-                                Total Único do Pacote: R$ {finalPkgTotal.toFixed(2)}
-                              </div>
-                            </div>
-                          </fieldset>
-                        </div>
-                      )
-                    })()}
-
-                    {/* 3. Painel de Gestão de Reserva Pertencente a Pacote Multi-Flat (Edição) */}
-                    {selectedRes && Boolean(selectedRes.packageId || selectedRes.packageCode) && (() => {
-                      const pkgCode = String(selectedRes.packageCode || selectedRes.packageId || "")
-                      const pkgSiblings = (data.reservations || []).filter(
-                        (r: any) => String(r.packageCode || r.packageId || "") === pkgCode
-                      )
-                      const activeSiblings = pkgSiblings.filter(
-                        (r: any) => !["cancelada", "cancelled", "expirada"].includes(String(r.status || "").toLowerCase())
-                      )
-                      const pkgTotalVal = activeSiblings.reduce((acc: number, r: any) => acc + (Number(r.totalAmount) || 0), 0)
-                      const hasUnpaidSibling = activeSiblings.some(
-                        (r: any) => r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago"
-                      )
-                      const isCurrentFlatPaid =
-                        selectedRes.paymentStatus === "pago_total" || selectedRes.paymentStatus === "pago"
-
-                      return (
-                        <div className="p-3 rounded-2xl border-2 border-indigo-300 dark:border-indigo-800 bg-indigo-50/70 dark:bg-indigo-950/30 space-y-2.5 text-xs">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                              <Badge className="bg-indigo-600 text-white font-black text-[10px]">
-                                📦 {pkgCode}{selectedRes.packageIndex && selectedRes.packageTotalFlats ? ` (${selectedRes.packageIndex}/${selectedRes.packageTotalFlats})` : ""}
-                              </Badge>
-                              <span className="font-bold text-slate-900 dark:text-slate-100">
-                                {activeSiblings.length} flat(s) ativo(s) • Total Pacote: R$ {pkgTotalVal.toFixed(2)}
-                              </span>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  const url = `${window.location.origin}/minha-reserva/${encodeURIComponent(pkgCode)}?requester=1`
-                                  navigator.clipboard.writeText(url)
-                                  toast({ title: "Link único do Solicitante copiado!", description: url })
-                                }}
-                                className="h-7 px-2 text-[11px] font-bold gap-1"
-                              >
-                                <Copy className="w-3 h-3" />
-                                <span>PIX / Portal Único</span>
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  const url = `${window.location.origin}/copiar-pix/${encodeURIComponent(pkgCode)}`
-                                  navigator.clipboard.writeText(url)
-                                  toast({ title: "Link direto Copiar PIX copiado!", description: url })
-                                }}
-                                className="h-7 px-2 text-[11px] font-bold gap-1"
-                              >
-                                <CreditCard className="w-3 h-3" />
-                                <span>Copiar PIX</span>
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  const url = `${window.location.origin}/credenciamento/${encodeURIComponent(pkgCode)}`
-                                  navigator.clipboard.writeText(url)
-                                  toast({ title: "Link único de Hóspedes 1 e 2 copiado!", description: url })
-                                }}
-                                className="h-7 px-2 text-[11px] font-bold gap-1"
-                              >
-                                <Users className="w-3 h-3" />
-                                <span>Link Hóspedes</span>
-                              </Button>
-                              {hasUnpaidSibling && (
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  disabled={pkgActionLoading}
-                                  onClick={async () => {
-                                    setPkgActionLoading(true)
-                                    try {
-                                      const r = await fetch(`/api/pms/packages/${encodeURIComponent(pkgCode)}/confirm-payment`, {
-                                        method: "POST",
-                                        headers: { "Content-Type": "application/json" },
-                                        credentials: "include",
-                                        body: JSON.stringify({ paymentMethod: "pix" }),
-                                      })
-                                      const j = await r.json().catch(() => ({}))
-                                      if (!r.ok) {
-                                        toast({ title: "Falha ao quitar pacote", description: j.error || "Tente novamente.", variant: "destructive" })
-                                        return
-                                      }
-                                      toast({ title: `Pagamento do pacote ${pkgCode} confirmado!`, description: "Todos os flats ativos foram quitados e liberados." })
-                                      await fetchData()
-                                      notifyCalendarUpdated()
-                                      setResModalOpen(false)
-                                    } finally {
-                                      setPkgActionLoading(false)
-                                    }
-                                  }}
-                                  className="h-7 px-2 text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
-                                >
-                                  <CheckCircle2 className="w-3 h-3" />
-                                  <span>Quitar Pacote</span>
-                                </Button>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Lista rápida dos flats irmãos no pacote */}
-                          {pkgSiblings.length > 1 && (
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              {pkgSiblings.map((sib: any) => {
-                                const isCurrent = Number(sib.id) === Number(selectedRes.id)
-                                const isCanceled = ["cancelada", "cancelled", "expirada"].includes(String(sib.status || "").toLowerCase())
-                                return (
-                                  <button
-                                    key={sib.id}
-                                    type="button"
-                                    onClick={() => handleOpenEditRes(sib)}
-                                    className={cn(
-                                      "px-2 py-1 rounded-lg border text-[11px] font-semibold transition-colors",
-                                      isCurrent
-                                        ? "bg-indigo-600 text-white border-indigo-700"
-                                        : isCanceled
-                                          ? "bg-slate-100 dark:bg-slate-900 text-muted-foreground line-through border-slate-200 dark:border-slate-800"
-                                          : "bg-white dark:bg-slate-900 text-foreground border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100/50"
-                                    )}
-                                  >
-                                    Flat {sib.flatNumber || sib.flatId} • R$ {Number(sib.totalAmount || 0).toFixed(2)}
-                                  </button>
-                                )
-                              })}
-                            </div>
-                          )}
-
-                          {/* Ações consolidadas: 1 NFS-e Única (CPF/CNPJ), 1 Boleto Único, Cancelar só este flat */}
-                          <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-indigo-200/70 dark:border-indigo-800/60">
-                            <span className="text-[11px] text-muted-foreground">
-                              {hasUnpaidSibling
-                                ? "Editar datas/diária deste flat recalcula automaticamente o mesmo PIX único."
-                                : "Pacote quitado • Hóspedes recebem instruções individuais sem valores."}
-                            </span>
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setPkgEditNfseOpen((v) => !v)
-                                  setPkgEditCancelOpen(false)
-                                }}
-                                className="h-7 px-2 text-[11px] font-bold gap-1"
-                              >
-                                <FileText className="w-3 h-3" />
-                                <span>1 NFS-e Única</span>
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                disabled={pkgActionLoading}
-                                onClick={async () => {
-                                  setPkgActionLoading(true)
-                                  try {
-                                    const r = await fetch("/api/boletos/emit", {
-                                      method: "POST",
-                                      headers: { "Content-Type": "application/json" },
-                                      credentials: "include",
-                                      body: JSON.stringify({
-                                        reservationId: selectedRes.id,
-                                        packageId: pkgCode,
-                                        consolidatePackage: true,
-                                      }),
-                                    })
-                                    const j = await r.json().catch(() => ({}))
-                                    if (!r.ok) {
-                                      toast({ title: "Não foi possível emitir boleto único", description: j.error || "Verifique CPF/CNPJ do solicitante.", variant: "destructive" })
-                                      return
-                                    }
-                                    toast({ title: "Boleto único do pacote emitido!", description: `Total consolidado: R$ ${pkgTotalVal.toFixed(2)}` })
-                                    await fetchData()
-                                  } finally {
-                                    setPkgActionLoading(false)
-                                  }
-                                }}
-                                className="h-7 px-2 text-[11px] font-bold gap-1"
-                              >
-                                <CreditCard className="w-3 h-3" />
-                                <span>1 Boleto Único</span>
-                              </Button>
-                              {activeSiblings.length >= 2 && (
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    setPkgEditCancelOpen((v) => {
-                                      const nextOpen = !v
-                                      if (nextOpen && !String(pkgEditRefundAmount || "").trim()) {
-                                        setPkgEditRefundAmount(String(Number(selectedRes.paidAmount || selectedRes.totalAmount || 0).toFixed(2)))
-                                      }
-                                      return nextOpen
-                                    })
-                                    setPkgEditNfseOpen(false)
-                                  }}
-                                  className="h-7 px-2 text-[11px] font-bold border-rose-300 text-rose-700 dark:text-rose-300 gap-1"
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                  <span>Cancelar Só Este Flat</span>
-                                </Button>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Painel inline: Emitir 1 NFS-e Única do Pacote (CPF ou CNPJ) */}
-                          {pkgEditNfseOpen && (
-                            <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 space-y-2">
-                              <div className="font-bold text-xs">Emitir 1 NFS-e Consolidada de Todo o Pacote (CPF ou CNPJ)</div>
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                <Input
-                                  value={pkgEditNfseDoc}
-                                  onChange={(e) => setPkgEditNfseDoc(e.target.value)}
-                                  placeholder="CPF (11 dígitos) ou CNPJ (14 dígitos)"
-                                  className="h-8 text-xs"
-                                />
-                                <Input
-                                  value={pkgEditNfseName}
-                                  onChange={(e) => setPkgEditNfseName(e.target.value)}
-                                  placeholder="Nome Completo ou Razão Social"
-                                  className="h-8 text-xs"
-                                />
-                              </div>
-                              <div className="flex justify-end gap-2">
-                                <Button type="button" variant="ghost" size="sm" onClick={() => setPkgEditNfseOpen(false)} className="h-7 text-xs">
-                                  Fechar
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  disabled={pkgActionLoading}
-                                  onClick={async () => {
-                                    setPkgActionLoading(true)
-                                    try {
-                                      const r = await fetch("/api/nfse/emit-consolidated", {
-                                        method: "POST",
-                                        headers: { "Content-Type": "application/json" },
-                                        credentials: "include",
-                                        body: JSON.stringify({
-                                          packageId: pkgCode,
-                                          tomadorCpfCnpj: pkgEditNfseDoc,
-                                          tomadorDocumento: pkgEditNfseDoc,
-                                          tomadorNome: pkgEditNfseName,
-                                        }),
-                                      })
-                                      const j = await r.json().catch(() => ({}))
-                                      if (!r.ok) {
-                                        toast({ title: "Erro ao emitir NFS-e consolidada", description: j.error || "Verifique CPF/CNPJ.", variant: "destructive" })
-                                        return
-                                      }
-                                      toast({ title: "NFS-e única do pacote emitida!", description: `Protocolo/Nota gerada para ${pkgCode}.` })
-                                      setPkgEditNfseOpen(false)
-                                      await fetchData()
-                                    } finally {
-                                      setPkgActionLoading(false)
-                                    }
-                                  }}
-                                  className="h-7 text-xs font-bold bg-indigo-600 text-white"
-                                >
-                                  Emitir 1 NFS-e (R$ {pkgTotalVal.toFixed(2)})
-                                </Button>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Painel inline: Cancelar Apenas Este Flat */}
-                          {pkgEditCancelOpen && (
-                            <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 space-y-2">
-                              <div className="font-bold text-rose-900 dark:text-rose-200 text-xs">
-                                Cancelar apenas o Flat {selectedRes.flatNumber || selectedRes.flatId} mantendo os demais ativos
-                              </div>
-                              {isCurrentFlatPaid ? (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
-                                  <div>
-                                    <Label className="text-[11px] font-semibold">Tratamento financeiro deste flat pago:</Label>
-                                    <select
-                                      value={pkgEditRefundResolution}
-                                      onChange={(e) => setPkgEditRefundResolution(e.target.value as any)}
-                                      className="mt-0.5 w-full h-8 rounded-lg border border-rose-300 bg-white dark:bg-slate-900 px-2 text-xs font-semibold"
-                                    >
-                                      <option value="partial_refund">Estorno Parcial ao Solicitante</option>
-                                      <option value="credit">Converter em Crédito de Hospedagem</option>
-                                      <option value="no_refund">Sem Reembolso (Retenção)</option>
-                                    </select>
-                                  </div>
-                                  {pkgEditRefundResolution !== "no_refund" && (
-                                    <div>
-                                      <Label className="text-[11px] font-semibold">Valor do Estorno / Crédito (R$):</Label>
-                                      <Input
-                                        type="number"
-                                        step="0.01"
-                                        min="0"
-                                        value={pkgEditRefundAmount}
-                                        onChange={(e) => setPkgEditRefundAmount(e.target.value)}
-                                        className="h-8 text-xs mt-0.5 bg-white dark:bg-slate-900"
-                                      />
-                                    </div>
-                                  )}
+                              {pkgEditRefundResolution !== "no_refund" && (
+                                <div>
+                                  <Label className="text-[11px] font-semibold">Valor do Estorno / Crédito (R$):</Label>
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={pkgEditRefundAmount}
+                                    onChange={(e) => setPkgEditRefundAmount(e.target.value)}
+                                    className="h-8 text-xs mt-0.5 bg-white dark:bg-slate-900"
+                                  />
                                 </div>
-                              ) : (
-                                <p className="text-[11px] text-rose-800 dark:text-rose-300">
-                                  Como o pacote ainda não foi pago, os outros flats permanecerão ativos e o mesmo PIX único será recalculado automaticamente.
-                                </p>
                               )}
-                              <div className="flex justify-end gap-2">
-                                <Button type="button" variant="ghost" size="sm" onClick={() => setPkgEditCancelOpen(false)} className="h-7 text-xs">
-                                  Voltar
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="destructive"
-                                  size="sm"
-                                  disabled={pkgActionLoading}
-                                  onClick={async () => {
-                                    setPkgActionLoading(true)
-                                    try {
-                                      const r = await fetch(`/api/pms/reservations/${selectedRes.id}/cancel-package-item`, {
-                                        method: "POST",
-                                        headers: { "Content-Type": "application/json" },
-                                        credentials: "include",
-                                        body: JSON.stringify({
-                                          refundResolution: isCurrentFlatPaid ? pkgEditRefundResolution : "unpaid_recalc",
-                                          refundAmount: String(pkgEditRefundAmount ?? "").trim() !== ""
-                                            ? Math.max(0, Number(String(pkgEditRefundAmount).replace(",", ".")) || 0)
-                                            : Number(selectedRes.paidAmount || selectedRes.totalAmount || 0),
-                                          reason: "Cancelamento individual de flat dentro do pacote multi-flat",
-                                        }),
-                                      })
-                                      const j = await r.json().catch(() => ({}))
-                                      if (!r.ok) {
-                                        toast({ title: "Erro ao cancelar flat do pacote", description: j.error || "Tente novamente.", variant: "destructive" })
-                                        return
-                                      }
-                                      toast({
-                                        title: `Flat ${selectedRes.flatNumber || selectedRes.flatId} removido do pacote ${pkgCode}`,
-                                        description: isCurrentFlatPaid
-                                          ? "Os demais flats seguem confirmados e pagos."
-                                          : `PIX único recalculado para R$ ${Number(j.summary?.totalAmount ?? j.packageSummary?.totalAmount ?? 0).toFixed(2)}.`,
-                                      })
-                                      setPkgEditCancelOpen(false)
-                                      setResModalOpen(false)
-                                      await fetchData()
-                                      notifyCalendarUpdated()
-                                    } finally {
-                                      setPkgActionLoading(false)
-                                    }
-                                  }}
-                                  className="h-7 text-xs font-bold"
-                                >
-                                  Confirmar Cancelamento Deste Flat
-                                </Button>
-                              </div>
                             </div>
+                          ) : (
+                            <p className="text-[11px] text-rose-800 dark:text-rose-300">
+                              Como o pacote ainda não foi pago, os outros flats permanecerão ativos e o mesmo PIX único será recalculado automaticamente.
+                            </p>
                           )}
+                          <div className="flex justify-end gap-2">
+                            <Button type="button" variant="ghost" size="sm" onClick={() => setPkgEditCancelOpen(false)} className="h-7 text-xs">
+                              Voltar
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="destructive"
+                              size="sm"
+                              disabled={pkgActionLoading}
+                              onClick={async () => {
+                                setPkgActionLoading(true)
+                                try {
+                                  const r = await fetch(`/api/pms/reservations/${selectedRes.id}/cancel-package-item`, {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    credentials: "include",
+                                    body: JSON.stringify({
+                                      refundResolution: isCurrentFlatPaid ? pkgEditRefundResolution : "unpaid_recalc",
+                                      refundAmount: String(pkgEditRefundAmount ?? "").trim() !== ""
+                                        ? Math.max(0, Number(String(pkgEditRefundAmount).replace(",", ".")) || 0)
+                                        : Number(selectedRes.paidAmount || selectedRes.totalAmount || 0),
+                                      reason: "Cancelamento individual de flat dentro do pacote multi-flat",
+                                    }),
+                                  })
+                                  const j = await r.json().catch(() => ({}))
+                                  if (!r.ok) {
+                                    toast({ title: "Erro ao cancelar flat do pacote", description: j.error || "Tente novamente.", variant: "destructive" })
+                                    return
+                                  }
+                                  toast({
+                                    title: `Flat ${selectedRes.flatNumber || selectedRes.flatId} removido do pacote ${pkgCode}`,
+                                    description: isCurrentFlatPaid
+                                      ? "Os demais flats seguem confirmados e pagos."
+                                      : `PIX único recalculado para R$ ${Number(j.summary?.totalAmount ?? j.packageSummary?.totalAmount ?? 0).toFixed(2)}.`,
+                                  })
+                                  setPkgEditCancelOpen(false)
+                                  setResModalOpen(false)
+                                  await fetchData()
+                                  notifyCalendarUpdated()
+                                } finally {
+                                  setPkgActionLoading(false)
+                                }
+                              }}
+                              className="h-7 text-xs font-bold"
+                            >
+                              Confirmar Cancelamento Deste Flat
+                            </Button>
+                          </div>
                         </div>
-                      )
-                    })()}
-                  </div>
-                )}
-
-                {(resModalTab === "reservation" || resModalTab === "details") && (
-
-              <div className={cn("py-2.5 space-y-3", !selectedRes && isMultiFlatPackageMode && "hidden")}>
+                      )}
+                    </div>
+                  )
+                })()}
                 {/* Banner de Alerta para Equipe: Hóspede com apontamento de Fumante */}
                 {(selectedRes?.isSmoker || selectedRes?.smokerGuestAlert) && (
                   <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border-2 border-rose-300 dark:border-rose-800 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-xs">
@@ -10566,6 +11191,48 @@ export default function PmsCalendar(props?: {
                       </span>
                     </div>
                   )
+                )}
+
+                {/* Banner Multi-Flat Unificado (só aparece ao adicionar 2+ flats dentro do formulário completo) */}
+                {!selectedRes && isMultiFlat && (
+                  <div className="p-3 rounded-2xl border-2 border-indigo-300 dark:border-indigo-700 bg-indigo-50/80 dark:bg-indigo-950/35 space-y-2 text-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Badge className="bg-indigo-600 text-white font-black text-[10.5px]">
+                          📦 Pacote Multi-Flat ({1 + extraPackageFlats.length} Flats)
+                        </Badge>
+                        <span className="font-bold text-indigo-950 dark:text-indigo-100">
+                          1 Solicitante • 1 PIX / Link Único (saldo restante) • CRM + NFS-e + Boleto integrados
+                        </span>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={handleAddExtraPackageFlat}
+                        className="h-7 px-2.5 text-[11px] font-bold border-indigo-400 text-indigo-700 dark:text-indigo-200 bg-white dark:bg-slate-900 gap-1"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Adicionar Flat
+                      </Button>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[10.5px]">
+                      <div className="px-2 py-1 rounded-lg bg-white/80 dark:bg-slate-900/70 border border-indigo-200/80 dark:border-indigo-800/60">
+                        <strong className="text-indigo-800 dark:text-indigo-300">Por Flat:</strong> Apartamento, Datas, Ocupação (1–3), Hóspedes 1 e 2 (CRM), Café, Camas, Veículo, Diárias e Taxas do Flat.
+                      </div>
+                      <div className="px-2 py-1 rounded-lg bg-white/80 dark:bg-slate-900/70 border border-indigo-200/80 dark:border-indigo-800/60">
+                        <strong className="text-emerald-800 dark:text-emerald-300">Compartilhado no Pacote:</strong> Solicitante / Empresa / CNPJ, Canal, Status & Hold, Tomador NFS-e + E-mails (;), Boleto e Pagamentos Divididos.
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {!selectedRes && isMultiFlat && (
+                  <div className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-indigo-600/10 border border-indigo-300/70 dark:border-indigo-700/60 text-xs">
+                    <span className="font-black text-indigo-800 dark:text-indigo-200 flex items-center gap-1.5">
+                      <span>🏢 Flat 1 (Principal do Pacote)</span>
+                    </span>
+                    <span className="text-[10.5px] text-muted-foreground">Dados abaixo valem para o Flat 1; Flats adicionais ficam logo após o veículo</span>
+                  </div>
                 )}
 
                                 {/* 1º Bloco: Datas e Horários de Entrada (Check-in) e Saída (Check-out) com Calendário Range Picker Unificado */}
@@ -11004,6 +11671,26 @@ export default function PmsCalendar(props?: {
                   </div>
                 </div>
 
+                {!selectedRes && (
+                  <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-dashed border-indigo-300 dark:border-indigo-700 bg-indigo-50/40 dark:bg-indigo-950/20 text-xs">
+                    <span className="text-[11px] text-indigo-900 dark:text-indigo-200 font-medium">
+                      {isMultiFlat
+                        ? `Pacote com ${1 + extraPackageFlats.length} flats configurado — cada flat mantém seus próprios hóspedes no CRM e um pagamento único consolidado.`
+                        : "Precisa reservar 2 ou mais flats para o mesmo solicitante ou empresa?"}
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={handleAddExtraPackageFlat}
+                      className="h-7 px-2.5 text-[11px] font-bold border-indigo-400 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100/70 dark:hover:bg-indigo-900/40 shrink-0 gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Adicionar Outro Flat ao Pacote</span>
+                    </Button>
+                  </div>
+                )}
+
                 {/* Banner sutil do Quarto da Vez apenas na criação de Nova Reserva */}
                 {!selectedRes && fairShareResult?.bestFlatNumber && (() => {
                   const todayIso = format(new Date(), "yyyy-MM-dd");
@@ -11210,6 +11897,11 @@ export default function PmsCalendar(props?: {
                       type="button"
                       onClick={() => {
                         setFormRequesterType("guest")
+                        setFormRequesterId("")
+                        setFormRequesterName("")
+                        setFormRequesterPhone("")
+                        setFormRequesterEmail("")
+                        setFormRequesterCpf("")
                         if (formInvoiceRecipientType === "requester" || formInvoiceRecipientType === "agency") {
                           setFormInvoiceRecipientType(formCompanyId ? "company" : "guest")
                         }
@@ -11595,6 +12287,7 @@ export default function PmsCalendar(props?: {
                             className="h-8 text-xs"
                           />
                         </div>
+                        {renderInlineCnpjBox("b2b_client")}
                       </div>
 
                       {/* Política Tarifária, Cartão Virtual VCN & Tomador da NFS-e */}
@@ -11694,7 +12387,7 @@ export default function PmsCalendar(props?: {
 
                         {/* Resumo Líquido x Comissão */}
                         {(() => {
-                          const gross = Number(formTotalAmount) || calculateTotal()
+                          const gross = isMultiFlat ? computeUnifiedReservationTotals().curTot : (Number(formTotalAmount) || calculateTotal())
                           const pct = formB2bRatePolicy === "NET" ? 0 : (Number(formB2bCommissionPct) || 0)
                           const comm = Number(((gross * pct) / 100).toFixed(2))
                           const net = Number((gross - comm).toFixed(2))
@@ -12149,8 +12842,8 @@ export default function PmsCalendar(props?: {
                           <Input
                             value={formRequesterEmail}
                             onChange={e => setFormRequesterEmail(e.target.value)}
-                            placeholder="E-mail"
-                            type="email"
+                            placeholder="E-mail(s) — separe por ;"
+                            type="text"
                             className="text-xs h-8"
                           />
                         </div>
@@ -12180,6 +12873,8 @@ export default function PmsCalendar(props?: {
                         newLabel="➕ Cadastrar Nova Empresa Parceira..."
                         prioritizeBookingPartners
                       />
+
+                      {renderInlineCnpjBox("requester_corporate")}
 
                       {formCompanyId && (() => {
                         const selCompObj = companies.find(comp => String(comp.id) === String(formCompanyId))
@@ -12215,10 +12910,10 @@ export default function PmsCalendar(props?: {
                             className="text-xs h-8"
                           />
                           <Input
-                            type="email"
+                            type="text"
                             value={formRequesterEmail}
                             onChange={e => setFormRequesterEmail(e.target.value)}
-                            placeholder="E-mail do Solicitante"
+                            placeholder="E-mail(s) do Solicitante — separe por ;"
                             className="text-xs h-8"
                           />
                         </div>
@@ -12417,7 +13112,7 @@ export default function PmsCalendar(props?: {
                         )}
                       </div>
                       <Input
-                        type="email"
+                        type="text"
                         value={formGuestEmail}
                         onChange={e => setFormGuestEmail(e.target.value)}
                         placeholder={formRequesterType !== "guest" ? "E-mail do Hóspede (Opcional agora)" : "E-mail"}
@@ -12778,7 +13473,7 @@ export default function PmsCalendar(props?: {
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <Input type="tel" inputMode="tel" value={formGuest2Phone} onChange={e => setFormGuest2Phone(formatBrazilPhone(e.target.value))} placeholder="WhatsApp do 2º Hóspede" className="text-xs h-8" />
-                        <Input type="email" value={formGuest2Email} onChange={e => setFormGuest2Email(e.target.value)} placeholder="E-mail" className="text-xs h-8" />
+                        <Input type="text" value={formGuest2Email} onChange={e => setFormGuest2Email(e.target.value)} placeholder="E-mail" className="text-xs h-8" />
                       </div>
                       {selectedRes && selectedRes.status !== "pre_reserva" && (
                         <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 px-2.5 py-2 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/70">
@@ -13022,7 +13717,7 @@ export default function PmsCalendar(props?: {
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <Input type="tel" inputMode="tel" value={formGuest3Phone} onChange={e => setFormGuest3Phone(formatBrazilPhone(e.target.value))} placeholder="WhatsApp do 3º Hóspede" className="text-xs h-8" />
-                        <Input type="email" value={formGuest3Email} onChange={e => setFormGuest3Email(e.target.value)} placeholder="E-mail" className="text-xs h-8" />
+                        <Input type="text" value={formGuest3Email} onChange={e => setFormGuest3Email(e.target.value)} placeholder="E-mail" className="text-xs h-8" />
                       </div>
                       {selectedRes && selectedRes.status !== "pre_reserva" && (
                         <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 px-2.5 py-2 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/70">
@@ -13584,15 +14279,13 @@ export default function PmsCalendar(props?: {
                 {/* Resumo Financeiro & Atalho para a Aba de Pagamentos */}
                 <div className="p-3.5 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent border border-emerald-500/20 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
                   <div className="space-y-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <CreditCard className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                      <span className="text-xs font-bold text-foreground">Resumo Financeiro da Hospedagem</span>
+                      <span className="text-xs font-bold text-foreground">
+                        {isMultiFlat ? `Resumo Financeiro do Pacote (${1 + extraPackageFlats.length} Flats)` : "Resumo Financeiro da Hospedagem"}
+                      </span>
                       {(() => {
-                        const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                        const isResPaid = formPaymentStatus === "pago_total" || formPaymentStatus === "pago";
-                        const sumPay = formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
-                        const curPaid = isResPaid ? Math.max(curTot, sumPay || Number(formPaidAmount) || 0) : (sumPay > 0 ? sumPay : (Number(formPaidAmount) || 0));
-                        const remaining = Math.max(0, curTot - curPaid);
+                        const { curTot, curPaid, remaining, isResPaid } = computeUnifiedReservationTotals();
                         if (isResPaid || (remaining === 0 && curTot > 0)) {
                           return <Badge className="bg-emerald-600 text-white font-bold text-[10px]">✓ Quitado</Badge>;
                         } else if (curPaid > 0) {
@@ -13603,17 +14296,21 @@ export default function PmsCalendar(props?: {
                     </div>
                     <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
                       {(() => {
-                        const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                        const isResPaid = formPaymentStatus === "pago_total" || formPaymentStatus === "pago";
-                        const sumPay = formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
-                        const curPaid = isResPaid ? Math.max(curTot, sumPay || Number(formPaidAmount) || 0) : (sumPay > 0 ? sumPay : (Number(formPaidAmount) || 0));
+                        const { curTot, curPaid, remaining } = computeUnifiedReservationTotals();
+                        const totalNightsAll = formDailyRates.length + extraPackageFlats.reduce((s, ef) => s + ef.dailyRates.length, 0);
                         return (
                           <>
                             <span>Total: <strong className="text-foreground font-bold">R$ {curTot.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
                             <span>•</span>
                             <span>Pago: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">R$ {curPaid.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                            {remaining > 0 && (
+                              <>
+                                <span>•</span>
+                                <span>Restante PIX/Link: <strong className="text-amber-700 dark:text-amber-300 font-bold">R$ {remaining.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                              </>
+                            )}
                             <span>•</span>
-                            <span>{formDailyRates.length} {formDailyRates.length === 1 ? "diária" : "diárias"} configuradas</span>
+                            <span>{totalNightsAll} {totalNightsAll === 1 ? "diária" : "diárias"} configuradas</span>
                           </>
                         );
                       })()}
@@ -14077,9 +14774,25 @@ export default function PmsCalendar(props?: {
                             placeholder="Selecione a Empresa para emissão da NFS-e..."
                             newLabel="➕ Cadastrar Nova Empresa (Só NFS-e)..."
                           />
+                          {renderInlineCnpjBox("invoice_only")}
                           <p className="text-[10px] text-muted-foreground leading-snug">
                             ✓ Emite a NFS-e no CNPJ sem ativar boleto faturado e já salva essa preferência como padrão no CRM do hóspede para as próximas reservas.
                           </p>
+                        </div>
+                      )}
+
+                      {(formInvoiceRecipientType === "company" || formInvoiceRecipientType === "requester" || formRequesterType === "company" || isMultiFlat) && (
+                        <div className="space-y-1">
+                          <Label className="text-[10.5px] font-bold text-emerald-950 dark:text-emerald-200">
+                            E-mail(s) p/ Envio da NFS-e & Comprovantes (separe múltiplos por ;)
+                          </Label>
+                          <Input
+                            type="text"
+                            value={formNfDeliveryEmails}
+                            onChange={e => setFormNfDeliveryEmails(e.target.value)}
+                            placeholder="financeiro@empresa.com; nfse@empresa.com"
+                            className="h-8 text-xs bg-background"
+                          />
                         </div>
                       )}
 
@@ -14640,50 +15353,419 @@ export default function PmsCalendar(props?: {
                     Ao cadastrar ou alterar a placa, o sistema envia e-mail com flat, dados da reserva e do veículo diretamente para a garagem (<span className="font-semibold">promenadesoho@pfbestacionamentos.com.br</span>).
                   </p>
                 </div>
+
+                {/* Flats Adicionais do Pacote Multi-Flat (Flat 2..N dentro do mesmo formulário) */}
+                {!selectedRes && isMultiFlat && (
+                  <div className="space-y-3 pt-1">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-xs font-black uppercase tracking-wider text-indigo-800 dark:text-indigo-200 flex items-center gap-1.5">
+                        <Building2 className="w-4 h-4 text-indigo-600" />
+                        <span>Flats Adicionais do Pacote ({extraPackageFlats.length})</span>
+                      </span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={handleAddExtraPackageFlat}
+                        className="h-7 px-2.5 text-xs font-bold border-indigo-400 text-indigo-700 dark:text-indigo-200 gap-1"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>+ Adicionar Outro Flat</span>
+                      </Button>
+                    </div>
+
+                    {extraPackageFlats.map((ef, idx) => {
+                      const flatIdxLabel = idx + 2
+                      const efCin = ef.sameDatesAsPrimary ? formCheckin : ef.checkinDate
+                      const efCout = ef.sameDatesAsPrimary ? formCheckout : ef.checkoutDate
+                      const efSubtotal = round2(
+                        ef.dailyRates.reduce((s, d) => s + (Number(d.rate) || 0), 0) +
+                        ef.charges.reduce((s, c) => s + (Number(c.amount) || 0), 0)
+                      )
+                      return (
+                        <div
+                          key={ef.uid}
+                          className="p-3.5 rounded-2xl border-2 border-indigo-200 dark:border-indigo-800/80 bg-indigo-50/40 dark:bg-indigo-950/20 space-y-3"
+                        >
+                          <div className="flex items-center justify-between gap-2 flex-wrap border-b border-indigo-200/70 dark:border-indigo-800/60 pb-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <Badge className="bg-indigo-600 text-white font-black text-[10.5px]">
+                                🏢 Flat {flatIdxLabel}
+                              </Badge>
+                              <span className="text-xs font-bold text-foreground">
+                                {ef.dailyRates.length} {ef.dailyRates.length === 1 ? "diária" : "diárias"} • Subtotal R$ {efSubtotal.toFixed(2)}
+                              </span>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleRemoveExtraPackageFlat(ef.uid)}
+                              className="h-7 px-2 text-xs text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-bold gap-1 cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Remover Flat {flatIdxLabel}</span>
+                            </Button>
+                          </div>
+
+                          {/* Seleção de Apartamento + Datas */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                            <div className="space-y-1">
+                              <Label className="text-[11px] font-bold">Apartamento (Flat {flatIdxLabel})</Label>
+                              <Select
+                                value={ef.flatId || "auto"}
+                                onValueChange={(val) => handleUpdateExtraPackageFlat(ef.uid, { flatId: val })}
+                              >
+                                <SelectTrigger className="h-8 text-xs font-bold bg-background">
+                                  <SelectValue placeholder="Selecione o Flat" />
+                                </SelectTrigger>
+                                <SelectContent className="max-h-64">
+                                  <SelectItem value="auto">⚡ Automático (Alocar livre)</SelectItem>
+                                  {(data.flats || []).map((fObj: any) => {
+                                    const usedInOther =
+                                      (formFlatId && String(formFlatId) === String(fObj.id) && efCin < formCheckout && efCout > formCheckin) ||
+                                      extraPackageFlats.some((other) => other.uid !== ef.uid && String(other.flatId) === String(fObj.id) && efCin < (other.sameDatesAsPrimary ? formCheckout : other.checkoutDate) && efCout > (other.sameDatesAsPrimary ? formCheckin : other.checkinDate))
+                                    const hasConf = (data.reservations || []).some((r: any) => {
+                                      if (Number(r.flatId) !== Number(fObj.id) && String(r.flatNumber) !== String(fObj.number)) return false
+                                      const st = String(r.status || "").toLowerCase()
+                                      if (["cancelada", "cancelled", "no_show", "expirada"].includes(st)) return false
+                                      return r.checkinDate < efCout && r.checkoutDate > efCin
+                                    })
+                                    return (
+                                      <SelectItem key={fObj.id} value={String(fObj.id)}>
+                                        Apt {fObj.number}{usedInOther ? " (Já escolhido neste pacote)" : hasConf ? " (⚠️ Ocupado)" : " (🟢 Livre)"}
+                                      </SelectItem>
+                                    )
+                                  })}
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between">
+                                <Label className="text-[11px] font-bold">Período do Flat {flatIdxLabel}</Label>
+                                <label className="flex items-center gap-1.5 text-[10.5px] font-semibold text-indigo-700 dark:text-indigo-300 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={ef.sameDatesAsPrimary}
+                                    onChange={(e) => {
+                                      const checked = e.target.checked
+                                      const nextCin = checked ? formCheckin : ef.checkinDate
+                                      const nextCout = checked ? formCheckout : ef.checkoutDate
+                                      const rNum = Math.max(0, Number(String(ef.dailyRate || "250").replace(",", ".")) || 250)
+                                      handleUpdateExtraPackageFlat(ef.uid, {
+                                        sameDatesAsPrimary: checked,
+                                        checkinDate: nextCin,
+                                        checkoutDate: nextCout,
+                                        dailyRates: buildReservationDailyRates(nextCin, nextCout, rNum, formChannel || "whatsapp", ef.dailyRates)
+                                      }, true)
+                                    }}
+                                    className="rounded border-indigo-400"
+                                  />
+                                  <span>Mesmas datas do Flat 1</span>
+                                </label>
+                              </div>
+                              {ef.sameDatesAsPrimary ? (
+                                <div className="h-8 px-2.5 rounded-md border border-border bg-background/70 flex items-center justify-between text-xs text-muted-foreground">
+                                  <span>{formCheckin.split("-").reverse().join("/")} ({ef.checkinTime}) → {formCheckout.split("-").reverse().join("/")} ({ef.checkoutTime})</span>
+                                </div>
+                              ) : (
+                                <div className="grid grid-cols-2 gap-1.5">
+                                  <Input
+                                    type="date"
+                                    value={ef.checkinDate}
+                                    onChange={(e) => {
+                                      const newCin = e.target.value
+                                      const newCout = ef.checkoutDate <= newCin ? format(addDays(parseISO(newCin), 1), "yyyy-MM-dd") : ef.checkoutDate
+                                      const rNum = Math.max(0, Number(String(ef.dailyRate || "250").replace(",", ".")) || 250)
+                                      handleUpdateExtraPackageFlat(ef.uid, {
+                                        checkinDate: newCin,
+                                        checkoutDate: newCout,
+                                        dailyRates: buildReservationDailyRates(newCin, newCout, rNum, formChannel || "whatsapp", ef.dailyRates)
+                                      }, true)
+                                    }}
+                                    className="h-8 text-xs bg-background"
+                                  />
+                                  <Input
+                                    type="date"
+                                    value={ef.checkoutDate}
+                                    onChange={(e) => {
+                                      const newCout = e.target.value
+                                      const rNum = Math.max(0, Number(String(ef.dailyRate || "250").replace(",", ".")) || 250)
+                                      handleUpdateExtraPackageFlat(ef.uid, {
+                                        checkoutDate: newCout,
+                                        dailyRates: ef.checkinDate < newCout ? buildReservationDailyRates(ef.checkinDate, newCout, rNum, formChannel || "whatsapp", ef.dailyRates) : ef.dailyRates
+                                      }, true)
+                                    }}
+                                    className="h-8 text-xs bg-background"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Ocupação + Informar Depois */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 p-2 rounded-xl bg-background/80 border border-border">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[11px] font-bold text-foreground">Ocupação:</span>
+                              {(["1", "2", "3"] as const).map((occ) => (
+                                <button
+                                  key={occ}
+                                  type="button"
+                                  onClick={() => handleUpdateExtraPackageFlat(ef.uid, {
+                                    guestCount: occ,
+                                    guest2InformLater: Number(occ) >= 2 ? false : ef.guest2InformLater,
+                                    extraMattress: occ === "3" ? true : ef.extraMattress
+                                  })}
+                                  className={cn(
+                                    "px-2 py-1 rounded-lg text-[11px] font-bold border cursor-pointer",
+                                    ef.guestCount === occ
+                                      ? "bg-indigo-600 text-white border-indigo-600"
+                                      : "bg-background text-muted-foreground border-border"
+                                  )}
+                                >
+                                  {occ} {occ === "1" ? "Hóspede" : "Hóspedes"}
+                                </button>
+                              ))}
+                            </div>
+                            <label className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={ef.informGuestsLater}
+                                onChange={(e) => handleUpdateExtraPackageFlat(ef.uid, { informGuestsLater: e.target.checked })}
+                                className="rounded border-amber-400"
+                              />
+                              <span>Informar hóspedes depois (via link único)</span>
+                            </label>
+                          </div>
+
+                          {/* Hóspede 1 & Hóspede 2 (e 3) com CRM Autocomplete */}
+                          {!ef.informGuestsLater && (
+                            <div className="space-y-2">
+                              <CrmGuestFieldsBlock
+                                guestIndex={1}
+                                label={`Hóspede 1 (Titular do Flat ${flatIdxLabel})`}
+                                optional={formRequesterType !== "guest"}
+                                guestId={ef.guestId}
+                                name={ef.guestName}
+                                cpf={ef.guestCpf}
+                                phone={ef.guestPhone}
+                                email={ef.guestEmail}
+                                crmGuests={crmGuests}
+                                searchIndexedCrm={searchIndexedCrm}
+                                onVerifyPhone={verifyGuestPhoneWhatsApp}
+                                onChangeField={(field, val) => {
+                                  const patch: Partial<MultiFlatExtraItem> =
+                                    field === "name" ? { guestName: val }
+                                      : field === "cpf" ? { guestCpf: val }
+                                        : field === "phone" ? { guestPhone: val }
+                                          : { guestEmail: val }
+                                  handleUpdateExtraPackageFlat(ef.uid, patch)
+                                }}
+                                onSelectCrmGuest={(g) => {
+                                  handleUpdateExtraPackageFlat(ef.uid, {
+                                    guestId: String(g.id),
+                                    guestName: g.name || g.fullName || "",
+                                    guestCpf: g.documentNumber || g.document || g.cpf || "",
+                                    guestPhone: g.phone || "",
+                                    guestEmail: g.email || "",
+                                    informGuestsLater: false,
+                                  })
+                                  toast({ title: `Hóspede 1 (Flat ${flatIdxLabel}) carregado`, description: g.name || g.fullName })
+                                }}
+                                onMarkManual={(clearFields) => {
+                                  handleUpdateExtraPackageFlat(ef.uid, clearFields
+                                    ? { guestId: "manual", guestName: "", guestCpf: "", guestPhone: "", guestEmail: "" }
+                                    : { guestId: "manual" }
+                                  )
+                                }}
+                              />
+
+                              {Number(ef.guestCount) >= 2 && (
+                                <div className="space-y-1.5">
+                                  <div className="flex items-center justify-between px-1">
+                                    <span className="text-[10.5px] font-bold text-indigo-700 dark:text-indigo-300">
+                                      2º Hóspede (Acompanhante do Flat {flatIdxLabel})
+                                    </span>
+                                    <label className="flex items-center gap-1.5 text-[10.5px] text-muted-foreground cursor-pointer">
+                                      <input
+                                        type="checkbox"
+                                        checked={ef.guest2InformLater}
+                                        onChange={(e) => handleUpdateExtraPackageFlat(ef.uid, { guest2InformLater: e.target.checked })}
+                                        className="rounded"
+                                      />
+                                      <span>Informar Hóspede 2 depois</span>
+                                    </label>
+                                  </div>
+                                  {!ef.guest2InformLater && (
+                                    <CrmGuestFieldsBlock
+                                      guestIndex={2}
+                                      label={`Hóspede 2 (Flat ${flatIdxLabel})`}
+                                      optional
+                                      guestId={ef.guest2Id}
+                                      name={ef.guest2Name}
+                                      cpf={ef.guest2Cpf}
+                                      phone={ef.guest2Phone}
+                                      email={ef.guest2Email}
+                                      crmGuests={crmGuests}
+                                      searchIndexedCrm={searchIndexedCrm}
+                                      onChangeField={(field, val) => {
+                                        const patch: Partial<MultiFlatExtraItem> =
+                                          field === "name" ? { guest2Name: val }
+                                            : field === "cpf" ? { guest2Cpf: val }
+                                              : field === "phone" ? { guest2Phone: val }
+                                                : { guest2Email: val }
+                                        handleUpdateExtraPackageFlat(ef.uid, patch)
+                                      }}
+                                      onSelectCrmGuest={(g) => {
+                                        handleUpdateExtraPackageFlat(ef.uid, {
+                                          guest2Id: String(g.id),
+                                          guest2Name: g.name || g.fullName || "",
+                                          guest2Cpf: g.documentNumber || g.document || g.cpf || "",
+                                          guest2Phone: g.phone || "",
+                                          guest2Email: g.email || "",
+                                          guest2InformLater: false,
+                                        })
+                                        toast({ title: `Hóspede 2 (Flat ${flatIdxLabel}) carregado`, description: g.name || g.fullName })
+                                      }}
+                                      onMarkManual={(clearFields) => {
+                                        handleUpdateExtraPackageFlat(ef.uid, clearFields
+                                          ? { guest2Id: "manual", guest2Name: "", guest2Cpf: "", guest2Phone: "", guest2Email: "" }
+                                          : { guest2Id: "manual" }
+                                        )
+                                      }}
+                                    />
+                                  )}
+                                </div>
+                              )}
+
+                              {Number(ef.guestCount) === 3 && (
+                                <CrmGuestFieldsBlock
+                                  guestIndex={3}
+                                  label={`Hóspede 3 (Flat ${flatIdxLabel})`}
+                                  optional
+                                  guestId={ef.guest3Id}
+                                  name={ef.guest3Name}
+                                  cpf={ef.guest3Cpf}
+                                  phone={ef.guest3Phone}
+                                  email={ef.guest3Email}
+                                  crmGuests={crmGuests}
+                                  searchIndexedCrm={searchIndexedCrm}
+                                  onChangeField={(field, val) => {
+                                    const patch: Partial<MultiFlatExtraItem> =
+                                      field === "name" ? { guest3Name: val }
+                                        : field === "cpf" ? { guest3Cpf: val }
+                                          : field === "phone" ? { guest3Phone: val }
+                                            : { guest3Email: val }
+                                    handleUpdateExtraPackageFlat(ef.uid, patch)
+                                  }}
+                                  onSelectCrmGuest={(g) => {
+                                    handleUpdateExtraPackageFlat(ef.uid, {
+                                      guest3Id: String(g.id),
+                                      guest3Name: g.name || g.fullName || "",
+                                      guest3Cpf: g.documentNumber || g.document || g.cpf || "",
+                                      guest3Phone: g.phone || "",
+                                      guest3Email: g.email || "",
+                                    })
+                                  }}
+                                  onMarkManual={(clearFields) => {
+                                    handleUpdateExtraPackageFlat(ef.uid, clearFields
+                                      ? { guest3Id: "manual", guest3Name: "", guest3Cpf: "", guest3Phone: "", guest3Email: "" }
+                                      : { guest3Id: "manual" }
+                                    )
+                                  }}
+                                />
+                              )}
+                            </div>
+                          )}
+
+                          {/* Preferências, Veículo e Observações compactas do Flat */}
+                          <div className="flex flex-wrap items-center gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateExtraPackageFlat(ef.uid, { includeBreakfast: !ef.includeBreakfast })}
+                              className={cn(
+                                "px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-pointer",
+                                ef.includeBreakfast ? "bg-amber-500 text-white border-amber-600" : "bg-background text-muted-foreground border-border"
+                              )}
+                            >
+                              ☕ Café {ef.includeBreakfast ? "Incluso" : "Não"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateExtraPackageFlat(ef.uid, { twinBeds: !ef.twinBeds })}
+                              className={cn(
+                                "px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-pointer",
+                                ef.twinBeds ? "bg-indigo-600 text-white border-indigo-600" : "bg-background text-muted-foreground border-border"
+                              )}
+                            >
+                              🛏️ {ef.twinBeds ? "2 Solteiro" : "1 Casal"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateExtraPackageFlat(ef.uid, { extraMattress: !ef.extraMattress })}
+                              className={cn(
+                                "px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-pointer",
+                                ef.extraMattress ? "bg-purple-600 text-white border-purple-600" : "bg-background text-muted-foreground border-border"
+                              )}
+                            >
+                              ➕ Colchão Extra
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <Input
+                              value={ef.vehiclePlate}
+                              onChange={(e) => handleUpdateExtraPackageFlat(ef.uid, { vehiclePlate: e.target.value.toUpperCase() })}
+                              placeholder="Placa Veículo (ex: ABC-1234)"
+                              maxLength={8}
+                              className="h-7 text-xs font-mono uppercase bg-background"
+                            />
+                            <Input
+                              value={ef.vehicleModel}
+                              onChange={(e) => handleUpdateExtraPackageFlat(ef.uid, { vehicleModel: e.target.value })}
+                              placeholder="Modelo / Cor Veículo"
+                              className="h-7 text-xs bg-background"
+                            />
+                            <Input
+                              value={ef.specialRequests}
+                              onChange={(e) => handleUpdateExtraPackageFlat(ef.uid, { specialRequests: e.target.value })}
+                              placeholder="Obs. Camareira / Flat"
+                              className="h-7 text-xs bg-background"
+                            />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
               )}
 
               {/* ABA: Pagamento & Diárias */}
-              {resModalTab === "payments" && !selectedRes && isMultiFlatPackageMode && (
-                <div className="py-4">
-                  <div className="p-4 rounded-2xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-950/30 flex items-center justify-between gap-3 text-xs">
-                    <div>
-                      <div className="font-bold text-slate-900 dark:text-slate-100">Precificação Consolidada do Pacote Multi-Flat</div>
-                      <p className="text-muted-foreground mt-0.5">
-                        As diárias por flat, descontos (R$ / %) e valor fechado com rateio automático são configurados diretamente na aba principal do pacote.
-                      </p>
-                    </div>
-                    <Button type="button" size="sm" onClick={() => setResModalTab("reservation")} className="text-xs font-bold shrink-0">
-                      Voltar ao Pacote
-                    </Button>
-                  </div>
-                </div>
-              )}
-              {resModalTab === "payments" && !(!selectedRes && isMultiFlatPackageMode) && (
+              {resModalTab === "payments" && (
                 <div className="py-2 space-y-3.5">
                   {/* 1. Cockpit Financeiro: Barra de Indicadores Unificada */}
                   {(() => {
-                    const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                    const isResPaid = formPaymentStatus === "pago_total" || formPaymentStatus === "pago";
-                    const sumPay = formPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-                    const curPaid = isResPaid ? Math.max(curTot, sumPay || Number(formPaidAmount) || 0) : (sumPay > 0 ? sumPay : (Number(formPaidAmount) || 0));
-                    const remaining = isResPaid ? 0 : Math.max(0, curTot - curPaid);
+                    const { curTot, curPaid, remaining, cardRemaining, isResPaid } = computeUnifiedReservationTotals();
                     const isPaid = isResPaid || (curTot > 0 && remaining === 0);
-
-                    const subtotalNights = formDailyRates.reduce((s, d) => s + (Number(d.rate) || 0), 0);
-                    const subtotalCharges = formCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+                    const totalNightsAll = formDailyRates.length + (!selectedRes && isMultiFlat ? extraPackageFlats.reduce((s, ef) => s + (ef.dailyRates?.length || 0), 0) : 0);
+                    const totalChargesAll = formCharges.length + (!selectedRes && isMultiFlat ? pkgExtraCharges.length + extraPackageFlats.reduce((s, ef) => s + (ef.charges?.length || 0), 0) : 0);
 
                     return (
+                      <div className="space-y-2.5">
                       <div className="p-3.5 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-xs shadow-2xs">
                         <div className="flex items-center gap-4 sm:gap-6 flex-wrap">
                           <div>
-                            <span className="text-[10px] uppercase font-bold text-muted-foreground block tracking-wider">Total da Estadia</span>
+                            <span className="text-[10px] uppercase font-bold text-muted-foreground block tracking-wider">
+                              {!selectedRes && isMultiFlat ? `Total do Pacote (${1 + extraPackageFlats.length} Flats)` : "Total da Estadia"}
+                            </span>
                             <span className="text-lg sm:text-xl font-black text-foreground">
                               R$ {curTot.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                             </span>
                             <span className="text-[10px] text-muted-foreground block">
-                              {formDailyRates.length} {formDailyRates.length === 1 ? "diária" : "diárias"}
-                              {formCharges.length > 0 && ` + ${formCharges.length} item(ns)`}
+                              {totalNightsAll} {totalNightsAll === 1 ? "diária" : "diárias"}
+                              {totalChargesAll > 0 && ` + ${totalChargesAll} item(ns)`}
                             </span>
                           </div>
 
@@ -14786,6 +15868,16 @@ export default function PmsCalendar(props?: {
                           )}
                         </div>
                       </div>
+                      {!selectedRes && isMultiFlat && remaining > 0 && !formIsFaturadoBoleto && (
+                        <div className="p-2.5 rounded-xl bg-sky-50/90 dark:bg-sky-950/30 border border-sky-300/70 dark:border-sky-800/70 text-[11px] text-sky-900 dark:text-sky-200 flex flex-wrap items-center justify-between gap-2">
+                          <span>
+                            💎 Ao salvar, será gerado <strong>1 PIX / Link Único</strong> para o solicitante cobrar apenas o saldo restante de{" "}
+                            <strong>R$ {remaining.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>{" "}
+                            (Cartão +5%: <strong>R$ {cardRemaining.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>).
+                          </span>
+                        </div>
+                      )}
+                      </div>
                     );
                   })()}
 
@@ -14861,6 +15953,24 @@ export default function PmsCalendar(props?: {
 
                     {formIsFaturadoBoleto && (
                       <div className="space-y-3 pt-2 border-t border-amber-300/50 dark:border-amber-800/50">
+                        {!selectedRes && isMultiFlat && (
+                          <label className="flex items-start gap-2.5 p-2.5 rounded-xl bg-amber-100/80 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={packageEmitBoletoNow}
+                              onChange={e => setPackageEmitBoletoNow(e.target.checked)}
+                              className="mt-0.5 rounded border-amber-500 text-amber-600 focus:ring-amber-500"
+                            />
+                            <div className="text-[11px]">
+                              <span className="font-bold text-amber-950 dark:text-amber-100 block">
+                                Emitir Boleto Banco Inter Unificado do Pacote imediatamente ao salvar
+                              </span>
+                              <span className="text-amber-800 dark:text-amber-300">
+                                Gera 1 boleto consolidado para os {1 + extraPackageFlats.length} flats na criação do pacote (se desmarcado, será emitido no check-out).
+                              </span>
+                            </div>
+                          </label>
+                        )}
                         {/* Linha 1: Composição (1 Boleto vs 2 Boletos), Pagador Principal e Prazo */}
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                           <div className="space-y-1">
@@ -15054,10 +16164,10 @@ export default function PmsCalendar(props?: {
                               className="h-8 text-xs"
                             />
                             <Input
-                              type="email"
+                              type="text"
                               value={formFinRespEmail}
                               onChange={e => setFormFinRespEmail(e.target.value)}
-                              placeholder="E-mail para Notas e Boletos"
+                              placeholder="E-mails p/ Notas e Boletos (separe por ;)"
                               className="h-8 text-xs"
                             />
                             <Input
@@ -15298,7 +16408,7 @@ export default function PmsCalendar(props?: {
                                         autoReminderEnabled: formAutoReminderEnabled,
                                         financialResponsible: {
                                           name: formFinRespName.trim(),
-                                          email: formFinRespEmail.trim(),
+                                          email: formatEmailList(formFinRespEmail),
                                           phone: formFinRespPhone.trim(),
                                           whatsapp: formFinRespPhone.trim(),
                                           document: formFinRespDoc.trim()
@@ -15443,6 +16553,73 @@ export default function PmsCalendar(props?: {
 
                   {/* 3. Composição de Valores da Hospedagem (Diárias, Taxas, Adicionais e Rateio Rápido) */}
                   <div className="p-3.5 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-3 shadow-2xs">
+                    {!selectedRes && isMultiFlat && (() => {
+                      const { rawSum, curTot } = computeUnifiedReservationTotals();
+                      const diffPkg = curTot - rawSum;
+                      return (
+                        <div className="p-3 bg-violet-50/90 dark:bg-violet-950/30 border border-violet-300/70 dark:border-violet-800/70 rounded-xl space-y-2">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <span className="text-xs font-bold text-violet-950 dark:text-violet-100">
+                              📦 Precificação Consolidada do Pacote ({1 + extraPackageFlats.length} Flats)
+                            </span>
+                            <span className="text-[11px] font-semibold text-violet-800 dark:text-violet-300">
+                              Soma Bruta: R$ {rawSum.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                              {packagePricingMode !== "sum" && ` → Final: R$ ${curTot.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
+                              {diffPkg !== 0 && ` (${diffPkg > 0 ? "+" : ""}${diffPkg.toLocaleString("pt-BR", { minimumFractionDigits: 2 })})`}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                            <div className="sm:col-span-7">
+                              <select
+                                value={packagePricingMode}
+                                onChange={(e) => {
+                                  const nextMode = e.target.value as "sum" | "discount_amount" | "discount_pct" | "fixed_total";
+                                  setPackagePricingMode(nextMode);
+                                  const nextInput = nextMode === "sum" ? "" : packagePricingInput;
+                                  if (nextMode === "sum") setPackagePricingInput("");
+                                  syncMultiFlatTotalsAndPayments(extraPackageFlats, pkgExtraCharges, nextMode, nextInput);
+                                }}
+                                className="w-full h-8 rounded-lg border border-violet-300 dark:border-violet-700 bg-background px-2.5 text-xs font-semibold"
+                              >
+                                <option value="sum">Somar Diárias dos Flats + Taxas (Padrão)</option>
+                                <option value="fixed_total">Valor Fixo Fechado do Pacote (R$)</option>
+                                <option value="discount_amount">Desconto Direto no Pacote (R$)</option>
+                                <option value="discount_pct">Desconto Percentual no Pacote (%)</option>
+                              </select>
+                            </div>
+                            {packagePricingMode !== "sum" && (
+                              <div className="sm:col-span-5 relative">
+                                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[11px] font-bold text-muted-foreground pointer-events-none">
+                                  {packagePricingMode === "discount_pct" ? "%" : "R$"}
+                                </span>
+                                <Input
+                                  type="text"
+                                  inputMode="decimal"
+                                  placeholder={packagePricingMode === "discount_pct" ? "Ex: 10" : "0,00"}
+                                  value={packagePricingMode === "discount_pct" ? packagePricingInput : formatCentsMaskValue(Number(packagePricingInput) || 0)}
+                                  onFocus={packagePricingMode === "discount_pct" ? undefined : keepCurrencyCursorAtEnd}
+                                  onClick={packagePricingMode === "discount_pct" ? undefined : keepCurrencyCursorAtEnd}
+                                  onChange={(e) => {
+                                    if (packagePricingMode === "discount_pct") {
+                                      const raw = e.target.value.replace(/[^\d.,]/g, "").replace(",", ".");
+                                      setPackagePricingInput(raw);
+                                      syncMultiFlatTotalsAndPayments(extraPackageFlats, pkgExtraCharges, packagePricingMode, raw);
+                                    } else {
+                                      const val = parseCentsMaskInput(e.target.value);
+                                      const nextStr = val > 0 ? String(val) : "";
+                                      setPackagePricingInput(nextStr);
+                                      syncMultiFlatTotalsAndPayments(extraPackageFlats, pkgExtraCharges, packagePricingMode, nextStr);
+                                    }
+                                  }}
+                                  className="h-8 pl-8 pr-2.5 text-xs font-bold text-right bg-background"
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     {/* Barra de Rateio Rápido do Pacote Total */}
                     <div className="p-2.5 bg-primary/5 dark:bg-primary/10 border border-primary/20 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
                       <div className="flex items-center gap-2 min-w-0">
@@ -15450,9 +16627,13 @@ export default function PmsCalendar(props?: {
                           <Wand2 className="w-4 h-4" />
                         </div>
                         <div>
-                          <span className="text-xs font-bold text-foreground block">Definir Pacote Total & Ratear</span>
+                          <span className="text-xs font-bold text-foreground block">
+                            {!selectedRes && isMultiFlat ? "Ratear Valor nas Diárias do Flat 1" : "Definir Pacote Total & Ratear"}
+                          </span>
                           <span className="text-[10.5px] text-muted-foreground block">
-                            Digite o valor total negociado para dividir automaticamente entre as diárias
+                            {!selectedRes && isMultiFlat
+                              ? "Digite o total negociado para o Flat 1 dividir automaticamente entre as diárias dele"
+                              : "Digite o valor total negociado para dividir automaticamente entre as diárias"}
                           </span>
                         </div>
                       </div>
@@ -15502,7 +16683,11 @@ export default function PmsCalendar(props?: {
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-1.5">
                           <CalendarDays className="w-4 h-4 text-primary shrink-0" />
-                          <span className="text-xs font-bold text-foreground">Diárias da Hospedagem ({formDailyRates.length})</span>
+                          <span className="text-xs font-bold text-foreground">
+                            {!selectedRes && isMultiFlat
+                              ? `Diárias do Flat 1 (${formFlatId === "auto" ? "Automático" : `Flat ${(data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId}`}) (${formDailyRates.length})`
+                              : `Diárias da Hospedagem (${formDailyRates.length})`}
+                          </span>
                         </div>
 
                         <div className="flex items-center gap-1.5 flex-wrap">
@@ -15556,7 +16741,8 @@ export default function PmsCalendar(props?: {
                               setFormDailyRates(updatedRates);
                               setFormCheckin(firstDate);
                               setFormCheckout(newCheckout);
-                              syncCompositeTotalAndPaid(updatedRates, formCharges, formChannel);
+                              const nextExtras = syncExtraFlatsDatesFromPrimary(firstDate, newCheckout, formChannel);
+                              syncCompositeTotalAndPaid(updatedRates, formCharges, formChannel, undefined, nextExtras);
                             }
                           };
 
@@ -15656,14 +16842,223 @@ export default function PmsCalendar(props?: {
                           );
                         })}
                       </div>
+
+                      {!selectedRes && isMultiFlat && extraPackageFlats.map((ef, efIdx) => {
+                        const efFlatLabel = ef.flatId === "auto"
+                          ? "Automático"
+                          : `Flat ${(data.flats || []).find((f: any) => f.id === Number(ef.flatId))?.number || ef.flatId}`;
+                        const efRatesSum = (ef.dailyRates || []).reduce((s, d) => s + (Number(d.rate) || 0), 0);
+                        return (
+                          <div key={ef.uid} className="pt-3 mt-2 border-t border-border/60 space-y-2">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <div className="flex items-center gap-1.5">
+                                <CalendarDays className="w-3.5 h-3.5 text-violet-600 shrink-0" />
+                                <span className="text-xs font-bold text-foreground">
+                                  Diárias do Flat {efIdx + 2} ({efFlatLabel}) ({ef.dailyRates.length})
+                                </span>
+                                <span className="text-[11px] font-bold text-violet-700 dark:text-violet-300">
+                                  • R$ {efRatesSum.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                </span>
+                              </div>
+                              {ef.dailyRates.length > 1 && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    const firstRate = Number(ef.dailyRates[0]?.rate) || 250;
+                                    const firstChan = ef.dailyRates[0]?.channel || formChannel;
+                                    const nextRates = ef.dailyRates.map(d => ({ ...d, rate: firstRate, channel: firstChan }));
+                                    handleUpdateExtraPackageFlat(ef.uid, { dailyRates: nextRates, dailyRate: String(firstRate) }, true);
+                                    toast({ title: `Diárias do Flat ${efIdx + 2} Equalizadas`, description: `Ajustadas para R$ ${firstRate.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}.` });
+                                  }}
+                                  className="h-7 px-2 text-[10.5px] text-muted-foreground hover:text-foreground cursor-pointer"
+                                >
+                                  Igualar Valores
+                                </Button>
+                              )}
+                            </div>
+                            <div className="space-y-1.5">
+                              {ef.dailyRates.map((d, nIdx) => {
+                                let formattedDate = d.date;
+                                try {
+                                  formattedDate = format(parseISO(d.date), "dd/MM/yyyy (EEE)", { locale: ptBR });
+                                } catch {}
+                                return (
+                                  <div
+                                    key={`${ef.uid}_${d.date || nIdx}`}
+                                    className="p-2.5 bg-background border border-violet-200/80 dark:border-violet-900/50 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                                  >
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 shrink-0">
+                                        #{nIdx + 1}
+                                      </span>
+                                      <span className="font-semibold text-foreground text-xs whitespace-nowrap">
+                                        {formattedDate}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-2 w-full sm:w-auto sm:flex-1 sm:justify-end">
+                                      <div className="flex-1 sm:flex-initial sm:w-44 min-w-0">
+                                        <Select
+                                          value={d.channel || formChannel || "whatsapp"}
+                                          onValueChange={(val) => {
+                                            const nextRates = ef.dailyRates.map((item, i) => i === nIdx ? { ...item, channel: val } : item);
+                                            handleUpdateExtraPackageFlat(ef.uid, { dailyRates: nextRates }, true);
+                                          }}
+                                        >
+                                          <SelectTrigger className="h-8 sm:h-7 text-xs font-medium w-full">
+                                            <SelectValue placeholder="Canal" />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            <SelectItem value="whatsapp">🟢 WhatsApp / Direta</SelectItem>
+                                            <SelectItem value="booking">🔵 Booking.com</SelectItem>
+                                            <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
+                                            <SelectItem value="b2b">🟣 B2B Reservas / Agência</SelectItem>
+                                            <SelectItem value="site">🟠 Site Próprio</SelectItem>
+                                            <SelectItem value="balcao">🏨 Balcão</SelectItem>
+                                            <SelectItem value="empresa">🏢 Empresa (PJ)</SelectItem>
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+                                      <div className="w-28 relative shrink-0">
+                                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground pointer-events-none">
+                                          R$
+                                        </span>
+                                        <Input
+                                          type="text"
+                                          inputMode="numeric"
+                                          placeholder="0,00"
+                                          value={formatCentsMaskValue(d.rate)}
+                                          onFocus={keepCurrencyCursorAtEnd}
+                                          onClick={keepCurrencyCursorAtEnd}
+                                          onChange={(e) => {
+                                            const val = parseCentsMaskInput(e.target.value);
+                                            const nextRates = ef.dailyRates.map((item, i) => i === nIdx ? { ...item, rate: val } : item);
+                                            const avg = nextRates.length > 0 ? Math.round((nextRates.reduce((s, r) => s + (Number(r.rate) || 0), 0) / nextRates.length) * 100) / 100 : (Number(ef.dailyRate) || 0);
+                                            handleUpdateExtraPackageFlat(ef.uid, { dailyRates: nextRates, dailyRate: String(avg) }, true);
+                                          }}
+                                          className="h-8 sm:h-7 pl-7 pr-2 text-xs font-bold text-right w-full"
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
 
                     {/* Subseção B: Taxas, Adicionais & Descontos */}
+                    {(() => {
+                      const totalChargesBadgeCount = (!selectedRes && isMultiFlat)
+                        ? pkgExtraCharges.length + formCharges.length + extraPackageFlats.reduce((s, ef) => s + (ef.charges?.length || 0), 0)
+                        : formCharges.length;
+                      const flat1Display = formFlatId === "auto" ? "Auto" : `Flat ${(data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId}`;
+
+                      const renderChargeRow = (charge: ReservationChargeItem, cIdx: number, scope: string, scopeBadge: string | null) => (
+                        <div
+                          key={`${scope}_${charge.id || cIdx}`}
+                          className="p-2.5 bg-background border border-border rounded-xl grid grid-cols-12 gap-2 items-center text-xs"
+                        >
+                          {scopeBadge && (
+                            <div className="col-span-12 flex items-center justify-between -mb-1">
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300">
+                                {scopeBadge}
+                              </span>
+                            </div>
+                          )}
+                          <div className="col-span-6 sm:col-span-4 sm:order-1 min-w-0">
+                            <Select
+                              value={charge.type}
+                              onValueChange={(val: any) => handleUpdateCharge(charge.id, "type", val, scope)}
+                            >
+                              <SelectTrigger className="h-8 sm:h-7 text-xs font-medium w-full">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="cleaning">🧹 Limpeza</SelectItem>
+                                <SelectItem value="pet">🐾 Pet</SelectItem>
+                                <SelectItem value="extra_bed">🛏️ Cama Extra</SelectItem>
+                                <SelectItem value="breakfast">☕ Café Extra</SelectItem>
+                                <SelectItem value="garage">🚗 Garagem</SelectItem>
+                                <SelectItem value="damage">🛠️ Consumo / Dano</SelectItem>
+                                <SelectItem value="discount">🏷️ Desconto</SelectItem>
+                                <SelectItem value="other">📦 Outro</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="col-span-6 sm:col-span-4 sm:order-3 flex items-center gap-1.5 min-w-0">
+                            <div className="relative flex-1 min-w-0">
+                              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground pointer-events-none">
+                                R$
+                              </span>
+                              <Input
+                                type="text"
+                                inputMode="numeric"
+                                placeholder="0,00"
+                                value={formatCentsMaskValue(charge.amount, true)}
+                                onFocus={keepCurrencyCursorAtEnd}
+                                onClick={keepCurrencyCursorAtEnd}
+                                onChange={e => {
+                                  const rawVal = parseCentsMaskInput(e.target.value, true);
+                                  const finalVal = charge.type === "discount" ? -Math.abs(rawVal) : rawVal;
+                                  handleUpdateCharge(charge.id, "amount", finalVal, scope);
+                                }}
+                                className={`h-8 sm:h-7 pl-7 pr-2 text-xs font-bold text-right w-full ${charge.amount < 0 ? "text-rose-600 dark:text-rose-400 font-black" : "text-foreground"}`}
+                              />
+                            </div>
+
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleRemoveCharge(charge.id, scope)}
+                              className="h-8 w-8 sm:h-7 sm:w-7 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
+                              title="Remover item"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+
+                          <div className="col-span-12 sm:col-span-4 sm:order-2 min-w-0">
+                            <Input
+                              type="text"
+                              placeholder="Descrição do item..."
+                              value={charge.title}
+                              onChange={e => handleUpdateCharge(charge.id, "title", e.target.value, scope)}
+                              className="h-8 sm:h-7 text-xs font-medium w-full"
+                            />
+                          </div>
+                        </div>
+                      );
+
+                      return (
                     <div className="space-y-2 pt-2 border-t border-border/70">
                       <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
-                          <span className="text-xs font-bold text-foreground">Taxas, Serviços Adicionais & Descontos ({formCharges.length})</span>
+                          <span className="text-xs font-bold text-foreground">Taxas, Serviços Adicionais & Descontos ({totalChargesBadgeCount})</span>
+                          {!selectedRes && isMultiFlat && (
+                            <select
+                              value={pkgChargeTarget}
+                              onChange={e => setPkgChargeTarget(e.target.value)}
+                              className="h-6 rounded-md border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/40 px-2 text-[10.5px] font-bold text-violet-900 dark:text-violet-200"
+                            >
+                              <option value="package">📦 Alvo: Pacote (Geral)</option>
+                              <option value="flat_0">🏠 Alvo: Flat 1 ({flat1Display})</option>
+                              {extraPackageFlats.map((ef, efIdx) => {
+                                const efDisp = ef.flatId === "auto" ? "Auto" : `Flat ${(data.flats || []).find((f: any) => f.id === Number(ef.flatId))?.number || ef.flatId}`;
+                                return (
+                                  <option key={ef.uid} value={ef.uid}>
+                                    🏠 Alvo: Flat {efIdx + 2} ({efDisp})
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          )}
                         </div>
 
                         {/* Botões de Atalho Rápido para Itens Comuns */}
@@ -15734,88 +17129,60 @@ export default function PmsCalendar(props?: {
                         </div>
                       </div>
 
-                      {formCharges.length === 0 ? (
+                      {totalChargesBadgeCount === 0 ? (
                         <div className="p-2.5 rounded-xl border border-dashed text-center text-[11px] text-muted-foreground bg-background/50">
                           Nenhuma taxa ou adicional configurado. Clique nos botões acima caso queira incluir Taxa de Limpeza, Pet, Cama Extra, Desconto, etc.
                         </div>
                       ) : (
                         <div className="space-y-1.5">
-                          {formCharges.map((charge, cIdx) => (
-                            <div
-                              key={charge.id || cIdx}
-                              className="p-2.5 bg-background border border-border rounded-xl grid grid-cols-12 gap-2 items-center text-xs"
-                            >
-                              <div className="col-span-6 sm:col-span-4 sm:order-1 min-w-0">
-                                <Select
-                                  value={charge.type}
-                                  onValueChange={(val: any) => handleUpdateCharge(charge.id, "type", val)}
-                                >
-                                  <SelectTrigger className="h-8 sm:h-7 text-xs font-medium w-full">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="cleaning">🧹 Limpeza</SelectItem>
-                                    <SelectItem value="pet">🐾 Pet</SelectItem>
-                                    <SelectItem value="extra_bed">🛏️ Cama Extra</SelectItem>
-                                    <SelectItem value="breakfast">☕ Café Extra</SelectItem>
-                                    <SelectItem value="garage">🚗 Garagem</SelectItem>
-                                    <SelectItem value="damage">🛠️ Consumo / Dano</SelectItem>
-                                    <SelectItem value="discount">🏷️ Desconto</SelectItem>
-                                    <SelectItem value="other">📦 Outro</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-
-                              <div className="col-span-6 sm:col-span-4 sm:order-3 flex items-center gap-1.5 min-w-0">
-                                <div className="relative flex-1 min-w-0">
-                                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground pointer-events-none">
-                                    R$
-                                  </span>
-                                  <Input
-                                    type="text"
-                                    inputMode="numeric"
-                                    placeholder="0,00"
-                                    value={formatCentsMaskValue(charge.amount, true)}
-                                    onFocus={keepCurrencyCursorAtEnd}
-                                    onClick={keepCurrencyCursorAtEnd}
-                                    onChange={e => {
-                                      const rawVal = parseCentsMaskInput(e.target.value, true);
-                                      const finalVal = charge.type === "discount" ? -Math.abs(rawVal) : rawVal;
-                                      handleUpdateCharge(charge.id, "amount", finalVal);
-                                    }}
-                                    className={`h-8 sm:h-7 pl-7 pr-2 text-xs font-bold text-right w-full ${charge.amount < 0 ? "text-rose-600 dark:text-rose-400 font-black" : "text-foreground"}`}
-                                  />
-                                </div>
-
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleRemoveCharge(charge.id)}
-                                  className="h-8 w-8 sm:h-7 sm:w-7 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
-                                  title="Remover item"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </Button>
-                              </div>
-
-                              <div className="col-span-12 sm:col-span-4 sm:order-2 min-w-0">
-                                <Input
-                                  type="text"
-                                  placeholder="Descrição do item..."
-                                  value={charge.title}
-                                  onChange={e => handleUpdateCharge(charge.id, "title", e.target.value)}
-                                  className="h-8 sm:h-7 text-xs font-medium w-full"
-                                />
-                              </div>
-                            </div>
-                          ))}
+                          {!selectedRes && isMultiFlat && pkgExtraCharges.map((charge, cIdx) =>
+                            renderChargeRow(charge, cIdx, "package", "📦 Pacote (Geral)")
+                          )}
+                          {formCharges.map((charge, cIdx) =>
+                            renderChargeRow(charge, cIdx, "flat_0", (!selectedRes && isMultiFlat) ? `🏠 Flat 1 (${flat1Display})` : null)
+                          )}
+                          {!selectedRes && isMultiFlat && extraPackageFlats.flatMap((ef, efIdx) => {
+                            const efDisp = ef.flatId === "auto" ? "Auto" : `Flat ${(data.flats || []).find((f: any) => f.id === Number(ef.flatId))?.number || ef.flatId}`;
+                            return (ef.charges || []).map((charge, cIdx) =>
+                              renderChargeRow(charge, cIdx, ef.uid, `🏠 Flat ${efIdx + 2} (${efDisp})`)
+                            );
+                          })}
                         </div>
                       )}
                     </div>
+                      );
+                    })()}
 
                     {/* Resumo da Composição */}
                     {(() => {
+                      if (!selectedRes && isMultiFlat) {
+                        const { curTot, rawSum, flat1Sub, extraFlatsSub, pkgChargesSub } = computeUnifiedReservationTotals();
+                        const adjustment = curTot - rawSum;
+                        return (
+                          <div className="pt-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-[11px] text-muted-foreground px-1 border-t border-border/60">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span>Flat 1: <strong className="text-foreground">R$ {flat1Sub.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                              <span>•</span>
+                              <span>Extras ({extraPackageFlats.length}): <strong className="text-foreground">R$ {extraFlatsSub.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                              {pkgChargesSub !== 0 && (
+                                <>
+                                  <span>•</span>
+                                  <span>Taxas Pacote: <strong className={pkgChargesSub > 0 ? "text-foreground" : "text-rose-600"}>R$ {pkgChargesSub.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                                </>
+                              )}
+                              {adjustment !== 0 && (
+                                <>
+                                  <span>•</span>
+                                  <span>Ajuste Pacote: <strong className={adjustment > 0 ? "text-emerald-600" : "text-rose-600"}>{adjustment > 0 ? "+" : ""}R$ {adjustment.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                                </>
+                              )}
+                            </div>
+                            <span className="font-bold text-foreground text-xs shrink-0">
+                              Total do Pacote: <strong className="text-primary font-black">R$ {curTot.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
+                            </span>
+                          </div>
+                        );
+                      }
                       const subtotalNights = formDailyRates.reduce((s, d) => s + (Number(d.rate) || 0), 0);
                       const subtotalCharges = formCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
                       const totalCalculated = Math.max(0, subtotalNights + subtotalCharges);
@@ -15988,11 +17355,7 @@ export default function PmsCalendar(props?: {
                   </Button>
                   <Button type="submit" size="sm" disabled={savingRes} className="font-bold text-xs bg-primary hover:bg-primary/90 text-primary-foreground min-w-[100px] shadow-sm">
                     {savingRes ? <RefreshCw className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
-                    {selectedRes
-                      ? "Salvar Alterações"
-                      : isMultiFlatPackageMode
-                        ? `Criar Pacote (${packageFlatsDraft.length} Flats)`
-                        : "Criar Reserva"}
+                    {selectedRes ? "Salvar Alterações" : isMultiFlat ? `Criar Pacote (${1 + extraPackageFlats.length} Flats)` : "Criar Reserva"}
                   </Button>
                 </div>
               </DialogFooter>
@@ -16734,10 +18097,10 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                               </div>
                             </div>
                             <Input
-                              type="email"
+                              type="text"
                               value={manualRecipient}
                               onChange={e => setManualRecipient(e.target.value)}
-                              placeholder="ex: portaria@condominio.com ou hospede@email.com"
+                              placeholder="ex: portaria@condominio.com; hospede@email.com"
                               className="text-xs h-8.5 rounded-xl font-medium"
                             />
                           </div>
@@ -17869,7 +19232,7 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
               </DialogDescription>
             </DialogHeader>
 
-            <form onSubmit={handleSaveNewCompany} className="space-y-3 pt-1 text-xs">
+            <form noValidate onSubmit={handleSaveNewCompany} className="space-y-3 pt-1 text-xs">
               {/* Papel da Empresa no CRM */}
               <div className="space-y-1.5 p-2.5 bg-muted/30 border border-border rounded-2xl">
                 <Label className="font-bold text-[11px] text-slate-700 dark:text-slate-300 block">
@@ -17970,12 +19333,15 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                     {newCompBillingEnabled ? "E-mail Financeiro" : "E-mail da Empresa (Opcional)"}
                   </Label>
                   <Input 
-                    type="email"
+                    type="text"
                     value={newCompFinancialEmail} 
                     onChange={e => setNewCompFinancialEmail(e.target.value)} 
-                    placeholder={newCompBillingEnabled ? "financeiro@empresa.com" : "Deixe vazio p/ enviar só ao hóspede"}
+                    placeholder={newCompBillingEnabled ? "financeiro@empresa.com; fiscal@empresa.com" : "financeiro@empresa.com; fiscal@empresa.com"}
                     className="h-8 text-xs rounded-xl" 
                   />
+                  <span className="text-[10px] text-muted-foreground block">
+                    Aceita múltiplos e-mails separados por ;
+                  </span>
                 </div>
                 <div className="space-y-1">
                   <Label className="font-bold">Telefone / WhatsApp (Opcional)</Label>

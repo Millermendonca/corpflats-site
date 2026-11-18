@@ -10,6 +10,72 @@ import {
 } from "./fnrh-serpro-service.mjs";
 import { rebuildFnrhPdfOnTheFly } from "./fnrh-pdf-service.mjs";
 
+const EMAIL_LIST_TOKEN_REGEX =
+  /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
+
+function tokenizeEmailListInput(raw) {
+  if (raw === null || raw === undefined) return [];
+  const tokens = [];
+  const items = Array.isArray(raw) ? raw : [raw];
+  for (const item of items) {
+    if (item === null || item === undefined) continue;
+    const str = String(item).trim();
+    if (!str) continue;
+    for (const seg of str.split(/[;,\r\n]+/)) {
+      const trimmedSeg = seg.trim();
+      if (!trimmedSeg) continue;
+      const angleMatch = /^[^<>]*<([^<>\s]+@[^<>\s]+)>\s*$/.exec(trimmedSeg);
+      if (angleMatch) {
+        tokens.push(angleMatch[1].trim());
+      } else {
+        for (const wsPart of trimmedSeg.split(/\s+/)) {
+          const tok = wsPart.trim();
+          if (tok) tokens.push(tok);
+        }
+      }
+    }
+  }
+  return tokens;
+}
+
+export function validateEmailList(raw) {
+  const tokens = tokenizeEmailListInput(raw);
+  if (tokens.length === 0) {
+    return { valid: true, emails: [], invalidTokens: [] };
+  }
+  const emails = [];
+  const invalidTokens = [];
+  const seen = new Set();
+  for (const token of tokens) {
+    const normalized = token.toLowerCase();
+    if (EMAIL_LIST_TOKEN_REGEX.test(normalized)) {
+      if (!seen.has(normalized)) {
+        seen.add(normalized);
+        emails.push(normalized);
+      }
+    } else {
+      invalidTokens.push(token);
+    }
+  }
+  return {
+    valid: invalidTokens.length === 0,
+    emails,
+    invalidTokens
+  };
+}
+
+export function parseEmailList(raw) {
+  return validateEmailList(raw).emails;
+}
+
+export function formatEmailList(raw) {
+  return parseEmailList(raw).join("; ");
+}
+
+export function getPrimaryEmail(raw) {
+  return parseEmailList(raw)[0] || "";
+}
+
 /**
  * Resolução dinâmica e unificada de URL de check-in para disparos de e-mail.
  */
@@ -2354,7 +2420,14 @@ export function sendEmailAsync({
   overrides = {},
   onDeliveryResult = null
 }) {
-  if (!recipient || !subject) {
+  const parsedRecipients = parseEmailList(recipient);
+  const rawRecipientFallback = !Array.isArray(recipient) ? String(recipient || "").trim() : "";
+  const effectiveRecipients =
+    parsedRecipients.length > 0
+      ? parsedRecipients
+      : (rawRecipientFallback.includes("@") ? [rawRecipientFallback] : []);
+
+  if (effectiveRecipients.length === 0 || !subject) {
     console.warn("[MailService] Destinatário ou assunto ausentes. Abortando.");
     if (typeof onDeliveryResult === "function") {
       try {
@@ -2364,9 +2437,15 @@ export function sendEmailAsync({
     return null;
   }
 
+  const recipientFormatted = effectiveRecipients.join(", ");
+  const parsedCc = parseEmailList(cc);
+  const ccFormatted = parsedCc.length > 0 ? parsedCc.join(", ") : (cc ? String(cc).trim() : null);
+  const parsedBcc = parseEmailList(bcc);
+  const bccFormatted = parsedBcc.length > 0 ? parsedBcc.join(", ") : (bcc ? String(bcc).trim() : null);
+
   // Verifica se o motor automático de e-mails está pausado pelo usuário
   if (metadata?.isAutomated && db?.settings?.emailSettings?.enabled === false) {
-    console.log(`[MailService ⏸️] Motor de e-mails automáticos pausado. Disparo para ${recipient} ('${subject}') suspenso.`);
+    console.log(`[MailService ⏸️] Motor de e-mails automáticos pausado. Disparo para ${recipientFormatted} ('${subject}') suspenso.`);
     return null;
   }
 
@@ -2380,16 +2459,17 @@ export function sendEmailAsync({
     reservation_id: String(reservationId || "0"),
     type: type || "email",
     direction: direction || "outbound",
-    recipient: recipient.trim(),
-    cc: cc ? String(cc).trim() : null,
-    bcc: bcc ? String(bcc).trim() : null,
+    recipient: recipientFormatted,
+    cc: ccFormatted,
+    bcc: bccFormatted,
     subject: subject.trim(),
     body: finalHtml || bodyText || "",
     status: "pending",
     metadata: {
       ...metadata,
-      cc: cc ? String(cc).trim() : undefined,
-      bcc: bcc ? String(bcc).trim() : undefined,
+      recipients: effectiveRecipients,
+      cc: ccFormatted || undefined,
+      bcc: bccFormatted || undefined,
       cleanBodyText: preExtractedCleanBody ? preExtractedCleanBody.slice(0, 3500) : undefined,
       hasAttachments: Array.isArray(attachments) && attachments.length > 0,
       attachmentsCount: Array.isArray(attachments) ? attachments.length : 0,
@@ -2447,9 +2527,9 @@ export function sendEmailAsync({
 
       const mailOptions = {
         from: `"${config.fromName || "CorpFlats"}" <${config.fromEmail || config.user || "contato@corpflats.com.br"}>`,
-        to: recipient.trim(),
-        ...(cc ? { cc: String(cc).trim() } : {}),
-        ...(bcc ? { bcc: String(bcc).trim() } : {}),
+        to: recipientFormatted,
+        ...(ccFormatted ? { cc: ccFormatted } : {}),
+        ...(bccFormatted ? { bcc: bccFormatted } : {}),
         subject: subject.trim(),
         html: finalHtml || `<p>${bodyText}</p>`,
         text: bodyText || subject,
@@ -2462,7 +2542,11 @@ export function sendEmailAsync({
       logEntry.metadata.messageId = info.messageId;
       logEntry.metadata.sentAt = new Date().toISOString();
       delete logEntry.metadata.error;
-      console.log(`[MailService] ✓ E-mail enviado para ${recipient} (MsgID: ${info.messageId})`);
+      const infoRejectedRaw = Array.isArray(info?.rejected) ? info.rejected : [];
+      if (infoRejectedRaw.length > 0) {
+        logEntry.metadata.rejected = infoRejectedRaw;
+      }
+      console.log(`[MailService] ✓ E-mail enviado para ${recipientFormatted} (MsgID: ${info.messageId})`);
       if (typeof onDeliveryResult === "function") {
         try {
           onDeliveryResult({
@@ -2470,9 +2554,51 @@ export function sendEmailAsync({
             status: "sent",
             messageId: info.messageId,
             sentAt: logEntry.metadata.sentAt,
-            communicationId: logEntry.id
+            communicationId: logEntry.id,
+            ...(infoRejectedRaw.length > 0 ? { rejected: infoRejectedRaw } : {})
           });
         } catch (_) {}
+      }
+
+      if (infoRejectedRaw.length > 0 && db && reservationId && String(reservationId) !== "0") {
+        try {
+          const infoRejectedLower = infoRejectedRaw
+            .map(e => String(e || "").replace(/.*<([^>]+)>.*/, "$1").trim().toLowerCase())
+            .filter(Boolean);
+          if (infoRejectedLower.length > 0) {
+            const resKeyUpper = String(reservationId).trim().toUpperCase();
+            const matchedRes = (db.reservations || []).find(
+              r => r && (String(r.id) === String(reservationId) || String(r.code || "").trim().toUpperCase() === resKeyUpper)
+            );
+            const firstRejectedGuestEmail = matchedRes
+              ? infoRejectedLower.find(addr => {
+                  const errForAddr = Array.isArray(info?.rejectedErrors)
+                    ? info.rejectedErrors.find(re => String(re?.recipient || "").toLowerCase().includes(addr))
+                    : null;
+                  const errorAllowed = errForAddr ? isRecipientDeliverySmtpError(errForAddr, addr) : true;
+                  return (
+                    errorAllowed &&
+                    !isInternalOrThirdPartyOperationalEmail({ ...logEntry, recipient: addr }, matchedRes, db)
+                  );
+                })
+              : null;
+            if (firstRejectedGuestEmail) {
+              await notifyGuestInvalidEmailViaWhatsApp({
+                db,
+                saveDatabase,
+                reservation: matchedRes,
+                invalidEmail: firstRejectedGuestEmail,
+                reason: (Array.isArray(info?.rejectedErrors) && info.rejectedErrors[0]?.message)
+                  ? info.rejectedErrors[0].message
+                  : `Destinatário rejeitado parcialmente no SMTP: ${firstRejectedGuestEmail}`,
+                source: "smtp_rejection",
+                overrides
+              });
+            }
+          }
+        } catch (partialAlertErr) {
+          console.warn("[MailService] Falha ao notificar hóspede sobre rejeição parcial SMTP:", partialAlertErr?.message || partialAlertErr);
+        }
       }
 
       if (isEmailAddressedToReception(logEntry, db)) {
@@ -2541,30 +2667,43 @@ export function sendEmailAsync({
         }
       }
       // Se a rejeição SMTP indicar endereço/domínio de destinatário inexistente em e-mail de hóspede, avisa via WhatsApp
-      const normRecip = String(recipient || "").trim().toLowerCase();
       const acceptedLower = Array.isArray(err?.accepted)
         ? err.accepted.map(e => String(e || "").replace(/.*<([^>]+)>.*/, "$1").trim().toLowerCase()).filter(Boolean)
         : [];
       const rejectedLower = Array.isArray(err?.rejected)
         ? err.rejected.map(e => String(e || "").replace(/.*<([^>]+)>.*/, "$1").trim().toLowerCase()).filter(Boolean)
         : [];
-      const recipientActuallyRejected =
-        normRecip &&
-        !acceptedLower.includes(normRecip) &&
-        (rejectedLower.length === 0 || rejectedLower.includes(normRecip));
+      if (Array.isArray(err?.rejected) && err.rejected.length > 0) {
+        logEntry.metadata.rejected = err.rejected;
+      }
+      const rejectedCandidates = effectiveRecipients.filter(addr => {
+        const lower = String(addr || "").trim().toLowerCase();
+        return (
+          lower &&
+          !acceptedLower.includes(lower) &&
+          (rejectedLower.length === 0 || rejectedLower.includes(lower))
+        );
+      });
 
-      if (recipientActuallyRejected && isRecipientDeliverySmtpError(err, normRecip) && db && reservationId && String(reservationId) !== "0") {
+      if (rejectedCandidates.length > 0 && db && reservationId && String(reservationId) !== "0") {
         try {
           const resKeyUpper = String(reservationId).trim().toUpperCase();
           const matchedRes = (db.reservations || []).find(
             r => r && (String(r.id) === String(reservationId) || String(r.code || "").trim().toUpperCase() === resKeyUpper)
           );
-          if (matchedRes && !isInternalOrThirdPartyOperationalEmail(logEntry, matchedRes, db)) {
+          const firstRejectedGuestEmail = matchedRes
+            ? rejectedCandidates.find(
+                addr =>
+                  isRecipientDeliverySmtpError(err, addr) &&
+                  !isInternalOrThirdPartyOperationalEmail({ ...logEntry, recipient: addr }, matchedRes, db)
+              )
+            : null;
+          if (firstRejectedGuestEmail) {
             await notifyGuestInvalidEmailViaWhatsApp({
               db,
               saveDatabase,
               reservation: matchedRes,
-              invalidEmail: normRecip,
+              invalidEmail: firstRejectedGuestEmail,
               reason: err.message || String(err),
               source: "smtp_rejection",
               overrides
@@ -2605,10 +2744,15 @@ export async function resendEmailAsync({ db, saveDatabase, communicationId }) {
     }
 
     const transporter = createTransporter(db);
+    const resendToList = parseEmailList(comm.recipient);
+    const resendTo = resendToList.length > 0 ? resendToList.join(", ") : String(comm.recipient || "").trim();
+    const resendCcRaw = comm.cc || comm.metadata?.cc;
+    const resendCcList = parseEmailList(resendCcRaw);
+    const resendCc = resendCcList.length > 0 ? resendCcList.join(", ") : (resendCcRaw ? String(resendCcRaw).trim() : "");
     const mailOptions = {
       from: `"${config.fromName}" <${config.fromEmail}>`,
-      to: comm.recipient,
-      ...(comm.cc || comm.metadata?.cc ? { cc: comm.cc || comm.metadata?.cc } : {}),
+      to: resendTo,
+      ...(resendCc ? { cc: resendCc } : {}),
       subject: comm.subject,
       html: comm.body
     };
@@ -3523,21 +3667,29 @@ export function isInternalOrThirdPartyOperationalEmail(commOrRecipient, reservat
     "promenadesoho@pfbestacionamentos.com.br"
   ).trim().toLowerCase();
 
-  if (!recipient) return false;
-  if (recipient === receptionEmail || recipient === garageEmail) return true;
-  if (recipient.includes("promenade.com.br") || recipient.includes("pfbestacionamentos") || recipient.includes("b2breservas")) {
-    return true;
-  }
+  const rawRecipient = String(comm ? comm.recipient : commOrRecipient || "").trim().toLowerCase();
+  const parsedRecipientList = parseEmailList(comm ? comm.recipient : commOrRecipient);
+  const recipientList = parsedRecipientList.length > 0 ? parsedRecipientList : (rawRecipient ? [rawRecipient] : []);
+  if (recipientList.length === 0) return false;
 
-  if (reservation) {
-    const agencyEmail = String(reservation.agencyEmail || reservation.b2bAgencyEmail || "").trim().toLowerCase();
-    if (agencyEmail && recipient === agencyEmail) return true;
-    const reqEmail = String(reservation.requesterInfo?.email || reservation.requesterEmail || "").trim().toLowerCase();
-    const guestEmail = String(reservation.guestEmail || "").trim().toLowerCase();
-    if (reqEmail && recipient === reqEmail && reqEmail !== guestEmail) return true;
-  }
+  const agencyEmailSet = new Set(parseEmailList([reservation?.agencyEmail, reservation?.b2bAgencyEmail]));
+  const reqEmailSet = new Set(parseEmailList([reservation?.requesterInfo?.email, reservation?.requesterEmail]));
+  const guestEmailSet = new Set(parseEmailList(reservation?.guestEmail));
 
-  return false;
+  const isSingleAddrOperational = (addr) => {
+    if (!addr) return false;
+    if (addr === receptionEmail || addr === garageEmail) return true;
+    if (addr.includes("promenade.com.br") || addr.includes("pfbestacionamentos") || addr.includes("b2breservas")) {
+      return true;
+    }
+    if (reservation) {
+      if (agencyEmailSet.has(addr)) return true;
+      if (reqEmailSet.has(addr) && !guestEmailSet.has(addr)) return true;
+    }
+    return false;
+  };
+
+  return recipientList.every(isSingleAddrOperational);
 }
 
 function normalizePhoneSimple(phone) {
@@ -3613,8 +3765,13 @@ export async function notifyGuestInvalidEmailViaWhatsApp({
     ""
   ).trim().toLowerCase();
 
+  const currentGuestList = parseEmailList(currentGuestEmail);
+  const stillMatchesGuestEmail = currentGuestList.length > 0
+    ? currentGuestList.includes(normInvalid)
+    : currentGuestEmail === normInvalid;
+
   // Se o hóspede já atualizou o e-mail para outro endereço válido, ignora bounces atrasados do e-mail antigo
-  if (currentGuestEmail && currentGuestEmail !== normInvalid && !reservation.guestEmailInvalid) {
+  if (currentGuestEmail && !stillMatchesGuestEmail && !reservation.guestEmailInvalid) {
     return { notified: false, reason: "email_already_corrected" };
   }
 
@@ -3631,7 +3788,17 @@ export async function notifyGuestInvalidEmailViaWhatsApp({
   if (source === "smtp_rejection" && Array.isArray(db.reservationCommunications)) {
     const recentSuccessExists = db.reservationCommunications.some(c => {
       if (!c || c.direction === "inbound" || c.status !== "sent") return false;
-      if (String(c.recipient || "").trim().toLowerCase() !== normInvalid) return false;
+      const cRejected = Array.isArray(c.metadata?.rejected)
+        ? c.metadata.rejected.map(e => String(e || "").replace(/.*<([^>]+)>.*/, "$1").trim().toLowerCase())
+        : [];
+      if (cRejected.includes(normInvalid)) return false;
+      const cRecipients = Array.isArray(c.metadata?.recipients) && c.metadata.recipients.length > 0
+        ? c.metadata.recipients.map(e => String(e || "").trim().toLowerCase())
+        : parseEmailList(c.recipient || "");
+      const matchedAddr = cRecipients.length > 0
+        ? cRecipients.includes(normInvalid)
+        : String(c.recipient || "").trim().toLowerCase() === normInvalid;
+      if (!matchedAddr) return false;
       const sentMs = new Date(c.metadata?.sentAt || c.created_at || c.createdAt || 0).getTime();
       return sentMs > 0 && nowMs - sentMs <= 72 * 3600 * 1000;
     });

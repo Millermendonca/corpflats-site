@@ -13,7 +13,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { getSmtpConfig, createTransporter, sendEmailAsync, renderWhatsAppMirrorEmail } from "./mail-service.mjs";
+import { getSmtpConfig, createTransporter, sendEmailAsync, renderWhatsAppMirrorEmail, parseEmailList, formatEmailList, getPrimaryEmail } from "./mail-service.mjs";
 import {
   getWhatsAppAiConfig,
   generateAiWhatsAppResponse,
@@ -2915,8 +2915,11 @@ export function formatWhatsAppChangesSummary(changes = [], options = {}) {
 
 // ── Identificação Unificada de Destinatários (Hóspede, Acompanhantes e Solicitante) ──
 function normalizeEmailAddress(raw) {
-  const email = String(raw || "").trim().toLowerCase();
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : "";
+  return getPrimaryEmail(raw);
+}
+
+function normalizeEmailList(raw) {
+  return formatEmailList(raw);
 }
 
 export function isValidBrazilianCpf(rawCpf) {
@@ -3091,12 +3094,8 @@ export function getReservationRecipients(reservation = {}, db = {}) {
       return d.length === 11 && d[2] === "9";
     });
     requesterPhone = reservation.validatedRequesterWhatsapp || mobilePart || phoneParts[0] || rawAgencyPhone;
-    const nfEmailsLowerSet = new Set(
-      (Array.isArray(reservation.nfDeliveryEmails) ? reservation.nfDeliveryEmails : [])
-        .map(e => normalizeEmailAddress(e))
-        .filter(Boolean)
-    );
-    const agencyFinancialLower = normalizeEmailAddress(agencyObj?.financialEmail || agencyObj?.emailFinanceiro || "");
+    const nfEmailsLowerSet = new Set(parseEmailList(reservation.nfDeliveryEmails));
+    const agencyFinancialLowerSet = new Set(parseEmailList([agencyObj?.financialEmail, agencyObj?.emailFinanceiro]));
     const isOperationalAgencyEmail = (cand = "") => {
       const clean = normalizeEmailAddress(cand);
       if (!clean) return false;
@@ -3106,11 +3105,11 @@ export function getReservationRecipients(reservation = {}, db = {}) {
       }
       if (clean.endsWith("@b2breservas.com.br")) return false;
       if (nfEmailsLowerSet.has(clean)) return false;
-      if (agencyFinancialLower && clean === agencyFinancialLower && localPart.includes("fatur")) return false;
+      if (agencyFinancialLowerSet.has(clean) && localPart.includes("fatur")) return false;
       return true;
     };
     const fallbackOperationalEmail = [agencyObj?.email, agencyObj?.agents?.[0]?.email].find(e => isOperationalAgencyEmail(e)) || "";
-    requesterEmail = normalizeEmailAddress(
+    requesterEmail = normalizeEmailList(
       reservation.agencyAgentEmail ||
       reservation.requesterInfo?.email ||
       reservation.requesterEmail ||
@@ -3120,7 +3119,7 @@ export function getReservationRecipients(reservation = {}, db = {}) {
   } else if (requesterType === "other_person") {
     requesterName = (reservation.requesterInfo?.name || reservation.requesterName || "").trim();
     requesterPhone = (reservation.validatedRequesterWhatsapp || reservation.requesterInfo?.whatsapp || reservation.requesterInfo?.phone || reservation.requesterPhone || "").trim();
-    requesterEmail = normalizeEmailAddress(reservation.requesterInfo?.email || reservation.requesterEmail);
+    requesterEmail = normalizeEmailList(reservation.requesterInfo?.email || reservation.requesterEmail);
   } else if (requesterType === "company") {
     requesterCompany = reservation.companyName || reservation.companyData?.companyName || "";
     let companyObj = null;
@@ -3136,12 +3135,12 @@ export function getReservationRecipients(reservation = {}, db = {}) {
     if (companyObj) {
       requesterName = (reservation.requesterInfo?.name || reservation.requesterName || companyObj.contactPerson || companyObj.tradeName || reservation.companyName || "Solicitante Corporativo").trim();
       requesterPhone = (reservation.validatedRequesterWhatsapp || reservation.requesterInfo?.whatsapp || reservation.requesterInfo?.phone || reservation.requesterPhone || reservation.companyData?.companyPhone || companyObj.whatsapp || companyObj.phone || companyObj.telefone || "").trim();
-      requesterEmail = normalizeEmailAddress(reservation.requesterInfo?.email || reservation.requesterEmail || reservation.companyData?.companyEmail || companyObj.email || companyObj.financialEmail || companyObj.emailFinanceiro);
+      requesterEmail = normalizeEmailList(reservation.requesterInfo?.email || reservation.requesterEmail || reservation.companyData?.companyEmail || companyObj.email || companyObj.financialEmail || companyObj.emailFinanceiro);
       requesterCompany = companyObj.tradeName || companyObj.corporateName || requesterCompany;
     } else {
       requesterName = (reservation.requesterInfo?.name || reservation.requesterName || reservation.companyName || reservation.companyData?.companyName || "Solicitante Corporativo").trim();
       requesterPhone = (reservation.validatedRequesterWhatsapp || reservation.requesterInfo?.whatsapp || reservation.requesterInfo?.phone || reservation.requesterPhone || reservation.companyData?.companyPhone || "").trim();
-      requesterEmail = normalizeEmailAddress(reservation.requesterInfo?.email || reservation.requesterEmail || reservation.companyData?.companyEmail);
+      requesterEmail = normalizeEmailList(reservation.requesterInfo?.email || reservation.requesterEmail || reservation.companyData?.companyEmail);
     }
   }
 
@@ -3502,12 +3501,16 @@ export function buildTemplateTargets(tpl, recipients, options = {}) {
     const digits = String(t.phone || "").replace(/\D/g, "");
     const phoneKey = digits ? digits.slice(-8) : "";
     let phone = t.phone || "";
-    let email = includeEmail ? normalizeEmailAddress(t.email) : "";
+    let email = "";
+    if (includeEmail) {
+      const parsedTargetEmails = parseEmailList(t.email);
+      const freshTargetEmails = parsedTargetEmails.filter(addr => !seenEmails.has(addr));
+      for (const addr of freshTargetEmails) seenEmails.add(addr);
+      email = freshTargetEmails.join("; ");
+    }
     if (phoneKey && seenPhones.has(phoneKey)) phone = "";
-    if (email && seenEmails.has(email)) email = "";
     if (!phone && !email) continue;
     if (phoneKey && phone) seenPhones.add(phoneKey);
-    if (email) seenEmails.add(email);
     seenTypes.add(t.type);
     targets.push({ ...t, phone, email });
   }
@@ -3783,7 +3786,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     (paidAmount > 0 && pendingAmount > 0.01) ||
     (isAdditionalStayTemplate && pendingAmount > 0.01)
   );
-  const isPaid = !hasPartialPendingExtension && (pendingAmount <= 0.01 || isOta || reservation.paymentStatus === "pago" || reservation.paymentStatus === "pago_total" || (paidAmount >= totalAmount - 0.01 && totalAmount > 0));
+  const isPaid = !hasPartialPendingExtension && (pendingAmount <= 0.01 || isOta || reservation.paymentStatus === "pago" || reservation.paymentStatus === "pago_total" || reservation.paymentStatus === "paid" || (paidAmount >= totalAmount - 0.01 && totalAmount > 0));
 
   let paymentStatus = "Aguardando Pagamento";
   if (isPaid || pendingAmount <= 0.01) {
@@ -3852,7 +3855,6 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const linkPagamento = (recipientIsRequester && requester.isDifferentFromGuest)
     ? `${appOrigin}/minha-reserva/${resCode}?requester=1`
     : `${appOrigin}/minha-reserva/${resCode}`;
-  const linkCopiarPix = `${appOrigin}/copiar-pix/${resCode}`;
   const linkCafeManha = (hasBreakfast || isBreakfastExplicitTemplate) && !isCancelled && !isUnpaidPreReservaTag ? `${appOrigin}/cafe/${resCode}` : "";
   const linkCheckout = `${appOrigin}/checkout/${resCode}`;
 
@@ -3958,8 +3960,29 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     ? avisoValidadePreReserva
     : "";
 
+  const rawMethodForPix = String(reservation.paymentMethod || "").toLowerCase().trim();
+  const isFaturadoBoletoRes = Boolean(
+    reservation.isFaturadoBoleto ||
+    rawMethodForPix === "boleto_faturado" ||
+    rawMethodForPix === "faturado_boleto" ||
+    rawMethodForPix === "boleto" ||
+    rawMethodForPix === "faturado_pj" ||
+    rawMethodForPix === "faturado_b2b" ||
+    String(reservation.b2bPaymentType || "").trim().toUpperCase() === "FATURADO"
+  );
+  const isPaidStatusOnly = !hasPartialPendingExtension && (
+    reservation.paymentStatus === "pago" ||
+    reservation.paymentStatus === "pago_total" ||
+    reservation.paymentStatus === "paid"
+  );
+  const isPackageRes = Boolean(reservation.packageCode || reservation.packageId);
+
   let instrucaoPagamento = "";
-  if (paidAmount === 0) {
+  if (isPaidStatusOnly) {
+    instrucaoPagamento = "Reserva 100% quitada! Nenhuma pendência financeira.";
+  } else if (isFaturadoBoletoRes) {
+    instrucaoPagamento = "Modalidade Faturado (Boleto Corporativo) — cobrança programada conforme prazo combinado com o financeiro.";
+  } else if (paidAmount === 0) {
     instrucaoPagamento = `Para garantir e confirmar definitivamente sua acomodação, efetue o pagamento via PIX com 5% de desconto (*${formatCurrency(pendingAmount)}*) ou no Cartão de Crédito (*${formatCurrency(cardPendingAmount)}*) pelo portal do hóspede:\n👉 ${linkPortalHospede}${inlineValidityFallback}`;
   } else if (paidAmount > 0 && pendingAmount > 0) {
     instrucaoPagamento = `Identificamos o pagamento parcial de *${formatCurrency(paidAmount)}*. O saldo restante é de *${formatCurrency(cardPendingAmount)}* no Cartão de Crédito ou *${formatCurrency(pendingAmount)}* com Desconto no PIX (-5%), e poderá ser quitado pelo portal:\n👉 ${linkPortalHospede}${inlineValidityFallback}`;
@@ -3968,7 +3991,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   }
 
   let instrucaoSaldo = "";
-  if (pendingAmount > 0) {
+  if (!isFaturadoBoletoRes && !isPaidStatusOnly && !isPaid && pendingAmount > 0) {
     instrucaoSaldo = `ℹ️ *Aviso de Pagamento:* Resta o saldo de *${formatCurrency(cardPendingAmount)}* no Cartão de Crédito ou *${formatCurrency(pendingAmount)}* com Desconto no PIX (-5%), que poderá ser quitado pelo link seguro do seu portal:\n👉 ${linkPortalHospede}`;
   } else {
     instrucaoSaldo = "";
@@ -3977,24 +4000,36 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   // Código PIX Copia e Cola da transação integrada (Inter ou payload oficial).
   // Se o valor pendente mudou (ex: alteração de diárias/datas/valor) e o PIX Copia e Cola
   // salvo ainda reflete o valor antigo, regenera imediatamente com o novo valor pendente.
-  let pixCopiaECola = pendingAmount <= 0.01 ? "" : (reservation.pixCopiaECola || "");
-  if (pendingAmount > 0 && isPixPayloadStaleForAmount(reservation, pendingAmount)) {
-    pixCopiaECola = "";
-  }
-  if (!pixCopiaECola && pendingAmount > 0) {
-    const cleanTxId = (resCode || "").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
-    pixCopiaECola = generateStaticPixPayload({
-      pixKey: db.settings?.interConfig?.pixKey || db.settings?.pixKey || "47964813000165",
-      amount: pendingAmount,
-      merchantName: db.siteConfig?.branding?.brandName || "CORPFLATS LTDA",
-      merchantCity: "CAMPOS DOS GOYTACAZES",
-      txid: cleanTxId || "***"
-    });
-    if (reservation && typeof reservation === "object") {
-      reservation.pixCopiaECola = pixCopiaECola;
-      reservation.pixChargedAmount = pendingAmount;
+  let pixCopiaECola = "";
+  if (!isFaturadoBoletoRes && !isPaidStatusOnly && pendingAmount > 0.01) {
+    if (isPackageRes) {
+      // Pacote multi-flat: nunca recalcular/sobrescrever com valor por flat individual;
+      // usar apenas o PIX consolidado do pacote quando já sincronizado.
+      pixCopiaECola = reservation.packagePixCopiaECola || reservation.pixCopiaECola || "";
+    } else {
+      pixCopiaECola = reservation.pixCopiaECola || "";
+      if (isPixPayloadStaleForAmount(reservation, pendingAmount)) {
+        pixCopiaECola = "";
+      }
+      if (!pixCopiaECola) {
+        const cleanTxId = (resCode || "").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+        pixCopiaECola = generateStaticPixPayload({
+          pixKey: db.settings?.interConfig?.pixKey || db.settings?.pixKey || "47964813000165",
+          amount: pendingAmount,
+          merchantName: db.siteConfig?.branding?.brandName || "CORPFLATS LTDA",
+          merchantCity: "CAMPOS DOS GOYTACAZES",
+          txid: cleanTxId || "***"
+        });
+        if (reservation && typeof reservation === "object") {
+          reservation.pixCopiaECola = pixCopiaECola;
+          reservation.pixChargedAmount = pendingAmount;
+        }
+      }
     }
   }
+  const linkCopiarPix = (!isFaturadoBoletoRes && !isPaidStatusOnly && !isPaid && pendingAmount > 0.01 && (!isPackageRes || Boolean(pixCopiaECola)))
+    ? `${appOrigin}/copiar-pix/${resCode}`
+    : "";
 
   const statusConfirmacao = reservation.status === "confirmada" ? "Confirmada" : "Pré-Reserva";
   
@@ -5078,12 +5113,38 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     paymentsSumVal
   ) * 100) / 100;
   const pendingAmountVal = Math.max(0, Math.round((totalAmountVal - paidAmountVal) * 100) / 100);
-  const isFullyPaidVal = pendingAmountVal <= 0.01;
-
+  const chanLowerBtn = String(reservation?.channel || "").toLowerCase();
+  const isAdditionalStayBtn = Boolean(
+    templateId === "tpl_additional_daily_pending" ||
+    triggerEvent === "additional_daily_pending"
+  );
+  const hasPartialPendingExtensionBtn = Boolean(
+    reservation?.paymentStatus === "sinal_pago" ||
+    reservation?.paymentStatus === "parcial" ||
+    (paidAmountVal > 0 && pendingAmountVal > 0.01) ||
+    (isAdditionalStayBtn && pendingAmountVal > 0.01)
+  );
   const pmRaw = String(reservation?.paymentMethod || "pix").toLowerCase().trim();
-  const isExplicitNonPixMethod = Boolean(pmRaw && !pmRaw.includes("pix") && (pmRaw.includes("cartao") || pmRaw.includes("credit") || pmRaw.includes("debit") || pmRaw.includes("faturado") || pmRaw.includes("vcn")));
+  const isFaturadoBoletoBtn = Boolean(
+    reservation?.isFaturadoBoleto ||
+    pmRaw === "boleto_faturado" ||
+    pmRaw === "faturado_boleto" ||
+    pmRaw === "boleto" ||
+    pmRaw === "faturado_pj" ||
+    pmRaw === "faturado_b2b" ||
+    String(reservation?.b2bPaymentType || "").trim().toUpperCase() === "FATURADO"
+  );
+  const isPaidStatusOnlyBtn = !hasPartialPendingExtensionBtn && (
+    reservation?.paymentStatus === "pago" ||
+    reservation?.paymentStatus === "pago_total" ||
+    reservation?.paymentStatus === "paid"
+  );
+  const isOtaBtn = chanLowerBtn.includes("booking") || chanLowerBtn.includes("airbnb") || chanLowerBtn.includes("b2b");
+  const isFullyPaidVal = pendingAmountVal <= 0.01 || isPaidStatusOnlyBtn || (!hasPartialPendingExtensionBtn && isOtaBtn && !isFaturadoBoletoBtn);
 
-  if (isFullyPaidVal || ((templateId === "tpl_pre_reserva_lembrete" || triggerEvent === "pre_reservation_expiring_soon" || templateId === "tpl_additional_daily_expiring_soon" || triggerEvent === "additional_daily_expiring_soon") && isExplicitNonPixMethod)) {
+  const isExplicitNonPixMethod = Boolean(isFaturadoBoletoBtn || (pmRaw && !pmRaw.includes("pix") && (pmRaw.includes("cartao") || pmRaw.includes("credit") || pmRaw.includes("debit") || pmRaw.includes("faturado") || pmRaw.includes("vcn"))));
+
+  if (isFullyPaidVal || isFaturadoBoletoBtn || isPaidStatusOnlyBtn || ((templateId === "tpl_pre_reserva_lembrete" || triggerEvent === "pre_reservation_expiring_soon" || templateId === "tpl_additional_daily_expiring_soon" || triggerEvent === "additional_daily_expiring_soon") && isExplicitNonPixMethod)) {
     list = list.filter(b => {
       if (!b) return false;
       const bUrl = String(b.url || "");
@@ -5097,12 +5158,12 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     });
   }
 
-  if (isFullyPaidVal) {
+  if (isFullyPaidVal || isFaturadoBoletoBtn || isPaidStatusOnlyBtn) {
     list = list.map(b => {
-      if (b.id === "btn_pagar" || /ver\s*detalhes\s*&\s*pagar/i.test(String(b.label || ""))) {
+      if (b.id === "btn_pagar" || /ver\s*(detalhes|reserva)\s*&\s*pagar|pagar\s*e\s*confirmar/i.test(String(b.label || ""))) {
         return {
           ...b,
-          label: "🏨 Ver Detalhes da Reserva"
+          label: (isFaturadoBoletoBtn && !isPaidStatusOnlyBtn) ? "📄 Ver Reserva" : "🏨 Ver Detalhes da Reserva"
         };
       }
       return b;
@@ -5124,9 +5185,15 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     const isPixBtn = b.id === "btn_pix" || /pix/i.test(String(b.label || "")) || (resolvedCopyCode && String(resolvedCopyCode).startsWith("000201")) || (finalUrl && finalUrl.includes("000201"));
     const cleanDigits = String(resolvedCopyCode || "").replace(/\D/g, "");
     const isBoletoBtn = /boleto|linha\s*digit/i.test(String(b.label || "")) || (finalUrl && finalUrl.includes("/copiar-boleto")) || (cleanDigits.length >= 44 && cleanDigits.length <= 48);
-    // Sanitização anti-falha: Se a URL apontar para o antigo link do whatsapp.com/otp/code/ em botão PIX ou for vazia com botão PIX, substitui pela URL oficial do portal/copiar-pix
-    if (isPixBtn && !isBoletoBtn && ((finalUrl && finalUrl.includes("whatsapp.com/otp")) || !finalUrl)) {
-      finalUrl = `${appOrigin}/copiar-pix/${resCode}`;
+    const hasNonEmptyCopyCode = Boolean(String(resolvedCopyCode || "").trim());
+    // Sanitização anti-falha: nunca anexar /copiar-pix/ ou manter botão PIX quando for faturado/pago ou quando copyCode vier vazio
+    if (isPixBtn && !isBoletoBtn) {
+      if (isFaturadoBoletoBtn || isPaidStatusOnlyBtn || isFullyPaidVal || ((b.type === "COPY" || b.copyCode !== undefined) && !hasNonEmptyCopyCode)) {
+        return null;
+      }
+      if ((finalUrl && finalUrl.includes("whatsapp.com/otp")) || !finalUrl) {
+        finalUrl = `${appOrigin}/copiar-pix/${resCode}`;
+      }
     } else if (isBoletoBtn && !finalUrl) {
       finalUrl = resolvedCopyCode
         ? `${appOrigin}/copiar-boleto?mode=boleto&linha=${encodeURIComponent(String(resolvedCopyCode).trim())}`
@@ -5140,7 +5207,7 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
       phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined,
       copyCode: resolvedCopyCode
     };
-  });
+  }).filter(Boolean);
 }
 
 export const buildTemplateActionButtons = renderTemplateButtons;
@@ -8430,6 +8497,7 @@ export function appendMessageToConversation(db, {
   buttons = [],
   triggerEvent = null,
   reservationCode = null,
+  packageCode = null,
   status = "delivered",
   timestamp = null,
   messageId = null,
@@ -8595,6 +8663,7 @@ export function appendMessageToConversation(db, {
     buttons: Array.isArray(buttons) ? buttons : [],
     triggerEvent: triggerEvent || null,
     reservationCode: reservationCode || null,
+    packageCode: packageCode || null,
     referenceMessageId: referenceMessageId || null,
     quotedText: resolvedQuotedText || null,
     timestamp: nowIso,

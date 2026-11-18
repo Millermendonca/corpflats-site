@@ -191,7 +191,11 @@ import {
   dispatchRetroactiveTodayReceptionEmailsToWhatsApp,
   getReceptionEmailFallbackStatusSummary,
   serveReceptionFallbackAttachment,
-  buildDirectBookingEmailFooterHtml
+  buildDirectBookingEmailFooterHtml,
+  parseEmailList,
+  validateEmailList,
+  formatEmailList,
+  getPrimaryEmail
 } from "./mail-service.mjs";
 import {
   DEFAULT_SEO_PAGES_CONFIG,
@@ -6663,10 +6667,10 @@ export function reconcileUniversalIntegrity(incomingState = null) {
       const rChanLower = String(r.channel || "").toLowerCase();
       const isB2bRec = rChanLower.includes("b2b") || Boolean(r.agencyId || r.b2bReservationNumber);
       const isOtaRec = rChanLower.includes("booking") || rChanLower.includes("airbnb");
-      const hasOtaPartialExtension = !isB2bRec && (r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial") && Number(r.paidAmount || 0) > 0 && Number(r.paidAmount || 0) < resTotalAmt - 0.01;
-      const isResPaid = !isUnverifiedPreReservation(r) && !hasOtaPartialExtension && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= resTotalAmt && resTotalAmt > 0));
+      const hasOtaPartialExtension = !isB2bRec && (r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial" || r.pendingStayExtension?.status === "pending_payment") && Number(r.paidAmount || 0) > 0 && Number(r.paidAmount || 0) < resTotalAmt - 0.01;
+      const isResPaid = !isUnverifiedPreReservation(r) && !hasOtaPartialExtension && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || r.paymentStatus === "paid" || (Number(r.paidAmount) >= resTotalAmt && resTotalAmt > 0));
       const pendingAmt = Math.max(0, Math.round((resTotalAmt - (Number(r.paidAmount) || 0)) * 100) / 100);
-      if (!isB2bRec && (!isOtaRec || hasOtaPartialExtension) && !isResPaid && pendingAmt > 0) {
+      if (!isB2bRec && !isFaturadoBoletoReservation(r) && !(r.packageCode || r.packageId) && (!isOtaRec || hasOtaPartialExtension) && !isResPaid && pendingAmt > 0) {
         if (!r.pixCopiaECola || isPixPayloadStaleForAmount(r, pendingAmt)) {
           const cleanTxId = String(r.code || `RES${r.id || ""}`).replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
           r.pixTxId = cleanTxId || r.pixTxId;
@@ -23371,31 +23375,40 @@ function isB2bReservation(r) {
   const chanLower = String(r.channel || "").toLowerCase().trim();
 
   // Guarda estrita de canais não-B2B:
-  // Se o canal for expressamente OTA ou canal direto convencional (Booking, Airbnb, WhatsApp, Site, Balcão, Direto),
+  // Se o canal for expressamente OTA ou canal direto convencional (Booking, Airbnb, WhatsApp, Site, Balcão, Direto/Direta, Particular, Corporativo, Empresa, PMS, Recepção, Manual),
   // rejeita categoricamente, mesmo que haja companyName ou agencyName preenchidos para nota fiscal corporativa.
-  // Exceção estrita: se houver flag explícita isB2b === true ou o canal contiver "b2b".
+  // Exceção estrita: se houver flag explícita isB2b === true, o canal contiver "b2b", ou houver agência/localizador B2B explícito.
   const isExplicitNonB2b =
     chanLower === "booking" || chanLower.includes("booking") ||
     chanLower === "airbnb" || chanLower.includes("airbnb") ||
     chanLower === "whatsapp" || chanLower.includes("whatsapp") ||
     chanLower === "site" || chanLower.includes("site") ||
-    chanLower === "balcao" || chanLower === "direto" || chanLower === "direct";
+    chanLower === "balcao" || chanLower === "balcão" ||
+    chanLower === "direto" || chanLower === "direta" || chanLower === "direct" ||
+    chanLower === "particular" || chanLower === "corporativo" ||
+    chanLower === "empresa" || chanLower === "pms" ||
+    chanLower === "recepcao" || chanLower === "recepção" || chanLower === "manual";
 
-  if (isExplicitNonB2b && r.isB2b !== true && chanLower !== "b2b" && !chanLower.includes("b2b")) {
-    return false;
-  }
-
-  return Boolean(
+  const hasExplicitB2bAgencyMarker = Boolean(
+    r.isB2b === true ||
     chanLower === "b2b" ||
     chanLower.includes("b2b") ||
-    r.isB2b === true ||
     r.b2bReservationNumber ||
     r.b2bLocatorRloc ||
     String(r.code || "").startsWith("B2B-") ||
     r.agencyId ||
+    r.requesterType === "agency_b2b"
+  );
+
+  if (isExplicitNonB2b && !hasExplicitB2bAgencyMarker) {
+    return false;
+  }
+
+  return Boolean(
+    hasExplicitB2bAgencyMarker ||
     r.agencyName ||
     r.agencyTradeName ||
-    r.companyName
+    (r.companyName && !isExplicitNonB2b && !r.packageCode && !r.packageId && !r.isFaturadoBoleto && r.requesterType !== "other_person" && r.requesterType !== "guest" && r.requesterType !== "company")
   );
 }
 const isB2BReservation = isB2bReservation;
@@ -37806,6 +37819,425 @@ app.get("/api/pms/reservations/:id/audit-logs", (req, res) => {
   });
 });
 
+function resolveOrUpsertReservationCompanyAndAgency(currentDb, input = {}) {
+  if (!currentDb) return { resolvedCompany: null, resolvedAgency: null };
+  if (!Array.isArray(currentDb.agencies)) currentDb.agencies = [];
+  if (!Array.isArray(currentDb.companies)) currentDb.companies = [];
+
+  const {
+    agencyId = null,
+    agencyName = "",
+    agencyTradeName = "",
+    agencyCnpj = "",
+    agencyPosUnit = "",
+    agencyAgentName = "",
+    agencyAgentEmail = "",
+    agencyAgentPhone = "",
+    b2bRatePolicy = "NET",
+    b2bCommissionPct = null,
+    invoiceRecipientType = null,
+    nfDeliveryEmails = null,
+    companyId = null,
+    companyName = "",
+    companyCnpj = "",
+    companyData = null,
+    companyEmail = "",
+    costCenter = "",
+    contactPerson = "",
+    isB2b = false,
+    isFaturado = false,
+    boletoTermDays = 15,
+    isInvoiceOnly = false
+  } = input;
+
+  // ── 1. Agência B2B ────────────────────────────────────────────────────────
+  let resolvedAgency = null;
+  if (agencyId) {
+    resolvedAgency = currentDb.agencies.find(a => a && Number(a.id) === Number(agencyId)) || null;
+  }
+  if (!resolvedAgency && (agencyName || agencyTradeName || agencyCnpj)) {
+    const cleanAgCnpj = String(agencyCnpj || "").replace(/\D/g, "");
+    resolvedAgency = currentDb.agencies.find(a =>
+      a && (
+        (cleanAgCnpj && cleanAgCnpj.length === 14 && String(a.cnpj || "").replace(/\D/g, "") === cleanAgCnpj) ||
+        (agencyName && a.corporateName && a.corporateName.trim().toLowerCase() === String(agencyName).trim().toLowerCase()) ||
+        (agencyName && a.tradeName && a.tradeName.trim().toLowerCase() === String(agencyName).trim().toLowerCase()) ||
+        (agencyTradeName && a.tradeName && a.tradeName.trim().toLowerCase() === String(agencyTradeName).trim().toLowerCase())
+      )
+    ) || null;
+    if (!resolvedAgency && (agencyName || agencyTradeName)) {
+      const nextAgId = currentDb.agencies.length > 0 ? Math.max(...currentDb.agencies.map(a => Number(a?.id) || 0)) + 1 : 1;
+      const agCorpName = String(agencyName || agencyTradeName).trim();
+      const agTrName = String(agencyTradeName || agencyName).trim();
+      const parsedNfList = parseEmailList(nfDeliveryEmails);
+      const rawFirstNfEmail = formatEmailList(parsedNfList);
+      const cleanAgAgentEmail = String(agencyAgentEmail || "").trim();
+      const primaryAgAgentEmail = getPrimaryEmail(cleanAgAgentEmail) || cleanAgAgentEmail;
+      resolvedAgency = {
+        id: nextAgId,
+        corporateName: agCorpName,
+        razaoSocial: agCorpName,
+        tradeName: agTrName,
+        nomeFantasia: agTrName,
+        cnpj: agencyCnpj ? String(agencyCnpj).trim() : "Isento / Não informado",
+        email: !isPureBillingMailbox(primaryAgAgentEmail) ? primaryAgAgentEmail : "",
+        financialEmail: rawFirstNfEmail || (isPureBillingMailbox(primaryAgAgentEmail) ? (formatEmailList(cleanAgAgentEmail) || primaryAgAgentEmail) : ""),
+        emailFinanceiro: rawFirstNfEmail || (isPureBillingMailbox(primaryAgAgentEmail) ? (formatEmailList(cleanAgAgentEmail) || primaryAgAgentEmail) : ""),
+        phone: String(agencyAgentPhone || "").trim(),
+        telefone: String(agencyAgentPhone || "").trim(),
+        contactPerson: String(agencyAgentName || "").trim(),
+        billingTerms: "Cartão Virtual B2B (VCN)",
+        defaultRatePolicy: b2bRatePolicy || "COMISSIONADA",
+        defaultCommissionPct: b2bCommissionPct !== null ? Number(b2bCommissionPct) : (b2bRatePolicy === "COMISSIONADA" ? 12 : 0),
+        defaultInvoiceRecipient: invoiceRecipientType || "company",
+        posUnits: agencyPosUnit ? [{
+          name: String(agencyPosUnit).trim(),
+          email: String(agencyAgentEmail || "").trim(),
+          phone: String(agencyAgentPhone || "").trim(),
+          agents: agencyAgentName ? [String(agencyAgentName).trim()] : []
+        }] : [],
+        agents: agencyAgentName ? [{
+          name: String(agencyAgentName).trim(),
+          email: String(agencyAgentEmail || "").trim(),
+          phone: String(agencyAgentPhone || "").trim(),
+          posUnit: String(agencyPosUnit || "").trim()
+        }] : [],
+        clientCompanies: companyName ? [String(companyName).trim()] : [],
+        notes: "Agência cadastrada automaticamente ao registrar reserva B2B.",
+        createdAt: new Date().toISOString()
+      };
+      currentDb.agencies.push(resolvedAgency);
+    }
+  }
+
+  if (resolvedAgency) {
+    if (!Array.isArray(resolvedAgency.posUnits)) resolvedAgency.posUnits = [];
+    if (!Array.isArray(resolvedAgency.agents)) resolvedAgency.agents = [];
+    if (!Array.isArray(resolvedAgency.clientCompanies)) resolvedAgency.clientCompanies = [];
+    if (agencyPosUnit) {
+      const unitTrim = String(agencyPosUnit).trim();
+      let u = resolvedAgency.posUnits.find(x => x.name && x.name.toLowerCase() === unitTrim.toLowerCase());
+      if (!u) {
+        u = {
+          name: unitTrim,
+          email: String(agencyAgentEmail || "").trim(),
+          phone: String(agencyAgentPhone || "").trim(),
+          agents: agencyAgentName ? [String(agencyAgentName).trim()] : []
+        };
+        resolvedAgency.posUnits.push(u);
+      } else if (agencyAgentName && Array.isArray(u.agents) && !u.agents.includes(String(agencyAgentName).trim())) {
+        u.agents.push(String(agencyAgentName).trim());
+      }
+    }
+    if (agencyAgentName) {
+      const agTrim = String(agencyAgentName).trim();
+      const exAg = resolvedAgency.agents.find(x => x.name && x.name.toLowerCase() === agTrim.toLowerCase());
+      if (!exAg) {
+        resolvedAgency.agents.push({
+          name: agTrim,
+          email: String(agencyAgentEmail || "").trim(),
+          phone: String(agencyAgentPhone || "").trim(),
+          posUnit: String(agencyPosUnit || "").trim()
+        });
+      }
+    }
+    if (companyName && !resolvedAgency.clientCompanies.includes(String(companyName).trim())) {
+      resolvedAgency.clientCompanies.push(String(companyName).trim());
+    }
+  }
+
+  // ── 2. Empresa (B2B, Direta, Multi-Flat ou CNPJ Inline) ──────────────────
+  const cData = companyData && typeof companyData === "object" ? companyData : {};
+  const rawCnpj = String(companyCnpj || cData.cnpj || "").trim();
+  const cleanCnpj = rawCnpj.replace(/\D/g, "");
+  const rawCompName = String(
+    companyName ||
+    cData.corporateName ||
+    cData.razaoSocial ||
+    cData.companyName ||
+    cData.tradeName ||
+    cData.nomeFantasia ||
+    ""
+  ).trim();
+  const rawTradeName = String(
+    cData.tradeName ||
+    cData.nomeFantasia ||
+    rawCompName ||
+    (cleanCnpj.length === 14 ? `Empresa ${rawCnpj}` : "")
+  ).trim();
+  const rawEmailInput = String(
+    cData.financialEmail ||
+    cData.emailFinanceiro ||
+    cData.companyEmail ||
+    cData.email ||
+    companyEmail ||
+    ""
+  ).trim();
+  const emailCheck = validateEmailList(rawEmailInput);
+  const resolvedCompEmail = emailCheck.emails.length > 0 ? emailCheck.emails.join("; ") : rawEmailInput;
+  const resolvedCompPhone = String(cData.phone || cData.telefone || cData.companyPhone || "").trim();
+  const resolvedCompContact = String(cData.contactPerson || cData.contato || contactPerson || "").trim();
+
+  const rawAddr = String(cData.address || cData.logradouro || cData.endereco || "").trim();
+  const rawNum = String(cData.number || cData.numero || "").trim();
+  const rawComp = String(cData.complement || cData.complemento || "").trim();
+  const rawNeigh = String(cData.neighborhood || cData.bairro || "").trim();
+  const rawCep = String(cData.cep || "").replace(/\D/g, "");
+  const rawCity = String(cData.city || cData.cidade || cData.municipio || "").trim();
+  const rawState = String(cData.state || cData.uf || cData.estado || "").trim().toUpperCase();
+  const rawIbge = String(cData.ibgeCode || cData.codigoMunicipio || cData.codigoIbge || "").trim();
+  const inferredGeo = (rawCep || rawCity || rawState || rawIbge)
+    ? inferIbgeAndValidCep({ cep: rawCep, cidade: rawCity, uf: rawState, codigoMunicipio: rawIbge })
+    : {};
+
+  let resolvedCompany = null;
+  if (companyId) {
+    resolvedCompany = currentDb.companies.find(c => c && Number(c.id) === Number(companyId)) || null;
+  }
+  if (!resolvedCompany && cleanCnpj.length === 14) {
+    resolvedCompany = currentDb.companies.find(c => c && String(c.cnpj || "").replace(/\D/g, "") === cleanCnpj) || null;
+  }
+  if (!resolvedCompany && rawCompName) {
+    const compNameLower = rawCompName.toLowerCase();
+    resolvedCompany = currentDb.companies.find(c =>
+      c && (
+        (c.corporateName && c.corporateName.trim().toLowerCase() === compNameLower) ||
+        (c.razaoSocial && c.razaoSocial.trim().toLowerCase() === compNameLower) ||
+        (c.tradeName && c.tradeName.trim().toLowerCase() === compNameLower) ||
+        (c.nomeFantasia && c.nomeFantasia.trim().toLowerCase() === compNameLower)
+      )
+    ) || null;
+  }
+
+  if (resolvedCompany) {
+    if (cleanCnpj.length === 14 && (!resolvedCompany.cnpj || /isento|n[ãa]o informado/i.test(String(resolvedCompany.cnpj)))) {
+      resolvedCompany.cnpj = rawCnpj;
+    }
+    if (rawCompName && !resolvedCompany.corporateName) {
+      resolvedCompany.corporateName = rawCompName;
+      resolvedCompany.razaoSocial = rawCompName;
+    }
+    if (rawTradeName && !resolvedCompany.tradeName) {
+      resolvedCompany.tradeName = rawTradeName;
+      resolvedCompany.nomeFantasia = rawTradeName;
+    }
+    if (resolvedCompEmail && (!resolvedCompany.financialEmail || (emailCheck.valid && emailCheck.emails.length > 0 && cData && Object.keys(cData).length > 0))) {
+      resolvedCompany.financialEmail = resolvedCompEmail;
+      resolvedCompany.emailFinanceiro = resolvedCompEmail;
+    }
+    if (resolvedCompPhone && !resolvedCompany.phone) {
+      resolvedCompany.phone = resolvedCompPhone;
+      resolvedCompany.telefone = resolvedCompPhone;
+    }
+    if (resolvedCompContact && !resolvedCompany.contactPerson) {
+      resolvedCompany.contactPerson = resolvedCompContact;
+      resolvedCompany.contato = resolvedCompContact;
+    }
+    if (rawAddr && !resolvedCompany.address) {
+      resolvedCompany.address = rawAddr;
+      resolvedCompany.logradouro = rawAddr;
+      resolvedCompany.endereco = rawAddr;
+    }
+    if (rawNum && !resolvedCompany.number) {
+      resolvedCompany.number = rawNum;
+      resolvedCompany.numero = rawNum;
+    }
+    if (rawComp && !resolvedCompany.complement) {
+      resolvedCompany.complement = rawComp;
+      resolvedCompany.complemento = rawComp;
+    }
+    if (rawNeigh && !resolvedCompany.neighborhood) {
+      resolvedCompany.neighborhood = rawNeigh;
+      resolvedCompany.bairro = rawNeigh;
+    }
+    if ((rawCep || inferredGeo.cep) && !resolvedCompany.cep) {
+      resolvedCompany.cep = rawCep || inferredGeo.cep;
+    }
+    if ((inferredGeo.cidade || rawCity) && !resolvedCompany.city) {
+      resolvedCompany.city = inferredGeo.cidade || rawCity;
+      resolvedCompany.cidade = resolvedCompany.city;
+    }
+    if ((inferredGeo.uf || rawState) && !resolvedCompany.state) {
+      resolvedCompany.state = inferredGeo.uf || rawState;
+      resolvedCompany.uf = resolvedCompany.state;
+    }
+    if ((inferredGeo.codigoMunicipio || rawIbge) && !resolvedCompany.ibgeCode) {
+      resolvedCompany.ibgeCode = inferredGeo.codigoMunicipio || rawIbge;
+      resolvedCompany.codigoMunicipio = resolvedCompany.ibgeCode;
+    }
+    if ((isB2b || isFaturado || cData.billingEnabled) && !isInvoiceOnly && resolvedCompany.billingEnabled === false) {
+      resolvedCompany.billingEnabled = true;
+      resolvedCompany.allowsDirectReservations = true;
+      resolvedCompany.companyRole = "booking_partner";
+      resolvedCompany.isInvoiceOnly = false;
+    }
+    if (Object.keys(cData).length > 0) {
+      applyCrmBillingConfigFields(resolvedCompany, cData);
+    }
+  } else if (rawCompName || cleanCnpj.length === 14) {
+    const nextCompId = currentDb.companies.length > 0 ? Math.max(...currentDb.companies.map(c => Number(c?.id) || 0)) + 1 : 1;
+    const finalCorpName = rawCompName || `Empresa ${rawCnpj}`;
+    const finalTradeName = rawTradeName || finalCorpName;
+    const compBillingEnabled = isInvoiceOnly ? false : Boolean(isB2b || isFaturado || cData.billingEnabled !== false);
+    resolvedCompany = {
+      id: nextCompId,
+      corporateName: finalCorpName,
+      razaoSocial: finalCorpName,
+      tradeName: finalTradeName,
+      nomeFantasia: finalTradeName,
+      cnpj: rawCnpj || "Isento / Não informado",
+      stateRegistration: String(cData.stateRegistration || cData.inscricaoEstadual || "").trim(),
+      municipalRegistration: String(cData.municipalRegistration || cData.inscricaoMunicipal || "").trim(),
+      financialEmail: resolvedCompEmail,
+      emailFinanceiro: resolvedCompEmail,
+      phone: resolvedCompPhone,
+      telefone: resolvedCompPhone,
+      contactPerson: resolvedCompContact,
+      contato: resolvedCompContact,
+      address: rawAddr,
+      logradouro: rawAddr,
+      endereco: rawAddr,
+      number: rawNum,
+      numero: rawNum,
+      complement: rawComp,
+      complemento: rawComp,
+      neighborhood: rawNeigh,
+      bairro: rawNeigh,
+      cep: rawCep || inferredGeo.cep || "",
+      city: inferredGeo.cidade || rawCity || "Campos dos Goytacazes",
+      cidade: inferredGeo.cidade || rawCity || "Campos dos Goytacazes",
+      state: inferredGeo.uf || rawState || "RJ",
+      uf: inferredGeo.uf || rawState || "RJ",
+      ibgeCode: inferredGeo.codigoMunicipio || rawIbge || "3301009",
+      codigoMunicipio: inferredGeo.codigoMunicipio || rawIbge || "3301009",
+      companyRole: isInvoiceOnly ? "invoice_only" : "booking_partner",
+      allowsDirectReservations: !isInvoiceOnly,
+      isInvoiceOnly: Boolean(isInvoiceOnly),
+      billingEnabled: compBillingEnabled,
+      billingTerms: isB2b ? "B2B" : (isFaturado ? `${Number(boletoTermDays || 15)} dias` : ""),
+      defaultCostCenter: costCenter ? String(costCenter).trim() : "",
+      notes: isInvoiceOnly
+        ? "Cadastrada automaticamente para emissão de NFS-e."
+        : (isB2b ? "Empresa vinculada em reserva B2B." : "Empresa cadastrada automaticamente ao registrar reserva."),
+      createdAt: new Date().toISOString()
+    };
+    if (Object.keys(cData).length > 0) {
+      applyCrmBillingConfigFields(resolvedCompany, cData);
+    }
+    currentDb.companies.push(resolvedCompany);
+  }
+
+  return { resolvedCompany, resolvedAgency };
+}
+
+function upsertCrmGuestProfile(currentDb, guestInput = {}, options = {}) {
+  if (!currentDb) return null;
+  if (!Array.isArray(currentDb.guests)) currentDb.guests = [];
+
+  const rawName = String(guestInput.name || "").trim();
+  const isPending =
+    Boolean(guestInput.informLater) ||
+    isPendingGuestName(rawName) ||
+    isPlaceholderOrEmptyGuestName(rawName) ||
+    /^h[óo]spede\s*\d+$/i.test(rawName);
+  const rawGuestId = guestInput.guestId && guestInput.guestId !== "manual" ? Number(guestInput.guestId) : null;
+
+  if (isPending && !rawGuestId) {
+    return null;
+  }
+
+  let cleanPhone = String(guestInput.phone || guestInput.whatsapp || "").trim();
+  let cleanEmail = String(guestInput.email || "").trim().toLowerCase();
+  let cleanDoc = String(guestInput.document || guestInput.cpf || "").trim();
+  const normDoc = normalizeDoc(cleanDoc);
+  const normName = normalizeName(rawName);
+
+  let guest = currentDb.guests.find(g => {
+    if (!g) return false;
+    if (!isPending && !areGuestNamesCompatible(g.fullName || g.name, rawName)) {
+      return false;
+    }
+    return (
+      (rawGuestId && Number(g.id) === rawGuestId) ||
+      (normDoc && normDoc.length >= 5 && normalizeDoc(g.document || g.documentNumber || g.cpf) === normDoc) ||
+      (cleanPhone && cleanPhone.replace(/\D/g, "").length >= 8 && phonesMatch(g.phone || g.whatsapp, cleanPhone)) ||
+      (cleanEmail && cleanEmail.includes("@") && String(g.email || "").trim().toLowerCase() === cleanEmail) ||
+      (!isPending && normName && (g.fullName || g.name) && normalizeName(g.fullName || g.name) === normName)
+    );
+  }) || null;
+
+  const extraTags = Array.isArray(guestInput.tags) ? guestInput.tags.filter(Boolean) : [];
+  const companyIdVal = guestInput.companyId ? Number(guestInput.companyId) : null;
+  const companyNameVal = String(guestInput.companyName || "").trim();
+  const companyCnpjVal = String(guestInput.companyCnpj || "").replace(/\D/g, "") || String(guestInput.companyCnpj || "").trim();
+  const agencyIdVal = guestInput.agencyId ? Number(guestInput.agencyId) : null;
+  const agencyNameVal = String(guestInput.agencyName || "").trim();
+  const costCenterVal = String(guestInput.costCenter || "").trim();
+  const isMonthly = Boolean(guestInput.isMonthlyGuest);
+  const autoInvoice = Boolean(guestInput.autoEmitInvoice);
+
+  if (!guest && !isPending) {
+    const nextGId = currentDb.guests.length > 0 ? Math.max(...currentDb.guests.map(g => Number(g?.id) || 0)) + 1 : 1;
+    guest = {
+      id: nextGId,
+      guestCode: `HOSP-${String(nextGId).padStart(5, "0")}`,
+      name: rawName,
+      fullName: rawName,
+      phone: cleanPhone,
+      email: cleanEmail,
+      document: cleanDoc,
+      documentNumber: cleanDoc,
+      companyId: companyIdVal,
+      companyName: companyNameVal,
+      companyCnpj: companyCnpjVal || undefined,
+      agencyId: agencyIdVal,
+      agencyName: agencyNameVal,
+      costCenter: costCenterVal,
+      city: "",
+      notes: String(guestInput.notes || "").trim(),
+      tags: [...extraTags],
+      isMonthlyGuest: isMonthly,
+      clientType: isMonthly ? "mensalista" : (options.isB2b ? "corporativo" : "avulso"),
+      autoEmitInvoice: autoInvoice,
+      createdAt: new Date().toISOString()
+    };
+    currentDb.guests.push(guest);
+  } else if (guest) {
+    if (!guest.guestCode) {
+      guest.guestCode = `HOSP-${String(guest.id).padStart(5, "0")}`;
+    }
+    if (cleanPhone) guest.phone = cleanPhone;
+    else if (guest.phone) cleanPhone = String(guest.phone).trim();
+    if (cleanEmail) guest.email = cleanEmail;
+    else if (guest.email) cleanEmail = String(guest.email).trim().toLowerCase();
+    if (cleanDoc) {
+      guest.document = cleanDoc;
+      guest.documentNumber = cleanDoc;
+    } else if (guest.document || guest.documentNumber || guest.cpf) {
+      cleanDoc = String(guest.document || guest.documentNumber || guest.cpf).trim();
+    }
+    if (companyNameVal) guest.companyName = companyNameVal;
+    if (companyIdVal) guest.companyId = companyIdVal;
+    if (companyCnpjVal) guest.companyCnpj = companyCnpjVal;
+    if (agencyIdVal) guest.agencyId = agencyIdVal;
+    if (agencyNameVal) guest.agencyName = agencyNameVal;
+    if (costCenterVal) guest.costCenter = costCenterVal;
+    if (isMonthly) {
+      guest.isMonthlyGuest = true;
+      guest.clientType = "mensalista";
+    }
+    if (autoInvoice) guest.autoEmitInvoice = true;
+    if (extraTags.length > 0) {
+      if (!Array.isArray(guest.tags)) guest.tags = [];
+      for (const tg of extraTags) {
+        if (!guest.tags.includes(tg)) guest.tags.push(tg);
+      }
+    }
+  }
+
+  return guest ? { guest, phone: cleanPhone, email: cleanEmail, document: cleanDoc } : null;
+}
+
 async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
   const {
     packageFlats = [],
@@ -37818,14 +38250,29 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
     companyId = null,
     companyName = "",
     companyCnpj = "",
+    companyData = null,
+    companyEmail = "",
     costCenter = "",
     agencyId = null,
     agencyName = "",
     agencyTradeName = "",
     agencyCnpj = "",
+    agencyPosUnit = "",
+    agencyAgentName = "",
+    agencyAgentEmail = "",
+    agencyAgentPhone = "",
+    b2bReservationNumber = "",
+    b2bLocatorRloc = "",
+    b2bRatePolicy = "NET",
+    b2bCommissionPct = null,
+    b2bPaymentType = null,
     channel = "direta",
     paymentMethod = "pix",
     paymentStatus = "pendente",
+    payments = [],
+    charges = [],
+    taxasExtras = [],
+    cleaningFee = 0,
     status = null,
     holdDurationMinutes = 30,
     holdPreset = null,
@@ -37834,9 +38281,30 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
     packageDiscountPct = 0,
     packageFixedTotal = null,
     isFaturadoBoleto = false,
-    boletoTermDays = 15,
+    boletoTermDays = null,
     boletoCustomDueDate = null,
+    boletoConsumptionMode = null,
+    boletoPayerType = null,
+    consumptionSamePayerAndDue = undefined,
+    consumptionPayerType = null,
+    consumptionTermDays = null,
+    consumptionCustomDueDate = null,
+    consumptionCustomPayer = null,
+    boletoFinePct = null,
+    boletoInterestPct = null,
+    boletoAutoWriteOffDays = null,
+    autoEmitBoletoOnCheckout = undefined,
+    autoReminderEnabled = undefined,
+    financialResponsible = null,
+    billingRecipients = null,
+    billingDeliveryRecipients = null,
     emitConsolidatedBoletoNow = false,
+    invoiceRecipientType = null,
+    nfDeliveryEmails = null,
+    nfHideFromGuest = null,
+    invoicingInstructions = "",
+    invoiceDetails = null,
+    autoEmitInvoice = false,
     emitNfse = true,
     forceOverbooking = false,
     notes = "",
@@ -37849,13 +38317,134 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
     throw err;
   }
 
-  let resolvedCompany = null;
-  if (companyId && Array.isArray(db.companies)) {
-    resolvedCompany = db.companies.find((c) => Number(c.id) === Number(companyId)) || null;
+  const safeParseEmails = (raw) => {
+    if (typeof parseEmailList === "function") return parseEmailList(raw);
+    const items = Array.isArray(raw) ? raw : [raw];
+    const out = [];
+    const seen = new Set();
+    for (const item of items) {
+      if (item === null || item === undefined) continue;
+      for (const part of String(item).split(/[;,\s\r\n]+/)) {
+        const clean = part.trim().toLowerCase();
+        if (clean && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean) && !seen.has(clean)) {
+          seen.add(clean);
+          out.push(clean);
+        }
+      }
+    }
+    return out;
+  };
+  const safeFormatEmails = (raw) => safeParseEmails(raw).join("; ");
+  const safePrimaryEmail = (raw) => safeParseEmails(raw)[0] || "";
+  const safeNormDoc = (v) => (typeof normalizeDoc === "function" ? normalizeDoc(v) : String(v || "").replace(/\D/g, ""));
+  const safeNormPhone = (v) => (typeof normalizePhone === "function" ? normalizePhone(v) : String(v || "").replace(/\D/g, ""));
+  const safePhonesMatch = (a, b) => {
+    if (typeof phonesMatch === "function") return phonesMatch(a, b);
+    const da = safeNormPhone(a);
+    const dbDigits = safeNormPhone(b);
+    return Boolean(da && dbDigits && da.length >= 8 && dbDigits.length >= 8 && da.slice(-8) === dbDigits.slice(-8));
+  };
+  const safeNormName = (s) =>
+    typeof normalizeName === "function"
+      ? normalizeName(s)
+      : String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim().replace(/\s+/g, " ");
+  const safeAreNamesCompat = (a, b) => {
+    if (typeof areGuestNamesCompatible === "function") return areGuestNamesCompatible(a, b);
+    const na = safeNormName(a);
+    const nb = safeNormName(b);
+    return Boolean(na && nb && (na === nb || na.split(" ")[0] === nb.split(" ")[0]));
+  };
+  const safeIsPlaceholderGuest = (n) => {
+    if (typeof isPlaceholderOrEmptyGuestName === "function") return isPlaceholderOrEmptyGuestName(n);
+    const s = String(n || "").trim();
+    return !s || isPendingGuestName(s) || /^h[óo]spede\s*\d+$/i.test(s);
+  };
+  const safeNormConsumptionMode = (m) => {
+    if (typeof normalizeBoletoConsumptionMode === "function") return normalizeBoletoConsumptionMode(m);
+    const s = String(m || "single").toLowerCase().trim();
+    return s === "separate" || s === "separado" ? "separate" : "single";
+  };
+
+  const chanLower = String(channel || "").toLowerCase();
+  const isB2b = chanLower.includes("b2b") || Boolean(agencyId || agencyName || b2bReservationNumber);
+  const normPayMethod = normalizePaymentMethodId(paymentMethod) || "pix";
+  const isFaturadoPkg = Boolean(
+    isFaturadoBoleto ||
+    isFaturadoBoletoMethod(normPayMethod) ||
+    String(b2bPaymentType || "").toUpperCase() === "FATURADO"
+  );
+  const effectivePayMethod = isFaturadoPkg && (!normPayMethod || normPayMethod === "pix")
+    ? (isB2b ? "faturado_b2b" : "boleto_faturado")
+    : normPayMethod;
+  if (typeof ensurePaymentMethodExists === "function") {
+    ensurePaymentMethodExists(effectivePayMethod);
   }
+
+  let resolvedCompany = null;
   let resolvedAgency = null;
-  if (agencyId && Array.isArray(db.agencies)) {
-    resolvedAgency = db.agencies.find((a) => Number(a.id) === Number(agencyId)) || null;
+  if (typeof resolveOrUpsertReservationCompanyAndAgency === "function") {
+    const entRes = resolveOrUpsertReservationCompanyAndAgency(db, {
+      companyId,
+      companyName,
+      companyCnpj,
+      companyData,
+      companyEmail,
+      costCenter,
+      agencyId,
+      agencyName,
+      agencyTradeName,
+      agencyCnpj,
+      agencyPosUnit,
+      agencyAgentName,
+      agencyAgentEmail,
+      agencyAgentPhone,
+      b2bRatePolicy,
+      b2bCommissionPct,
+      invoiceRecipientType,
+      nfDeliveryEmails,
+      contactPerson: requesterName || requesterInfo?.name || "",
+      isB2b,
+      isFaturado: isFaturadoPkg,
+      boletoTermDays
+    });
+    resolvedCompany = entRes.resolvedCompany;
+    resolvedAgency = entRes.resolvedAgency;
+  } else {
+    if (!Array.isArray(db.companies)) db.companies = [];
+    if (!Array.isArray(db.agencies)) db.agencies = [];
+    if (companyId) {
+      resolvedCompany = db.companies.find((c) => c && Number(c.id) === Number(companyId)) || null;
+    }
+    const cleanInlineCnpj = String(companyCnpj || companyData?.cnpj || "").replace(/\D/g, "");
+    const inlineCompName = String(companyName || companyData?.corporateName || companyData?.razaoSocial || companyData?.companyName || companyData?.tradeName || "").trim();
+    if (!resolvedCompany && cleanInlineCnpj.length === 14) {
+      resolvedCompany = db.companies.find((c) => c && String(c.cnpj || "").replace(/\D/g, "") === cleanInlineCnpj) || null;
+    }
+    if (!resolvedCompany && inlineCompName) {
+      resolvedCompany = db.companies.find((c) => c && String(c.corporateName || c.tradeName || "").trim().toLowerCase() === inlineCompName.toLowerCase()) || null;
+    }
+    if (!resolvedCompany && (inlineCompName || cleanInlineCnpj.length === 14)) {
+      const nextCid = db.companies.length > 0 ? Math.max(...db.companies.map((c) => Number(c?.id) || 0)) + 1 : 1;
+      const compMail = safeFormatEmails(companyData?.financialEmail || companyData?.emailFinanceiro || companyData?.companyEmail || companyEmail || "");
+      resolvedCompany = {
+        id: nextCid,
+        corporateName: inlineCompName || `Empresa ${companyCnpj || cleanInlineCnpj}`,
+        razaoSocial: inlineCompName || `Empresa ${companyCnpj || cleanInlineCnpj}`,
+        tradeName: String(companyData?.tradeName || inlineCompName || `Empresa ${cleanInlineCnpj}`).trim(),
+        cnpj: String(companyCnpj || companyData?.cnpj || "Isento / Não informado").trim(),
+        financialEmail: compMail,
+        emailFinanceiro: compMail,
+        phone: String(companyData?.phone || companyData?.telefone || "").trim(),
+        contactPerson: String(companyData?.contactPerson || requesterName || "").trim(),
+        billingEnabled: Boolean(isB2b || isFaturadoPkg || companyData?.billingEnabled !== false),
+        ...(companyData?.defaultBoletoTermDays != null ? { defaultBoletoTermDays: Number(companyData.defaultBoletoTermDays) } : {}),
+        createdAt: new Date().toISOString()
+      };
+      db.companies.push(resolvedCompany);
+    }
+    if (agencyId) {
+      resolvedAgency = db.agencies.find((a) => a && Number(a.id) === Number(agencyId)) || null;
+    }
   }
 
   const solName = String(
@@ -37885,7 +38474,7 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
     packageFlats[0]?.guests?.[0]?.phone ||
     ""
   ).trim();
-  const solEmail = String(
+  const rawSolEmailInput = String(
     requesterEmail ||
     requesterInfo?.email ||
     resolvedCompany?.financialEmail ||
@@ -37895,7 +38484,8 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
     packageFlats[0]?.guestEmail ||
     packageFlats[0]?.guests?.[0]?.email ||
     ""
-  ).trim().toLowerCase();
+  ).trim();
+  const solEmail = safeFormatEmails(rawSolEmailInput) || rawSolEmailInput.toLowerCase();
   const solDoc = String(
     requesterDocument ||
     requesterInfo?.cpf ||
@@ -37916,32 +38506,52 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
     throw err;
   }
 
-  const chanLower = String(channel || "").toLowerCase();
-  const isB2b = chanLower.includes("b2b") || Boolean(agencyId || agencyName || payload.b2bReservationNumber);
-  const normPayMethod = normalizePaymentMethodId(paymentMethod) || "pix";
-  const isFaturadoPkg = Boolean(
-    isFaturadoBoleto ||
-    isFaturadoBoletoMethod(normPayMethod) ||
-    String(payload.b2bPaymentType || "").toUpperCase() === "FATURADO"
-  );
-  const effectivePayMethod = isFaturadoPkg && (!normPayMethod || normPayMethod === "pix")
-    ? (isB2b ? "faturado_b2b" : "boleto_faturado")
-    : normPayMethod;
+  // Normalização de múltiplos pagamentos (split/sinal) no pacote
+  let normalizedPkgPayments = Array.isArray(payments)
+    ? payments
+        .map((p, pIdx) => ({
+          id: String(p?.id || `pay_pkg_in_${pIdx}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`),
+          amount: Math.round(Math.max(0, Number(p?.amount) || 0) * 100) / 100,
+          method: String(normalizePaymentMethodId(p?.method) || effectivePayMethod || "pix"),
+          date: String(p?.date || new Date().toISOString()),
+          category: p?.category ? String(p.category) : undefined,
+          notes: p?.notes ? String(p.notes) : undefined
+        }))
+        .filter(
+          (p) =>
+            (p.amount > 0 || p.method) &&
+            !(isFaturadoPkg && typeof isSyntheticAutoQuitacaoEntry === "function" && isSyntheticAutoQuitacaoEntry(p))
+        )
+    : [];
+
+  const explicitPaidFromPayments = normalizedPkgPayments.length > 0
+    ? Math.round(normalizedPkgPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0) * 100) / 100
+    : null;
+  const rawScalarPaid =
+    payload.paidAmount !== undefined && payload.paidAmount !== null && payload.paidAmount !== ""
+      ? Math.round(Math.max(0, Number(payload.paidAmount) || 0) * 100) / 100
+      : null;
+  let explicitPaidInput = explicitPaidFromPayments !== null ? explicitPaidFromPayments : rawScalarPaid;
 
   let resolvedStatus = "pre_reserva";
   if (status) {
     resolvedStatus = String(status).trim();
-  } else if (isB2b || isFaturadoPkg || paymentStatus === "pago_total" || paymentStatus === "pago") {
+  } else if (
+    isB2b ||
+    isFaturadoPkg ||
+    paymentStatus === "pago_total" ||
+    paymentStatus === "pago" ||
+    (explicitPaidInput !== null && explicitPaidInput > 0)
+  ) {
     resolvedStatus = "confirmada";
   }
   if ((isB2b || isFaturadoPkg) && resolvedStatus === "pre_reserva") {
     resolvedStatus = "confirmada";
   }
-
-  const isSettledNow =
-    !isFaturadoPkg &&
-    resolvedStatus === "confirmada" &&
-    (paymentStatus === "pago_total" || paymentStatus === "pago" || Number(payload.paidAmount) > 0 || payload.markAsPaid === true);
+  if (resolvedStatus === "pre_reserva" && !isB2b && !isFaturadoPkg) {
+    normalizedPkgPayments = [];
+    explicitPaidInput = 0;
+  }
 
   const canonicalFlats = typeof getCanonicalFlats === "function" ? getCanonicalFlats(db) : (db.flats || []);
   const siteCfg = db.siteConfig || DEFAULT_SITE_CONFIG;
@@ -38031,14 +38641,16 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
       Math.round((new Date(`${fCheckout}T12:00:00Z`).getTime() - new Date(`${fCheckin}T12:00:00Z`).getTime()) / 86400000)
     );
 
-    const itemCharges = Array.isArray(item.charges)
-      ? item.charges.map((c) => ({
-          id: String(c.id || `charge_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`),
-          type: String(c.type || "other"),
-          title: String(c.title || "Taxa / Adicional"),
-          amount: Number(c.amount) || 0
-        }))
-      : [];
+    const rawItemCharges = Array.isArray(item.charges)
+      ? item.charges
+      : (Array.isArray(item.taxasExtras) ? item.taxasExtras : []);
+    const itemCharges = rawItemCharges.map((c) => ({
+      id: String(c.id || `charge_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`),
+      type: String(c.type || "other"),
+      title: String(c.title || "Taxa / Adicional"),
+      amount: Number(c.amount) || 0,
+      ...(c.notes ? { notes: String(c.notes) } : {})
+    }));
     if (Number(item.cleaningFee) > 0 && !itemCharges.some((c) => c.type === "cleaning")) {
       itemCharges.push({
         id: `charge_cleaning_${idx}_${Date.now()}`,
@@ -38116,6 +38728,8 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
     const ratesSum = itemDailyRates.reduce((s, d) => s + (Number(d.rate) || 0), 0);
     if (baseTotalAmount <= 0) {
       baseTotalAmount = Math.round((ratesSum + chargesSum) * 100) / 100;
+    } else if (chargesSum !== 0 && ratesSum > 0 && Math.abs(baseTotalAmount - ratesSum) < 0.05) {
+      baseTotalAmount = Math.max(0, Math.round((ratesSum + chargesSum) * 100) / 100);
     }
 
     preparedDrafts.push({
@@ -38136,6 +38750,43 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
     });
   }
 
+  // Taxas extras no nível do pacote (sem duplicar taxas já informadas por flat)
+  const rawPkgCharges = Array.isArray(charges) && charges.length > 0
+    ? charges
+    : (Array.isArray(taxasExtras) ? taxasExtras : []);
+  const existingDraftChargeIds = new Set(
+    preparedDrafts.flatMap((d) => (d.charges || []).map((c) => String(c.id || "")))
+  );
+  const anyDraftHasCleaning = preparedDrafts.some((d) => (d.charges || []).some((c) => c.type === "cleaning"));
+  const pkgLevelCharges = rawPkgCharges
+    .map((c, cIdx) => ({
+      id: String(c?.id || `pkg_charge_${cIdx}_${Date.now()}`),
+      type: String(c?.type || "other"),
+      title: String(c?.title || "Taxa do Pacote"),
+      amount: Number(c?.amount) || 0,
+      isPackageCharge: true,
+      ...(c?.notes ? { notes: String(c.notes) } : {})
+    }))
+    .filter((c) => {
+      if (existingDraftChargeIds.has(c.id)) return false;
+      if (c.type === "cleaning" && anyDraftHasCleaning) return false;
+      return true;
+    });
+  if (Number(cleaningFee) > 0 && !anyDraftHasCleaning && !pkgLevelCharges.some((c) => c.type === "cleaning")) {
+    pkgLevelCharges.push({
+      id: `pkg_charge_cleaning_${Date.now()}`,
+      type: "cleaning",
+      title: "Taxa de Limpeza",
+      amount: Number(cleaningFee),
+      isPackageCharge: true
+    });
+  }
+  if (pkgLevelCharges.length > 0 && preparedDrafts.length > 0) {
+    const pkgExtraSum = pkgLevelCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+    preparedDrafts[0].charges = [...preparedDrafts[0].charges, ...pkgLevelCharges];
+    preparedDrafts[0].baseTotalAmount = Math.max(0, Math.round((preparedDrafts[0].baseTotalAmount + pkgExtraSum) * 100) / 100);
+  }
+
   // Aplica rateio automático do pacote (soma, desconto R$, desconto % ou valor fechado)
   const rateioResult = applyPackageRateioToDraftFlats(preparedDrafts, {
     mode: packagePricingMode,
@@ -38144,10 +38795,6 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
     fixedTotal: packageFixedTotal
   });
 
-  const explicitPaidInput =
-    payload.paidAmount !== undefined && payload.paidAmount !== null && payload.paidAmount !== ""
-      ? Math.round(Math.max(0, Number(payload.paidAmount) || 0) * 100) / 100
-      : null;
   const wantsFullPaid =
     paymentStatus === "pago_total" ||
     paymentStatus === "pago" ||
@@ -38173,7 +38820,6 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
     (wantsFullPaid || (explicitPaidInput !== null && explicitPaidInput + 0.50 >= rateioResult.targetTotal && rateioResult.targetTotal > 0));
 
   const partialPaidPool =
-    !isFaturadoPkg &&
     !effectiveFullySettledNow &&
     explicitPaidInput !== null &&
     explicitPaidInput > 0
@@ -38181,15 +38827,79 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
       : 0;
   let allocatedPartialPaid = 0;
 
+  // Rateio proporcional por lançamento de pagamento dividido (ex.: Dinheiro + PIX ou Sinal parcial)
+  const hasExplicitSplitPayments =
+    normalizedPkgPayments.length > 0 &&
+    (effectiveFullySettledNow || partialPaidPool > 0);
+  const splitRemainingByPayment = normalizedPkgPayments.map((p) => Math.round((Number(p.amount) || 0) * 100) / 100);
+
   const pkgCode = generatePackageCode(db);
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
-  const resolvedHoldMins = Math.max(5, Number(holdDurationMinutes) || 30);
-  const expiresAtIso = resolvedStatus === "pre_reserva" ? new Date(nowMs + resolvedHoldMins * 60000).toISOString() : null;
+  const holdInfoPkg = resolvedStatus === "pre_reserva" && typeof resolvePreReservationHold === "function"
+    ? resolvePreReservationHold(payload, preparedDrafts[0]?.checkinDate)
+    : null;
+  const resolvedHoldMins = holdInfoPkg?.holdDurationMinutes || Math.max(5, Number(holdDurationMinutes) || 30);
+  const expiresAtIso = resolvedStatus === "pre_reserva"
+    ? (holdInfoPkg?.expiresAt || new Date(nowMs + resolvedHoldMins * 60000).toISOString())
+    : null;
 
   if (!db.reservations) db.reservations = [];
   if (!db.guests) db.guests = [];
   if (!db.cleaningRequests) db.cleaningRequests = [];
+
+  // Upsert do Solicitante Terceiro no CRM quando aplicável (sem criar fantasma para nome pendente)
+  let resolvedRequesterGuestId = requesterInfo?.guestId ? Number(requesterInfo.guestId) : null;
+  const shouldUpsertThirdPartyReq = Boolean(
+    requesterType === "other_person" &&
+    !isB2b &&
+    !resolvedCompany &&
+    solName &&
+    !safeIsPlaceholderGuest(solName)
+  );
+  if (shouldUpsertThirdPartyReq) {
+    if (typeof upsertCrmGuestProfile === "function") {
+      const reqUpserted = upsertCrmGuestProfile(db, {
+        guestId: resolvedRequesterGuestId,
+        name: solName,
+        phone: solPhone,
+        email: safePrimaryEmail(solEmail) || solEmail,
+        document: solDoc,
+        companyId: resolvedCompany?.id || null,
+        companyName: resolvedCompany?.corporateName || companyName || "",
+        companyCnpj: resolvedCompany?.cnpj || companyCnpj || "",
+        notes: "Cadastrado como solicitante do pacote multi-flat",
+        tags: ["solicitante_terceiro"]
+      }, { isB2b });
+      if (reqUpserted?.guest?.id) resolvedRequesterGuestId = reqUpserted.guest.id;
+    } else {
+      let reqGuest = db.guests.find((g) =>
+        g && (
+          (resolvedRequesterGuestId && Number(g.id) === resolvedRequesterGuestId) ||
+          (solDoc && safeNormDoc(g.document || g.documentNumber || g.cpf) === safeNormDoc(solDoc)) ||
+          (solPhone && safePhonesMatch(g.phone, solPhone)) ||
+          (safeNormName(g.fullName || g.name) === safeNormName(solName))
+        )
+      );
+      if (!reqGuest) {
+        const nextReqGId = db.guests.length > 0 ? Math.max(...db.guests.map((g) => Number(g?.id) || 0)) + 1 : 1;
+        reqGuest = {
+          id: nextReqGId,
+          guestCode: `HOSP-${String(nextReqGId).padStart(5, "0")}`,
+          name: solName,
+          fullName: solName,
+          phone: solPhone,
+          email: safePrimaryEmail(solEmail) || solEmail,
+          document: solDoc,
+          documentNumber: solDoc,
+          tags: ["solicitante_terceiro"],
+          createdAt: nowIso
+        };
+        db.guests.push(reqGuest);
+      }
+      resolvedRequesterGuestId = reqGuest.id;
+    }
+  }
 
   let nextResId = db.reservations.length > 0 ? Math.max(...db.reservations.map((r) => Number(r.id) || 0)) + 1 : 1;
   const authUser = ctx.authUser || null;
@@ -38224,14 +38934,83 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
     );
 
     const g1FinalName = g1InformLater ? "A Definir (Aguardando Solicitante)" : g1ExplicitName;
-    const g1Phone = reqIsGuest1 ? solPhone : (g1InformLater ? "" : String(item.guestPhone || g1Raw.phone || g1Raw.whatsapp || "").trim());
-    const g1Email = reqIsGuest1 ? solEmail : (g1InformLater ? "" : String(item.guestEmail || g1Raw.email || "").trim().toLowerCase());
-    const g1Doc = reqIsGuest1 ? solDoc : (g1InformLater ? "" : String(item.guestDocument || g1Raw.cpf || g1Raw.document || "").trim());
+    let g1Phone = reqIsGuest1 ? solPhone : (g1InformLater ? "" : String(item.guestPhone || g1Raw.phone || g1Raw.whatsapp || "").trim());
+    let g1Email = reqIsGuest1 ? (safePrimaryEmail(solEmail) || solEmail) : (g1InformLater ? "" : String(item.guestEmail || g1Raw.email || "").trim().toLowerCase());
+    let g1Doc = reqIsGuest1 ? solDoc : (g1InformLater ? "" : String(item.guestDocument || g1Raw.cpf || g1Raw.document || "").trim());
+
+    let g1CrmGuest = null;
+    if (!g1InformLater) {
+      const g1InputId = item.guestId || g1Raw.guestId || (reqIsGuest1 ? resolvedRequesterGuestId : null);
+      if (typeof upsertCrmGuestProfile === "function") {
+        const up1 = upsertCrmGuestProfile(db, {
+          guestId: g1InputId,
+          name: g1FinalName,
+          phone: g1Phone,
+          email: g1Email,
+          document: g1Doc,
+          companyId: resolvedCompany?.id || (companyId ? Number(companyId) : null),
+          companyName: resolvedCompany?.corporateName || companyName || "",
+          companyCnpj: resolvedCompany?.cnpj || companyCnpj || "",
+          agencyId: resolvedAgency?.id || (agencyId ? Number(agencyId) : null),
+          agencyName: resolvedAgency?.tradeName || agencyName || "",
+          costCenter: String(costCenter || "").trim(),
+          autoEmitInvoice: Boolean(autoEmitInvoice)
+        }, { isB2b });
+        if (up1?.guest) {
+          g1CrmGuest = up1.guest;
+          if (!g1Phone && up1.phone) g1Phone = up1.phone;
+          if (!g1Email && up1.email) g1Email = up1.email;
+          if (!g1Doc && up1.document) g1Doc = up1.document;
+        }
+      } else {
+        let gMatch = db.guests.find((g) => {
+          if (!g || !safeAreNamesCompat(g.fullName || g.name, g1FinalName)) return false;
+          return (
+            (g1InputId && g1InputId !== "manual" && Number(g.id) === Number(g1InputId)) ||
+            (g1Doc && safeNormDoc(g.document || g.documentNumber || g.cpf) === safeNormDoc(g1Doc)) ||
+            (g1Phone && safePhonesMatch(g.phone, g1Phone)) ||
+            (safeNormName(g.fullName || g.name) === safeNormName(g1FinalName))
+          );
+        });
+        if (!gMatch) {
+          const nextGId = db.guests.length > 0 ? Math.max(...db.guests.map((g) => Number(g?.id) || 0)) + 1 : 1;
+          gMatch = {
+            id: nextGId,
+            guestCode: `HOSP-${String(nextGId).padStart(5, "0")}`,
+            name: g1FinalName,
+            fullName: g1FinalName,
+            phone: g1Phone,
+            email: g1Email,
+            document: g1Doc,
+            documentNumber: g1Doc,
+            companyId: resolvedCompany?.id || null,
+            companyName: resolvedCompany?.corporateName || companyName || "",
+            agencyId: resolvedAgency?.id || null,
+            agencyName: resolvedAgency?.tradeName || agencyName || "",
+            createdAt: nowIso
+          };
+          db.guests.push(gMatch);
+        } else {
+          if (g1Phone && !gMatch.phone) gMatch.phone = g1Phone;
+          else if (!g1Phone && gMatch.phone) g1Phone = String(gMatch.phone).trim();
+          if (g1Email && !gMatch.email) gMatch.email = g1Email;
+          else if (!g1Email && gMatch.email) g1Email = String(gMatch.email).trim().toLowerCase();
+          if (g1Doc && !gMatch.document) { gMatch.document = g1Doc; gMatch.documentNumber = g1Doc; }
+          else if (!g1Doc && (gMatch.document || gMatch.cpf)) g1Doc = String(gMatch.document || gMatch.cpf).trim();
+        }
+        g1CrmGuest = gMatch;
+      }
+      if (reqIsGuest1 && g1CrmGuest?.id && !resolvedRequesterGuestId) {
+        resolvedRequesterGuestId = g1CrmGuest.id;
+      }
+    }
 
     const normalizedGuests = [
       {
         index: 1,
         isMain: true,
+        guestId: g1CrmGuest?.id || null,
+        guestCode: g1CrmGuest?.guestCode || null,
         name: g1InformLater ? "" : g1FinalName,
         phone: g1Phone,
         email: g1Email,
@@ -38244,30 +39023,113 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
     let g2InformLater = false;
     if (draft.guestCount >= 2) {
       const g2Name = String(item.guest2Name || g2Raw.name || "").trim();
-      g2InformLater = Boolean(item.informGuestsLater || item.guest2InformLater || g2Raw.informLater || !g2Name);
+      g2InformLater = Boolean(
+        item.informGuestsLater ||
+        item.guest2InformLater ||
+        g2Raw.informLater ||
+        !g2Name ||
+        safeIsPlaceholderGuest(g2Name)
+      );
+      let g2Phone = g2InformLater ? "" : String(item.guest2Phone || g2Raw.phone || g2Raw.whatsapp || "").trim();
+      let g2Email = g2InformLater ? "" : String(item.guest2Email || g2Raw.email || "").trim().toLowerCase();
+      let g2Doc = g2InformLater ? "" : String(item.guest2Document || g2Raw.cpf || g2Raw.document || "").trim();
+      let g2CrmGuest = null;
+      if (!g2InformLater) {
+        const g2InputId = item.guest2Id || g2Raw.guestId || null;
+        if (typeof upsertCrmGuestProfile === "function") {
+          const up2 = upsertCrmGuestProfile(db, {
+            guestId: g2InputId,
+            name: g2Name,
+            phone: g2Phone,
+            email: g2Email,
+            document: g2Doc,
+            companyId: resolvedCompany?.id || null,
+            companyName: resolvedCompany?.corporateName || companyName || "",
+            notes: `Cadastrado como 2º hóspede (acompanhante) no pacote ${pkgCode}`
+          }, { isB2b });
+          if (up2?.guest) {
+            g2CrmGuest = up2.guest;
+            if (!g2Phone && up2.phone) g2Phone = up2.phone;
+            if (!g2Email && up2.email) g2Email = up2.email;
+            if (!g2Doc && up2.document) g2Doc = up2.document;
+          }
+        } else {
+          let g2Match = db.guests.find((g) => {
+            if (!g || !safeAreNamesCompat(g.fullName || g.name, g2Name)) return false;
+            return (
+              (g2InputId && Number(g.id) === Number(g2InputId)) ||
+              (g2Doc && safeNormDoc(g.document || g.documentNumber || g.cpf) === safeNormDoc(g2Doc)) ||
+              (g2Phone && safePhonesMatch(g.phone, g2Phone)) ||
+              (safeNormName(g.fullName || g.name) === safeNormName(g2Name))
+            );
+          });
+          if (!g2Match) {
+            const nextG2Id = db.guests.length > 0 ? Math.max(...db.guests.map((g) => Number(g?.id) || 0)) + 1 : 1;
+            g2Match = {
+              id: nextG2Id,
+              guestCode: `HOSP-${String(nextG2Id).padStart(5, "0")}`,
+              name: g2Name,
+              fullName: g2Name,
+              phone: g2Phone,
+              email: g2Email,
+              document: g2Doc,
+              documentNumber: g2Doc,
+              companyId: resolvedCompany?.id || null,
+              companyName: resolvedCompany?.corporateName || companyName || "",
+              createdAt: nowIso
+            };
+            db.guests.push(g2Match);
+          }
+          g2CrmGuest = g2Match;
+        }
+      }
       normalizedGuests.push({
         index: 2,
         isMain: false,
+        guestId: g2CrmGuest?.id || null,
+        guestCode: g2CrmGuest?.guestCode || null,
         name: g2InformLater ? "" : g2Name,
-        phone: g2InformLater ? "" : String(item.guest2Phone || g2Raw.phone || g2Raw.whatsapp || "").trim(),
-        email: g2InformLater ? "" : String(item.guest2Email || g2Raw.email || "").trim().toLowerCase(),
-        cpf: g2InformLater ? "" : String(item.guest2Document || g2Raw.cpf || g2Raw.document || "").trim(),
-        document: g2InformLater ? "" : String(item.guest2Document || g2Raw.cpf || g2Raw.document || "").trim(),
+        phone: g2Phone,
+        email: g2Email,
+        cpf: g2Doc,
+        document: g2Doc,
         informLater: g2InformLater
       });
     }
     if (draft.guestCount >= 3 && rawGuests[2]) {
       const g3Raw = rawGuests[2];
       const g3Name = String(g3Raw.name || "").trim();
+      const g3InformLater = Boolean(item.informGuestsLater || g3Raw.informLater || !g3Name || safeIsPlaceholderGuest(g3Name));
+      let g3Phone = g3InformLater ? "" : String(g3Raw.phone || g3Raw.whatsapp || "").trim();
+      let g3Email = g3InformLater ? "" : String(g3Raw.email || "").trim().toLowerCase();
+      let g3Doc = g3InformLater ? "" : String(g3Raw.cpf || g3Raw.document || "").trim();
+      let g3CrmGuest = null;
+      if (!g3InformLater) {
+        if (typeof upsertCrmGuestProfile === "function") {
+          const up3 = upsertCrmGuestProfile(db, {
+            guestId: g3Raw.guestId || null,
+            name: g3Name,
+            phone: g3Phone,
+            email: g3Email,
+            document: g3Doc,
+            companyId: resolvedCompany?.id || null,
+            companyName: resolvedCompany?.corporateName || companyName || "",
+            notes: `Cadastrado como 3º hóspede (acompanhante) no pacote ${pkgCode}`
+          }, { isB2b });
+          if (up3?.guest) g3CrmGuest = up3.guest;
+        }
+      }
       normalizedGuests.push({
         index: 3,
         isMain: false,
-        name: g3Name,
-        phone: String(g3Raw.phone || "").trim(),
-        email: String(g3Raw.email || "").trim().toLowerCase(),
-        cpf: String(g3Raw.cpf || g3Raw.document || "").trim(),
-        document: String(g3Raw.cpf || g3Raw.document || "").trim(),
-        informLater: !g3Name
+        guestId: g3CrmGuest?.id || null,
+        guestCode: g3CrmGuest?.guestCode || null,
+        name: g3InformLater ? "" : g3Name,
+        phone: g3Phone,
+        email: g3Email,
+        cpf: g3Doc,
+        document: g3Doc,
+        informLater: g3InformLater
       });
     }
 
@@ -38296,21 +39158,152 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
       : "other_person";
 
     const unitTotal = draft.totalAmount;
+    const isLastFlat = idx === rateioResult.items.length - 1;
     let unitPaid = 0;
-    if (effectiveFullySettledNow) {
+    let flatPayments = [];
+
+    if (hasExplicitSplitPayments) {
+      for (let pIdx = 0; pIdx < normalizedPkgPayments.length; pIdx++) {
+        const pEntry = normalizedPkgPayments[pIdx];
+        const shareAmt = isLastFlat
+          ? Math.max(0, Math.round(splitRemainingByPayment[pIdx] * 100) / 100)
+          : (rateioResult.targetTotal > 0
+              ? Math.round((unitTotal / rateioResult.targetTotal) * pEntry.amount * 100) / 100
+              : 0);
+        splitRemainingByPayment[pIdx] = Math.max(0, Math.round((splitRemainingByPayment[pIdx] - shareAmt) * 100) / 100);
+        if (shareAmt > 0) {
+          flatPayments.push({
+            id: `${pEntry.id}_f${idx + 1}`,
+            amount: shareAmt,
+            method: pEntry.method || effectivePayMethod,
+            date: pEntry.date || nowIso,
+            ...(pEntry.category ? { category: pEntry.category } : {}),
+            packageCode: pkgCode,
+            packageBatchPaid: effectiveFullySettledNow,
+            notes: pEntry.notes || (effectiveFullySettledNow
+              ? `Pagamento confirmado na criação do pacote ${pkgCode}`
+              : `Pagamento parcial/dividido rateado na criação do pacote ${pkgCode}`)
+          });
+          unitPaid = Math.round((unitPaid + shareAmt) * 100) / 100;
+        }
+      }
+      if (effectiveFullySettledNow && wantsFullPaid && unitPaid < unitTotal && unitTotal > 0 && flatPayments.length === 0) {
+        unitPaid = unitTotal;
+      }
+    } else if (effectiveFullySettledNow) {
       unitPaid = unitTotal;
+      if (unitPaid > 0) {
+        flatPayments = [{
+          id: `pay_pkg_init_${rId}_${Date.now()}`,
+          amount: unitPaid,
+          method: effectivePayMethod,
+          date: nowIso,
+          packageCode: pkgCode,
+          packageBatchPaid: true,
+          notes: `Pagamento confirmado na criação do pacote ${pkgCode}`
+        }];
+      }
     } else if (partialPaidPool > 0 && rateioResult.targetTotal > 0) {
-      unitPaid =
-        idx === rateioResult.items.length - 1
-          ? Math.max(0, Math.round((partialPaidPool - allocatedPartialPaid) * 100) / 100)
-          : Math.round((unitTotal / rateioResult.targetTotal) * partialPaidPool * 100) / 100;
+      unitPaid = isLastFlat
+        ? Math.max(0, Math.round((partialPaidPool - allocatedPartialPaid) * 100) / 100)
+        : Math.round((unitTotal / rateioResult.targetTotal) * partialPaidPool * 100) / 100;
       allocatedPartialPaid = Math.round((allocatedPartialPaid + unitPaid) * 100) / 100;
+      if (unitPaid > 0) {
+        flatPayments = [{
+          id: `pay_pkg_init_${rId}_${Date.now()}`,
+          amount: unitPaid,
+          method: effectivePayMethod,
+          date: nowIso,
+          packageCode: pkgCode,
+          packageBatchPaid: false,
+          notes: `Sinal parcial rateado na criação do pacote ${pkgCode}`
+        }];
+      }
     }
-    const unitPayStatus = effectiveFullySettledNow
+
+    const unitPayStatus = !isFaturadoPkg && (effectiveFullySettledNow || (unitPaid + 0.01 >= unitTotal && unitTotal > 0))
       ? "pago_total"
       : unitPaid > 0
       ? "sinal_pago"
       : "pendente";
+
+    const resolvedInvRecipient =
+      invoiceRecipientType ||
+      resolvedAgency?.defaultInvoiceRecipient ||
+      g1CrmGuest?.preferredInvoiceRecipient ||
+      (resolvedCompany ? "company" : (resolvedAgency ? "agency" : (reqIsGuest1 ? "guest" : "requester")));
+    const resolvedNfHideFromGuest = nfHideFromGuest !== null && nfHideFromGuest !== undefined
+      ? Boolean(nfHideFromGuest)
+      : !reqIsGuest1;
+
+    const rawNfEmailsCandidates = safeParseEmails(nfDeliveryEmails);
+    let resolvedNfDeliveryEmails = rawNfEmailsCandidates.length > 0
+      ? rawNfEmailsCandidates
+      : safeParseEmails([
+          isB2b ? agencyAgentEmail : "",
+          resolvedCompany?.financialEmail,
+          resolvedAgency?.financialEmail,
+          !resolvedNfHideFromGuest ? g1Email : ""
+        ]);
+    if (resolvedNfHideFromGuest && g1Email) {
+      resolvedNfDeliveryEmails = resolvedNfDeliveryEmails.filter((e) => e !== g1Email.toLowerCase());
+    }
+
+    const resolvedFinResp = (() => {
+      const src = financialResponsible || resolvedCompany?.financialResponsible || resolvedAgency?.financialResponsible || g1CrmGuest?.financialResponsible || {};
+      const name = String(payload.financialResponsibleName ?? src.name ?? resolvedCompany?.financialResponsibleName ?? resolvedAgency?.financialResponsibleName ?? "").trim();
+      const rawFrEmail = String(payload.financialResponsibleEmail ?? src.email ?? resolvedCompany?.financialResponsibleEmail ?? resolvedAgency?.financialResponsibleEmail ?? "").trim();
+      const email = safeFormatEmails(rawFrEmail) || rawFrEmail;
+      const phone = String(payload.financialResponsiblePhone ?? src.phone ?? src.whatsapp ?? resolvedCompany?.financialResponsiblePhone ?? resolvedAgency?.financialResponsiblePhone ?? "").trim();
+      const document = String(payload.financialResponsibleDocument ?? src.document ?? resolvedCompany?.financialResponsibleDocument ?? resolvedAgency?.financialResponsibleDocument ?? "").trim();
+      return { name, email, phone, document };
+    })();
+
+    const resolvedBillingRecipients = (() => {
+      const src = billingRecipients || billingDeliveryRecipients || resolvedCompany?.defaultBillingRecipients || resolvedAgency?.defaultBillingRecipients || g1CrmGuest?.defaultBillingRecipients || null;
+      if (src && typeof src === "object") {
+        const waFlag = src.sendWhatsapp !== undefined ? src.sendWhatsapp : src.sendWhatsApp;
+        return {
+          guest: Boolean(src.guest),
+          requester: Boolean(src.requester),
+          company: Boolean(src.company ?? (resolvedCompany || resolvedAgency)),
+          financialResponsible: Boolean(src.financialResponsible),
+          sendEmail: src.sendEmail !== false,
+          sendWhatsapp: waFlag !== false,
+          sendWhatsApp: waFlag !== false
+        };
+      }
+      const hasFinResp = Boolean(resolvedFinResp.email || resolvedFinResp.phone);
+      return {
+        guest: !resolvedCompany && !resolvedAgency,
+        requester: Boolean(solEmail || solPhone),
+        company: Boolean(resolvedCompany || resolvedAgency),
+        financialResponsible: hasFinResp,
+        sendEmail: true,
+        sendWhatsapp: true,
+        sendWhatsApp: true
+      };
+    })();
+
+    const resolvedBoletoTermDays = Number(
+      boletoTermDays ??
+      resolvedCompany?.defaultBoletoTermDays ??
+      resolvedAgency?.defaultBoletoTermDays ??
+      15
+    );
+    const resolvedBoletoConsMode = safeNormConsumptionMode(
+      boletoConsumptionMode ||
+      resolvedCompany?.defaultBoletoConsumptionMode ||
+      resolvedAgency?.defaultBoletoConsumptionMode ||
+      "single"
+    );
+    const resolvedBoletoPayerType = String(
+      boletoPayerType ||
+      resolvedCompany?.defaultBoletoPayerType ||
+      resolvedAgency?.defaultBoletoPayerType ||
+      resolvedInvRecipient ||
+      (resolvedCompany ? "company" : (resolvedAgency ? "agency" : "guest"))
+    );
 
     const newRes = {
       id: rId,
@@ -38329,10 +39322,12 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
       requesterIsGuest1: reqIsGuest1,
       informGuestsLater: g1InformLater,
       guest2InformLater: g2InformLater,
-      hideFinancialForGuest: !reqIsGuest1,
-      nfHideFromGuest: !reqIsGuest1,
+      hideFinancialForGuest: resolvedNfHideFromGuest,
+      nfHideFromGuest: resolvedNfHideFromGuest,
       flatId: flat.id,
       flatNumber: String(flat.number),
+      guestId: g1CrmGuest?.id || null,
+      guestCode: g1CrmGuest?.guestCode || null,
       guestName: g1FinalName,
       guestPending: g1InformLater,
       guestPhone: g1Phone,
@@ -38348,6 +39343,7 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
       requesterEmail: solEmail,
       requesterInfo: {
         type: childReqType === "guest" ? "other_person" : childReqType,
+        guestId: resolvedRequesterGuestId || null,
         name: solName,
         phone: solPhone,
         whatsapp: solPhone,
@@ -38357,25 +39353,61 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
       companyId: resolvedCompany?.id || (companyId ? Number(companyId) : null),
       companyName: resolvedCompany?.corporateName || resolvedCompany?.tradeName || companyName || "",
       companyCnpj: resolvedCompany?.cnpj || companyCnpj || "",
-      costCenter: String(costCenter || "").trim(),
+      costCenter: String(costCenter || resolvedCompany?.defaultCostCenter || "").trim(),
       agencyId: resolvedAgency?.id || (agencyId ? Number(agencyId) : null),
       agencyName: resolvedAgency?.corporateName || agencyName || "",
       agencyTradeName: resolvedAgency?.tradeName || agencyTradeName || agencyName || "",
       agencyCnpj: resolvedAgency?.cnpj || agencyCnpj || "",
+      agencyPosUnit: String(agencyPosUnit || "").trim(),
+      agencyAgentName: String(agencyAgentName || "").trim(),
+      agencyAgentEmail: String(agencyAgentEmail || "").trim(),
+      agencyAgentPhone: String(agencyAgentPhone || "").trim(),
+      b2bReservationNumber: String(b2bReservationNumber || "").trim() || undefined,
+      b2bLocatorRloc: String(b2bLocatorRloc || b2bReservationNumber || "").trim() || undefined,
+      b2bRatePolicy: isB2b ? String(b2bRatePolicy || resolvedAgency?.defaultRatePolicy || "NET").toUpperCase() : undefined,
+      b2bCommissionPct: isB2b && b2bCommissionPct !== null ? Number(b2bCommissionPct) : undefined,
+      b2bPaymentType: isB2b && b2bPaymentType ? String(b2bPaymentType) : undefined,
+      invoiceRecipientType: resolvedInvRecipient,
+      nfRecipientType: resolvedInvRecipient,
+      invoicingInstructions: invoicingInstructions ? String(invoicingInstructions).trim() : "",
+      nfDeliveryEmails: resolvedNfDeliveryEmails,
+      invoiceDetails: invoiceDetails || null,
+      autoEmitInvoice: Boolean(autoEmitInvoice),
       checkinDate: draft.checkinDate,
       checkoutDate: draft.checkoutDate,
       checkinTime: item.checkinTime || payload.checkinTime || db.settings?.checkinTime || "14:00",
       checkoutTime: item.checkoutTime || payload.checkoutTime || db.settings?.checkoutTime || "12:00",
       status: resolvedStatus,
       expiresAt: expiresAtIso,
-      holdPreset: resolvedStatus === "pre_reserva" ? (holdPreset || `${resolvedHoldMins}m`) : undefined,
+      holdPreset: resolvedStatus === "pre_reserva" ? (holdInfoPkg?.holdPreset || holdPreset || `${resolvedHoldMins}m`) : undefined,
       holdDurationMinutes: resolvedStatus === "pre_reserva" ? resolvedHoldMins : undefined,
-      holdDurationLabel: resolvedStatus === "pre_reserva" ? (resolvedHoldMins >= 60 ? `${Math.round(resolvedHoldMins / 60)}h` : `${resolvedHoldMins} minutos`) : undefined,
+      holdDurationLabel: resolvedStatus === "pre_reserva" ? (holdInfoPkg?.holdDurationLabel || (resolvedHoldMins >= 60 ? `${Math.round(resolvedHoldMins / 60)}h` : `${resolvedHoldMins} minutos`)) : undefined,
       channel: isB2b ? "b2b" : channel,
       paymentMethod: effectivePayMethod,
       isFaturadoBoleto: isFaturadoPkg,
-      boletoTermDays: Number(boletoTermDays) || 15,
+      boletoTermDays: resolvedBoletoTermDays,
       boletoCustomDueDate: boletoCustomDueDate || null,
+      boletoConsumptionMode: resolvedBoletoConsMode,
+      boletoPayerType: resolvedBoletoPayerType,
+      consumptionSamePayerAndDue: consumptionSamePayerAndDue !== undefined
+        ? Boolean(consumptionSamePayerAndDue)
+        : (resolvedCompany?.defaultConsumptionSamePayerAndDue !== undefined ? Boolean(resolvedCompany.defaultConsumptionSamePayerAndDue) : true),
+      consumptionPayerType: String(consumptionPayerType || resolvedCompany?.defaultConsumptionPayerType || resolvedBoletoPayerType || "guest"),
+      consumptionTermDays: Number(consumptionTermDays ?? resolvedCompany?.defaultConsumptionTermDays ?? resolvedBoletoTermDays),
+      consumptionCustomDueDate: consumptionCustomDueDate || null,
+      consumptionCustomPayer: consumptionCustomPayer || null,
+      boletoFinePct: Number(boletoFinePct ?? resolvedCompany?.defaultBoletoFinePct ?? resolvedAgency?.defaultBoletoFinePct ?? 2),
+      boletoInterestPct: Number(boletoInterestPct ?? resolvedCompany?.defaultBoletoInterestPct ?? resolvedAgency?.defaultBoletoInterestPct ?? 1),
+      boletoAutoWriteOffDays: Number(boletoAutoWriteOffDays ?? resolvedCompany?.defaultBoletoAutoWriteOffDays ?? resolvedAgency?.defaultBoletoAutoWriteOffDays ?? 60),
+      autoEmitBoletoOnCheckout: autoEmitBoletoOnCheckout !== undefined
+        ? Boolean(autoEmitBoletoOnCheckout)
+        : Boolean(resolvedCompany?.defaultAutoEmitBoletoOnCheckout ?? resolvedAgency?.defaultAutoEmitBoletoOnCheckout ?? true),
+      autoReminderEnabled: autoReminderEnabled !== undefined
+        ? Boolean(autoReminderEnabled)
+        : Boolean(resolvedCompany?.defaultAutoReminderEnabled ?? resolvedAgency?.defaultAutoReminderEnabled ?? true),
+      financialResponsible: resolvedFinResp,
+      billingRecipients: resolvedBillingRecipients,
+      billingDeliveryRecipients: resolvedBillingRecipients,
       dailyRate: draft.dailyRate,
       dailyRates: draft.dailyRates,
       charges: draft.charges,
@@ -38385,19 +39417,7 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
       paidAmount: unitPaid,
       paidAt: effectiveFullySettledNow ? nowIso : undefined,
       paymentStatus: unitPayStatus,
-      payments: unitPaid > 0
-        ? [{
-            id: `pay_pkg_init_${rId}_${Date.now()}`,
-            amount: unitPaid,
-            method: effectivePayMethod,
-            date: nowIso,
-            packageCode: pkgCode,
-            packageBatchPaid: effectiveFullySettledNow,
-            notes: effectiveFullySettledNow
-              ? `Pagamento confirmado na criação do pacote ${pkgCode}`
-              : `Sinal parcial rateado na criação do pacote ${pkgCode}`
-          }]
-        : [],
+      payments: flatPayments,
       includeBreakfast: draft.includeBreakfast,
       twinBeds: draft.twinBeds,
       bedType: draft.twinBeds ? "twin" : "queen",
@@ -38467,7 +39487,7 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
         packageId: pkgCode,
         consolidatePackage: true,
         reservationIds: createdReservations.map((r) => r.id),
-        boletoTermDays,
+        boletoTermDays: createdReservations[0]?.boletoTermDays ?? Number(boletoTermDays ?? 15),
         customDueDate: boletoCustomDueDate,
         emitNfse,
         forceReissue: true,
@@ -38554,6 +39574,19 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
       });
     } catch (_) {}
   }
+
+  try {
+    if (typeof invalidateGuestCache === "function") invalidateGuestCache();
+    if (typeof markGuestReconciliationDirty === "function") markGuestReconciliationDirty();
+    if (typeof reconcileAndMergeGuests === "function") reconcileAndMergeGuests(db);
+    const firstGuestId = createdReservations[0]?.guestId;
+    const syncedMainGuest = firstGuestId && Array.isArray(db.guests)
+      ? db.guests.find((g) => g && Number(g.id) === Number(firstGuestId))
+      : null;
+    if (syncedMainGuest && typeof triggerAutoGoogleContactSync === "function") {
+      triggerAutoGoogleContactSync(db, syncedMainGuest);
+    }
+  } catch (_) {}
 
   saveDatabase("pms_package_created");
 
@@ -39026,133 +40059,32 @@ app.post("/api/pms/reservations", async (req, res) => {
     });
   }
 
-  // ── Resolução e Upsert de Agência (CRM de Agências) e Empresa (CRM de Empresas) ──
-  if (!db.agencies) db.agencies = [];
-  if (!db.companies) db.companies = [];
-
-  let resolvedAgency = null;
-  if (agencyId) {
-    resolvedAgency = db.agencies.find(a => Number(a.id) === Number(agencyId));
-  }
-  if (!resolvedAgency && (agencyName || agencyTradeName || agencyCnpj)) {
-    const cleanAgCnpj = String(agencyCnpj || "").replace(/\D/g, "");
-    resolvedAgency = db.agencies.find(a =>
-      (cleanAgCnpj && cleanAgCnpj.length === 14 && String(a.cnpj || "").replace(/\D/g, "") === cleanAgCnpj) ||
-      (agencyName && a.corporateName && a.corporateName.trim().toLowerCase() === String(agencyName).trim().toLowerCase()) ||
-      (agencyName && a.tradeName && a.tradeName.trim().toLowerCase() === String(agencyName).trim().toLowerCase()) ||
-      (agencyTradeName && a.tradeName && a.tradeName.trim().toLowerCase() === String(agencyTradeName).trim().toLowerCase())
-    );
-    if (!resolvedAgency && (agencyName || agencyTradeName)) {
-      const nextAgId = db.agencies.length > 0 ? Math.max(...db.agencies.map(a => Number(a.id) || 0)) + 1 : 1;
-      const agCorpName = String(agencyName || agencyTradeName).trim();
-      const agTrName = String(agencyTradeName || agencyName).trim();
-      const rawFirstNfEmail = Array.isArray(req.body?.nfDeliveryEmails)
-        ? String(req.body.nfDeliveryEmails[0] || "").trim()
-        : String(req.body?.nfDeliveryEmails || "").split(",")[0].trim();
-      const cleanAgAgentEmail = String(agencyAgentEmail || "").trim();
-      resolvedAgency = {
-        id: nextAgId,
-        corporateName: agCorpName,
-        razaoSocial: agCorpName,
-        tradeName: agTrName,
-        nomeFantasia: agTrName,
-        cnpj: agencyCnpj ? String(agencyCnpj).trim() : "Isento / Não informado",
-        email: !isPureBillingMailbox(cleanAgAgentEmail) ? cleanAgAgentEmail : "",
-        financialEmail: rawFirstNfEmail || (isPureBillingMailbox(cleanAgAgentEmail) ? cleanAgAgentEmail : ""),
-        emailFinanceiro: rawFirstNfEmail || (isPureBillingMailbox(cleanAgAgentEmail) ? cleanAgAgentEmail : ""),
-        phone: String(agencyAgentPhone || "").trim(),
-        telefone: String(agencyAgentPhone || "").trim(),
-        contactPerson: String(agencyAgentName || "").trim(),
-        billingTerms: "Cartão Virtual B2B (VCN)",
-        defaultRatePolicy: b2bRatePolicy || "COMISSIONADA",
-        defaultCommissionPct: b2bCommissionPct !== null ? Number(b2bCommissionPct) : (b2bRatePolicy === "COMISSIONADA" ? 12 : 0),
-        defaultInvoiceRecipient: invoiceRecipientType || "company",
-        posUnits: agencyPosUnit ? [{
-          name: String(agencyPosUnit).trim(),
-          email: String(agencyAgentEmail || "").trim(),
-          phone: String(agencyAgentPhone || "").trim(),
-          agents: agencyAgentName ? [String(agencyAgentName).trim()] : []
-        }] : [],
-        agents: agencyAgentName ? [{
-          name: String(agencyAgentName).trim(),
-          email: String(agencyAgentEmail || "").trim(),
-          phone: String(agencyAgentPhone || "").trim(),
-          posUnit: String(agencyPosUnit || "").trim()
-        }] : [],
-        clientCompanies: companyName ? [String(companyName).trim()] : [],
-        notes: "Agência cadastrada automaticamente ao registrar reserva B2B.",
-        createdAt: new Date().toISOString()
-      };
-      db.agencies.push(resolvedAgency);
-    }
-  }
-
-  if (resolvedAgency) {
-    if (!Array.isArray(resolvedAgency.posUnits)) resolvedAgency.posUnits = [];
-    if (!Array.isArray(resolvedAgency.agents)) resolvedAgency.agents = [];
-    if (!Array.isArray(resolvedAgency.clientCompanies)) resolvedAgency.clientCompanies = [];
-    if (agencyPosUnit) {
-      const unitTrim = String(agencyPosUnit).trim();
-      let u = resolvedAgency.posUnits.find(x => x.name && x.name.toLowerCase() === unitTrim.toLowerCase());
-      if (!u) {
-        u = {
-          name: unitTrim,
-          email: String(agencyAgentEmail || "").trim(),
-          phone: String(agencyAgentPhone || "").trim(),
-          agents: agencyAgentName ? [String(agencyAgentName).trim()] : []
-        };
-        resolvedAgency.posUnits.push(u);
-      } else if (agencyAgentName && Array.isArray(u.agents) && !u.agents.includes(String(agencyAgentName).trim())) {
-        u.agents.push(String(agencyAgentName).trim());
-      }
-    }
-    if (agencyAgentName) {
-      const agTrim = String(agencyAgentName).trim();
-      const exAg = resolvedAgency.agents.find(x => x.name && x.name.toLowerCase() === agTrim.toLowerCase());
-      if (!exAg) {
-        resolvedAgency.agents.push({
-          name: agTrim,
-          email: String(agencyAgentEmail || "").trim(),
-          phone: String(agencyAgentPhone || "").trim(),
-          posUnit: String(agencyPosUnit || "").trim()
-        });
-      }
-    }
-    if (companyName && !resolvedAgency.clientCompanies.includes(String(companyName).trim())) {
-      resolvedAgency.clientCompanies.push(String(companyName).trim());
-    }
-  }
-
-  let resolvedCompany = null;
-  if (companyId) {
-    resolvedCompany = db.companies.find(c => Number(c.id) === Number(companyId));
-  }
-  if (!resolvedCompany && companyName) {
-    resolvedCompany = db.companies.find(c =>
-      (c.corporateName && c.corporateName.trim().toLowerCase() === String(companyName).trim().toLowerCase()) ||
-      (c.tradeName && c.tradeName.trim().toLowerCase() === String(companyName).trim().toLowerCase())
-    );
-    if (!resolvedCompany && isB2b) {
-      const nextCompId = db.companies.length > 0 ? Math.max(...db.companies.map(c => Number(c.id) || 0)) + 1 : 1;
-      const compNameTrim = String(companyName).trim();
-      resolvedCompany = {
-        id: nextCompId,
-        corporateName: compNameTrim,
-        razaoSocial: compNameTrim,
-        tradeName: compNameTrim,
-        nomeFantasia: compNameTrim,
-        cnpj: req.body.companyCnpj ? String(req.body.companyCnpj).trim() : "Isento / Não informado",
-        financialEmail: "",
-        phone: "",
-        contactPerson: "",
-        billingTerms: "B2B",
-        defaultCostCenter: costCenter ? String(costCenter).trim() : "",
-        notes: "Empresa vinculada em reserva B2B.",
-        createdAt: new Date().toISOString()
-      };
-      db.companies.push(resolvedCompany);
-    }
-  }
+  // ── Resolução e Upsert de Agência (CRM de Agências) e Empresa (CRM de Empresas / CNPJ Inline) ──
+  const { resolvedCompany: initialResolvedCompany, resolvedAgency } = resolveOrUpsertReservationCompanyAndAgency(db, {
+    agencyId,
+    agencyName,
+    agencyTradeName,
+    agencyCnpj,
+    agencyPosUnit,
+    agencyAgentName,
+    agencyAgentEmail,
+    agencyAgentPhone,
+    b2bRatePolicy,
+    b2bCommissionPct,
+    invoiceRecipientType,
+    nfDeliveryEmails: req.body.nfDeliveryEmails,
+    companyId,
+    companyName,
+    companyCnpj: req.body.companyCnpj,
+    companyData: req.body.companyData,
+    companyEmail: req.body.companyEmail,
+    costCenter,
+    contactPerson: requesterInfo?.name || guestName || "",
+    isB2b,
+    isFaturado: isFaturadoOnCreate,
+    boletoTermDays: req.body.boletoTermDays
+  });
+  let resolvedCompany = initialResolvedCompany;
 
   const numGuests = Math.min(Math.max(Number(guestCount) || (Array.isArray(guests) && guests.length > 0 ? guests.length : 1), 1), 3);
   const rawInputGuestName = String(guestName || guests?.[0]?.name || "").trim();
@@ -39172,61 +40104,28 @@ app.post("/api/pms/reservations", async (req, res) => {
   if (!db.guests) db.guests = [];
   let guest = null;
   if (req.body.guestId || !isGuestPending) {
-    guest = db.guests.find(g => {
-      if (!isGuestPending && !areGuestNamesCompatible(g.fullName || g.name, primaryName)) {
-        return false;
-      }
-      return (
-        (req.body.guestId && req.body.guestId !== "manual" && Number(g.id) === Number(req.body.guestId)) ||
-        (primaryPhone && phonesMatch(g.phone, primaryPhone)) ||
-        (primaryDoc && normalizeDoc(g.document || g.documentNumber) === normalizeDoc(primaryDoc)) ||
-        (!isGuestPending && g.name && normalizeName(g.fullName || g.name) === normalizeName(primaryName))
-      );
-    });
-
-    if (!guest && !isGuestPending) {
-      const nextGId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
-      guest = {
-        id: nextGId,
-        guestCode: `HOSP-${String(nextGId).padStart(5, "0")}`,
-        name: primaryName,
-        fullName: primaryName,
-        phone: primaryPhone,
-        email: primaryEmail,
-        document: primaryDoc,
-        companyId: resolvedCompany?.id || (companyId ? Number(companyId) : null),
-        companyName: resolvedCompany?.corporateName || companyName || "",
-        agencyId: resolvedAgency?.id || (agencyId ? Number(agencyId) : null),
-        agencyName: resolvedAgency?.tradeName || agencyName || "",
-        costCenter: costCenter ? String(costCenter).trim() : "",
-        city: "",
-        notes: "",
-        tags: isB2b ? ["Corporativo B2B"] : [],
-        isMonthlyGuest: isMonthly,
-        clientType: isMonthly ? "mensalista" : (isB2b ? "corporativo" : "avulso"),
-        autoEmitInvoice: autoInvoice,
-        createdAt: new Date().toISOString()
-      };
-      db.guests.push(guest);
-    } else if (guest) {
-      if (primaryPhone) guest.phone = primaryPhone;
-      else if (guest.phone) primaryPhone = String(guest.phone).trim();
-      if (primaryEmail) guest.email = primaryEmail;
-      else if (guest.email) primaryEmail = String(guest.email).trim();
-      if (primaryDoc) guest.document = primaryDoc;
-      else if (guest.document || guest.cpf) primaryDoc = String(guest.document || guest.cpf).trim();
-      if (resolvedCompany?.corporateName || companyName) guest.companyName = resolvedCompany?.corporateName || companyName;
-      if (resolvedCompany?.id) guest.companyId = resolvedCompany.id;
-      if (resolvedAgency?.id) guest.agencyId = resolvedAgency.id;
-      if (resolvedAgency?.tradeName || agencyName) guest.agencyName = resolvedAgency?.tradeName || agencyName;
-      if (costCenter) guest.costCenter = String(costCenter).trim();
-      if (isMonthly) {
-        guest.isMonthlyGuest = true;
-        guest.clientType = "mensalista";
-      }
-      if (autoInvoice) {
-        guest.autoEmitInvoice = true;
-      }
+    const upsertedMain = upsertCrmGuestProfile(db, {
+      guestId: req.body.guestId,
+      name: primaryName,
+      phone: primaryPhone,
+      email: primaryEmail,
+      document: primaryDoc,
+      informLater: isGuestPending,
+      companyId: resolvedCompany?.id || (companyId ? Number(companyId) : null),
+      companyName: resolvedCompany?.corporateName || companyName || "",
+      companyCnpj: resolvedCompany?.cnpj || req.body.companyCnpj || "",
+      agencyId: resolvedAgency?.id || (agencyId ? Number(agencyId) : null),
+      agencyName: resolvedAgency?.tradeName || agencyName || "",
+      costCenter: costCenter ? String(costCenter).trim() : "",
+      tags: isB2b ? ["Corporativo B2B"] : [],
+      isMonthlyGuest: isMonthly,
+      autoEmitInvoice: autoInvoice
+    }, { isB2b });
+    if (upsertedMain?.guest) {
+      guest = upsertedMain.guest;
+      primaryPhone = upsertedMain.phone || primaryPhone;
+      primaryEmail = upsertedMain.email || primaryEmail;
+      primaryDoc = upsertedMain.document || primaryDoc;
     }
   }
 
@@ -39238,6 +40137,7 @@ app.post("/api/pms/reservations", async (req, res) => {
       preparedGuests.push({
         index: 1,
         guestId: guest ? guest.id : null,
+        guestCode: guest?.guestCode || null,
         name: isGuestPending ? "" : primaryName,
         cpf: primaryDoc,
         phone: primaryPhone,
@@ -39246,56 +40146,50 @@ app.post("/api/pms/reservations", async (req, res) => {
         checkinCompletedAt: existingG?.checkinCompletedAt || null
       });
     } else {
-      const gName = existingG?.name ? existingG.name.trim() : `Hóspede ${i}`;
-      const gCpf = (existingG?.cpf || existingG?.document || "").trim();
-      const gPhone = (existingG?.phone || "").trim();
-      const gEmail = (existingG?.email || "").trim();
+      const gName = existingG?.name ? existingG.name.trim() : "";
+      const gInformLater = Boolean(
+        req.body.informGuestsLater ||
+        (i === 2 && req.body.guest2InformLater) ||
+        existingG?.informLater ||
+        !gName ||
+        isPendingGuestName(gName) ||
+        /^h[óo]spede\s*\d+$/i.test(gName)
+      );
+      let gCpf = gInformLater ? "" : (existingG?.cpf || existingG?.document || "").trim();
+      let gPhone = gInformLater ? "" : (existingG?.phone || existingG?.whatsapp || "").trim();
+      let gEmail = gInformLater ? "" : (existingG?.email || "").trim().toLowerCase();
       let resolvedExtraGuestId = existingG?.guestId ? Number(existingG.guestId) : null;
+      let resolvedExtraGuestCode = null;
 
-      if (gName && !/^h[óo]spede\s*\d+$/i.test(gName)) {
-        let extraGuest = db.guests.find(cg =>
-          (resolvedExtraGuestId && cg.id === resolvedExtraGuestId) ||
-          (gCpf && (cg.document === gCpf || cg.documentNumber === gCpf)) ||
-          (gPhone && cg.phone === gPhone) ||
-          (cg.name && cg.name.toLowerCase() === gName.toLowerCase())
-        );
-        if (!extraGuest) {
-          extraGuest = {
-            id: db.guests.length > 0 ? Math.max(...db.guests.map(cg => cg.id)) + 1 : 1,
-            name: gName,
-            fullName: gName,
-            phone: gPhone,
-            email: gEmail,
-            document: gCpf,
-            documentNumber: gCpf,
-            city: "",
-            companyName: companyName || "",
-            notes: `Cadastrado como ${i}º hóspede (acompanhante) da reserva`,
-            tags: [],
-            isMonthlyGuest: false,
-            clientType: "avulso",
-            autoEmitInvoice: false,
-            createdAt: new Date().toISOString()
-          };
-          db.guests.push(extraGuest);
-        } else {
-          if (gPhone && !extraGuest.phone) extraGuest.phone = gPhone;
-          if (gEmail && !extraGuest.email) extraGuest.email = gEmail;
-          if (gCpf && !extraGuest.document) {
-            extraGuest.document = gCpf;
-            extraGuest.documentNumber = gCpf;
-          }
+      if (!gInformLater) {
+        const upExtra = upsertCrmGuestProfile(db, {
+          guestId: resolvedExtraGuestId,
+          name: gName,
+          phone: gPhone,
+          email: gEmail,
+          document: gCpf,
+          companyId: resolvedCompany?.id || null,
+          companyName: resolvedCompany?.corporateName || companyName || "",
+          notes: `Cadastrado como ${i}º hóspede (acompanhante) da reserva`
+        }, { isB2b });
+        if (upExtra?.guest) {
+          resolvedExtraGuestId = upExtra.guest.id;
+          resolvedExtraGuestCode = upExtra.guest.guestCode || null;
+          if (!gPhone && upExtra.phone) gPhone = upExtra.phone;
+          if (!gEmail && upExtra.email) gEmail = upExtra.email;
+          if (!gCpf && upExtra.document) gCpf = upExtra.document;
         }
-        resolvedExtraGuestId = extraGuest.id;
       }
 
       preparedGuests.push({
         index: i,
         guestId: resolvedExtraGuestId,
-        name: gName,
+        guestCode: resolvedExtraGuestCode,
+        name: gInformLater ? "" : gName,
         cpf: gCpf,
         phone: gPhone,
         email: gEmail,
+        informLater: gInformLater,
         hasCompletedCheckin: Boolean(existingG?.hasCompletedCheckin),
         checkinCompletedAt: existingG?.checkinCompletedAt || null
       });
@@ -39306,39 +40200,27 @@ app.post("/api/pms/reservations", async (req, res) => {
   const { invoiceDetails } = req.body;
   if (invoiceDetails && invoiceDetails.emitInvoice) {
     if (invoiceDetails.type === "pj" && invoiceDetails.cnpj) {
-      if (!db.companies) db.companies = [];
       const cleanCnpj = invoiceDetails.cnpj.replace(/\D/g, "");
-      let existingComp = db.companies.find(c => c.cnpj.replace(/\D/g, "") === cleanCnpj);
-      if (!existingComp) {
-        existingComp = {
-          id: db.companies.length > 0 ? Math.max(...db.companies.map(c => c.id)) + 1 : 1,
-          corporateName: (invoiceDetails.companyName || invoiceDetails.razaoSocial || "Empresa PJ").trim(),
-          razaoSocial: (invoiceDetails.companyName || invoiceDetails.razaoSocial || "Empresa PJ").trim(),
-          tradeName: (invoiceDetails.tradeName || invoiceDetails.nomeFantasia || invoiceDetails.companyName || "").trim(),
-          nomeFantasia: (invoiceDetails.tradeName || invoiceDetails.nomeFantasia || invoiceDetails.companyName || "").trim(),
-          cnpj: invoiceDetails.cnpj.trim(),
-          stateRegistration: "",
-          municipalRegistration: "",
-          financialEmail: (invoiceDetails.companyEmail || "").trim(),
-          phone: (invoiceDetails.companyPhone || "").trim(),
-          contactPerson: primaryName,
-          companyRole: "invoice_only",
-          allowsDirectReservations: false,
-          isInvoiceOnly: true,
-          billingEnabled: false,
-          billingTerms: "",
-          notes: `Cadastrada automaticamente para emissão de NFS-e no nome do hóspede ${primaryName}.`,
-          createdAt: new Date().toISOString()
-        };
-        db.companies.push(existingComp);
-      }
-      if (!resolvedCompany) {
-        resolvedCompany = existingComp;
+      const { resolvedCompany: invComp } = resolveOrUpsertReservationCompanyAndAgency(db, {
+        companyCnpj: invoiceDetails.cnpj,
+        companyName: invoiceDetails.companyName || invoiceDetails.razaoSocial || "Empresa PJ",
+        companyData: {
+          corporateName: invoiceDetails.companyName || invoiceDetails.razaoSocial || "Empresa PJ",
+          tradeName: invoiceDetails.tradeName || invoiceDetails.nomeFantasia || invoiceDetails.companyName || "",
+          cnpj: invoiceDetails.cnpj,
+          financialEmail: invoiceDetails.companyEmail || "",
+          phone: invoiceDetails.companyPhone || "",
+          contactPerson: primaryName
+        },
+        isInvoiceOnly: true
+      });
+      if (!resolvedCompany && invComp) {
+        resolvedCompany = invComp;
       }
 
-      if (guest) {
-        guest.companyId = existingComp.id;
-        guest.companyName = existingComp.corporateName;
+      if (guest && invComp) {
+        guest.companyId = invComp.id;
+        guest.companyName = invComp.corporateName;
         guest.companyCnpj = cleanCnpj;
         guest.preferredInvoiceRecipient = "company";
         guest.autoEmitInvoice = true;
@@ -39373,50 +40255,25 @@ app.post("/api/pms/reservations", async (req, res) => {
   let finalRequesterInfo = requesterInfo ? { ...requesterInfo } : null;
   if (requesterType === "other_person" && finalRequesterInfo && finalRequesterInfo.name) {
     const reqName = (finalRequesterInfo.name || "").trim();
-    const reqPhone = (finalRequesterInfo.phone || "").trim();
-    const reqEmail = (finalRequesterInfo.email || "").trim();
+    const reqPhone = (finalRequesterInfo.phone || finalRequesterInfo.whatsapp || "").trim();
+    const reqEmail = formatEmailList(finalRequesterInfo.email || "") || (finalRequesterInfo.email || "").trim();
     const reqDoc = (finalRequesterInfo.cpf || finalRequesterInfo.document || "").trim();
+    finalRequesterInfo.email = reqEmail;
 
-    if (!db.guests) db.guests = [];
-
-    let reqGuest = db.guests.find(g =>
-      (finalRequesterInfo.guestId && g.id === Number(finalRequesterInfo.guestId)) ||
-      (reqDoc && (g.document === reqDoc || g.documentNumber === reqDoc)) ||
-      (reqPhone && g.phone === reqPhone) ||
-      (reqName && g.name && g.name.toLowerCase() === reqName.toLowerCase())
-    );
-
-    if (!reqGuest) {
-      reqGuest = {
-        id: db.guests.length > 0 ? Math.max(...db.guests.map(g => g.id)) + 1 : 1,
-        name: reqName,
-        fullName: reqName,
-        phone: reqPhone,
-        email: reqEmail,
-        document: reqDoc,
-        documentNumber: reqDoc,
-        city: "",
-        companyName: companyName || "",
-        notes: "Cadastrado como solicitante da reserva",
-        tags: ["solicitante_terceiro"],
-        isMonthlyGuest: false,
-        clientType: "avulso",
-        autoEmitInvoice: false,
-        createdAt: new Date().toISOString()
-      };
-      db.guests.push(reqGuest);
-    } else {
-      if (reqPhone && !reqGuest.phone) reqGuest.phone = reqPhone;
-      if (reqEmail && !reqGuest.email) reqGuest.email = reqEmail;
-      if (reqDoc && !reqGuest.document) {
-        reqGuest.document = reqDoc;
-        reqGuest.documentNumber = reqDoc;
-      }
-      if (Array.isArray(reqGuest.tags) && !reqGuest.tags.includes("solicitante_terceiro")) {
-        reqGuest.tags.push("solicitante_terceiro");
-      }
+    const reqUpserted = upsertCrmGuestProfile(db, {
+      guestId: finalRequesterInfo.guestId,
+      name: reqName,
+      phone: reqPhone,
+      email: getPrimaryEmail(reqEmail) || reqEmail,
+      document: reqDoc,
+      companyId: resolvedCompany?.id || null,
+      companyName: resolvedCompany?.corporateName || companyName || "",
+      notes: "Cadastrado como solicitante da reserva",
+      tags: ["solicitante_terceiro"]
+    }, { isB2b });
+    if (reqUpserted?.guest?.id) {
+      finalRequesterInfo.guestId = reqUpserted.guest.id;
     }
-    finalRequesterInfo.guestId = reqGuest.id;
   }
 
   const extResNum = String(b2bReservationNumber || externalReservationNumber || "").trim();
@@ -39463,20 +40320,26 @@ app.post("/api/pms/reservations", async (req, res) => {
       guest.preferredInvoiceRecipient = "guest";
     }
   }
-  const resolvedNfEmails = Array.isArray(nfDeliveryEmails)
-    ? nfDeliveryEmails.map(e => String(e).trim()).filter(Boolean)
-    : (typeof nfDeliveryEmails === "string" && nfDeliveryEmails.trim()
-        ? nfDeliveryEmails.split(/[;,]+/).map(e => e.trim()).filter(Boolean)
-        : (isB2b
-            ? Array.from(new Set([
-                agencyAgentEmail,
-                resolvedAgency?.financialEmail,
-                resolvedInvRecipient === "guest" ? primaryEmail : ""
-              ].map(e => String(e || "").trim()).filter(Boolean)))
-            : []));
   const resolvedNfHideFromGuest = nfHideFromGuest !== null && nfHideFromGuest !== undefined
     ? Boolean(nfHideFromGuest)
     : (isB2b && resolvedInvRecipient !== "guest");
+  const parsedExplicitNfEmails = parseEmailList(nfDeliveryEmails);
+  let resolvedNfEmails = parsedExplicitNfEmails.length > 0
+    ? parsedExplicitNfEmails
+    : (isB2b
+        ? parseEmailList([
+            agencyAgentEmail,
+            resolvedAgency?.financialEmail,
+            resolvedInvRecipient === "guest" ? primaryEmail : ""
+          ])
+        : parseEmailList([
+            resolvedInvRecipient === "company" ? resolvedCompany?.financialEmail : "",
+            resolvedInvRecipient === "requester" ? finalRequesterInfo?.email : "",
+            !resolvedNfHideFromGuest && resolvedInvRecipient === "guest" ? primaryEmail : ""
+          ]));
+  if (resolvedNfHideFromGuest && primaryEmail) {
+    resolvedNfEmails = resolvedNfEmails.filter(e => e !== primaryEmail.toLowerCase());
+  }
 
   const holdInfoOnCreate = resolvedStatus === "pre_reserva"
     ? resolvePreReservationHold(req.body, checkinDate)
@@ -40036,6 +40899,7 @@ app.post("/api/pms/reservations", async (req, res) => {
   } catch (_) {}
 
   try {
+    invalidateGuestCache();
     reconcileAndMergeGuests(db);
     const syncedMainGuest = (db.guests || []).find(g => Number(g.id) === Number(newReservation.guestId));
     if (syncedMainGuest) triggerAutoGoogleContactSync(db, syncedMainGuest);
@@ -50417,21 +51281,34 @@ app.get("/api/pms/guests", (req, res) => {
   const resByName = new Map();
   for (const r of reservations) {
     if (!r) continue;
-    if (r.guestId) addToMapList(resByGuestId, r.guestId, r);
-    const rDoc = (r.guestDocument || r.document || "").replace(/\D/g, "");
+    if (r.guestId) addToMapList(resByGuestId, Number(r.guestId), r);
+    const rDoc = normalizeDoc(r.guestDocument || r.document || "");
     if (rDoc) addToMapList(resByDoc, rDoc, r);
-    if (Array.isArray(r.guests)) {
-      for (const rg of r.guests) {
-        const rgCpf = (rg?.cpf || "").replace(/\D/g, "");
-        if (rgCpf && rgCpf !== rDoc) addToMapList(resByDoc, rgCpf, r);
-      }
-    }
     const rPhone = normalizePhone(r.guestPhone || "");
     if (rPhone && rPhone.length >= 8) addToMapList(resByPhone, rPhone, r);
     const rEmail = (r.guestEmail || "").trim().toLowerCase();
     if (rEmail && rEmail.includes("@")) addToMapList(resByEmail, rEmail, r);
     const rName = normalizeName(r.guestName || "");
     if (rName && rName.length >= 5) addToMapList(resByName, rName, r);
+
+    if (Array.isArray(r.guests)) {
+      for (const rg of r.guests) {
+        if (!rg) continue;
+        if (rg.guestId && Number(rg.guestId) !== Number(r.guestId)) {
+          addToMapList(resByGuestId, Number(rg.guestId), r);
+        }
+        const rgDoc = normalizeDoc(rg.cpf || rg.document || "");
+        if (rgDoc && rgDoc !== rDoc) addToMapList(resByDoc, rgDoc, r);
+        const rgPhone = normalizePhone(rg.phone || rg.whatsapp || "");
+        if (rgPhone && rgPhone.length >= 8 && rgPhone !== rPhone) addToMapList(resByPhone, rgPhone, r);
+        const rgEmail = String(rg.email || "").trim().toLowerCase();
+        if (rgEmail && rgEmail.includes("@") && rgEmail !== rEmail) addToMapList(resByEmail, rgEmail, r);
+        const rgName = normalizeName(rg.name || "");
+        if (rgName && rgName.length >= 5 && rgName !== rName && !isPlaceholderOrEmptyGuestName(rg.name)) {
+          addToMapList(resByName, rgName, r);
+        }
+      }
+    }
   }
 
   const invByDoc = new Map();
@@ -50480,15 +51357,32 @@ app.get("/api/pms/guests", (req, res) => {
     const guestNameTokenCount = guestNameLower.split(/\s+/).filter(Boolean).length;
     const candResSet = new Set();
     const appendResCands = (arr) => { if (arr) for (const item of arr) candResSet.add(item); };
-    if (g.id) appendResCands(resByGuestId.get(g.id));
+    if (g.id) appendResCands(resByGuestId.get(Number(g.id)));
     if (cleanDoc) appendResCands(resByDoc.get(cleanDoc));
     if (cleanPhone && cleanPhone.length >= 8) appendResCands(resByPhone.get(cleanPhone));
     if (cleanEmail && cleanEmail.includes("@")) appendResCands(resByEmail.get(cleanEmail));
     if (guestNameLower && guestNameTokenCount >= 2 && guestNameLower.length >= 5) appendResCands(resByName.get(guestNameLower));
 
+    const gDisplayName = g.fullName || g.name || "";
     const guestReservations = [];
     for (const r of candResSet) {
-      if (areGuestNamesCompatible(r.guestName, g.fullName || g.name)) {
+      const matchesTitular = areGuestNamesCompatible(r.guestName, gDisplayName);
+      const matchesCompanionSlot = Array.isArray(r.guests) && r.guests.some((rg) => {
+        if (!rg || isPlaceholderOrEmptyGuestName(rg.name)) return false;
+        if (!areGuestNamesCompatible(rg.name, gDisplayName)) return false;
+        const rgDoc = normalizeDoc(rg.cpf || rg.document || "");
+        const rgPhone = normalizePhone(rg.phone || rg.whatsapp || "");
+        const rgEmail = String(rg.email || "").trim().toLowerCase();
+        const rgNameNorm = normalizeName(rg.name || "");
+        return (
+          (rg.guestId && g.id && Number(rg.guestId) === Number(g.id)) ||
+          (cleanDoc && rgDoc === cleanDoc) ||
+          (cleanPhone && cleanPhone.length >= 8 && rgPhone && phonesMatch(rgPhone, cleanPhone)) ||
+          (cleanEmail && cleanEmail.includes("@") && rgEmail === cleanEmail) ||
+          (guestNameLower && guestNameTokenCount >= 2 && guestNameLower.length >= 5 && rgNameNorm === guestNameLower)
+        );
+      });
+      if (matchesTitular || matchesCompanionSlot) {
         guestReservations.push(r);
       }
     }
@@ -52660,21 +53554,38 @@ app.get("/api/pms/guests/:id", async (req, res) => {
   const guestNameLower = normalizeName(guest.fullName || guest.name || "");
   const guestNameTokenCount = guestNameLower.split(/\s+/).filter(Boolean).length;
 
-  // Histórico de Reservas (por ID, CPF, telefone ou nome composto, respeitando compatibilidade nominal)
+  // Histórico de Reservas (titular ou acompanhante — por ID, CPF, telefone ou nome composto, respeitando compatibilidade nominal)
+  const gDisplayName = guest.fullName || guest.name || "";
   const guestReservations = (db.reservations || []).filter(r => {
-    if (!areGuestNamesCompatible(r.guestName, guest.fullName || guest.name)) {
-      return false;
-    }
-    const resDoc = (r.guestDocument || r.document || "").replace(/\D/g, "");
+    const resDoc = normalizeDoc(r.guestDocument || r.document || "");
     const resPhone = normalizePhone(r.guestPhone || "");
     const resEmail = (r.guestEmail || "").trim().toLowerCase();
     const resName = normalizeName(r.guestName || "");
-    return (r.guestId && r.guestId === guest.id) ||
-           (cleanDoc && resDoc === cleanDoc) ||
-           (cleanPhone && cleanPhone.length >= 8 && resPhone === cleanPhone) ||
-           (cleanEmail && cleanEmail.includes("@") && resEmail === cleanEmail) ||
-           (guestNameLower && guestNameTokenCount >= 2 && guestNameLower.length >= 5 && resName === guestNameLower) ||
-           (cleanDoc && Array.isArray(r.guests) && r.guests.some(rg => (rg.cpf || "").replace(/\D/g, "") === cleanDoc));
+    const matchesTitular =
+      areGuestNamesCompatible(r.guestName, gDisplayName) &&
+      (
+        (r.guestId && Number(r.guestId) === Number(guest.id)) ||
+        (cleanDoc && resDoc === cleanDoc) ||
+        (cleanPhone && cleanPhone.length >= 8 && resPhone && phonesMatch(resPhone, cleanPhone)) ||
+        (cleanEmail && cleanEmail.includes("@") && resEmail === cleanEmail) ||
+        (guestNameLower && guestNameTokenCount >= 2 && guestNameLower.length >= 5 && resName === guestNameLower)
+      );
+    const matchesCompanion = Array.isArray(r.guests) && r.guests.some(rg => {
+      if (!rg || isPlaceholderOrEmptyGuestName(rg.name)) return false;
+      if (!areGuestNamesCompatible(rg.name, gDisplayName)) return false;
+      const rgDoc = normalizeDoc(rg.cpf || rg.document || "");
+      const rgPhone = normalizePhone(rg.phone || rg.whatsapp || "");
+      const rgEmail = String(rg.email || "").trim().toLowerCase();
+      const rgNameNorm = normalizeName(rg.name || "");
+      return (
+        (rg.guestId && Number(rg.guestId) === Number(guest.id)) ||
+        (cleanDoc && rgDoc === cleanDoc) ||
+        (cleanPhone && cleanPhone.length >= 8 && rgPhone && phonesMatch(rgPhone, cleanPhone)) ||
+        (cleanEmail && cleanEmail.includes("@") && rgEmail === cleanEmail) ||
+        (guestNameLower && guestNameTokenCount >= 2 && guestNameLower.length >= 5 && rgNameNorm === guestNameLower)
+      );
+    });
+    return matchesTitular || matchesCompanion;
   }).sort((a, b) => new Date(b.checkinDate || b.createdAt).getTime() - new Date(a.checkinDate || a.createdAt).getTime());
 
   // Histórico de Notas Fiscais
@@ -55891,6 +56802,8 @@ app.get("/api/pms/reservations/:id/communications", async (req, res) => {
   );
   const resIdStr = r ? String(r.id) : paramId;
   const resCode = r?.code || (paramId.startsWith("RES-") || paramId.startsWith("CORP-") || paramId.startsWith("B2B-") ? paramId : null);
+  const pkgCode = String(r?.packageCode || r?.packageId || (paramId.toUpperCase().startsWith("PKG-") ? paramId : "")).trim();
+  const pkgCodeUpper = pkgCode ? pkgCode.toUpperCase() : "";
 
   if (r && (!pgPool || pgHydratedSuccessfully)) {
     ensureReservationScheduledEmails(db, saveDatabase, r);
@@ -55904,19 +56817,29 @@ app.get("/api/pms/reservations/:id/communications", async (req, res) => {
     }
   }
 
+  const idMatches = (code, id, pCode = null) => {
+    if (pkgCodeUpper) {
+      if (pCode && String(pCode).trim().toUpperCase() === pkgCodeUpper) return true;
+      if (code && String(code).trim().toUpperCase() === pkgCodeUpper) return true;
+      if (id && String(id).trim().toUpperCase() === pkgCodeUpper) return true;
+    }
+    if (resCode && code && String(code).toUpperCase() === String(resCode).toUpperCase()) return true;
+    if (resIdStr && (String(code) === resIdStr || String(id) === resIdStr)) return true;
+    if (paramId && (String(code) === paramId || String(id) === paramId)) return true;
+    return false;
+  };
+
   // 1. E-mails Enviados
   if (!db.reservationCommunications) db.reservationCommunications = [];
   const emailsSent = db.reservationCommunications.filter(c =>
-    String(c.reservation_id) === resIdStr ||
-    (resCode && String(c.reservation_id) === String(resCode))
+    idMatches(c.metadata?.reservationCode || c.reservationCode, c.reservation_id, c.packageCode || c.metadata?.packageCode)
   );
   emailsSent.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   // 2. E-mails Agendados
   if (!db.emailQueue) db.emailQueue = [];
   const emailsScheduled = db.emailQueue.filter(q =>
-    (q.reservationCode && (q.reservationCode === resCode || q.reservationCode === resIdStr)) ||
-    (q.reservationId && (String(q.reservationId) === resIdStr || String(q.reservationId) === String(resCode)))
+    idMatches(q.reservationCode, q.reservationId, q.packageCode)
   );
 
   // 3. Resolução Consolidada de Telefones e Identificadores para WhatsApp
@@ -55924,7 +56847,7 @@ app.get("/api/pms/reservations/:id/communications", async (req, res) => {
     (r.guestId && g.id === r.guestId) ||
     (r.guestPhone && g.phone && g.phone.replace(/\D/g, "") === r.guestPhone.replace(/\D/g, "")) ||
     (r.guestDocument && g.document && g.document.replace(/\D/g, "") === r.guestDocument.replace(/\D/g, "")) ||
-    (r.guestName && g.name && g.name.toLowerCase().trim() === r.guestName.toLowerCase().trim())
+    (r.guestName && !isPendingGuestName(r.guestName) && g.name && g.name.toLowerCase().trim() === r.guestName.toLowerCase().trim())
   ) : null;
 
   const phoneCandidates = new Set();
@@ -55941,7 +56864,14 @@ app.get("/api/pms/reservations/:id/communications", async (req, res) => {
   };
 
   addPhoneDigits(r?.guestPhone);
-  addPhoneDigits(r?.guests?.[0]?.phone);
+  addPhoneDigits(r?.requesterPhone);
+  addPhoneDigits(r?.requesterInfo?.phone);
+  addPhoneDigits(r?.requesterInfo?.whatsapp);
+  if (Array.isArray(r?.guests)) {
+    for (const rg of r.guests) {
+      addPhoneDigits(rg?.phone || rg?.whatsapp);
+    }
+  }
   addPhoneDigits(matchedGuest?.phone);
 
   const isMiller = (r?.guestName && r.guestName.toLowerCase().includes("miller")) ||
@@ -55965,28 +56895,24 @@ app.get("/api/pms/reservations/:id/communications", async (req, res) => {
     );
   };
 
-  const idMatches = (code, id) => {
-    if (resCode && code && String(code).toUpperCase() === String(resCode).toUpperCase()) return true;
-    if (resIdStr && (String(code) === resIdStr || String(id) === resIdStr)) return true;
-    if (paramId && (String(code) === paramId || String(id) === paramId)) return true;
-    return false;
-  };
+  const resCheckoutPlusGrace = r?.checkoutDate ? addDaysToIsoDate(r.checkoutDate, 7) : null;
 
-  // 4. Mensagens de WhatsApp Agendadas (Fila) — vinculação estrita por reserva quando reservationCode/reservationId existir
+  // 4. Mensagens de WhatsApp Agendadas (Fila) — vinculação estrita por reserva quando reservationCode/reservationId/packageCode existir
   const whatsappQueue = (db.whatsappQueue || []).filter(q => {
-    if (idMatches(q.reservationCode, q.reservationId)) return true;
-    if (q.reservationCode || q.reservationId) return false;
+    if (idMatches(q.reservationCode, q.reservationId, q.packageCode)) return true;
+    if (q.reservationCode || q.reservationId || q.packageCode) return false;
     if (phoneMatches(q.guestPhone)) return true;
     return false;
   });
 
   // 5. Histórico de Mensagens de WhatsApp Enviadas — nunca misturar mensagens de reservas anteriores/canceladas do mesmo hóspede
   const whatsappHistory = (db.whatsappHistory || []).filter(h => {
-    if (idMatches(h.reservationCode, h.reservationId)) return true;
-    if (h.reservationCode || h.reservationId) return false;
+    if (idMatches(h.reservationCode, h.reservationId, h.packageCode)) return true;
+    if (h.reservationCode || h.reservationId || h.packageCode) return false;
     if (r?.createdAt && h.sentAt && h.sentAt < r.createdAt) return false;
+    if (resCheckoutPlusGrace && h.sentAt && String(h.sentAt).slice(0, 10) > resCheckoutPlusGrace) return false;
     if (phoneMatches(h.guestPhone)) return true;
-    if (r?.guestName && h.guestName && h.guestName.toLowerCase().trim() === r.guestName.toLowerCase().trim()) {
+    if (r?.guestName && !isPendingGuestName(r.guestName) && h.guestName && h.guestName.toLowerCase().trim() === r.guestName.toLowerCase().trim()) {
       return true;
     }
     return false;
@@ -55997,13 +56923,14 @@ app.get("/api/pms/reservations/:id/communications", async (req, res) => {
   convs.forEach(conv => {
     (conv.messages || []).forEach(m => {
       if (!m.fromMe) return;
-      const hasExplicitRes = Boolean(m.reservationCode || m.reservationId);
+      const hasExplicitRes = Boolean(m.reservationCode || m.reservationId || m.packageCode);
       const isRel = hasExplicitRes
-        ? idMatches(m.reservationCode, m.reservationId)
+        ? idMatches(m.reservationCode, m.reservationId, m.packageCode)
         : Boolean(
             m.triggerEvent &&
             m.triggerEvent !== "chat_direct" &&
-            (!r?.createdAt || !m.timestamp || m.timestamp >= r.createdAt)
+            (!r?.createdAt || !m.timestamp || m.timestamp >= r.createdAt) &&
+            (!resCheckoutPlusGrace || !m.timestamp || String(m.timestamp).slice(0, 10) <= resCheckoutPlusGrace)
           );
       if (isRel) {
         const already = whatsappHistory.some(h =>
@@ -56015,6 +56942,7 @@ app.get("/api/pms/reservations/:id/communications", async (req, res) => {
             id: m.id || m.messageId || `conv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
             reservationCode: m.reservationCode || resCode,
             reservationId: r?.id,
+            packageCode: m.packageCode || pkgCode || null,
             guestName: r?.guestName || conv.name,
             guestPhone: conv.phone,
             triggerEvent: m.triggerEvent || "mensagem_whatsapp",
@@ -63204,9 +64132,10 @@ function isGenericFallbackAddress(logradouro = "", cep = "") {
   return false;
 }
 
-function resolveGuestDigitalCheckinData({ guestId, cpfCnpj, name, reservationId, reservationCode } = {}) {
+function resolveGuestDigitalCheckinData({ guestId, cpfCnpj, name, phone, reservationId, reservationCode } = {}) {
   const cleanDoc = onlyDigits(cpfCnpj || "");
   const cleanName = String(name || "").trim().toLowerCase();
+  const cleanInputPhone = cleanPhone(phone || "");
   const candidates = [];
 
   const pushCandidate = (src, priority = 1) => {
@@ -63291,8 +64220,13 @@ function resolveGuestDigitalCheckinData({ guestId, cpfCnpj, name, reservationId,
   }
 
   for (const acc of (db.guestAccounts || [])) {
-    const aDoc = onlyDigits(acc.document || acc.cpf || "");
-    if ((cleanDoc && aDoc === cleanDoc) || (guestId && Number(acc.guestId) === Number(guestId))) {
+    const aDoc = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+    const aPhone = cleanPhone(acc.phone || acc.phoneNumber || "");
+    if (
+      (cleanDoc && aDoc === cleanDoc) ||
+      (guestId && Number(acc.guestId) === Number(guestId)) ||
+      (cleanInputPhone && cleanInputPhone.length >= 8 && aPhone && (aPhone === cleanInputPhone || aPhone.slice(-8) === cleanInputPhone.slice(-8)))
+    ) {
       pushCandidate(acc, 3);
     }
   }
@@ -63328,8 +64262,309 @@ function resolveGuestDigitalCheckinData({ guestId, cpfCnpj, name, reservationId,
     guestId: best.guestId || firstWithGuestId,
     nome: best.nome || firstWithName,
     email: best.email || firstWithEmail,
+    allEmails: parseEmailList(candidates.map(c => c.email)),
     telefone: best.telefone || firstWithPhone
   };
+}
+
+function collectReservationGuestPersonalEmails(resInput, targetDb = db, extraSources = []) {
+  const activeDb = targetDb || db || {};
+  const resList = Array.isArray(resInput) ? resInput.filter(Boolean) : (resInput ? [resInput] : []);
+  const emailSources = [];
+  if (Array.isArray(extraSources)) emailSources.push(...extraSources);
+  else if (extraSources) emailSources.push(extraSources);
+
+  const guestIds = new Set();
+  const guestDocs = new Set();
+  const guestPhones = new Set();
+  const guestPhoneTails = new Set();
+  const stayGuestNames = new Set();
+  const excludedRequesterIds = new Set();
+  const excludedRequesterDocs = new Set();
+  const excludedRequesterNames = new Set();
+
+  const addDoc = (raw) => {
+    const d = onlyDigits(raw || "");
+    if (d && d.length !== 14) guestDocs.add(d);
+  };
+  const addPhone = (raw) => {
+    const p = cleanPhone(raw || "");
+    if (p && p.length >= 8) {
+      guestPhones.add(p);
+      guestPhoneTails.add(p.slice(-8));
+    }
+  };
+  const addStayName = (raw, reqNameNorm) => {
+    const n = String(raw || "").trim().toLowerCase();
+    if (n && n !== "hóspede" && n !== "hospede" && (!reqNameNorm || n !== reqNameNorm)) {
+      stayGuestNames.add(n);
+    }
+  };
+
+  for (const r of resList) {
+    if (r.guestEmail) emailSources.push(r.guestEmail);
+    const reqGuestId = (!r.requesterIsGuest1 && r.requesterInfo?.guestId) ? Number(r.requesterInfo.guestId) : null;
+    const reqNameNorm = (!r.requesterIsGuest1 && r.requesterInfo?.name) ? String(r.requesterInfo.name).trim().toLowerCase() : "";
+    if (!r.requesterIsGuest1 && r.requesterInfo) {
+      if (reqGuestId) excludedRequesterIds.add(reqGuestId);
+      const rqd = onlyDigits(r.requesterInfo.cpf || r.requesterInfo.document || "");
+      if (rqd && rqd.length !== 14) excludedRequesterDocs.add(rqd);
+      if (reqNameNorm && reqNameNorm !== String(r.guestName || "").trim().toLowerCase()) {
+        excludedRequesterNames.add(reqNameNorm);
+      }
+    }
+    if (r.requesterIsGuest1) {
+      if (r.requesterEmail) emailSources.push(r.requesterEmail);
+      if (r.requesterInfo?.email) emailSources.push(r.requesterInfo.email);
+      if (r.requesterInfo?.guestId) guestIds.add(Number(r.requesterInfo.guestId));
+      addDoc(r.requesterInfo?.cpf || r.requesterInfo?.document || r.requesterDocument);
+      addPhone(r.requesterPhone || r.requesterInfo?.phone || r.requesterInfo?.whatsapp);
+    }
+    if (r.guestId && (!reqGuestId || Number(r.guestId) !== reqGuestId)) guestIds.add(Number(r.guestId));
+    addDoc(r.guestDocument || r.document);
+    addPhone(r.guestPhone || r.phone);
+    addStayName(r.guestName, r.requesterIsGuest1 ? "" : reqNameNorm);
+
+    if (Array.isArray(r.guests)) {
+      for (const rg of r.guests) {
+        if (!rg) continue;
+        if (rg.email) emailSources.push(rg.email);
+        if (rg.guestEmail) emailSources.push(rg.guestEmail);
+        if (rg.guestId && (!reqGuestId || Number(rg.guestId) !== reqGuestId)) guestIds.add(Number(rg.guestId));
+        addDoc(rg.cpf || rg.document || rg.documentNumber);
+        addPhone(rg.phone || rg.phoneNumber);
+        addStayName(rg.name || rg.fullName, r.requesterIsGuest1 ? "" : reqNameNorm);
+      }
+    }
+
+    if (typeof resolveGuestDigitalCheckinData === "function") {
+      const chk = resolveGuestDigitalCheckinData({
+        guestId: r.guestId,
+        cpfCnpj: r.guestDocument || "",
+        name: r.guestName || "",
+        phone: r.guestPhone || "",
+        reservationId: r.id,
+        reservationCode: r.code
+      });
+      if (chk?.email) emailSources.push(chk.email);
+      if (Array.isArray(chk?.allEmails)) emailSources.push(...chk.allEmails);
+    }
+  }
+
+  for (const g of (Array.isArray(activeDb.guests) ? activeDb.guests : [])) {
+    if (!g) continue;
+    const gId = g.id ? Number(g.id) : null;
+    const gDoc = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+    const gPhone = cleanPhone(g.phone || g.phoneNumber || "");
+    const gName = String(g.fullName || g.name || "").trim().toLowerCase();
+    const isExcludedRequester =
+      (Array.isArray(g.tags) && g.tags.includes("solicitante_terceiro")) ||
+      (gId && excludedRequesterIds.has(gId)) ||
+      (gDoc && excludedRequesterDocs.has(gDoc)) ||
+      (gName && excludedRequesterNames.has(gName));
+    const matches =
+      (gId && guestIds.has(gId)) ||
+      (gDoc && guestDocs.has(gDoc)) ||
+      (gPhone && gPhone.length >= 8 && (guestPhones.has(gPhone) || guestPhoneTails.has(gPhone.slice(-8)))) ||
+      (!isExcludedRequester && gName && stayGuestNames.has(gName));
+    if (matches) {
+      if (gId) guestIds.add(gId);
+      addDoc(gDoc);
+      addPhone(gPhone);
+      if (g.email) emailSources.push(g.email);
+      if (g.guestEmail) emailSources.push(g.guestEmail);
+    }
+  }
+
+  for (const acc of (Array.isArray(activeDb.guestAccounts) ? activeDb.guestAccounts : [])) {
+    if (!acc) continue;
+    const aGuestId = acc.guestId ? Number(acc.guestId) : null;
+    const aDoc = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+    const aPhone = cleanPhone(acc.phone || acc.phoneNumber || "");
+    const aName = String(acc.fullName || acc.name || "").trim().toLowerCase();
+    const isAccExcludedRequester =
+      (aGuestId && excludedRequesterIds.has(aGuestId)) ||
+      (aDoc && excludedRequesterDocs.has(aDoc)) ||
+      (aName && excludedRequesterNames.has(aName));
+    const matches =
+      (aGuestId && guestIds.has(aGuestId)) ||
+      (aDoc && guestDocs.has(aDoc)) ||
+      (aPhone && aPhone.length >= 8 && (guestPhones.has(aPhone) || guestPhoneTails.has(aPhone.slice(-8)))) ||
+      (!isAccExcludedRequester && aName && stayGuestNames.has(aName));
+    if (matches) {
+      if (acc.email) emailSources.push(acc.email);
+      if (acc.guestEmail) emailSources.push(acc.guestEmail);
+    }
+  }
+
+  return new Set(parseEmailList(emailSources));
+}
+
+function collectReservationGuestPersonalPhones(resInput, targetDb = db, extraSources = []) {
+  const activeDb = targetDb || db || {};
+  const resList = Array.isArray(resInput) ? resInput.filter(Boolean) : (resInput ? [resInput] : []);
+  const phoneSources = [];
+  if (Array.isArray(extraSources)) phoneSources.push(...extraSources);
+  else if (extraSources) phoneSources.push(extraSources);
+
+  const guestIds = new Set();
+  const guestDocs = new Set();
+  const stayGuestNames = new Set();
+  const excludedRequesterIds = new Set();
+  const excludedRequesterDocs = new Set();
+  const excludedRequesterNames = new Set();
+  const exactPhones = new Set();
+  const tail8Phones = new Set();
+  const tail9Phones = new Set();
+  const tail10Phones = new Set();
+  const tail11Phones = new Set();
+
+  const addDoc = (raw) => {
+    const d = onlyDigits(raw || "");
+    if (d && d.length !== 14) guestDocs.add(d);
+  };
+  const addStayName = (raw, reqNameNorm) => {
+    const n = String(raw || "").trim().toLowerCase();
+    if (n && n !== "hóspede" && n !== "hospede" && (!reqNameNorm || n !== reqNameNorm)) {
+      stayGuestNames.add(n);
+    }
+  };
+  const addPhone = (raw) => {
+    const p = cleanPhone(raw || "");
+    if (!p || p.length < 8) return;
+    exactPhones.add(p);
+    if (p.length >= 12 && p.startsWith("55")) exactPhones.add(p.slice(2));
+    tail8Phones.add(p.slice(-8));
+    if (p.length >= 9) tail9Phones.add(p.slice(-9));
+    if (p.length >= 10) tail10Phones.add(p.slice(-10));
+    if (p.length >= 11) tail11Phones.add(p.slice(-11));
+  };
+  const matchesCollectedPhone = (p) => {
+    if (!p || p.length < 8) return false;
+    const localP = (p.length >= 12 && p.startsWith("55")) ? p.slice(2) : p;
+    return (
+      exactPhones.has(p) ||
+      exactPhones.has(localP) ||
+      tail8Phones.has(p.slice(-8)) ||
+      (p.length >= 9 && tail9Phones.has(p.slice(-9))) ||
+      (p.length >= 10 && tail10Phones.has(p.slice(-10))) ||
+      (p.length >= 11 && tail11Phones.has(p.slice(-11)))
+    );
+  };
+
+  for (const src of phoneSources) addPhone(src);
+
+  for (const r of resList) {
+    const reqGuestId = (!r.requesterIsGuest1 && r.requesterInfo?.guestId) ? Number(r.requesterInfo.guestId) : null;
+    const reqNameNorm = (!r.requesterIsGuest1 && r.requesterInfo?.name) ? String(r.requesterInfo.name).trim().toLowerCase() : "";
+    if (!r.requesterIsGuest1 && r.requesterInfo) {
+      if (reqGuestId) excludedRequesterIds.add(reqGuestId);
+      const rqd = onlyDigits(r.requesterInfo.cpf || r.requesterInfo.document || "");
+      if (rqd && rqd.length !== 14) excludedRequesterDocs.add(rqd);
+      if (reqNameNorm && reqNameNorm !== String(r.guestName || "").trim().toLowerCase()) {
+        excludedRequesterNames.add(reqNameNorm);
+      }
+    }
+    if (r.guestId && (!reqGuestId || Number(r.guestId) !== reqGuestId)) guestIds.add(Number(r.guestId));
+    addDoc(r.guestDocument || r.document);
+    addPhone(r.guestPhone || r.phone || r.whatsapp);
+    addStayName(r.guestName, r.requesterIsGuest1 ? "" : reqNameNorm);
+    if (r.requesterIsGuest1) {
+      if (r.requesterInfo?.guestId) guestIds.add(Number(r.requesterInfo.guestId));
+      addDoc(r.requesterInfo?.cpf || r.requesterInfo?.document || r.requesterDocument);
+      addPhone(r.requesterPhone || r.requesterInfo?.phone || r.requesterInfo?.whatsapp);
+    }
+    if (Array.isArray(r.guests)) {
+      for (const rg of r.guests) {
+        if (!rg) continue;
+        if (rg.guestId && (!reqGuestId || Number(rg.guestId) !== reqGuestId)) guestIds.add(Number(rg.guestId));
+        addDoc(rg.cpf || rg.document || rg.documentNumber);
+        addPhone(rg.phone || rg.phoneNumber || rg.whatsapp);
+        addStayName(rg.name || rg.fullName, r.requesterIsGuest1 ? "" : reqNameNorm);
+      }
+    }
+    if (typeof resolveGuestDigitalCheckinData === "function") {
+      const chk = resolveGuestDigitalCheckinData({
+        guestId: r.guestId,
+        cpfCnpj: r.guestDocument || "",
+        name: r.guestName || "",
+        phone: r.guestPhone || "",
+        reservationId: r.id,
+        reservationCode: r.code
+      });
+      if (chk?.telefone) addPhone(chk.telefone);
+    }
+  }
+
+  for (const g of (Array.isArray(activeDb.guests) ? activeDb.guests : [])) {
+    if (!g) continue;
+    const gId = g.id ? Number(g.id) : null;
+    const gDoc = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+    const gPhone = cleanPhone(g.phone || g.phoneNumber || g.whatsapp || "");
+    const gName = String(g.fullName || g.name || "").trim().toLowerCase();
+    const isExcludedRequester =
+      (Array.isArray(g.tags) && g.tags.includes("solicitante_terceiro")) ||
+      (gId && excludedRequesterIds.has(gId)) ||
+      (gDoc && excludedRequesterDocs.has(gDoc)) ||
+      (gName && excludedRequesterNames.has(gName));
+    const matches =
+      (gId && guestIds.has(gId)) ||
+      (gDoc && guestDocs.has(gDoc)) ||
+      matchesCollectedPhone(gPhone) ||
+      (!isExcludedRequester && gName && stayGuestNames.has(gName));
+    if (matches) {
+      if (gId) guestIds.add(gId);
+      addDoc(gDoc);
+      addPhone(gPhone);
+    }
+  }
+
+  for (const acc of (Array.isArray(activeDb.guestAccounts) ? activeDb.guestAccounts : [])) {
+    if (!acc) continue;
+    const aGuestId = acc.guestId ? Number(acc.guestId) : null;
+    const aDoc = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+    const aPhone = cleanPhone(acc.phone || acc.phoneNumber || acc.whatsapp || "");
+    const aName = String(acc.fullName || acc.name || "").trim().toLowerCase();
+    const isAccExcludedRequester =
+      (aGuestId && excludedRequesterIds.has(aGuestId)) ||
+      (aDoc && excludedRequesterDocs.has(aDoc)) ||
+      (aName && excludedRequesterNames.has(aName));
+    const matches =
+      (aGuestId && guestIds.has(aGuestId)) ||
+      (aDoc && guestDocs.has(aDoc)) ||
+      matchesCollectedPhone(aPhone) ||
+      (!isAccExcludedRequester && aName && stayGuestNames.has(aName));
+    if (matches) {
+      addPhone(aPhone);
+    }
+  }
+
+  return {
+    exact: exactPhones,
+    tail8: tail8Phones,
+    tail9: tail9Phones,
+    tail10: tail10Phones,
+    tail11: tail11Phones,
+    matches(raw) {
+      const c = cleanPhone(raw || "");
+      return matchesCollectedPhone(c);
+    }
+  };
+}
+
+function isGuestPersonalPhone(rawPhone, phoneSetInfo) {
+  const c = cleanPhone(rawPhone || "");
+  if (!c || c.length < 8 || !phoneSetInfo) return false;
+  if (typeof phoneSetInfo.matches === "function") return phoneSetInfo.matches(c);
+  const localC = (c.length >= 12 && c.startsWith("55")) ? c.slice(2) : c;
+  if (phoneSetInfo instanceof Set) {
+    if (phoneSetInfo.has(c) || phoneSetInfo.has(localC)) return true;
+    const tail8 = c.slice(-8);
+    for (const gp of phoneSetInfo) {
+      if (gp && gp.length >= 8 && (gp === c || gp === localC || gp.slice(-8) === tail8)) return true;
+    }
+  }
+  return false;
 }
 
 function getFiscalData() {
@@ -64079,7 +65314,23 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       : (r.agencyCnpj ? (db.agencies || []).find(a => onlyDigits(a.cnpj) === onlyDigits(r.agencyCnpj)) : null);
 
     let invoiceRecipientType = String(r.invoiceRecipientType || "").toLowerCase();
-    if (invoiceRecipientType === "other_person" || invoiceRecipientType === "third_party") invoiceRecipientType = "requester";
+    const stayGuestDocForRec = onlyDigits(r.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || "");
+    const reqInfoDocForRec = onlyDigits(r.requesterInfo?.cpf || r.requesterInfo?.document || r.requesterDocument || "");
+    const matchesStayDocForReqPf = Boolean(
+      stayGuestDocForRec && (
+        (reqInfoDocForRec && reqInfoDocForRec === stayGuestDocForRec) ||
+        (!r.requesterInfo && !r.requesterName)
+      )
+    );
+    if (
+      invoiceRecipientType === "other_person" ||
+      invoiceRecipientType === "third_party" ||
+      (invoiceRecipientType === "requester_pf" && !r.requesterIsGuest1 && (Boolean(r.requesterInfo) || !matchesStayDocForReqPf))
+    ) {
+      invoiceRecipientType = "requester";
+    } else if (invoiceRecipientType === "requester_pf") {
+      invoiceRecipientType = "guest";
+    }
     if (!["guest", "company", "agency", "requester"].includes(invoiceRecipientType)) {
       const gPref = String(guest?.preferredInvoiceRecipient || "").toLowerCase();
       if (gPref === "guest") {
@@ -64103,9 +65354,165 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       guestId: guest?.id || r.guestId,
       cpfCnpj: r.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || "",
       name: r.guestName || guest?.fullName || guest?.name || "",
+      phone: r.guestPhone || guest?.phone || "",
       reservationId: r.id,
       reservationCode: r.code
     });
+
+    const guestPersonalSet = typeof collectReservationGuestPersonalEmails === "function"
+      ? collectReservationGuestPersonalEmails(r, db, [
+          guest?.email,
+          resolvedCheckinAddr?.email,
+          ...(Array.isArray(resolvedCheckinAddr?.allEmails) ? resolvedCheckinAddr.allEmails : [])
+        ])
+      : (() => {
+          const srcs = [r.guestEmail, guest?.email, resolvedCheckinAddr?.email];
+          if (Array.isArray(resolvedCheckinAddr?.allEmails)) srcs.push(...resolvedCheckinAddr.allEmails);
+          const gIds = new Set();
+          const gDocs = new Set();
+          const gPhones = new Set();
+          const stayNames = new Set();
+          const exReqIds = new Set();
+          const exReqDocs = new Set();
+          const exReqNames = new Set();
+          const reqGId = (!r.requesterIsGuest1 && r.requesterInfo?.guestId) ? Number(r.requesterInfo.guestId) : null;
+          const reqN = (!r.requesterIsGuest1 && r.requesterInfo?.name) ? String(r.requesterInfo.name).trim().toLowerCase() : "";
+          if (!r.requesterIsGuest1 && r.requesterInfo) {
+            if (reqGId) exReqIds.add(reqGId);
+            const rqd = onlyDigits(r.requesterInfo.cpf || r.requesterInfo.document || "");
+            if (rqd && rqd.length !== 14) exReqDocs.add(rqd);
+            if (reqN && reqN !== String(r.guestName || "").trim().toLowerCase()) exReqNames.add(reqN);
+          }
+          const addStN = (raw) => {
+            const n = String(raw || "").trim().toLowerCase();
+            if (n && n !== "hóspede" && n !== "hospede" && (r.requesterIsGuest1 || !reqN || n !== reqN)) stayNames.add(n);
+          };
+          addStN(r.guestName);
+          if (r.requesterIsGuest1) {
+            if (r.requesterEmail) srcs.push(r.requesterEmail);
+            if (r.requesterInfo?.email) srcs.push(r.requesterInfo.email);
+            if (r.requesterInfo?.guestId) gIds.add(Number(r.requesterInfo.guestId));
+            const rqDoc = onlyDigits(r.requesterInfo?.cpf || r.requesterInfo?.document || r.requesterDocument || "");
+            if (rqDoc && rqDoc.length !== 14) gDocs.add(rqDoc);
+            const rqPh = cleanPhone(r.requesterPhone || r.requesterInfo?.phone || r.requesterInfo?.whatsapp || "");
+            if (rqPh && rqPh.length >= 8) gPhones.add(rqPh);
+          }
+          if (r.guestId && (!reqGId || Number(r.guestId) !== reqGId)) gIds.add(Number(r.guestId));
+          const rDoc = onlyDigits(r.guestDocument || r.document || "");
+          if (rDoc && rDoc.length !== 14) gDocs.add(rDoc);
+          const rPh = cleanPhone(r.guestPhone || r.phone || "");
+          if (rPh && rPh.length >= 8) gPhones.add(rPh);
+          if (Array.isArray(r.guests)) {
+            for (const rg of r.guests) {
+              if (!rg) continue;
+              if (rg.email) srcs.push(rg.email);
+              if (rg.guestId && (!reqGId || Number(rg.guestId) !== reqGId)) gIds.add(Number(rg.guestId));
+              const rgDoc = onlyDigits(rg.cpf || rg.document || rg.documentNumber || "");
+              if (rgDoc && rgDoc.length !== 14) gDocs.add(rgDoc);
+              const rgPh = cleanPhone(rg.phone || rg.phoneNumber || "");
+              if (rgPh && rgPh.length >= 8) gPhones.add(rgPh);
+              addStN(rg.name || rg.fullName);
+            }
+          }
+          for (const g of (db.guests || [])) {
+            if (!g) continue;
+            const gd = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+            const gp = cleanPhone(g.phone || g.phoneNumber || "");
+            const gn = String(g.fullName || g.name || "").trim().toLowerCase();
+            const isEx = (Array.isArray(g.tags) && g.tags.includes("solicitante_terceiro")) || (g.id && exReqIds.has(Number(g.id))) || (gd && exReqDocs.has(gd)) || (gn && exReqNames.has(gn));
+            if ((g.id && gIds.has(Number(g.id))) || (gd && gDocs.has(gd)) || (gp && gp.length >= 8 && Array.from(gPhones).some(p => p === gp || p.slice(-8) === gp.slice(-8))) || (!isEx && gn && stayNames.has(gn))) {
+              if (g.id) gIds.add(Number(g.id));
+              if (gd && gd.length !== 14) gDocs.add(gd);
+              if (gp && gp.length >= 8) gPhones.add(gp);
+              if (g.email) srcs.push(g.email);
+            }
+          }
+          for (const acc of (db.guestAccounts || [])) {
+            if (!acc) continue;
+            const ad = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+            const ap = cleanPhone(acc.phone || acc.phoneNumber || "");
+            const an = String(acc.fullName || acc.name || "").trim().toLowerCase();
+            const isExAcc = (acc.guestId && exReqIds.has(Number(acc.guestId))) || (ad && exReqDocs.has(ad)) || (an && exReqNames.has(an));
+            if ((acc.guestId && gIds.has(Number(acc.guestId))) || (ad && gDocs.has(ad)) || (ap && ap.length >= 8 && Array.from(gPhones).some(p => p === ap || p.slice(-8) === ap.slice(-8))) || (!isExAcc && an && stayNames.has(an))) {
+              if (acc.email) srcs.push(acc.email);
+            }
+          }
+          return new Set(parseEmailList(srcs));
+        })();
+    const maskHiddenGuestEmail = (raw) => {
+      const list = parseEmailList(raw);
+      return getPrimaryEmail(
+        r.nfHideFromGuest && guestPersonalSet.size > 0
+          ? list.filter(e => !guestPersonalSet.has(e))
+          : list
+      );
+    };
+    const guestPersonalPhoneSet = typeof collectReservationGuestPersonalPhones === "function"
+      ? collectReservationGuestPersonalPhones(r, db, [guest?.phone, guest?.phoneNumber, resolvedCheckinAddr?.telefone])
+      : (() => {
+          const phSet = new Set();
+          const addPh = (raw) => {
+            const p = cleanPhone(raw || "");
+            if (p && p.length >= 8) {
+              phSet.add(p);
+              if (p.length >= 12 && p.startsWith("55")) phSet.add(p.slice(2));
+            }
+          };
+          addPh(r.guestPhone || r.phone);
+          addPh(guest?.phone || guest?.phoneNumber);
+          addPh(resolvedCheckinAddr?.telefone);
+          if (r.requesterIsGuest1) addPh(r.requesterPhone || r.requesterInfo?.phone || r.requesterInfo?.whatsapp);
+          if (Array.isArray(r.guests)) {
+            for (const rg of r.guests) {
+              if (rg) addPh(rg.phone || rg.phoneNumber || rg.whatsapp);
+            }
+          }
+          const gIds = new Set(r.guestId ? [Number(r.guestId)] : []);
+          const gDocs = new Set();
+          const rDoc = onlyDigits(r.guestDocument || r.document || "");
+          if (rDoc && rDoc.length !== 14) gDocs.add(rDoc);
+          if (r.requesterIsGuest1) {
+            if (r.requesterInfo?.guestId) gIds.add(Number(r.requesterInfo.guestId));
+            const rqD = onlyDigits(r.requesterInfo?.cpf || r.requesterInfo?.document || "");
+            if (rqD && rqD.length !== 14) gDocs.add(rqD);
+          }
+          if (Array.isArray(r.guests)) {
+            for (const rg of r.guests) {
+              if (!rg) continue;
+              if (rg.guestId) gIds.add(Number(rg.guestId));
+              const rgD = onlyDigits(rg.cpf || rg.document || rg.documentNumber || "");
+              if (rgD && rgD.length !== 14) gDocs.add(rgD);
+            }
+          }
+          for (const g of (db.guests || [])) {
+            if (!g) continue;
+            const gd = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+            const gp = cleanPhone(g.phone || g.phoneNumber || "");
+            if ((g.id && gIds.has(Number(g.id))) || (gd && gDocs.has(gd)) || (gp && gp.length >= 8 && Array.from(phSet).some(p => p === gp || p.slice(-8) === gp.slice(-8)))) {
+              if (g.id) gIds.add(Number(g.id));
+              if (gd && gd.length !== 14) gDocs.add(gd);
+              addPh(gp);
+            }
+          }
+          for (const acc of (db.guestAccounts || [])) {
+            if (!acc) continue;
+            const ad = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+            const ap = cleanPhone(acc.phone || acc.phoneNumber || "");
+            if ((acc.guestId && gIds.has(Number(acc.guestId))) || (ad && gDocs.has(ad)) || (ap && ap.length >= 8 && Array.from(phSet).some(p => p === ap || p.slice(-8) === ap.slice(-8)))) {
+              addPh(ap);
+            }
+          }
+          return phSet;
+        })();
+    const maskHiddenGuestPhone = (raw) => {
+      const p = cleanPhone(raw || "");
+      if (!p) return "";
+      if (!r.nfHideFromGuest) return p;
+      const isMatch = typeof isGuestPersonalPhone === "function"
+        ? isGuestPersonalPhone(p, guestPersonalPhoneSet)
+        : (guestPersonalPhoneSet instanceof Set && Array.from(guestPersonalPhoneSet).some(gp => gp && gp.length >= 8 && (gp === p || gp.slice(-8) === p.slice(-8))));
+      return isMatch ? "" : p;
+    };
 
     const guestOption = {
       type: "guest",
@@ -64115,8 +65522,8 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       doc: onlyDigits(r.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || ""),
       tomadorNome: toTitleCase(r.guestName || guest?.fullName || guest?.name || "Hóspede"),
       tomadorCpfCnpj: onlyDigits(r.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || ""),
-      tomadorEmail: (r.guestEmail || guest?.email || "").trim().toLowerCase(),
-      tomadorTelefone: cleanPhone(r.guestPhone || guest?.phone || ""),
+      tomadorEmail: maskHiddenGuestEmail([r.guestEmail, guest?.email]),
+      tomadorTelefone: maskHiddenGuestPhone(r.guestPhone || guest?.phone || ""),
       tomadorEndereco: (resolvedCheckinAddr?.logradouro || r.street || r.guestStreet || guest?.street || guest?.address || guest?.logradouro || "").trim(),
       tomadorNumero: (resolvedCheckinAddr?.numero || r.streetNumber || r.guestStreetNumber || guest?.streetNumber || guest?.number || "").trim(),
       tomadorComplemento: (resolvedCheckinAddr?.complemento || r.complement || r.guestComplement || guest?.complement || "").trim(),
@@ -64157,15 +65564,17 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       doc: onlyDigits(company.cnpj || r.companyCnpj || ""),
       tomadorNome: toTitleCase(company.corporateName || company.tradeName || r.companyName || ""),
       tomadorCpfCnpj: onlyDigits(company.cnpj || r.companyCnpj || ""),
-      tomadorEmail: (
-        company.financialEmail ||
-        (!isCompNoBilling ? r.agencyAgentEmail : "") ||
-        (!r.nfHideFromGuest ? (r.guestEmail || guest?.email || "") : "")
-      ).trim().toLowerCase(),
-      tomadorTelefone: cleanPhone(
-        (!r.nfHideFromGuest && isCompNoBilling)
-          ? (r.guestPhone || guest?.phone || company.phone || "")
-          : (company.phone || r.guestPhone || guest?.phone || "")
+      tomadorEmail: maskHiddenGuestEmail([
+        company.financialEmail,
+        !isCompNoBilling ? r.agencyAgentEmail : "",
+        !r.nfHideFromGuest ? [r.guestEmail, guest?.email] : ""
+      ]),
+      tomadorTelefone: maskHiddenGuestPhone(
+        r.nfHideFromGuest
+          ? (company.phone || "")
+          : (isCompNoBilling
+              ? (r.guestPhone || guest?.phone || company.phone || "")
+              : (company.phone || r.guestPhone || guest?.phone || ""))
       ),
       tomadorEndereco: (company.address || company.logradouro || r.companyAddress || "").trim(),
       tomadorNumero: (company.number || r.companyNumber || "S/N").trim(),
@@ -64186,8 +65595,12 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       doc: onlyDigits(agency.cnpj || r.agencyCnpj || ""),
       tomadorNome: toTitleCase(agency.corporateName || agency.razaoSocial || agency.tradeName || r.agencyName || ""),
       tomadorCpfCnpj: onlyDigits(agency.cnpj || r.agencyCnpj || ""),
-      tomadorEmail: (r.agencyAgentEmail || agency.financialEmail || (Array.isArray(r.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || "").trim().toLowerCase(),
-      tomadorTelefone: cleanPhone(r.agencyAgentPhone || agency.phone || ""),
+      tomadorEmail: maskHiddenGuestEmail([
+        r.agencyAgentEmail,
+        agency.financialEmail,
+        r.nfDeliveryEmails
+      ]),
+      tomadorTelefone: maskHiddenGuestPhone(r.agencyAgentPhone || agency.phone || ""),
       tomadorEndereco: (agency.address || agency.logradouro || r.agencyAddress || "Av. Paulista").trim(),
       tomadorNumero: (agency.number || r.agencyNumber || "1000").trim(),
       tomadorComplemento: (agency.complement || r.agencyComplement || "").trim(),
@@ -64214,8 +65627,8 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       doc: onlyDigits(r.requesterInfo.cpf || requesterCrm?.documentNumber || requesterCrm?.document || requesterCrm?.cpf || ""),
       tomadorNome: toTitleCase(r.requesterInfo.name || requesterCrm?.fullName || requesterCrm?.name || "Solicitante"),
       tomadorCpfCnpj: onlyDigits(r.requesterInfo.cpf || requesterCrm?.documentNumber || requesterCrm?.document || requesterCrm?.cpf || ""),
-      tomadorEmail: (r.requesterInfo.email || requesterCrm?.email || "").trim().toLowerCase(),
-      tomadorTelefone: cleanPhone(r.requesterInfo.phone || requesterCrm?.phone || ""),
+      tomadorEmail: maskHiddenGuestEmail([r.requesterInfo.email, requesterCrm?.email]),
+      tomadorTelefone: maskHiddenGuestPhone(r.requesterInfo.phone || requesterCrm?.phone || ""),
       tomadorEndereco: (requesterCrm?.street || requesterCrm?.address || requesterCrm?.logradouro || "").trim(),
       tomadorNumero: (requesterCrm?.streetNumber || requesterCrm?.number || "").trim(),
       tomadorComplemento: (requesterCrm?.complement || "").trim(),
@@ -64344,7 +65757,18 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       },
       boletos: resBoletos,
       invoiceRecipientType,
-      nfDeliveryEmails: Array.isArray(r.nfDeliveryEmails) ? r.nfDeliveryEmails : (tomadorEmail ? [tomadorEmail] : []),
+      nfDeliveryEmails: (() => {
+        const list = parseEmailList([
+          r.nfDeliveryEmails,
+          activeOption.type === "company" ? company?.financialEmail : "",
+          activeOption.type === "agency" ? [r.agencyAgentEmail, agency?.financialEmail] : "",
+          activeOption.type === "requester" ? r.requesterInfo?.email : "",
+          tomadorEmail
+        ]);
+        return r.nfHideFromGuest && guestPersonalSet.size > 0
+          ? list.filter(e => !guestPersonalSet.has(e))
+          : list;
+      })(),
       nfHideFromGuest: Boolean(r.nfHideFromGuest),
       b2bReservationNumber: r.b2bReservationNumber || r.externalReservationNumber || null,
       b2bLocatorRloc: r.b2bLocatorRloc || null,
@@ -64357,8 +65781,8 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       tomadorPadrao: resolvedTomadorPadrao,
       tomadorNome: toTitleCase(tomadorNome),
       tomadorCpfCnpj: cleanDoc,
-      tomadorEmail: (tomadorEmail || "").trim().toLowerCase(),
-      tomadorTelefone: cleanPhone(tomadorTelefone),
+      tomadorEmail: maskHiddenGuestEmail(tomadorEmail),
+      tomadorTelefone: maskHiddenGuestPhone(tomadorTelefone),
       tomadorEndereco: (tomadorEndereco || "").trim(),
       tomadorNumero: (tomadorNumero || "").trim(),
       tomadorComplemento: (tomadorComplemento || "").trim(),
@@ -64381,9 +65805,11 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
         guest: guestOption,
         company: companyOption,
         agency: agencyOption,
+        requester: requesterOption,
         guestOption,
         companyOption,
-        agencyOption
+        agencyOption,
+        requesterOption
       },
       hasPendingDoc,
       hasPendingCadastral: pendingReasons.length > 0,
@@ -64505,16 +65931,192 @@ export async function executeNfseEmissionInternal(payload) {
       )
     : null;
 
-  const matchedGuest = Array.isArray(db.guests)
-    ? db.guests.find(g =>
-        g && (
-          (payload.guestId && Number(g.id) === Number(payload.guestId)) ||
-          (matchedRes?.guestId && Number(g.id) === Number(matchedRes.guestId)) ||
-          (cleanDoc.length === 11 && onlyDigits(g.documentNumber || g.document || g.cpf || "") === cleanDoc) ||
-          (matchedRes?.guestDocument && onlyDigits(g.documentNumber || g.document || g.cpf || "") === onlyDigits(matchedRes.guestDocument)) ||
-          (candidateGuestName && String(g.fullName || g.name || "").trim().toLowerCase() === candidateGuestName.toLowerCase())
+  const consolidatedResList = (payload.isConsolidated && Array.isArray(payload.reservationIds) && Array.isArray(db.reservations))
+    ? db.reservations.filter(r => r && payload.reservationIds.some(rid => Number(r.id) === Number(rid) || String(r.code) === String(rid)))
+    : [];
+  const relevantGuestReservations = [
+    ...consolidatedResList,
+    ...(matchedRes && !consolidatedResList.some(cr => Number(cr.id) === Number(matchedRes.id)) ? [matchedRes] : [])
+  ];
+  const resolvedNfHideFromGuest = payload.nfHideFromGuest !== undefined
+    ? Boolean(payload.nfHideFromGuest)
+    : Boolean(matchedRes ? matchedRes.nfHideFromGuest : consolidatedResList.some(r => Boolean(r?.nfHideFromGuest)));
+
+  const primaryRefRes = matchedRes || relevantGuestReservations[0] || null;
+  const normPayRecType = String(payload.invoiceRecipientType || "").trim().toLowerCase();
+  const normResRecType = String(primaryRefRes?.invoiceRecipientType || "").trim().toLowerCase();
+  const isExplicitGuestRec = normPayRecType === "guest";
+  const isPayReqRec = ["requester", "other_person", "third_party"].includes(normPayRecType);
+  const isPayReqPfRec = normPayRecType === "requester_pf";
+  const isResReqRec = ["requester", "other_person", "third_party"].includes(normResRecType);
+  const anyResRequesterIsGuest1 = payload.requesterIsGuest1 === true || relevantGuestReservations.some(r => Boolean(r?.requesterIsGuest1));
+  const matchesAnyStayGuestDoc = cleanDoc.length === 11 && relevantGuestReservations.some(r => {
+    if (!r) return false;
+    const rDoc = onlyDigits(r.guestDocument || r.document || "");
+    if (rDoc && rDoc === cleanDoc) return true;
+    if (Array.isArray(r.guests) && r.guests.some(rg => onlyDigits(rg?.cpf || rg?.document || rg?.documentNumber || "") === cleanDoc)) return true;
+
+    const reqGuestId = (!r.requesterIsGuest1 && r.requesterInfo?.guestId) ? Number(r.requesterInfo.guestId) : null;
+    const reqName = (!r.requesterIsGuest1 && r.requesterInfo?.name) ? String(r.requesterInfo.name).trim().toLowerCase() : "";
+    const stayGuestIds = new Set();
+    if (r.guestId && (!reqGuestId || Number(r.guestId) !== reqGuestId)) stayGuestIds.add(Number(r.guestId));
+    if (Array.isArray(r.guests)) {
+      for (const rg of r.guests) {
+        if (rg?.guestId && (!reqGuestId || Number(rg.guestId) !== reqGuestId)) stayGuestIds.add(Number(rg.guestId));
+      }
+    }
+    const stayPhones = new Set();
+    const addStayPh = (raw) => {
+      const p = cleanPhone(raw || "");
+      if (p && p.length >= 8) stayPhones.add(p);
+    };
+    addStayPh(r.guestPhone || r.phone);
+    if (Array.isArray(r.guests)) {
+      for (const rg of r.guests) addStayPh(rg?.phone || rg?.phoneNumber);
+    }
+    const phoneMatchesStay = (raw) => {
+      const p = cleanPhone(raw || "");
+      if (!p || p.length < 8) return false;
+      for (const sp of stayPhones) {
+        if (sp === p || sp.slice(-8) === p.slice(-8)) return true;
+      }
+      return false;
+    };
+    const stayEmails = new Set(parseEmailList([
+      r.guestEmail,
+      ...(Array.isArray(r.guests) ? r.guests.map(rg => rg?.email || rg?.guestEmail) : [])
+    ]));
+    const stayNames = new Set();
+    const rGName = String(r.guestName || "").trim().toLowerCase();
+    if (rGName && rGName !== "hóspede" && rGName !== "hospede" && (r.requesterIsGuest1 || !reqName || rGName !== reqName)) {
+      stayNames.add(rGName);
+    }
+    if (Array.isArray(r.guests)) {
+      for (const rg of r.guests) {
+        const rgN = String(rg?.name || rg?.fullName || "").trim().toLowerCase();
+        if (rgN && rgN !== "hóspede" && rgN !== "hospede" && (r.requesterIsGuest1 || !reqName || rgN !== reqName)) {
+          stayNames.add(rgN);
+        }
+      }
+    }
+
+    const matchedStayGuestIds = new Set(stayGuestIds);
+    for (const g of (Array.isArray(db.guests) ? db.guests : [])) {
+      if (!g) continue;
+      const gId = g.id ? Number(g.id) : null;
+      const gDoc = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+      const gEmailList = parseEmailList([g.email, g.guestEmail]);
+      const gName = String(g.fullName || g.name || "").trim().toLowerCase();
+      const isTaggedThirdParty = Array.isArray(g.tags) && g.tags.includes("solicitante_terceiro");
+      const isReqRecord = Boolean(
+        !r.requesterIsGuest1 && (
+          isTaggedThirdParty ||
+          (reqGuestId && gId === reqGuestId) ||
+          (reqName && gName && gName === reqName && !stayNames.has(gName))
         )
+      );
+      if (isReqRecord) continue;
+      const isStayRecord = Boolean(
+        (gId && stayGuestIds.has(gId)) ||
+        phoneMatchesStay(g.phone || g.phoneNumber) ||
+        gEmailList.some(e => stayEmails.has(e)) ||
+        (gName && stayNames.has(gName))
+      );
+      if (isStayRecord) {
+        if (gId) matchedStayGuestIds.add(gId);
+        if (gDoc && gDoc === cleanDoc) return true;
+      }
+    }
+    for (const acc of (Array.isArray(db.guestAccounts) ? db.guestAccounts : [])) {
+      if (!acc) continue;
+      const aGuestId = acc.guestId ? Number(acc.guestId) : null;
+      const aDoc = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+      const aEmailList = parseEmailList([acc.email, acc.guestEmail]);
+      const aName = String(acc.fullName || acc.name || "").trim().toLowerCase();
+      const isReqAcc = Boolean(
+        !r.requesterIsGuest1 && (
+          (reqGuestId && aGuestId === reqGuestId) ||
+          (reqName && aName && aName === reqName && !stayNames.has(aName))
+        )
+      );
+      if (isReqAcc) continue;
+      const isStayAcc = Boolean(
+        (aGuestId && matchedStayGuestIds.has(aGuestId)) ||
+        phoneMatchesStay(acc.phone || acc.phoneNumber) ||
+        aEmailList.some(e => stayEmails.has(e)) ||
+        (aName && stayNames.has(aName))
+      );
+      if (isStayAcc && aDoc && aDoc === cleanDoc) return true;
+    }
+    return false;
+  });
+  const matchesResRequesterInfo = Boolean(
+    cleanDoc.length === 11 &&
+    relevantGuestReservations.some(r => {
+      if (!r || r.requesterIsGuest1 || !r.requesterInfo) return false;
+      const rqDoc = onlyDigits(r.requesterInfo.cpf || r.requesterInfo.document || "");
+      const rqName = String(r.requesterInfo.name || "").trim().toLowerCase();
+      const tName = String(tomadorNome || "").trim().toLowerCase();
+      return (rqDoc && rqDoc === cleanDoc) || (!rqDoc && rqName && tName && rqName === tName && rqName !== String(r.guestName || "").trim().toLowerCase());
+    })
+  );
+  const isThirdPartyRequesterEmission = Boolean(
+    cleanDoc.length === 11 &&
+    !isExplicitGuestRec &&
+    !anyResRequesterIsGuest1 &&
+    !matchesAnyStayGuestDoc &&
+    (
+      isPayReqRec ||
+      matchesResRequesterInfo ||
+      (!normPayRecType && isResReqRec) ||
+      (isPayReqPfRec && relevantGuestReservations.some(r => r && !r.requesterIsGuest1 && (r.requesterInfo || ["requester", "other_person", "third_party"].includes(String(r.invoiceRecipientType || "").toLowerCase())))) ||
+      (
+        primaryRefRes?.requesterInfo?.name &&
+        primaryRefRes?.guestName &&
+        String(tomadorNome || "").trim().toLowerCase() === String(primaryRefRes.requesterInfo.name).trim().toLowerCase() &&
+        String(tomadorNome || "").trim().toLowerCase() !== String(primaryRefRes.guestName).trim().toLowerCase()
       )
+    )
+  );
+  const candidateStayGuestName = isThirdPartyRequesterEmission
+    ? (payload.guestName || extractedDescGuestName || primaryRefRes?.guestName || "").trim()
+    : candidateGuestName;
+  const isPayloadGuestIdRequester = Boolean(
+    isThirdPartyRequesterEmission &&
+    payload.guestId &&
+    (
+      (primaryRefRes?.requesterInfo?.guestId && Number(payload.guestId) === Number(primaryRefRes.requesterInfo.guestId)) ||
+      (primaryRefRes?.guestId && Number(payload.guestId) !== Number(primaryRefRes.guestId)) ||
+      relevantGuestReservations.some(r => r?.requesterInfo?.guestId && Number(payload.guestId) === Number(r.requesterInfo.guestId)) ||
+      (Array.isArray(db.guests) && db.guests.some(g => g && Number(g.id) === Number(payload.guestId) && onlyDigits(g.documentNumber || g.document || g.cpf || "") === cleanDoc)) ||
+      (Array.isArray(db.guestAccounts) && db.guestAccounts.some(acc => acc && Number(acc.guestId) === Number(payload.guestId) && onlyDigits(acc.documentNumber || acc.document || acc.cpf || "") === cleanDoc))
+    )
+  );
+
+  const matchedGuest = Array.isArray(db.guests)
+    ? (isThirdPartyRequesterEmission
+        ? db.guests.find(g => {
+            if (!g) return false;
+            const gDoc = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+            if (gDoc && gDoc === cleanDoc) return false;
+            if (primaryRefRes?.requesterInfo?.guestId && Number(g.id) === Number(primaryRefRes.requesterInfo.guestId)) return false;
+            if (relevantGuestReservations.some(r => r?.requesterInfo?.guestId && Number(g.id) === Number(r.requesterInfo.guestId))) return false;
+            return (
+              (!isPayloadGuestIdRequester && payload.guestId && Number(g.id) === Number(payload.guestId)) ||
+              (primaryRefRes?.guestId && Number(g.id) === Number(primaryRefRes.guestId)) ||
+              (primaryRefRes?.guestDocument && gDoc && gDoc === onlyDigits(primaryRefRes.guestDocument)) ||
+              (candidateStayGuestName && String(g.fullName || g.name || "").trim().toLowerCase() === candidateStayGuestName.toLowerCase())
+            );
+          })
+        : db.guests.find(g =>
+            g && (
+              (payload.guestId && Number(g.id) === Number(payload.guestId)) ||
+              (matchedRes?.guestId && Number(g.id) === Number(matchedRes.guestId)) ||
+              (cleanDoc.length === 11 && onlyDigits(g.documentNumber || g.document || g.cpf || "") === cleanDoc) ||
+              (matchedRes?.guestDocument && onlyDigits(g.documentNumber || g.document || g.cpf || "") === onlyDigits(matchedRes.guestDocument)) ||
+              (candidateGuestName && String(g.fullName || g.name || "").trim().toLowerCase() === candidateGuestName.toLowerCase())
+            )
+          ))
     : null;
 
   // Trava contra emissão duplicada para a mesma reserva
@@ -64563,13 +66165,20 @@ export async function executeNfseEmissionInternal(payload) {
   );
 
   // Normalização de endereço e tomador (enriquecendo com check-in digital se necessário)
-  const resolvedCheckin = cleanDoc.length === 11 ? resolveGuestDigitalCheckinData({
-    guestId: payload.guestId,
-    cpfCnpj: cleanDoc,
-    name: tomadorNome,
-    reservationId: payload.reservationId,
-    reservationCode: payload.reservationCode
-  }) : null;
+  const resolvedCheckin = cleanDoc.length === 11
+    ? (isThirdPartyRequesterEmission
+        ? resolveGuestDigitalCheckinData({
+            cpfCnpj: cleanDoc,
+            name: tomadorNome
+          })
+        : resolveGuestDigitalCheckinData({
+            guestId: payload.guestId,
+            cpfCnpj: cleanDoc,
+            name: tomadorNome,
+            reservationId: payload.reservationId,
+            reservationCode: payload.reservationCode
+          }))
+    : null;
 
   const rawPayLogradouro = (payload.tomadorStreet || payload.tomadorEndereco || payload.tomadorLogradouro || payload.endLogradouro || "").trim();
   const rawPayCep = payload.tomadorCep || payload.endCep || "";
@@ -64589,7 +66198,10 @@ export async function executeNfseEmissionInternal(payload) {
       city: rawPayCidade
     });
     if (incomingAddrIsGeneric) {
-      const crmEntity = existingAgencyByCnpj || db.companies.find(c => onlyDigits(c.cnpj) === cleanDoc || (payload.companyId && Number(c.id) === Number(payload.companyId)));
+      const crmEntity = existingAgencyByCnpj || db.companies.find(c =>
+        onlyDigits(c.cnpj) === cleanDoc ||
+        (payload.companyId && Number(c.id) === Number(payload.companyId) && (!onlyDigits(c.cnpj) || onlyDigits(c.cnpj) === cleanDoc))
+      );
       if (crmEntity && (crmEntity.address || crmEntity.logradouro) && !isGenericPelincaCompanyAddress(crmEntity)) {
         resolvedCnpjAddr = {
           logradouro: crmEntity.address || crmEntity.logradouro,
@@ -64652,24 +66264,255 @@ export async function executeNfseEmissionInternal(payload) {
   const endCidade = hasRealPayloadOrCheckinAddr ? (resolvedGeoPay.cidade || normPayAddr.cidade || "") : "";
   const endUf = hasRealPayloadOrCheckinAddr ? (resolvedGeoPay.uf || normPayAddr.uf || "") : "";
   const endCodMun = hasRealPayloadOrCheckinAddr ? (resolvedGeoPay.codigoMunicipio || normPayAddr.ibge || "") : "";
-  const cleanEmail = (payload.tomadorEmail || resolvedCheckin?.email || "").trim().toLowerCase();
-  const rawTomadorTel = cleanPhone(payload.tomadorTelefone || resolvedCheckin?.telefone || "");
+  const isMatchedGuestThirdPartyRequester = Boolean(
+    matchedGuest && (
+      (primaryRefRes && !primaryRefRes.requesterIsGuest1 && primaryRefRes.requesterInfo?.guestId && Number(matchedGuest.id) === Number(primaryRefRes.requesterInfo.guestId)) ||
+      relevantGuestReservations.some(r => r && !r.requesterIsGuest1 && r.requesterInfo?.guestId && Number(matchedGuest.id) === Number(r.requesterInfo.guestId)) ||
+      (isThirdPartyRequesterEmission && (
+        onlyDigits(matchedGuest.documentNumber || matchedGuest.document || matchedGuest.cpf || "") === cleanDoc ||
+        (Array.isArray(matchedGuest.tags) && matchedGuest.tags.includes("solicitante_terceiro"))
+      ))
+    )
+  );
+  const extraGuestEmailSources = [
+    !isMatchedGuestThirdPartyRequester ? matchedGuest?.email : "",
+    !isThirdPartyRequesterEmission ? resolvedCheckin?.email : "",
+    ...(!isThirdPartyRequesterEmission && Array.isArray(resolvedCheckin?.allEmails) ? resolvedCheckin.allEmails : []),
+    ...(Array.isArray(payload.consolidatedGuestEmails) ? payload.consolidatedGuestEmails : [])
+  ];
+  if (relevantGuestReservations.length === 0) {
+    if (!isPayloadGuestIdRequester && payload.guestId && Array.isArray(db.guests)) {
+      const pGuest = db.guests.find(g => g && Number(g.id) === Number(payload.guestId));
+      if (pGuest?.email) extraGuestEmailSources.push(pGuest.email);
+    }
+    if (cleanDoc.length === 11 && Array.isArray(db.guestAccounts)) {
+      for (const acc of db.guestAccounts) {
+        if (!acc) continue;
+        const aDoc = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+        if ((!isPayloadGuestIdRequester && payload.guestId && Number(acc.guestId) === Number(payload.guestId)) || (!isThirdPartyRequesterEmission && aDoc && aDoc === cleanDoc)) {
+          if (acc.email) extraGuestEmailSources.push(acc.email);
+        }
+      }
+    }
+  }
+  const guestPersonalEmailSet = typeof collectReservationGuestPersonalEmails === "function"
+    ? collectReservationGuestPersonalEmails(relevantGuestReservations, db, extraGuestEmailSources)
+    : (() => {
+        const srcs = [...extraGuestEmailSources];
+        const gIds = new Set();
+        const gDocs = new Set();
+        const gPhones = new Set();
+        const stayNames = new Set();
+        const exReqIds = new Set();
+        const exReqDocs = new Set();
+        const exReqNames = new Set();
+        if (!isPayloadGuestIdRequester && payload.guestId) gIds.add(Number(payload.guestId));
+        if (!isThirdPartyRequesterEmission && cleanDoc.length === 11) gDocs.add(cleanDoc);
+        for (const r of relevantGuestReservations) {
+          if (!r) continue;
+          if (r.guestEmail) srcs.push(r.guestEmail);
+          const reqGId = (!r.requesterIsGuest1 && r.requesterInfo?.guestId) ? Number(r.requesterInfo.guestId) : null;
+          const reqN = (!r.requesterIsGuest1 && r.requesterInfo?.name) ? String(r.requesterInfo.name).trim().toLowerCase() : "";
+          if (!r.requesterIsGuest1 && r.requesterInfo) {
+            if (reqGId) exReqIds.add(reqGId);
+            const rqDocEx = onlyDigits(r.requesterInfo.cpf || r.requesterInfo.document || "");
+            if (rqDocEx && rqDocEx.length !== 14) exReqDocs.add(rqDocEx);
+            if (reqN && reqN !== String(r.guestName || "").trim().toLowerCase()) exReqNames.add(reqN);
+          }
+          const rGN = String(r.guestName || "").trim().toLowerCase();
+          if (rGN && rGN !== "hóspede" && rGN !== "hospede" && (r.requesterIsGuest1 || !reqN || rGN !== reqN)) stayNames.add(rGN);
+          if (r.requesterIsGuest1) {
+            if (r.requesterEmail) srcs.push(r.requesterEmail);
+            if (r.requesterInfo?.email) srcs.push(r.requesterInfo.email);
+            if (r.requesterInfo?.guestId) gIds.add(Number(r.requesterInfo.guestId));
+            const rqDoc = onlyDigits(r.requesterInfo?.cpf || r.requesterInfo?.document || r.requesterDocument || "");
+            if (rqDoc && rqDoc.length !== 14) gDocs.add(rqDoc);
+            const rqPh = cleanPhone(r.requesterPhone || r.requesterInfo?.phone || r.requesterInfo?.whatsapp || "");
+            if (rqPh && rqPh.length >= 8) gPhones.add(rqPh);
+          }
+          if (r.guestId && (!reqGId || Number(r.guestId) !== reqGId)) gIds.add(Number(r.guestId));
+          const rDoc = onlyDigits(r.guestDocument || r.document || "");
+          if (rDoc && rDoc.length !== 14) gDocs.add(rDoc);
+          const rPh = cleanPhone(r.guestPhone || r.phone || "");
+          if (rPh && rPh.length >= 8) gPhones.add(rPh);
+          if (Array.isArray(r.guests)) {
+            for (const rg of r.guests) {
+              if (!rg) continue;
+              if (rg.email) srcs.push(rg.email);
+              if (rg.guestId && (!reqGId || Number(rg.guestId) !== reqGId)) gIds.add(Number(rg.guestId));
+              const rgDoc = onlyDigits(rg.cpf || rg.document || rg.documentNumber || "");
+              if (rgDoc && rgDoc.length !== 14) gDocs.add(rgDoc);
+              const rgPh = cleanPhone(rg.phone || rg.phoneNumber || "");
+              if (rgPh && rgPh.length >= 8) gPhones.add(rgPh);
+              const rgN = String(rg.name || rg.fullName || "").trim().toLowerCase();
+              if (rgN && rgN !== "hóspede" && rgN !== "hospede" && (r.requesterIsGuest1 || !reqN || rgN !== reqN)) stayNames.add(rgN);
+            }
+          }
+          if (typeof resolveGuestDigitalCheckinData === "function") {
+            const chk = resolveGuestDigitalCheckinData({
+              guestId: r.guestId,
+              cpfCnpj: r.guestDocument || "",
+              name: r.guestName || "",
+              phone: r.guestPhone || "",
+              reservationId: r.id,
+              reservationCode: r.code
+            });
+            if (chk?.email) srcs.push(chk.email);
+            if (Array.isArray(chk?.allEmails)) srcs.push(...chk.allEmails);
+          }
+        }
+        for (const g of (Array.isArray(db.guests) ? db.guests : [])) {
+          if (!g) continue;
+          const gd = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+          const gp = cleanPhone(g.phone || g.phoneNumber || "");
+          const gn = String(g.fullName || g.name || "").trim().toLowerCase();
+          const isEx = (Array.isArray(g.tags) && g.tags.includes("solicitante_terceiro")) || (g.id && exReqIds.has(Number(g.id))) || (gd && exReqDocs.has(gd)) || (gn && exReqNames.has(gn));
+          if ((g.id && gIds.has(Number(g.id))) || (gd && gDocs.has(gd)) || (gp && gp.length >= 8 && Array.from(gPhones).some(p => p === gp || p.slice(-8) === gp.slice(-8))) || (!isEx && gn && stayNames.has(gn))) {
+            if (g.id) gIds.add(Number(g.id));
+            if (gd && gd.length !== 14) gDocs.add(gd);
+            if (gp && gp.length >= 8) gPhones.add(gp);
+            if (g.email) srcs.push(g.email);
+          }
+        }
+        for (const acc of (Array.isArray(db.guestAccounts) ? db.guestAccounts : [])) {
+          if (!acc) continue;
+          const ad = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+          const ap = cleanPhone(acc.phone || acc.phoneNumber || "");
+          const an = String(acc.fullName || acc.name || "").trim().toLowerCase();
+          const isExAcc = (acc.guestId && exReqIds.has(Number(acc.guestId))) || (ad && exReqDocs.has(ad)) || (an && exReqNames.has(an));
+          if ((acc.guestId && gIds.has(Number(acc.guestId))) || (ad && gDocs.has(ad)) || (ap && ap.length >= 8 && Array.from(gPhones).some(p => p === ap || p.slice(-8) === ap.slice(-8))) || (!isExAcc && an && stayNames.has(an))) {
+            if (acc.email) srcs.push(acc.email);
+          }
+        }
+        return new Set(parseEmailList(srcs));
+      })();
+  const rawTomadorEmailCandidates = parseEmailList([payload.tomadorEmail, !resolvedNfHideFromGuest ? resolvedCheckin?.email : ""]);
+  const cleanEmail = getPrimaryEmail(
+    resolvedNfHideFromGuest
+      ? rawTomadorEmailCandidates.filter(e => !guestPersonalEmailSet.has(e))
+      : rawTomadorEmailCandidates
+  );
+  const extraGuestPhoneSources = [
+    payload.guestPhone,
+    !isMatchedGuestThirdPartyRequester ? matchedGuest?.phone : "",
+    !isMatchedGuestThirdPartyRequester ? matchedGuest?.phoneNumber : "",
+    !isThirdPartyRequesterEmission ? resolvedCheckin?.telefone : ""
+  ];
+  if (relevantGuestReservations.length === 0) {
+    if (!isPayloadGuestIdRequester && payload.guestId && Array.isArray(db.guests)) {
+      const pGuest = db.guests.find(g => g && Number(g.id) === Number(payload.guestId));
+      if (pGuest?.phone) extraGuestPhoneSources.push(pGuest.phone);
+      if (pGuest?.phoneNumber) extraGuestPhoneSources.push(pGuest.phoneNumber);
+    }
+    if (cleanDoc.length === 11 && Array.isArray(db.guestAccounts)) {
+      for (const acc of db.guestAccounts) {
+        if (!acc) continue;
+        const aDoc = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+        if ((!isPayloadGuestIdRequester && payload.guestId && Number(acc.guestId) === Number(payload.guestId)) || (!isThirdPartyRequesterEmission && aDoc && aDoc === cleanDoc)) {
+          if (acc.phone) extraGuestPhoneSources.push(acc.phone);
+          if (acc.phoneNumber) extraGuestPhoneSources.push(acc.phoneNumber);
+        }
+      }
+    }
+  }
+  const guestPersonalPhoneSet = typeof collectReservationGuestPersonalPhones === "function"
+    ? collectReservationGuestPersonalPhones(relevantGuestReservations, db, extraGuestPhoneSources)
+    : (() => {
+        const phSet = new Set();
+        const addPh = (raw) => {
+          const p = cleanPhone(raw || "");
+          if (p && p.length >= 8) {
+            phSet.add(p);
+            if (p.length >= 12 && p.startsWith("55")) phSet.add(p.slice(2));
+          }
+        };
+        for (const s of extraGuestPhoneSources) addPh(s);
+        const gIds = new Set(!isPayloadGuestIdRequester && payload.guestId ? [Number(payload.guestId)] : []);
+        const gDocs = new Set(!isThirdPartyRequesterEmission && cleanDoc.length === 11 ? [cleanDoc] : []);
+        for (const r of relevantGuestReservations) {
+          if (!r) continue;
+          if (r.guestId) gIds.add(Number(r.guestId));
+          const rDoc = onlyDigits(r.guestDocument || r.document || "");
+          if (rDoc && rDoc.length !== 14) gDocs.add(rDoc);
+          addPh(r.guestPhone || r.phone || r.whatsapp);
+          if (r.requesterIsGuest1) {
+            if (r.requesterInfo?.guestId) gIds.add(Number(r.requesterInfo.guestId));
+            const rqD = onlyDigits(r.requesterInfo?.cpf || r.requesterInfo?.document || "");
+            if (rqD && rqD.length !== 14) gDocs.add(rqD);
+            addPh(r.requesterPhone || r.requesterInfo?.phone || r.requesterInfo?.whatsapp);
+          }
+          if (Array.isArray(r.guests)) {
+            for (const rg of r.guests) {
+              if (!rg) continue;
+              if (rg.guestId) gIds.add(Number(rg.guestId));
+              const rgD = onlyDigits(rg.cpf || rg.document || rg.documentNumber || "");
+              if (rgD && rgD.length !== 14) gDocs.add(rgD);
+              addPh(rg.phone || rg.phoneNumber || rg.whatsapp);
+            }
+          }
+        }
+        for (const g of (Array.isArray(db.guests) ? db.guests : [])) {
+          if (!g) continue;
+          const gd = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+          const gp = cleanPhone(g.phone || g.phoneNumber || "");
+          if ((g.id && gIds.has(Number(g.id))) || (gd && gDocs.has(gd)) || (gp && gp.length >= 8 && Array.from(phSet).some(p => p === gp || p.slice(-8) === gp.slice(-8)))) {
+            if (g.id) gIds.add(Number(g.id));
+            if (gd && gd.length !== 14) gDocs.add(gd);
+            addPh(gp);
+          }
+        }
+        for (const acc of (Array.isArray(db.guestAccounts) ? db.guestAccounts : [])) {
+          if (!acc) continue;
+          const ad = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+          const ap = cleanPhone(acc.phone || acc.phoneNumber || "");
+          if ((acc.guestId && gIds.has(Number(acc.guestId))) || (ad && gDocs.has(ad)) || (ap && ap.length >= 8 && Array.from(phSet).some(p => p === ap || p.slice(-8) === ap.slice(-8)))) {
+            addPh(ap);
+          }
+        }
+        return phSet;
+      })();
+  const isExecGuestPhone = (raw) => {
+    const p = cleanPhone(raw || "");
+    if (!p || p.length < 8) return false;
+    return typeof isGuestPersonalPhone === "function"
+      ? isGuestPersonalPhone(p, guestPersonalPhoneSet)
+      : (guestPersonalPhoneSet instanceof Set && Array.from(guestPersonalPhoneSet).some(gp => gp && gp.length >= 8 && (gp === p || gp.slice(-8) === p.slice(-8))));
+  };
+  const rawTomadorTelCandidate = cleanPhone(payload.tomadorTelefone || (!resolvedNfHideFromGuest ? resolvedCheckin?.telefone : "") || "");
+  const rawTomadorTel = (resolvedNfHideFromGuest && isExecGuestPhone(rawTomadorTelCandidate)) ? "" : rawTomadorTelCandidate;
   const guestWhatsappPhone = cleanPhone(
     payload.guestPhone ||
     matchedRes?.guestPhone ||
-    matchedRes?.guests?.[0]?.phone ||
+    primaryRefRes?.guestPhone ||
+    primaryRefRes?.guests?.[0]?.phone ||
     matchedGuest?.phone ||
-    resolvedCheckin?.telefone ||
+    (!isThirdPartyRequesterEmission ? resolvedCheckin?.telefone : "") ||
     ""
   );
   const isRawTomadorLandline = rawTomadorTel && rawTomadorTel.replace(/^55/, "").length <= 10;
-  const cleanTel = (cleanDoc.length === 14 && guestWhatsappPhone && (!rawTomadorTel || isRawTomadorLandline))
-    ? guestWhatsappPhone
-    : (rawTomadorTel || guestWhatsappPhone);
+  const rawCleanTel = resolvedNfHideFromGuest
+    ? rawTomadorTel
+    : ((cleanDoc.length === 14 && guestWhatsappPhone && (!rawTomadorTel || isRawTomadorLandline))
+        ? guestWhatsappPhone
+        : (rawTomadorTel || guestWhatsappPhone));
+  const cleanTel = (resolvedNfHideFromGuest && isExecGuestPhone(rawCleanTel)) ? "" : rawCleanTel;
 
   // Sincronização limpa de CRM ao emitir NFS-e para CNPJ (Agência -> db.agencies; Empresa -> db.companies)
-  let resolvedAgencyId = payload.agencyId ? Number(payload.agencyId) : (existingAgencyByCnpj?.id ? Number(existingAgencyByCnpj.id) : (matchedRes?.agencyId ? Number(matchedRes.agencyId) : null));
-  let resolvedCompanyId = payload.companyId ? Number(payload.companyId) : (matchedRes?.companyId ? Number(matchedRes.companyId) : null);
+  const matchedResCompDoc = matchedRes?.companyId
+    ? onlyDigits(((db.companies || []).find(c => Number(c.id) === Number(matchedRes.companyId))?.cnpj) || matchedRes.companyCnpj || "")
+    : onlyDigits(matchedRes?.companyCnpj || "");
+  const matchedResCompanyMatchesDoc = Boolean(
+    matchedRes?.companyId &&
+    (cleanDoc.length !== 14 || isAgencyTomador || !matchedResCompDoc || matchedResCompDoc === cleanDoc)
+  );
+  let resolvedAgencyId = payload.agencyId !== undefined
+    ? (payload.agencyId ? Number(payload.agencyId) : (existingAgencyByCnpj?.id ? Number(existingAgencyByCnpj.id) : null))
+    : (existingAgencyByCnpj?.id
+        ? Number(existingAgencyByCnpj.id)
+        : ((cleanDoc.length === 14 && !isAgencyTomador) ? null : (matchedRes?.agencyId ? Number(matchedRes.agencyId) : null)));
+  let resolvedCompanyId = payload.companyId !== undefined
+    ? (payload.companyId ? Number(payload.companyId) : null)
+    : (matchedResCompanyMatchesDoc ? Number(matchedRes.companyId) : null);
 
   if (cleanDoc.length === 14) {
     const finalAddrIsGenericPelinca = isGenericPelincaCompanyAddress({
@@ -64682,6 +66525,10 @@ export async function executeNfseEmissionInternal(payload) {
       let ag = existingAgencyByCnpj;
       if (!ag) {
         const nextAgId = db.agencies.length > 0 ? Math.max(...db.agencies.map(a => Number(a.id) || 0)) + 1 : 1;
+        const agCrmRawList = parseEmailList([payload.nfDeliveryEmails, payload.tomadorEmail, cleanEmail]);
+        const agCrmEmailList = resolvedNfHideFromGuest
+          ? agCrmRawList.filter(e => !guestPersonalEmailSet.has(e))
+          : agCrmRawList;
         ag = {
           id: nextAgId,
           corporateName: toTitleCase(tomadorNome),
@@ -64689,7 +66536,7 @@ export async function executeNfseEmissionInternal(payload) {
           tradeName: payload.tomadorNomeFantasia || toTitleCase(tomadorNome),
           nomeFantasia: payload.tomadorNomeFantasia || toTitleCase(tomadorNome),
           cnpj: cleanDoc,
-          financialEmail: cleanEmail,
+          financialEmail: agCrmEmailList.join("; "),
           phone: cleanTel,
           address: endLogradouro,
           logradouro: endLogradouro,
@@ -64730,10 +66577,16 @@ export async function executeNfseEmissionInternal(payload) {
         if (!isActuallyCompany) resolvedCompanyId = matchedRes?.companyId ? Number(matchedRes.companyId) : null;
       }
     } else {
-      let comp = db.companies.find(c => onlyDigits(c.cnpj) === cleanDoc || (resolvedCompanyId && Number(c.id) === Number(resolvedCompanyId)));
+      let comp = db.companies.find(c =>
+        onlyDigits(c.cnpj) === cleanDoc ||
+        (resolvedCompanyId && Number(c.id) === Number(resolvedCompanyId) && (!cleanDoc || cleanDoc.length !== 14 || !onlyDigits(c.cnpj) || onlyDigits(c.cnpj) === cleanDoc))
+      );
       if (!comp) {
         const nextCompId = db.companies.length > 0 ? Math.max(...db.companies.map(c => Number(c.id) || 0)) + 1 : 1;
-        const guestMailLower = String(matchedRes?.guestEmail || matchedGuest?.email || "").trim().toLowerCase();
+        const compCrmRawList = parseEmailList([payload.nfDeliveryEmails, payload.tomadorEmail, cleanEmail]);
+        const compCrmEmailList = resolvedNfHideFromGuest
+          ? compCrmRawList.filter(e => !guestPersonalEmailSet.has(e))
+          : compCrmRawList;
         comp = {
           id: nextCompId,
           corporateName: toTitleCase(tomadorNome),
@@ -64741,7 +66594,7 @@ export async function executeNfseEmissionInternal(payload) {
           tradeName: payload.tomadorNomeFantasia || toTitleCase(tomadorNome),
           nomeFantasia: payload.tomadorNomeFantasia || toTitleCase(tomadorNome),
           cnpj: cleanDoc,
-          financialEmail: (cleanEmail && cleanEmail !== guestMailLower) ? cleanEmail : "",
+          financialEmail: compCrmEmailList.join("; "),
           phone: (cleanTel && cleanTel !== guestWhatsappPhone) ? cleanTel : "",
           companyRole: "invoice_only",
           allowsDirectReservations: false,
@@ -64784,32 +66637,34 @@ export async function executeNfseEmissionInternal(payload) {
         comp.uf = endUf;
       }
       resolvedCompanyId = Number(comp.id);
-      if (matchedGuest) {
-        matchedGuest.companyId = Number(comp.id);
-        matchedGuest.companyName = comp.tradeName || comp.corporateName || toTitleCase(tomadorNome);
-        matchedGuest.companyCnpj = cleanDoc;
-        matchedGuest.preferredInvoiceRecipient = "company";
-        if (!Array.isArray(matchedGuest.tags)) matchedGuest.tags = [];
-        if (!matchedGuest.tags.includes("Corporativo")) matchedGuest.tags.push("Corporativo");
-        matchedGuest.updatedAt = new Date().toISOString();
-      }
-      if (matchedRes) {
-        matchedRes.companyId = Number(comp.id);
-        matchedRes.companyName = comp.corporateName || comp.tradeName || toTitleCase(tomadorNome);
-        matchedRes.companyCnpj = cleanDoc;
-        if (comp.address) matchedRes.companyAddress = comp.address;
-        if (comp.number) matchedRes.companyNumber = comp.number;
-        if (comp.complement !== undefined) matchedRes.companyComplement = comp.complement;
-        if (comp.neighborhood) matchedRes.companyNeighborhood = comp.neighborhood;
-        if (comp.cep) matchedRes.companyCep = comp.cep;
-        if (comp.city) matchedRes.companyCity = comp.city;
-        if (comp.state) matchedRes.companyState = comp.state;
-        if (comp.ibgeCode) matchedRes.companyIbgeCode = comp.ibgeCode;
-        matchedRes.invoiceRecipientType = "company";
-        matchedRes.nfRecipientType = "company";
+      if (!payload.isConsolidated) {
+        if (matchedGuest) {
+          matchedGuest.companyId = Number(comp.id);
+          matchedGuest.companyName = comp.tradeName || comp.corporateName || toTitleCase(tomadorNome);
+          matchedGuest.companyCnpj = cleanDoc;
+          matchedGuest.preferredInvoiceRecipient = "company";
+          if (!Array.isArray(matchedGuest.tags)) matchedGuest.tags = [];
+          if (!matchedGuest.tags.includes("Corporativo")) matchedGuest.tags.push("Corporativo");
+          matchedGuest.updatedAt = new Date().toISOString();
+        }
+        if (matchedRes) {
+          matchedRes.companyId = Number(comp.id);
+          matchedRes.companyName = comp.corporateName || comp.tradeName || toTitleCase(tomadorNome);
+          matchedRes.companyCnpj = cleanDoc;
+          if (comp.address) matchedRes.companyAddress = comp.address;
+          if (comp.number) matchedRes.companyNumber = comp.number;
+          if (comp.complement !== undefined) matchedRes.companyComplement = comp.complement;
+          if (comp.neighborhood) matchedRes.companyNeighborhood = comp.neighborhood;
+          if (comp.cep) matchedRes.companyCep = comp.cep;
+          if (comp.city) matchedRes.companyCity = comp.city;
+          if (comp.state) matchedRes.companyState = comp.state;
+          if (comp.ibgeCode) matchedRes.companyIbgeCode = comp.ibgeCode;
+          matchedRes.invoiceRecipientType = "company";
+          matchedRes.nfRecipientType = "company";
+        }
       }
     }
-    if (isAgencyTomador && resolvedAgencyId && matchedRes) {
+    if (isAgencyTomador && resolvedAgencyId && matchedRes && !payload.isConsolidated) {
       const agObj = db.agencies.find(a => Number(a.id) === Number(resolvedAgencyId));
       matchedRes.agencyId = Number(resolvedAgencyId);
       if (agObj) {
@@ -64828,21 +66683,11 @@ export async function executeNfseEmissionInternal(payload) {
       matchedRes.invoiceRecipientType = "agency";
       matchedRes.nfRecipientType = "agency";
     }
-  } else if (cleanDoc.length === 11 && Boolean(
-    payload.invoiceRecipientType === "requester" ||
-    payload.invoiceRecipientType === "other_person" ||
-    (!payload.invoiceRecipientType && (matchedRes?.invoiceRecipientType === "requester" || matchedRes?.invoiceRecipientType === "other_person")) ||
-    (
-      matchedRes?.requesterInfo?.name &&
-      matchedRes?.guestName &&
-      String(tomadorNome || "").trim().toLowerCase() === String(matchedRes.requesterInfo.name).trim().toLowerCase() &&
-      String(tomadorNome || "").trim().toLowerCase() !== String(matchedRes.guestName).trim().toLowerCase()
-    )
-  )) {
+  } else if (cleanDoc.length === 11 && isThirdPartyRequesterEmission) {
     if (!db.guests) db.guests = [];
     let reqGuestRec = db.guests.find(g =>
       g && (
-        (matchedRes?.requesterInfo?.guestId && Number(g.id) === Number(matchedRes.requesterInfo.guestId)) ||
+        (primaryRefRes?.requesterInfo?.guestId && Number(g.id) === Number(primaryRefRes.requesterInfo.guestId)) ||
         onlyDigits(g.documentNumber || g.document || g.cpf || "") === cleanDoc ||
         (cleanTel && cleanPhone(g.phone) === cleanTel && Array.isArray(g.tags) && g.tags.includes("solicitante_terceiro"))
       )
@@ -64900,12 +66745,30 @@ export async function executeNfseEmissionInternal(payload) {
       reqGuestRec.updatedAt = new Date().toISOString();
     }
     if (matchedRes) {
+      const safePayloadReqDelivery = resolvedNfHideFromGuest
+        ? parseEmailList(payload.nfDeliveryEmails).filter(e => !guestPersonalEmailSet.has(e))
+        : parseEmailList(payload.nfDeliveryEmails);
+      const safePayloadReqTomador = resolvedNfHideFromGuest
+        ? rawTomadorEmailCandidates.filter(e => !guestPersonalEmailSet.has(e))
+        : rawTomadorEmailCandidates;
+      const combinedPayloadReqEmails = parseEmailList([...safePayloadReqDelivery, ...safePayloadReqTomador]);
+      const existingReqEmails = resolvedNfHideFromGuest
+        ? parseEmailList(matchedRes.requesterInfo?.email).filter(e => !guestPersonalEmailSet.has(e))
+        : parseEmailList(matchedRes.requesterInfo?.email);
+      const resolvedReqInfoEmail = combinedPayloadReqEmails.length > 1
+        ? combinedPayloadReqEmails.join("; ")
+        : (combinedPayloadReqEmails.length === 1
+            ? (existingReqEmails.length > 1 && existingReqEmails.includes(combinedPayloadReqEmails[0])
+                ? existingReqEmails.join("; ")
+                : combinedPayloadReqEmails[0])
+            : (existingReqEmails.join("; ") || ""));
+      if (resolvedReqInfoEmail) reqGuestRec.email = resolvedReqInfoEmail;
       matchedRes.requesterInfo = {
         ...(matchedRes.requesterInfo || {}),
         guestId: reqGuestRec.id,
         name: toTitleCase(tomadorNome),
         cpf: cleanDoc,
-        email: cleanEmail || matchedRes.requesterInfo?.email || "",
+        email: resolvedReqInfoEmail || cleanEmail || matchedRes.requesterInfo?.email || "",
         phone: cleanTel || matchedRes.requesterInfo?.phone || ""
       };
       matchedRes.invoiceRecipientType = "requester";
@@ -65084,23 +66947,30 @@ export async function executeNfseEmissionInternal(payload) {
   const resolvedCheckinDate = payload.checkinDate || payload.checkIn || matchedRes?.checkinDate || null;
   const resolvedCheckoutDate = payload.checkoutDate || payload.checkOut || matchedRes?.checkoutDate || null;
   const resolvedAliquota = Number(payload.aliquota || payload.aliquotaIss || 2.0);
-  const resolvedNfHideFromGuest = payload.nfHideFromGuest !== undefined ? Boolean(payload.nfHideFromGuest) : Boolean(matchedRes?.nfHideFromGuest);
   const targetCompForDelivery = resolvedCompanyId ? (db.companies || []).find(c => Number(c.id) === Number(resolvedCompanyId)) : null;
   const isTargetCompNoBilling = Boolean(targetCompForDelivery && (targetCompForDelivery.billingEnabled === false || targetCompForDelivery.isInvoiceOnly === true));
-  const guestPersonalEmail = String(matchedRes?.guestEmail || matchedGuest?.email || "").trim().toLowerCase();
-  const explicitCompanyEmail = String(targetCompForDelivery?.financialEmail || "").trim().toLowerCase();
-  const rawDeliveryEmails = Array.isArray(payload.nfDeliveryEmails)
-    ? payload.nfDeliveryEmails
-    : (typeof payload.nfDeliveryEmails === "string" && payload.nfDeliveryEmails.trim()
-        ? payload.nfDeliveryEmails.split(/[;,]+/).map(s => s.trim()).filter(Boolean)
-        : (Array.isArray(matchedRes?.nfDeliveryEmails) && matchedRes.nfDeliveryEmails.length > 0
-            ? matchedRes.nfDeliveryEmails
+  const explicitCompanyEmails = parseEmailList(targetCompForDelivery?.financialEmail);
+  const isExplicitConsolidatedDelivery = Boolean(
+    payload.isConsolidated &&
+    Array.isArray(payload.nfDeliveryEmails) &&
+    (payload.nfDeliveryEmails.length > 0 || resolvedNfHideFromGuest || payload.isTomadorOverridden)
+  );
+  const rawDeliveryEmails = isExplicitConsolidatedDelivery
+    ? parseEmailList(payload.nfDeliveryEmails)
+    : (parseEmailList(payload.nfDeliveryEmails).length > 0
+        ? parseEmailList(payload.nfDeliveryEmails)
+        : (!payload.isTomadorOverridden && parseEmailList(matchedRes?.nfDeliveryEmails).length > 0
+            ? parseEmailList(matchedRes.nfDeliveryEmails)
             : (isTargetCompNoBilling && !resolvedNfHideFromGuest
-                ? Array.from(new Set([guestPersonalEmail, explicitCompanyEmail].filter(Boolean)))
-                : (cleanEmail ? [cleanEmail] : []))));
-  const resolvedNfDeliveryEmails = resolvedNfHideFromGuest && guestPersonalEmail
-    ? rawDeliveryEmails.filter(e => String(e).trim().toLowerCase() !== guestPersonalEmail)
+                ? parseEmailList([matchedRes?.guestEmail, matchedGuest?.email, explicitCompanyEmails])
+                : parseEmailList([payload.tomadorEmail, isThirdPartyRequesterEmission ? matchedRes?.requesterInfo?.email : "", explicitCompanyEmails, !resolvedNfHideFromGuest ? cleanEmail : ""]))));
+  const resolvedNfDeliveryEmails = resolvedNfHideFromGuest
+    ? rawDeliveryEmails.filter(e => !guestPersonalEmailSet.has(e))
     : rawDeliveryEmails;
+  const safeTomadorEmail = getPrimaryEmail(
+    resolvedNfDeliveryEmails.find(e => !resolvedNfHideFromGuest || !guestPersonalEmailSet.has(e)) ||
+    cleanEmail
+  );
 
   // Motor Oficial Unificado: Padrão Nacional ADN (Gov.br / SEFIN Nacional)
   const motorEscolhido = "padrao_nacional";
@@ -65130,7 +67000,7 @@ export async function executeNfseEmissionInternal(payload) {
         cpfCnpj: cleanDoc,
         nome: toTitleCase(tomadorNome),
         telefone: cleanTel,
-        email: resolvedNfDeliveryEmails[0] || (resolvedNfHideFromGuest ? "" : cleanEmail),
+        email: safeTomadorEmail,
         logradouro: endLogradouro,
         numero: endNumero,
         complemento: endComplemento,
@@ -65202,20 +67072,24 @@ export async function executeNfseEmissionInternal(payload) {
       prestadorRazaoSocial: "Rental Miller's LTDA",
       prestadorCnpj: "47.964.813/0001-65",
       prestadorIm: "142591",
-      invoiceRecipientType: isAgencyTomador ? "agency" : (cleanDoc.length === 14 ? "company" : (payload.invoiceRecipientType === "requester" || matchedRes?.invoiceRecipientType === "requester" ? "requester" : "guest")),
+      invoiceRecipientType: isAgencyTomador ? "agency" : (cleanDoc.length === 14 ? "company" : (isThirdPartyRequesterEmission ? "requester" : (matchesAnyStayGuestDoc && !anyResRequesterIsGuest1 ? "guest" : (["requester", "other_person", "third_party"].includes(normPayRecType) || ["requester", "other_person", "third_party"].includes(normResRecType) ? "requester" : "guest")))),
       agencyId: resolvedAgencyId,
       companyId: resolvedCompanyId,
-      guestId: payload.guestId ? Number(payload.guestId) : (resolvedCheckin?.guestId ? Number(resolvedCheckin.guestId) : (matchedRes?.guestId ? Number(matchedRes.guestId) : null)),
+      guestId: isThirdPartyRequesterEmission
+        ? (matchedGuest?.id ? Number(matchedGuest.id) : (primaryRefRes?.guestId ? Number(primaryRefRes.guestId) : (!isPayloadGuestIdRequester && payload.guestId ? Number(payload.guestId) : null)))
+        : (payload.guestId ? Number(payload.guestId) : (resolvedCheckin?.guestId ? Number(resolvedCheckin.guestId) : (matchedRes?.guestId ? Number(matchedRes.guestId) : null))),
       b2bReservationNumber: payload.b2bReservationNumber || matchedRes?.b2bReservationNumber || null,
       b2bLocatorRloc: payload.b2bLocatorRloc || matchedRes?.b2bLocatorRloc || null,
       costCenter: payload.costCenter || matchedRes?.costCenter || null,
       nfDeliveryEmails: resolvedNfDeliveryEmails,
       nfHideFromGuest: resolvedNfHideFromGuest,
-      guestName: candidateGuestName || matchedRes?.guestName || matchedGuest?.fullName || matchedGuest?.name || null,
+      guestName: isThirdPartyRequesterEmission
+        ? (candidateStayGuestName || primaryRefRes?.guestName || matchedGuest?.fullName || matchedGuest?.name || null)
+        : (candidateGuestName || matchedRes?.guestName || matchedGuest?.fullName || matchedGuest?.name || null),
       guestPhone: resolvedNfHideFromGuest ? "" : (guestWhatsappPhone || cleanTel),
       tomadorNome: toTitleCase(tomadorNome),
       tomadorCpfCnpj: cleanDoc,
-      tomadorEmail: resolvedNfDeliveryEmails[0] || (resolvedNfHideFromGuest ? "" : cleanEmail),
+      tomadorEmail: safeTomadorEmail,
       tomadorTelefone: resolvedNfHideFromGuest ? rawTomadorTel : cleanTel,
       tomadorEndereco: endLogradouro,
       tomadorLogradouro: endLogradouro,
@@ -65905,16 +67779,43 @@ app.post("/api/nfse/emit-batch", async (req, res) => {
         const agId = reservationObj.agencyId || guest?.agencyId;
         const agency = agId ? (db.agencies || []).find(a => Number(a.id) === Number(agId)) : null;
 
-        const recType = reservationObj.invoiceRecipientType || (agency && reservationObj.b2bRatePolicy === "NET" && !company ? "agency" : (company ? "company" : (agency ? "agency" : "guest")));
+        const rawRecType = String(reservationObj.invoiceRecipientType || (agency && reservationObj.b2bRatePolicy === "NET" && !company ? "agency" : (company ? "company" : (agency ? "agency" : "guest")))).trim().toLowerCase();
+        const stayGuestDocBatch = onlyDigits(reservationObj.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || "");
+        const reqDocBatch = onlyDigits(reservationObj.requesterInfo?.cpf || reservationObj.requesterInfo?.document || reservationObj.requesterDocument || "");
+        const isRequesterPfThirdParty = rawRecType === "requester_pf" && !reservationObj.requesterIsGuest1 && (
+          Boolean(reservationObj.requesterInfo) || !stayGuestDocBatch || (reqDocBatch && reqDocBatch !== stayGuestDocBatch)
+        );
+        const recType = (["other_person", "third_party"].includes(rawRecType) || isRequesterPfThirdParty)
+          ? "requester"
+          : (rawRecType === "requester_pf" ? "guest" : rawRecType);
         const isAg = recType === "agency" && Boolean(agency);
-        const isPj = !isAg && (Boolean(company) || onlyDigits(reservationObj.guestDocument).length === 14);
+        const isReq = recType === "requester" && !reservationObj.requesterIsGuest1 && Boolean(
+          reservationObj.requesterInfo?.name ||
+          reservationObj.requesterInfo?.cpf ||
+          reservationObj.requesterInfo?.document ||
+          reservationObj.requesterName
+        );
+        const isPj = !isAg && !isReq && recType !== "guest" && recType !== "requester" && (Boolean(company) || onlyDigits(reservationObj.guestDocument).length === 14);
+        const reqCrm = isReq
+          ? (db.guests || []).find(g =>
+              g && (
+                (reservationObj.requesterInfo?.guestId && Number(g.id) === Number(reservationObj.requesterInfo.guestId)) ||
+                (reservationObj.requesterInfo?.cpf && onlyDigits(g.documentNumber || g.document || g.cpf || "") === onlyDigits(reservationObj.requesterInfo.cpf)) ||
+                (reservationObj.requesterInfo?.phone && cleanPhone(g.phone) === cleanPhone(reservationObj.requesterInfo.phone))
+              )
+            )
+          : null;
 
         const tomadorNome = isAg
           ? (agency.corporateName || agency.tradeName)
-          : (isPj ? (company?.corporateName || reservationObj.guestName) : reservationObj.guestName);
+          : (isReq
+              ? (reservationObj.requesterInfo?.name || reservationObj.requesterName || reqCrm?.fullName || reqCrm?.name || reservationObj.guestName)
+              : (isPj ? (company?.corporateName || reservationObj.guestName) : reservationObj.guestName));
         const tomadorDoc = isAg
           ? agency.cnpj
-          : (isPj ? (company?.cnpj || reservationObj.guestDocument) : (reservationObj.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || ""));
+          : (isReq
+              ? (reservationObj.requesterInfo?.cpf || reservationObj.requesterInfo?.document || reservationObj.requesterDocument || reqCrm?.documentNumber || reqCrm?.document || reqCrm?.cpf || "")
+              : (isPj ? (company?.cnpj || reservationObj.guestDocument) : (reservationObj.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || "")));
 
         let diarias = 1;
         if (reservationObj.checkinDate && reservationObj.checkoutDate) {
@@ -65922,27 +67823,165 @@ app.post("/api/nfse/emit-batch", async (req, res) => {
           if (diff > 0) diarias = diff;
         }
 
+        const batchGuestPersonalSet = typeof collectReservationGuestPersonalEmails === "function"
+          ? collectReservationGuestPersonalEmails(reservationObj, db, [guest?.email])
+          : (() => {
+              const srcs = [reservationObj.guestEmail, guest?.email];
+              if (reservationObj.requesterIsGuest1) {
+                if (reservationObj.requesterEmail) srcs.push(reservationObj.requesterEmail);
+                if (reservationObj.requesterInfo?.email) srcs.push(reservationObj.requesterInfo.email);
+              }
+              const gIds = new Set();
+              const gDocs = new Set();
+              const gPhones = new Set();
+              if (reservationObj.guestId) gIds.add(Number(reservationObj.guestId));
+              const rDoc = onlyDigits(reservationObj.guestDocument || reservationObj.document || "");
+              if (rDoc && rDoc.length !== 14) gDocs.add(rDoc);
+              const rPh = cleanPhone(reservationObj.guestPhone || reservationObj.phone || "");
+              if (rPh && rPh.length >= 8) gPhones.add(rPh);
+              if (Array.isArray(reservationObj.guests)) {
+                for (const rg of reservationObj.guests) {
+                  if (!rg) continue;
+                  if (rg.email) srcs.push(rg.email);
+                  if (rg.guestId) gIds.add(Number(rg.guestId));
+                  const rgDoc = onlyDigits(rg.cpf || rg.document || rg.documentNumber || "");
+                  if (rgDoc && rgDoc.length !== 14) gDocs.add(rgDoc);
+                  const rgPh = cleanPhone(rg.phone || rg.phoneNumber || "");
+                  if (rgPh && rgPh.length >= 8) gPhones.add(rgPh);
+                }
+              }
+              if (typeof resolveGuestDigitalCheckinData === "function") {
+                const chk = resolveGuestDigitalCheckinData({
+                  guestId: reservationObj.guestId,
+                  cpfCnpj: reservationObj.guestDocument || "",
+                  name: reservationObj.guestName || "",
+                  phone: reservationObj.guestPhone || "",
+                  reservationId: reservationObj.id,
+                  reservationCode: reservationObj.code
+                });
+                if (chk?.email) srcs.push(chk.email);
+                if (Array.isArray(chk?.allEmails)) srcs.push(...chk.allEmails);
+              }
+              for (const g of (db.guests || [])) {
+                if (!g) continue;
+                const gd = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+                const gp = cleanPhone(g.phone || g.phoneNumber || "");
+                if ((g.id && gIds.has(Number(g.id))) || (gd && gDocs.has(gd)) || (gp && gp.length >= 8 && Array.from(gPhones).some(p => p === gp || p.slice(-8) === gp.slice(-8)))) {
+                  if (g.id) gIds.add(Number(g.id));
+                  if (gd && gd.length !== 14) gDocs.add(gd);
+                  if (gp && gp.length >= 8) gPhones.add(gp);
+                  if (g.email) srcs.push(g.email);
+                }
+              }
+              for (const acc of (db.guestAccounts || [])) {
+                if (!acc) continue;
+                const ad = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+                const ap = cleanPhone(acc.phone || acc.phoneNumber || "");
+                if ((acc.guestId && gIds.has(Number(acc.guestId))) || (ad && gDocs.has(ad)) || (ap && ap.length >= 8 && Array.from(gPhones).some(p => p === ap || p.slice(-8) === ap.slice(-8)))) {
+                  if (acc.email) srcs.push(acc.email);
+                }
+              }
+              return new Set(parseEmailList(srcs));
+            })();
+        const batchHideFromGuest = Boolean(reservationObj.nfHideFromGuest);
+        const rawBatchDeliveryList = parseEmailList([
+          reservationObj.nfDeliveryEmails,
+          isAg
+            ? [reservationObj.agencyAgentEmail, agency?.financialEmail]
+            : (isReq
+                ? [reservationObj.requesterInfo?.email, reservationObj.requesterEmail, reqCrm?.email]
+                : (isPj ? company?.financialEmail : ""))
+        ]);
+        const safeBatchDeliveryList = batchHideFromGuest
+          ? rawBatchDeliveryList.filter(e => !batchGuestPersonalSet.has(e))
+          : rawBatchDeliveryList;
+        const rawBatchTomadorEmails = parseEmailList(
+          isAg
+            ? [reservationObj.agencyAgentEmail, agency?.financialEmail]
+            : (isReq
+                ? [reservationObj.requesterInfo?.email, reservationObj.requesterEmail, reqCrm?.email]
+                : (isPj
+                    ? [company?.financialEmail, !batchHideFromGuest ? guest?.email : ""]
+                    : (!batchHideFromGuest ? [reservationObj.guestEmail, guest?.email] : [])))
+        );
+        const safeBatchTomadorEmails = batchHideFromGuest
+          ? rawBatchTomadorEmails.filter(e => !batchGuestPersonalSet.has(e))
+          : rawBatchTomadorEmails;
+        const batchGuestPhoneSet = typeof collectReservationGuestPersonalPhones === "function"
+          ? collectReservationGuestPersonalPhones(reservationObj, db, [guest?.phone, guest?.phoneNumber])
+          : (() => {
+              const phSet = new Set();
+              const addPh = (raw) => {
+                const p = cleanPhone(raw || "");
+                if (p && p.length >= 8) {
+                  phSet.add(p);
+                  if (p.length >= 12 && p.startsWith("55")) phSet.add(p.slice(2));
+                }
+              };
+              addPh(reservationObj.guestPhone || reservationObj.phone);
+              addPh(guest?.phone || guest?.phoneNumber);
+              if (reservationObj.requesterIsGuest1) addPh(reservationObj.requesterPhone || reservationObj.requesterInfo?.phone || reservationObj.requesterInfo?.whatsapp);
+              if (Array.isArray(reservationObj.guests)) {
+                for (const rg of reservationObj.guests) {
+                  if (rg) addPh(rg.phone || rg.phoneNumber || rg.whatsapp);
+                }
+              }
+              const gIds = new Set(reservationObj.guestId ? [Number(reservationObj.guestId)] : []);
+              const gDocs = new Set();
+              const rDoc = onlyDigits(reservationObj.guestDocument || reservationObj.document || "");
+              if (rDoc && rDoc.length !== 14) gDocs.add(rDoc);
+              for (const g of (db.guests || [])) {
+                if (!g) continue;
+                const gd = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+                const gp = cleanPhone(g.phone || g.phoneNumber || "");
+                if ((g.id && gIds.has(Number(g.id))) || (gd && gDocs.has(gd)) || (gp && gp.length >= 8 && Array.from(phSet).some(p => p === gp || p.slice(-8) === gp.slice(-8)))) addPh(gp);
+              }
+              for (const acc of (db.guestAccounts || [])) {
+                if (!acc) continue;
+                const ad = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+                const ap = cleanPhone(acc.phone || acc.phoneNumber || "");
+                if ((acc.guestId && gIds.has(Number(acc.guestId))) || (ad && gDocs.has(ad)) || (ap && ap.length >= 8 && Array.from(phSet).some(p => p === ap || p.slice(-8) === ap.slice(-8)))) addPh(ap);
+              }
+              return phSet;
+            })();
+        const rawBatchTel = cleanPhone(
+          isAg
+            ? (reservationObj.agencyAgentPhone || agency.phone || "")
+            : (isReq
+                ? (reservationObj.requesterInfo?.phone || reservationObj.requesterPhone || reqCrm?.phone || "")
+                : (isPj
+                    ? (company?.phone || (!batchHideFromGuest ? guest?.phone : "") || "")
+                    : (!batchHideFromGuest ? (reservationObj.guestPhone || guest?.phone || "") : "")))
+        );
+        const safeBatchTel = (batchHideFromGuest && (
+          typeof isGuestPersonalPhone === "function"
+            ? isGuestPersonalPhone(rawBatchTel, batchGuestPhoneSet)
+            : (batchGuestPhoneSet instanceof Set && rawBatchTel && rawBatchTel.length >= 8 && Array.from(batchGuestPhoneSet).some(gp => gp && gp.length >= 8 && (gp === rawBatchTel || gp.slice(-8) === rawBatchTel.slice(-8))))
+        )) ? "" : rawBatchTel;
+
         payload = {
           reservationId: reservationObj.id,
           reservationCode: reservationObj.code,
           guestId: guest?.id || reservationObj.guestId,
           companyId: company?.id ? Number(company.id) : null,
           agencyId: agency?.id ? Number(agency.id) : null,
-          invoiceRecipientType: isAg ? "agency" : (isPj ? "company" : "guest"),
-          nfDeliveryEmails: reservationObj.nfDeliveryEmails || [],
-          nfHideFromGuest: Boolean(reservationObj.nfHideFromGuest),
+          invoiceRecipientType: isAg ? "agency" : (isReq ? "requester" : (isPj ? "company" : "guest")),
+          requesterIsGuest1: Boolean(reservationObj.requesterIsGuest1),
+          nfDeliveryEmails: safeBatchDeliveryList,
+          nfHideFromGuest: batchHideFromGuest,
+          consolidatedGuestEmails: Array.from(batchGuestPersonalSet),
           sistemaEmissor: "padrao_nacional",
           tomadorNome,
           tomadorCpfCnpj: tomadorDoc,
-          tomadorEmail: isAg ? (reservationObj.agencyAgentEmail || agency.financialEmail) : (isPj ? (company?.financialEmail || guest?.email) : (reservationObj.guestEmail || guest?.email)),
-          tomadorTelefone: isAg ? (reservationObj.agencyAgentPhone || agency.phone) : (isPj ? (company?.phone || guest?.phone) : (reservationObj.guestPhone || guest?.phone)),
-          tomadorEndereco: isAg ? (agency.address || agency.logradouro) : (isPj ? (company?.address || company?.logradouro || guest?.address) : (guest?.address || guest?.logradouro)),
-          tomadorNumero: isAg ? agency.number : (isPj ? (company?.number || guest?.number) : guest?.number),
-          tomadorComplemento: isAg ? agency.complement : (isPj ? (company?.complement || guest?.complement) : guest?.complement),
-          tomadorBairro: isAg ? agency.neighborhood : (isPj ? (company?.neighborhood || guest?.neighborhood) : guest?.neighborhood),
-          tomadorCep: isAg ? agency.cep : (isPj ? (company?.cep || guest?.cep) : guest?.cep),
-          tomadorCidade: isAg ? agency.city : (isPj ? (company?.city || guest?.city) : guest?.city),
-          tomadorUf: isAg ? agency.state : (isPj ? (company?.state || guest?.state) : guest?.state),
+          tomadorEmail: getPrimaryEmail(safeBatchTomadorEmails),
+          tomadorTelefone: safeBatchTel,
+          tomadorEndereco: isAg ? (agency.address || agency.logradouro) : (isReq ? (reqCrm?.address || reqCrm?.logradouro || reqCrm?.street) : (isPj ? (company?.address || company?.logradouro || guest?.address) : (guest?.address || guest?.logradouro))),
+          tomadorNumero: isAg ? agency.number : (isReq ? (reqCrm?.number || reqCrm?.streetNumber) : (isPj ? (company?.number || guest?.number) : guest?.number)),
+          tomadorComplemento: isAg ? agency.complement : (isReq ? reqCrm?.complement : (isPj ? (company?.complement || guest?.complement) : guest?.complement)),
+          tomadorBairro: isAg ? agency.neighborhood : (isReq ? reqCrm?.neighborhood : (isPj ? (company?.neighborhood || guest?.neighborhood) : guest?.neighborhood)),
+          tomadorCep: isAg ? agency.cep : (isReq ? reqCrm?.cep : (isPj ? (company?.cep || guest?.cep) : guest?.cep)),
+          tomadorCidade: isAg ? agency.city : (isReq ? reqCrm?.city : (isPj ? (company?.city || guest?.city) : guest?.city)),
+          tomadorUf: isAg ? agency.state : (isReq ? reqCrm?.state : (isPj ? (company?.state || guest?.state) : guest?.state)),
           flatNumber: reservationObj.flatNumber,
           checkinDate: reservationObj.checkinDate,
           checkoutDate: reservationObj.checkoutDate,
@@ -65952,31 +67991,81 @@ app.post("/api/nfse/emit-batch", async (req, res) => {
       } else if (item && typeof item === "object") {
         payload = { ...item };
         if (sistemaEmissor && !payload.sistemaEmissor) payload.sistemaEmissor = sistemaEmissor;
-        if (payload.reservationId) {
-          reservationObj = (db.reservations || []).find(r => Number(r.id) === Number(payload.reservationId));
+        if (payload.reservationId || payload.reservationCode) {
+          reservationObj = (db.reservations || []).find(r =>
+            r && (
+              (payload.reservationId && Number(r.id) === Number(payload.reservationId)) ||
+              (payload.reservationCode && String(r.code) === String(payload.reservationCode))
+            )
+          );
           if (!reservationObj && !payload.tomadorNome) {
-            results.push({ success: false, reservationId: payload.reservationId, error: `Reserva #${payload.reservationId} não encontrada.` });
+            results.push({ success: false, reservationId: payload.reservationId || payload.reservationCode, error: `Reserva #${payload.reservationId || payload.reservationCode} não encontrada.` });
             failedCount++;
             continue;
           }
-          if (reservationObj && (!payload.tomadorNome || !payload.tomadorCpfCnpj)) {
+          if (reservationObj) {
             const guest = (db.guests || []).find(g =>
               (reservationObj.guestId && Number(g.id) === Number(reservationObj.guestId)) ||
               (reservationObj.guestPhone && cleanPhone(g.phone) === cleanPhone(reservationObj.guestPhone))
             );
-            const compId = reservationObj.companyId || guest?.companyId;
+            const compId = payload.companyId || reservationObj.companyId || guest?.companyId;
             const company = compId ? (db.companies || []).find(c => Number(c.id) === Number(compId)) : null;
-            const agId = reservationObj.agencyId || guest?.agencyId;
+            const agId = payload.agencyId || reservationObj.agencyId || guest?.agencyId;
             const agency = agId ? (db.agencies || []).find(a => Number(a.id) === Number(agId)) : null;
 
-            const recType = payload.invoiceRecipientType || reservationObj.invoiceRecipientType || (agency && reservationObj.b2bRatePolicy === "NET" && !company ? "agency" : (company ? "company" : "guest"));
+            const rawObjRecType = String(payload.invoiceRecipientType || reservationObj.invoiceRecipientType || (agency && reservationObj.b2bRatePolicy === "NET" && !company ? "agency" : (company ? "company" : "guest"))).trim().toLowerCase();
+            const stayGuestDocObj = onlyDigits(reservationObj.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || "");
+            const payloadDocObj = onlyDigits(payload.tomadorCpfCnpj || "");
+            const isObjReqPfThirdParty = rawObjRecType === "requester_pf" && !reservationObj.requesterIsGuest1 && (
+              payloadDocObj ? payloadDocObj !== stayGuestDocObj : (Boolean(reservationObj.requesterInfo) || !stayGuestDocObj)
+            );
+            const recType = (["other_person", "third_party"].includes(rawObjRecType) || isObjReqPfThirdParty)
+              ? "requester"
+              : (rawObjRecType === "requester_pf" ? "guest" : rawObjRecType);
             const isAg = recType === "agency" && Boolean(agency);
-            const isPj = !isAg && (Boolean(company) || onlyDigits(reservationObj.guestDocument).length === 14);
+            const isReq = recType === "requester" && !reservationObj.requesterIsGuest1 && Boolean(
+              reservationObj.requesterInfo?.name ||
+              reservationObj.requesterInfo?.cpf ||
+              reservationObj.requesterInfo?.document ||
+              reservationObj.requesterName ||
+              payload.tomadorCpfCnpj
+            );
+            const isPj = !isAg && !isReq && recType !== "guest" && recType !== "requester" && (Boolean(company) || onlyDigits(reservationObj.guestDocument).length === 14);
+            const reqCrm = isReq
+              ? (db.guests || []).find(g =>
+                  g && (
+                    (reservationObj.requesterInfo?.guestId && Number(g.id) === Number(reservationObj.requesterInfo.guestId)) ||
+                    (reservationObj.requesterInfo?.cpf && onlyDigits(g.documentNumber || g.document || g.cpf || "") === onlyDigits(reservationObj.requesterInfo.cpf)) ||
+                    (reservationObj.requesterInfo?.phone && cleanPhone(g.phone) === cleanPhone(reservationObj.requesterInfo.phone))
+                  )
+                )
+              : null;
+            if (payload.nfHideFromGuest === undefined) {
+              payload.nfHideFromGuest = Boolean(reservationObj.nfHideFromGuest);
+            }
+            if (payload.requesterIsGuest1 === undefined) {
+              payload.requesterIsGuest1 = Boolean(reservationObj.requesterIsGuest1);
+            }
+            if (!payload.invoiceRecipientType) {
+              payload.invoiceRecipientType = isAg ? "agency" : (isReq ? "requester" : (isPj ? "company" : "guest"));
+            }
+            if (!payload.companyId && company?.id) payload.companyId = Number(company.id);
+            if (!payload.agencyId && agency?.id) payload.agencyId = Number(agency.id);
+            if (!payload.guestId && (guest?.id || reservationObj.guestId)) payload.guestId = guest?.id || reservationObj.guestId;
+
             if (!payload.tomadorNome) {
-              payload.tomadorNome = isAg ? agency.corporateName : (isPj ? (company?.corporateName || reservationObj.guestName) : reservationObj.guestName);
+              payload.tomadorNome = isAg
+                ? agency.corporateName
+                : (isReq
+                    ? (reservationObj.requesterInfo?.name || reservationObj.requesterName || reqCrm?.fullName || reqCrm?.name || reservationObj.guestName)
+                    : (isPj ? (company?.corporateName || reservationObj.guestName) : reservationObj.guestName));
             }
             if (!payload.tomadorCpfCnpj) {
-              payload.tomadorCpfCnpj = isAg ? agency.cnpj : (isPj ? (company?.cnpj || reservationObj.guestDocument) : (reservationObj.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || ""));
+              payload.tomadorCpfCnpj = isAg
+                ? agency.cnpj
+                : (isReq
+                    ? (reservationObj.requesterInfo?.cpf || reservationObj.requesterInfo?.document || reservationObj.requesterDocument || reqCrm?.documentNumber || reqCrm?.document || reqCrm?.cpf || "")
+                    : (isPj ? (company?.cnpj || reservationObj.guestDocument) : (reservationObj.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || "")));
             }
             if (!payload.valorServico) {
               let diarias = 1;
@@ -65986,6 +68075,103 @@ app.post("/api/nfse/emit-batch", async (req, res) => {
               }
               payload.valorServico = Number(reservationObj.totalAmount || (Number(reservationObj.dailyRate || 0) * diarias) || 250);
             }
+            const objGuestPersonalSet = typeof collectReservationGuestPersonalEmails === "function"
+              ? collectReservationGuestPersonalEmails(reservationObj, db, [guest?.email])
+              : (() => {
+                  const srcs = [reservationObj.guestEmail, guest?.email];
+                  if (reservationObj.requesterIsGuest1) {
+                    if (reservationObj.requesterEmail) srcs.push(reservationObj.requesterEmail);
+                    if (reservationObj.requesterInfo?.email) srcs.push(reservationObj.requesterInfo.email);
+                  }
+                  const gIds = new Set(reservationObj.guestId ? [Number(reservationObj.guestId)] : []);
+                  const gDocs = new Set();
+                  const rDoc = onlyDigits(reservationObj.guestDocument || reservationObj.document || "");
+                  if (rDoc && rDoc.length !== 14) gDocs.add(rDoc);
+                  const gPhones = new Set();
+                  const rPh = cleanPhone(reservationObj.guestPhone || reservationObj.phone || "");
+                  if (rPh && rPh.length >= 8) gPhones.add(rPh);
+                  if (Array.isArray(reservationObj.guests)) {
+                    for (const rg of reservationObj.guests) {
+                      if (!rg) continue;
+                      if (rg.email) srcs.push(rg.email);
+                      if (rg.guestId) gIds.add(Number(rg.guestId));
+                      const rgD = onlyDigits(rg.cpf || rg.document || rg.documentNumber || "");
+                      if (rgD && rgD.length !== 14) gDocs.add(rgD);
+                      const rgP = cleanPhone(rg.phone || rg.phoneNumber || "");
+                      if (rgP && rgP.length >= 8) gPhones.add(rgP);
+                    }
+                  }
+                  for (const g of (db.guests || [])) {
+                    if (!g) continue;
+                    const gd = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+                    const gp = cleanPhone(g.phone || g.phoneNumber || "");
+                    if ((g.id && gIds.has(Number(g.id))) || (gd && gDocs.has(gd)) || (gp && gp.length >= 8 && Array.from(gPhones).some(p => p === gp || p.slice(-8) === gp.slice(-8)))) {
+                      if (g.id) gIds.add(Number(g.id));
+                      if (gd && gd.length !== 14) gDocs.add(gd);
+                      if (gp && gp.length >= 8) gPhones.add(gp);
+                      if (g.email) srcs.push(g.email);
+                    }
+                  }
+                  for (const acc of (db.guestAccounts || [])) {
+                    if (!acc) continue;
+                    const ad = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+                    const ap = cleanPhone(acc.phone || acc.phoneNumber || "");
+                    if ((acc.guestId && gIds.has(Number(acc.guestId))) || (ad && gDocs.has(ad)) || (ap && ap.length >= 8 && Array.from(gPhones).some(p => p === ap || p.slice(-8) === ap.slice(-8)))) {
+                      if (acc.email) srcs.push(acc.email);
+                    }
+                  }
+                  return new Set(parseEmailList(srcs));
+                })();
+            payload.consolidatedGuestEmails = Array.from(objGuestPersonalSet);
+            const objHide = Boolean(payload.nfHideFromGuest);
+            const rawObjDelivery = parseEmailList(
+              payload.nfDeliveryEmails !== undefined
+                ? payload.nfDeliveryEmails
+                : [
+                    reservationObj.nfDeliveryEmails,
+                    isAg
+                      ? [reservationObj.agencyAgentEmail, agency?.financialEmail]
+                      : (isReq
+                          ? [reservationObj.requesterInfo?.email, reservationObj.requesterEmail, reqCrm?.email]
+                          : (isPj ? company?.financialEmail : ""))
+                  ]
+            );
+            payload.nfDeliveryEmails = objHide
+              ? rawObjDelivery.filter(e => !objGuestPersonalSet.has(e))
+              : rawObjDelivery;
+            const rawObjTomadorEmails = parseEmailList(
+              payload.tomadorEmail ||
+              (isAg
+                ? [reservationObj.agencyAgentEmail, agency?.financialEmail]
+                : (isReq
+                    ? [reservationObj.requesterInfo?.email, reservationObj.requesterEmail, reqCrm?.email]
+                    : (isPj
+                        ? [company?.financialEmail, !objHide ? guest?.email : ""]
+                        : (!objHide ? [reservationObj.guestEmail, guest?.email] : []))))
+            );
+            payload.tomadorEmail = getPrimaryEmail(
+              objHide
+                ? rawObjTomadorEmails.filter(e => !objGuestPersonalSet.has(e))
+                : rawObjTomadorEmails
+            );
+            const objGuestPhoneSet = typeof collectReservationGuestPersonalPhones === "function"
+              ? collectReservationGuestPersonalPhones(reservationObj, db, [guest?.phone, guest?.phoneNumber])
+              : new Set([reservationObj.guestPhone, guest?.phone, ...(Array.isArray(reservationObj.guests) ? reservationObj.guests.map(g => g?.phone || g?.phoneNumber) : [])].map(p => cleanPhone(p || "")).filter(p => p.length >= 8));
+            const rawObjTel = cleanPhone(
+              payload.tomadorTelefone !== undefined
+                ? payload.tomadorTelefone
+                : (isAg
+                    ? (reservationObj.agencyAgentPhone || agency?.phone || "")
+                    : (isReq
+                        ? (reservationObj.requesterInfo?.phone || reservationObj.requesterPhone || reqCrm?.phone || "")
+                        : (isPj
+                            ? (company?.phone || (!objHide ? guest?.phone : "") || "")
+                            : (!objHide ? (reservationObj.guestPhone || guest?.phone || "") : ""))))
+            );
+            const isObjGuestPh = typeof isGuestPersonalPhone === "function"
+              ? isGuestPersonalPhone(rawObjTel, objGuestPhoneSet)
+              : (objGuestPhoneSet instanceof Set && rawObjTel && rawObjTel.length >= 8 && Array.from(objGuestPhoneSet).some(gp => gp && gp.length >= 8 && (gp === rawObjTel || gp.slice(-8) === rawObjTel.slice(-8))));
+            payload.tomadorTelefone = (objHide && isObjGuestPh) ? "" : rawObjTel;
           }
         }
       }
@@ -66067,6 +68253,8 @@ app.post("/api/nfse/emit-consolidated", async (req, res) => {
     cpfCnpj,
     tomadorNome,
     tomadorEmail,
+    nfDeliveryEmails,
+    nfHideFromGuest,
     tomadorTelefone,
     tomadorEndereco,
     tomadorNumero,
@@ -66139,9 +68327,19 @@ app.post("/api/nfse/emit-consolidated", async (req, res) => {
   let targetEntity = null;
   let cleanDoc = "";
   let targetName = "";
+  const primaryRecType = String(primaryRes?.invoiceRecipientType || "").trim().toLowerCase();
 
-  if (!explicitDocDigits && (inferredCompanyId || inferredAgencyId)) {
-    isAgencyConsolidated = Boolean(inferredAgencyId && !inferredCompanyId);
+  const isReqPrimaryRecType = (
+    ["requester", "other_person", "third_party", "requester_pf"].includes(primaryRecType) &&
+    !companyId &&
+    !agencyId
+  );
+  if (!explicitDocDigits && !isReqPrimaryRecType && (inferredCompanyId || inferredAgencyId)) {
+    isAgencyConsolidated = Boolean(
+      inferredAgencyId &&
+      !(!agencyId && companyId) &&
+      (Boolean(agencyId && !companyId) || primaryRecType === "agency" || (!inferredCompanyId && primaryRecType !== "company"))
+    );
     targetEntity = isAgencyConsolidated
       ? (db.agencies || []).find(a => Number(a.id) === Number(inferredAgencyId))
       : (db.companies || []).find(c => Number(c.id) === Number(inferredCompanyId));
@@ -66158,11 +68356,32 @@ app.post("/api/nfse/emit-consolidated", async (req, res) => {
       primaryRes?.guestDocument ||
       ""
     );
-    if (cleanDoc.length === 14 && (inferredCompanyId || inferredAgencyId)) {
-      isAgencyConsolidated = Boolean(inferredAgencyId && !inferredCompanyId);
-      targetEntity = isAgencyConsolidated
-        ? (db.agencies || []).find(a => Number(a.id) === Number(inferredAgencyId))
-        : (db.companies || []).find(c => Number(c.id) === Number(inferredCompanyId));
+    if (cleanDoc.length === 14) {
+      const matchedExplicitAg = (db.agencies || []).find(a => onlyDigits(a.cnpj) === cleanDoc) || null;
+      const matchedExplicitCo = (db.companies || []).find(c => onlyDigits(c.cnpj) === cleanDoc) || null;
+      const inferredAgencyObj = inferredAgencyId ? (db.agencies || []).find(a => Number(a.id) === Number(inferredAgencyId)) || null : null;
+      const inferredCompanyObj = inferredCompanyId ? (db.companies || []).find(c => Number(c.id) === Number(inferredCompanyId)) || null : null;
+      const explicitCompanyMatchesDoc = Boolean(companyId && inferredCompanyObj && onlyDigits(inferredCompanyObj.cnpj) === cleanDoc);
+      const explicitAgencyPassed = Boolean(agencyId && !companyId && (!inferredAgencyObj || !onlyDigits(inferredAgencyObj.cnpj) || onlyDigits(inferredAgencyObj.cnpj) === cleanDoc));
+      if (matchedExplicitAg && (!matchedExplicitCo || primaryRecType === "agency" || Boolean(agencyId && !companyId))) {
+        isAgencyConsolidated = true;
+        targetEntity = matchedExplicitAg;
+      } else if (matchedExplicitCo) {
+        isAgencyConsolidated = false;
+        targetEntity = matchedExplicitCo;
+      } else if (explicitCompanyMatchesDoc) {
+        isAgencyConsolidated = false;
+        targetEntity = inferredCompanyObj;
+      } else if (explicitDocDigits.length === 14) {
+        isAgencyConsolidated = false;
+        targetEntity = null;
+      } else {
+        isAgencyConsolidated = Boolean(
+          explicitAgencyPassed ||
+          (inferredAgencyObj && onlyDigits(inferredAgencyObj.cnpj) === cleanDoc)
+        );
+        targetEntity = isAgencyConsolidated ? inferredAgencyObj : inferredCompanyObj;
+      }
     }
     targetName = String(
       tomadorNome ||
@@ -66250,21 +68469,297 @@ CNAE: 5510-8/01 (Hotéis e hospedagem) • Item LC 116: 09.02 (Hospedagem de qua
 
   function cleanCnpjSafe(v) { return String(v || "").replace(/\D/g, ""); }
 
+  const resolvedNfHideConsolidated = nfHideFromGuest !== undefined
+    ? Boolean(nfHideFromGuest)
+    : selectedReservations.some(r => Boolean(r?.nfHideFromGuest));
+  const guestEmailsConsolidatedSet = typeof collectReservationGuestPersonalEmails === "function"
+    ? collectReservationGuestPersonalEmails(selectedReservations, db)
+    : (() => {
+        const srcs = [];
+        const gIds = new Set();
+        const gDocs = new Set();
+        const gPhones = new Set();
+        for (const r of selectedReservations) {
+          if (!r) continue;
+          if (r.guestEmail) srcs.push(r.guestEmail);
+          if (r.requesterIsGuest1) {
+            if (r.requesterEmail) srcs.push(r.requesterEmail);
+            if (r.requesterInfo?.email) srcs.push(r.requesterInfo.email);
+            if (r.requesterInfo?.guestId) gIds.add(Number(r.requesterInfo.guestId));
+            const rqDoc = onlyDigits(r.requesterInfo?.cpf || r.requesterInfo?.document || r.requesterDocument || "");
+            if (rqDoc && rqDoc.length !== 14) gDocs.add(rqDoc);
+            const rqPh = cleanPhone(r.requesterPhone || r.requesterInfo?.phone || r.requesterInfo?.whatsapp || "");
+            if (rqPh && rqPh.length >= 8) gPhones.add(rqPh);
+          }
+          if (r.guestId) gIds.add(Number(r.guestId));
+          const rDoc = onlyDigits(r.guestDocument || r.document || "");
+          if (rDoc && rDoc.length !== 14) gDocs.add(rDoc);
+          const rPh = cleanPhone(r.guestPhone || r.phone || "");
+          if (rPh && rPh.length >= 8) gPhones.add(rPh);
+          if (Array.isArray(r.guests)) {
+            for (const rg of r.guests) {
+              if (!rg) continue;
+              if (rg.email) srcs.push(rg.email);
+              if (rg.guestId) gIds.add(Number(rg.guestId));
+              const rgDoc = onlyDigits(rg.cpf || rg.document || rg.documentNumber || "");
+              if (rgDoc && rgDoc.length !== 14) gDocs.add(rgDoc);
+              const rgPh = cleanPhone(rg.phone || rg.phoneNumber || "");
+              if (rgPh && rgPh.length >= 8) gPhones.add(rgPh);
+            }
+          }
+          if (typeof resolveGuestDigitalCheckinData === "function") {
+            const rCheckin = resolveGuestDigitalCheckinData({
+              guestId: r.guestId,
+              cpfCnpj: r.guestDocument || "",
+              name: r.guestName || "",
+              phone: r.guestPhone || "",
+              reservationId: r.id,
+              reservationCode: r.code
+            });
+            if (rCheckin?.email) srcs.push(rCheckin.email);
+            if (Array.isArray(rCheckin?.allEmails)) srcs.push(...rCheckin.allEmails);
+          }
+        }
+        for (const g of (Array.isArray(db.guests) ? db.guests : [])) {
+          if (!g) continue;
+          const gd = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+          const gp = cleanPhone(g.phone || g.phoneNumber || "");
+          if ((g.id && gIds.has(Number(g.id))) || (gd && gDocs.has(gd)) || (gp && gp.length >= 8 && Array.from(gPhones).some(p => p === gp || p.slice(-8) === gp.slice(-8)))) {
+            if (g.id) gIds.add(Number(g.id));
+            if (gd && gd.length !== 14) gDocs.add(gd);
+            if (gp && gp.length >= 8) gPhones.add(gp);
+            if (g.email) srcs.push(g.email);
+          }
+        }
+        for (const acc of (Array.isArray(db.guestAccounts) ? db.guestAccounts : [])) {
+          if (!acc) continue;
+          const ad = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+          const ap = cleanPhone(acc.phone || acc.phoneNumber || "");
+          if ((acc.guestId && gIds.has(Number(acc.guestId))) || (ad && gDocs.has(ad)) || (ap && ap.length >= 8 && Array.from(gPhones).some(p => p === ap || p.slice(-8) === ap.slice(-8)))) {
+            if (acc.email) srcs.push(acc.email);
+          }
+        }
+        return new Set(parseEmailList(srcs));
+      })();
+  const isConsStayGuestDoc = Boolean(
+    isPfConsolidated &&
+    selectedReservations.some(r => {
+      if (!r) return false;
+      const rDoc = onlyDigits(r.guestDocument || r.document || "");
+      if (rDoc && rDoc === cleanDoc) return true;
+      if (Array.isArray(r.guests) && r.guests.some(rg => onlyDigits(rg?.cpf || rg?.document || rg?.documentNumber || "") === cleanDoc)) return true;
+      const reqGuestId = (!r.requesterIsGuest1 && r.requesterInfo?.guestId) ? Number(r.requesterInfo.guestId) : null;
+      const reqName = (!r.requesterIsGuest1 && r.requesterInfo?.name) ? String(r.requesterInfo.name).trim().toLowerCase() : "";
+      const stayIds = new Set();
+      if (r.guestId && (!reqGuestId || Number(r.guestId) !== reqGuestId)) stayIds.add(Number(r.guestId));
+      if (Array.isArray(r.guests)) {
+        for (const rg of r.guests) {
+          if (rg?.guestId && (!reqGuestId || Number(rg.guestId) !== reqGuestId)) stayIds.add(Number(rg.guestId));
+        }
+      }
+      const stayNames = new Set();
+      const rGN = String(r.guestName || "").trim().toLowerCase();
+      if (rGN && rGN !== "hóspede" && rGN !== "hospede" && (r.requesterIsGuest1 || !reqName || rGN !== reqName)) stayNames.add(rGN);
+      if (Array.isArray(r.guests)) {
+        for (const rg of r.guests) {
+          const rgN = String(rg?.name || rg?.fullName || "").trim().toLowerCase();
+          if (rgN && rgN !== "hóspede" && rgN !== "hospede" && (r.requesterIsGuest1 || !reqName || rgN !== reqName)) stayNames.add(rgN);
+        }
+      }
+      const stayPhones = new Set([cleanPhone(r.guestPhone || r.phone || ""), ...(Array.isArray(r.guests) ? r.guests.map(rg => cleanPhone(rg?.phone || rg?.phoneNumber || "")) : [])].filter(p => p && p.length >= 8));
+      const stayEmails = new Set(parseEmailList([r.guestEmail, ...(Array.isArray(r.guests) ? r.guests.map(rg => rg?.email || rg?.guestEmail) : [])]));
+      const matchedIds = new Set(stayIds);
+      for (const g of (Array.isArray(db.guests) ? db.guests : [])) {
+        if (!g) continue;
+        const gId = g.id ? Number(g.id) : null;
+        const gDoc = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+        const gPh = cleanPhone(g.phone || g.phoneNumber || "");
+        const gN = String(g.fullName || g.name || "").trim().toLowerCase();
+        const gEm = parseEmailList([g.email, g.guestEmail]);
+        if (!r.requesterIsGuest1 && ((Array.isArray(g.tags) && g.tags.includes("solicitante_terceiro")) || (reqGuestId && gId === reqGuestId) || (reqName && gN === reqName && !stayNames.has(gN)))) continue;
+        if ((gId && stayIds.has(gId)) || (gPh && gPh.length >= 8 && Array.from(stayPhones).some(sp => sp === gPh || sp.slice(-8) === gPh.slice(-8))) || gEm.some(e => stayEmails.has(e)) || (gN && stayNames.has(gN))) {
+          if (gId) matchedIds.add(gId);
+          if (gDoc && gDoc === cleanDoc) return true;
+        }
+      }
+      for (const acc of (Array.isArray(db.guestAccounts) ? db.guestAccounts : [])) {
+        if (!acc) continue;
+        const aId = acc.guestId ? Number(acc.guestId) : null;
+        const aDoc = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+        const aPh = cleanPhone(acc.phone || acc.phoneNumber || "");
+        const aN = String(acc.fullName || acc.name || "").trim().toLowerCase();
+        const aEm = parseEmailList([acc.email, acc.guestEmail]);
+        if (!r.requesterIsGuest1 && ((reqGuestId && aId === reqGuestId) || (reqName && aN === reqName && !stayNames.has(aN)))) continue;
+        if ((aId && matchedIds.has(aId)) || (aPh && aPh.length >= 8 && Array.from(stayPhones).some(sp => sp === aPh || sp.slice(-8) === aPh.slice(-8))) || aEm.some(e => stayEmails.has(e)) || (aN && stayNames.has(aN))) {
+          if (aDoc && aDoc === cleanDoc) return true;
+        }
+      }
+      return false;
+    })
+  );
+  const primaryResCoObj = primaryRes?.companyId
+    ? (db.companies || []).find(c => Number(c.id) === Number(primaryRes.companyId)) || null
+    : null;
+  const primaryResAgObj = primaryRes?.agencyId
+    ? (db.agencies || []).find(a => Number(a.id) === Number(primaryRes.agencyId)) || null
+    : null;
+  const primaryResCompanyDoc = onlyDigits(primaryRes?.companyCnpj || primaryResCoObj?.cnpj || "");
+  const primaryResAgencyDoc = onlyDigits(primaryRes?.agencyCnpj || primaryResAgObj?.cnpj || "");
+  const primaryDefaultIsAgency = Boolean(
+    primaryRecType === "agency" ||
+    (primaryRes?.agencyId && !primaryRes?.companyId && primaryRecType !== "company")
+  );
+  const primaryDefaultIsPf = Boolean(
+    ["guest", "requester", "requester_pf", "other_person", "third_party"].includes(primaryRecType) ||
+    (!primaryRes?.companyId && !primaryRes?.agencyId && !primaryResCompanyDoc && !primaryResAgencyDoc)
+  );
+  const primaryDefaultEntityId = primaryDefaultIsAgency
+    ? (primaryRes?.agencyId ? Number(primaryRes.agencyId) : null)
+    : (!primaryDefaultIsPf && primaryRes?.companyId ? Number(primaryRes.companyId) : null);
+  const primaryDefaultDoc = primaryDefaultIsAgency
+    ? primaryResAgencyDoc
+    : (!primaryDefaultIsPf
+        ? primaryResCompanyDoc
+        : onlyDigits(
+            primaryRes?.requesterInfo?.cpf ||
+            primaryRes?.requesterInfo?.document ||
+            ((["requester", "other_person", "third_party"].includes(primaryRecType) && !primaryRes?.requesterIsGuest1)
+              ? ""
+              : (primaryRes?.guestDocument || primaryRes?.document || ""))
+          ));
+  const explicitCompanyOverride = Boolean(
+    companyId && (
+      !primaryRes?.companyId ||
+      Number(companyId) !== Number(primaryRes.companyId) ||
+      primaryDefaultIsAgency ||
+      primaryDefaultIsPf
+    )
+  );
+  const explicitAgencyOverride = Boolean(
+    agencyId && (
+      !primaryRes?.agencyId ||
+      Number(agencyId) !== Number(primaryRes.agencyId) ||
+      !primaryDefaultIsAgency
+    )
+  );
+  const explicitDocOverride = Boolean(
+    explicitDocDigits &&
+    cleanDoc &&
+    cleanDoc !== primaryDefaultDoc &&
+    !(targetEntity && primaryDefaultEntityId && Number(targetEntity.id) === primaryDefaultEntityId && isAgencyConsolidated === primaryDefaultIsAgency)
+  );
+  const isTomadorOverridden = Boolean(
+    explicitCompanyOverride ||
+    explicitAgencyOverride ||
+    explicitDocOverride ||
+    (isPfConsolidated && !primaryDefaultIsPf) ||
+    (!isPfConsolidated && primaryDefaultIsPf && (companyId || agencyId || explicitDocDigits))
+  );
+  const suppressPrimaryEmailsOnOverride = Boolean(isTomadorOverridden);
+
+  const explicitConsolidatedDeliveryEmails = parseEmailList(nfDeliveryEmails);
+  let parsedConsolidatedDeliveryEmails = explicitConsolidatedDeliveryEmails.length > 0
+    ? explicitConsolidatedDeliveryEmails
+    : parseEmailList([
+        tomadorEmail,
+        targetEntity?.financialEmail,
+        !suppressPrimaryEmailsOnOverride ? primaryRes?.nfDeliveryEmails : "",
+        !suppressPrimaryEmailsOnOverride && !(resolvedNfHideConsolidated && (primaryRes?.requesterIsGuest1 || isConsStayGuestDoc))
+          ? [primaryRes?.requesterEmail, primaryRes?.requesterInfo?.email]
+          : "",
+        !suppressPrimaryEmailsOnOverride && !resolvedNfHideConsolidated ? primaryRes?.guestEmail : ""
+      ]);
+  if (resolvedNfHideConsolidated && guestEmailsConsolidatedSet.size > 0) {
+    parsedConsolidatedDeliveryEmails = parsedConsolidatedDeliveryEmails.filter(e => !guestEmailsConsolidatedSet.has(e));
+  }
+  const safeExplicitTomadorEmail = (resolvedNfHideConsolidated && guestEmailsConsolidatedSet.has(getPrimaryEmail(tomadorEmail || "")))
+    ? ""
+    : getPrimaryEmail(tomadorEmail || "");
+  const safePrimaryFallbackList = (() => {
+    const rawFallbacks = parseEmailList([
+      parsedConsolidatedDeliveryEmails,
+      targetEntity?.financialEmail,
+      !suppressPrimaryEmailsOnOverride && !(resolvedNfHideConsolidated && (primaryRes?.requesterIsGuest1 || isConsStayGuestDoc))
+        ? [primaryRes?.requesterEmail, primaryRes?.requesterInfo?.email]
+        : "",
+      !suppressPrimaryEmailsOnOverride && !resolvedNfHideConsolidated ? primaryRes?.guestEmail : ""
+    ]);
+    return resolvedNfHideConsolidated
+      ? rawFallbacks.filter(e => !guestEmailsConsolidatedSet.has(e))
+      : rawFallbacks;
+  })();
+  const primaryConsolidatedEmail = getPrimaryEmail(
+    safeExplicitTomadorEmail ||
+    parsedConsolidatedDeliveryEmails[0] ||
+    safePrimaryFallbackList[0] ||
+    ""
+  );
+  if (explicitConsolidatedDeliveryEmails.length > 0 && parsedConsolidatedDeliveryEmails.length === 0 && primaryConsolidatedEmail) {
+    parsedConsolidatedDeliveryEmails = [primaryConsolidatedEmail];
+  }
+  const guestPhonesConsolidatedSet = typeof collectReservationGuestPersonalPhones === "function"
+    ? collectReservationGuestPersonalPhones(selectedReservations, db)
+    : (() => {
+        const phSet = new Set();
+        const addPh = (raw) => {
+          const p = cleanPhone(raw || "");
+          if (p && p.length >= 8) {
+            phSet.add(p);
+            if (p.length >= 12 && p.startsWith("55")) phSet.add(p.slice(2));
+          }
+        };
+        for (const r of selectedReservations) {
+          if (!r) continue;
+          addPh(r.guestPhone || r.phone);
+          if (r.requesterIsGuest1) addPh(r.requesterPhone || r.requesterInfo?.phone);
+          if (Array.isArray(r.guests)) {
+            for (const rg of r.guests) {
+              if (rg) addPh(rg.phone || rg.phoneNumber);
+            }
+          }
+        }
+        return phSet;
+      })();
+  const rawConsTel = cleanPhone(
+    tomadorTelefone ||
+    targetEntity?.phone ||
+    (!isTomadorOverridden && !(resolvedNfHideConsolidated && (primaryRes?.requesterIsGuest1 || isConsStayGuestDoc)) ? (primaryRes?.requesterPhone || primaryRes?.requesterInfo?.phone || "") : "") ||
+    (!isTomadorOverridden && !resolvedNfHideConsolidated ? (primaryRes?.guestPhone || "") : "")
+  );
+  const isConsGuestPhone = typeof isGuestPersonalPhone === "function"
+    ? isGuestPersonalPhone(rawConsTel, guestPhonesConsolidatedSet)
+    : (guestPhonesConsolidatedSet instanceof Set && rawConsTel && rawConsTel.length >= 8 && Array.from(guestPhonesConsolidatedSet).some(gp => gp && gp.length >= 8 && (gp === rawConsTel || gp.slice(-8) === rawConsTel.slice(-8))));
+  const safeConsTel = (resolvedNfHideConsolidated && isConsGuestPhone) ? "" : rawConsTel;
+  const isConsThirdPartyReq = Boolean(
+    isPfConsolidated &&
+    !primaryRes?.requesterIsGuest1 &&
+    !isConsStayGuestDoc &&
+    (
+      ["requester", "other_person", "third_party"].includes(primaryRecType) ||
+      Boolean(primaryRes?.requesterInfo && onlyDigits(primaryRes.requesterInfo.cpf || primaryRes.requesterInfo.document || "") === cleanDoc && cleanDoc !== onlyDigits(primaryRes?.guestDocument || ""))
+    )
+  );
+
   const payload = {
     companyId: !isPfConsolidated && !isAgencyConsolidated && targetEntity ? Number(targetEntity.id) : null,
     agencyId: !isPfConsolidated && isAgencyConsolidated && targetEntity ? Number(targetEntity.id) : null,
     packageId: resolvedPkgCode || primaryRes?.packageId || null,
-    invoiceRecipientType: isPfConsolidated ? "requester_pf" : (isAgencyConsolidated ? "agency" : "company"),
+    invoiceRecipientType: isPfConsolidated ? (isConsThirdPartyReq ? "requester" : (isConsStayGuestDoc ? "guest" : "requester_pf")) : (isAgencyConsolidated ? "agency" : "company"),
+    requesterIsGuest1: Boolean(primaryRes?.requesterIsGuest1),
     tomadorType: isPfConsolidated ? "pf" : "pj",
     isConsolidated: true,
+    isTomadorOverridden: Boolean(isTomadorOverridden),
     reservationIds: selectedReservations.map(r => Number(r.id)),
     reservationCodes: selectedReservations.map(r => r.code).filter(Boolean),
     consolidatedStaysCount: selectedReservations.length,
     sistemaEmissor: sistemaEmissor || "padrao_nacional",
     tomadorNome: toTitleCase(targetName),
     tomadorCpfCnpj: cleanDoc,
-    tomadorEmail: String(tomadorEmail || targetEntity?.financialEmail || primaryRes?.requesterEmail || primaryRes?.guestEmail || "").trim().toLowerCase(),
-    tomadorTelefone: cleanPhone(tomadorTelefone || targetEntity?.phone || primaryRes?.requesterPhone || primaryRes?.guestPhone || ""),
+    tomadorEmail: primaryConsolidatedEmail,
+    nfDeliveryEmails: parsedConsolidatedDeliveryEmails,
+    nfHideFromGuest: resolvedNfHideConsolidated,
+    consolidatedGuestEmails: Array.from(guestEmailsConsolidatedSet),
+    tomadorTelefone: safeConsTel,
     tomadorEndereco: tomadorEndereco || targetEntity?.address || targetEntity?.logradouro || primaryRes?.guestAddress || "Av. Pelinca",
     tomadorNumero: tomadorNumero || targetEntity?.number || "250",
     tomadorComplemento: tomadorComplemento || targetEntity?.complement || "",
@@ -66302,10 +68797,15 @@ CNAE: 5510-8/01 (Hotéis e hospedagem) • Item LC 116: 09.02 (Hospedagem de qua
       reservationIds: payload.reservationIds,
       reservationCodes: payload.reservationCodes,
       flatNumber: payload.flatNumber,
+      invoiceRecipientType: payload.invoiceRecipientType,
+      guestId: primaryRes?.guestId || null,
       tomadorType: payload.tomadorType,
       tomadorNome: payload.tomadorNome,
       tomadorCpfCnpj: payload.tomadorCpfCnpj,
       tomadorEmail: payload.tomadorEmail,
+      tomadorTelefone: payload.tomadorTelefone || "",
+      nfDeliveryEmails: payload.nfDeliveryEmails || [],
+      nfHideFromGuest: Boolean(payload.nfHideFromGuest),
       discriminacao: payload.discriminacao,
       valorServico: totalValor,
       valorLiquido: totalValor,
@@ -66347,6 +68847,206 @@ function enqueueNfseRetry(payload, errorMessage, engine = "padrao_nacional") {
   const valor = Number(payload.valorServico || 0);
   const resCode = payload.reservationCode || null;
   const resId = payload.reservationId ? Number(payload.reservationId) : null;
+  const resIds = Array.isArray(payload.reservationIds) ? payload.reservationIds.map(Number) : (resId ? [resId] : []);
+  const resCodes = Array.isArray(payload.reservationCodes) ? payload.reservationCodes : (resCode ? [resCode] : []);
+
+  const matchedRes = Array.isArray(db.reservations)
+    ? db.reservations.find(r =>
+        r && ((resId && Number(r.id) === resId) || (resCode && String(r.code) === String(resCode)))
+      )
+    : null;
+  const consolidatedResList = (payload.isConsolidated && resIds.length > 0 && Array.isArray(db.reservations))
+    ? db.reservations.filter(r => r && resIds.some(rid => Number(r.id) === Number(rid) || String(r.code) === String(rid)))
+    : [];
+  const relevantResList = [
+    ...consolidatedResList,
+    ...(matchedRes && !consolidatedResList.some(cr => Number(cr.id) === Number(matchedRes.id)) ? [matchedRes] : [])
+  ];
+  const resolvedHideFromGuest = payload.nfHideFromGuest !== undefined
+    ? Boolean(payload.nfHideFromGuest)
+    : Boolean(matchedRes ? matchedRes.nfHideFromGuest : consolidatedResList.some(r => Boolean(r?.nfHideFromGuest)));
+  const primaryRetryRefRes = matchedRes || relevantResList[0] || null;
+  const normRetryRecType = String(payload.invoiceRecipientType || "").trim().toLowerCase();
+  const normResRetryRecType = String(primaryRetryRefRes?.invoiceRecipientType || "").trim().toLowerCase();
+  const anyRetryRequesterIsGuest1 = payload.requesterIsGuest1 === true || relevantResList.some(r => Boolean(r?.requesterIsGuest1));
+  const matchesAnyRetryStayGuestDoc = cleanDoc.length === 11 && relevantResList.some(r => {
+    if (!r) return false;
+    const rDoc = onlyDigits(r.guestDocument || r.document || "");
+    if (rDoc && rDoc === cleanDoc) return true;
+    if (Array.isArray(r.guests) && r.guests.some(rg => onlyDigits(rg?.cpf || rg?.document || rg?.documentNumber || "") === cleanDoc)) return true;
+    const reqGuestId = (!r.requesterIsGuest1 && r.requesterInfo?.guestId) ? Number(r.requesterInfo.guestId) : null;
+    const reqName = (!r.requesterIsGuest1 && r.requesterInfo?.name) ? String(r.requesterInfo.name).trim().toLowerCase() : "";
+    const stayIds = new Set();
+    if (r.guestId && (!reqGuestId || Number(r.guestId) !== reqGuestId)) stayIds.add(Number(r.guestId));
+    if (Array.isArray(r.guests)) {
+      for (const rg of r.guests) {
+        if (rg?.guestId && (!reqGuestId || Number(rg.guestId) !== reqGuestId)) stayIds.add(Number(rg.guestId));
+      }
+    }
+    const stayPhones = new Set([cleanPhone(r.guestPhone || r.phone || ""), ...(Array.isArray(r.guests) ? r.guests.map(rg => cleanPhone(rg?.phone || rg?.phoneNumber || "")) : [])].filter(p => p && p.length >= 8));
+    const stayEmails = new Set(parseEmailList([r.guestEmail, ...(Array.isArray(r.guests) ? r.guests.map(rg => rg?.email || rg?.guestEmail) : [])]));
+    const stayNames = new Set();
+    const rGN = String(r.guestName || "").trim().toLowerCase();
+    if (rGN && rGN !== "hóspede" && rGN !== "hospede" && (r.requesterIsGuest1 || !reqName || rGN !== reqName)) stayNames.add(rGN);
+    if (Array.isArray(r.guests)) {
+      for (const rg of r.guests) {
+        const rgN = String(rg?.name || rg?.fullName || "").trim().toLowerCase();
+        if (rgN && rgN !== "hóspede" && rgN !== "hospede" && (r.requesterIsGuest1 || !reqName || rgN !== reqName)) stayNames.add(rgN);
+      }
+    }
+    const matchedIds = new Set(stayIds);
+    for (const g of (Array.isArray(db.guests) ? db.guests : [])) {
+      if (!g) continue;
+      const gId = g.id ? Number(g.id) : null;
+      const gDoc = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+      const gPh = cleanPhone(g.phone || g.phoneNumber || "");
+      const gN = String(g.fullName || g.name || "").trim().toLowerCase();
+      const gEm = parseEmailList([g.email, g.guestEmail]);
+      if (!r.requesterIsGuest1 && ((Array.isArray(g.tags) && g.tags.includes("solicitante_terceiro")) || (reqGuestId && gId === reqGuestId) || (reqName && gN === reqName && !stayNames.has(gN)))) continue;
+      if ((gId && stayIds.has(gId)) || (gPh && gPh.length >= 8 && Array.from(stayPhones).some(sp => sp === gPh || sp.slice(-8) === gPh.slice(-8))) || gEm.some(e => stayEmails.has(e)) || (gN && stayNames.has(gN))) {
+        if (gId) matchedIds.add(gId);
+        if (gDoc && gDoc === cleanDoc) return true;
+      }
+    }
+    for (const acc of (Array.isArray(db.guestAccounts) ? db.guestAccounts : [])) {
+      if (!acc) continue;
+      const aId = acc.guestId ? Number(acc.guestId) : null;
+      const aDoc = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+      const aPh = cleanPhone(acc.phone || acc.phoneNumber || "");
+      const aN = String(acc.fullName || acc.name || "").trim().toLowerCase();
+      const aEm = parseEmailList([acc.email, acc.guestEmail]);
+      if (!r.requesterIsGuest1 && ((reqGuestId && aId === reqGuestId) || (reqName && aN === reqName && !stayNames.has(aN)))) continue;
+      if ((aId && matchedIds.has(aId)) || (aPh && aPh.length >= 8 && Array.from(stayPhones).some(sp => sp === aPh || sp.slice(-8) === aPh.slice(-8))) || aEm.some(e => stayEmails.has(e)) || (aN && stayNames.has(aN))) {
+        if (aDoc && aDoc === cleanDoc) return true;
+      }
+    }
+    return false;
+  });
+  const isRetryThirdPartyRequester = Boolean(
+    cleanDoc.length === 11 &&
+    normRetryRecType !== "guest" &&
+    !anyRetryRequesterIsGuest1 &&
+    !matchesAnyRetryStayGuestDoc &&
+    (
+      ["requester", "other_person", "third_party"].includes(normRetryRecType) ||
+      (!normRetryRecType && ["requester", "other_person", "third_party"].includes(normResRetryRecType)) ||
+      (normRetryRecType === "requester_pf" && relevantResList.some(r => r && !r.requesterIsGuest1 && (r.requesterInfo || ["requester", "other_person", "third_party"].includes(String(r.invoiceRecipientType || "").toLowerCase())))) ||
+      relevantResList.some(r => r && !r.requesterIsGuest1 && r.requesterInfo && onlyDigits(r.requesterInfo.cpf || r.requesterInfo.document || "") === cleanDoc)
+    )
+  );
+  const isRetryPayloadGuestIdRequester = Boolean(
+    isRetryThirdPartyRequester &&
+    payload.guestId &&
+    (
+      (primaryRetryRefRes?.requesterInfo?.guestId && Number(payload.guestId) === Number(primaryRetryRefRes.requesterInfo.guestId)) ||
+      (primaryRetryRefRes?.guestId && Number(payload.guestId) !== Number(primaryRetryRefRes.guestId)) ||
+      relevantResList.some(r => r?.requesterInfo?.guestId && Number(payload.guestId) === Number(r.requesterInfo.guestId)) ||
+      (Array.isArray(db.guests) && db.guests.some(g => g && Number(g.id) === Number(payload.guestId) && onlyDigits(g.documentNumber || g.document || g.cpf || "") === cleanDoc)) ||
+      (Array.isArray(db.guestAccounts) && db.guestAccounts.some(acc => acc && Number(acc.guestId) === Number(payload.guestId) && onlyDigits(acc.documentNumber || acc.document || acc.cpf || "") === cleanDoc))
+    )
+  );
+  const resolvedRetryRecType = payload.invoiceRecipientType || matchedRes?.invoiceRecipientType || relevantResList[0]?.invoiceRecipientType || null;
+  const resolvedRetryRequesterIsGuest1 = payload.requesterIsGuest1 !== undefined
+    ? Boolean(payload.requesterIsGuest1)
+    : (matchedRes
+        ? Boolean(matchedRes.requesterIsGuest1)
+        : (relevantResList[0]?.requesterIsGuest1 !== undefined ? Boolean(relevantResList[0].requesterIsGuest1) : undefined));
+  const resolvedRetryStayGuestId = isRetryThirdPartyRequester
+    ? (primaryRetryRefRes?.guestId ? Number(primaryRetryRefRes.guestId) : (!isRetryPayloadGuestIdRequester && payload.guestId ? Number(payload.guestId) : null))
+    : (payload.guestId || matchedRes?.guestId || relevantResList[0]?.guestId || null);
+  const resolvedRetryGuestPhone = payload.guestPhone || primaryRetryRefRes?.guestPhone || "";
+  const resolvedRetryGuestName = payload.guestName || primaryRetryRefRes?.guestName || "";
+  const resolvedRetryGuestDocument = payload.guestDocument || primaryRetryRefRes?.guestDocument || "";
+  const retryGuestPersonalSet = typeof collectReservationGuestPersonalEmails === "function"
+    ? collectReservationGuestPersonalEmails(relevantResList, db, payload.consolidatedGuestEmails || [])
+    : (() => {
+        const srcs = [...(Array.isArray(payload.consolidatedGuestEmails) ? payload.consolidatedGuestEmails : [])];
+        const gIds = new Set(!isRetryPayloadGuestIdRequester && payload.guestId ? [Number(payload.guestId)] : []);
+        const gDocs = new Set(!isRetryThirdPartyRequester && cleanDoc.length === 11 ? [cleanDoc] : []);
+        const gPhones = new Set();
+        const stayNames = new Set();
+        const exReqIds = new Set();
+        const exReqDocs = new Set();
+        const exReqNames = new Set();
+        for (const r of relevantResList) {
+          if (!r) continue;
+          if (r.guestEmail) srcs.push(r.guestEmail);
+          const reqGId = (!r.requesterIsGuest1 && r.requesterInfo?.guestId) ? Number(r.requesterInfo.guestId) : null;
+          const reqN = (!r.requesterIsGuest1 && r.requesterInfo?.name) ? String(r.requesterInfo.name).trim().toLowerCase() : "";
+          if (!r.requesterIsGuest1 && r.requesterInfo) {
+            if (reqGId) exReqIds.add(reqGId);
+            const rqdEx = onlyDigits(r.requesterInfo.cpf || r.requesterInfo.document || "");
+            if (rqdEx && rqdEx.length !== 14) exReqDocs.add(rqdEx);
+            if (reqN && reqN !== String(r.guestName || "").trim().toLowerCase()) exReqNames.add(reqN);
+          }
+          const rGN = String(r.guestName || "").trim().toLowerCase();
+          if (rGN && rGN !== "hóspede" && rGN !== "hospede" && (r.requesterIsGuest1 || !reqN || rGN !== reqN)) stayNames.add(rGN);
+          if (r.requesterIsGuest1) {
+            if (r.requesterEmail) srcs.push(r.requesterEmail);
+            if (r.requesterInfo?.email) srcs.push(r.requesterInfo.email);
+          }
+          if (r.guestId && (!reqGId || Number(r.guestId) !== reqGId)) gIds.add(Number(r.guestId));
+          const rDoc = onlyDigits(r.guestDocument || r.document || "");
+          if (rDoc && rDoc.length !== 14) gDocs.add(rDoc);
+          const rPh = cleanPhone(r.guestPhone || r.phone || "");
+          if (rPh && rPh.length >= 8) gPhones.add(rPh);
+          if (Array.isArray(r.guests)) {
+            for (const rg of r.guests) {
+              if (!rg) continue;
+              if (rg.email) srcs.push(rg.email);
+              if (rg.guestId && (!reqGId || Number(rg.guestId) !== reqGId)) gIds.add(Number(rg.guestId));
+              const rgD = onlyDigits(rg.cpf || rg.document || rg.documentNumber || "");
+              if (rgD && rgD.length !== 14) gDocs.add(rgD);
+              const rgP = cleanPhone(rg.phone || rg.phoneNumber || "");
+              if (rgP && rgP.length >= 8) gPhones.add(rgP);
+              const rgN = String(rg.name || rg.fullName || "").trim().toLowerCase();
+              if (rgN && rgN !== "hóspede" && rgN !== "hospede" && (r.requesterIsGuest1 || !reqN || rgN !== reqN)) stayNames.add(rgN);
+            }
+          }
+        }
+        for (const g of (Array.isArray(db.guests) ? db.guests : [])) {
+          if (!g) continue;
+          const gd = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+          const gp = cleanPhone(g.phone || g.phoneNumber || "");
+          const gn = String(g.fullName || g.name || "").trim().toLowerCase();
+          const isEx = (Array.isArray(g.tags) && g.tags.includes("solicitante_terceiro")) || (g.id && exReqIds.has(Number(g.id))) || (gd && exReqDocs.has(gd)) || (gn && exReqNames.has(gn));
+          if ((g.id && gIds.has(Number(g.id))) || (gd && gDocs.has(gd)) || (gp && gp.length >= 8 && Array.from(gPhones).some(p => p === gp || p.slice(-8) === gp.slice(-8))) || (!isEx && gn && stayNames.has(gn))) {
+            if (g.id) gIds.add(Number(g.id));
+            if (gd && gd.length !== 14) gDocs.add(gd);
+            if (gp && gp.length >= 8) gPhones.add(gp);
+            if (g.email) srcs.push(g.email);
+          }
+        }
+        for (const acc of (Array.isArray(db.guestAccounts) ? db.guestAccounts : [])) {
+          if (!acc) continue;
+          const ad = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+          const ap = cleanPhone(acc.phone || acc.phoneNumber || "");
+          const an = String(acc.fullName || acc.name || "").trim().toLowerCase();
+          const isExAcc = (acc.guestId && exReqIds.has(Number(acc.guestId))) || (ad && exReqDocs.has(ad)) || (an && exReqNames.has(an));
+          if ((acc.guestId && gIds.has(Number(acc.guestId))) || (ad && gDocs.has(ad)) || (ap && ap.length >= 8 && Array.from(gPhones).some(p => p === ap || p.slice(-8) === ap.slice(-8))) || (!isExAcc && an && stayNames.has(an))) {
+            if (acc.email) srcs.push(acc.email);
+          }
+        }
+        return new Set(parseEmailList(srcs));
+      })();
+  const retryQueueGuestPhoneSet = typeof collectReservationGuestPersonalPhones === "function"
+    ? collectReservationGuestPersonalPhones(relevantResList, db, [payload.guestPhone])
+    : new Set([payload.guestPhone, ...relevantResList.flatMap(r => [r?.guestPhone, r?.phone, ...(Array.isArray(r?.guests) ? r.guests.map(g => g?.phone || g?.phoneNumber) : [])])].map(p => cleanPhone(p || "")).filter(p => p.length >= 8));
+  const rawQueueTel = cleanPhone(payload.tomadorTelefone || "");
+  const isQueueGuestPhone = typeof isGuestPersonalPhone === "function"
+    ? isGuestPersonalPhone(rawQueueTel, retryQueueGuestPhoneSet)
+    : (retryQueueGuestPhoneSet instanceof Set && rawQueueTel && rawQueueTel.length >= 8 && Array.from(retryQueueGuestPhoneSet).some(gp => gp && gp.length >= 8 && (gp === rawQueueTel || gp.slice(-8) === rawQueueTel.slice(-8))));
+  const safeQueueTomadorTel = (resolvedHideFromGuest && isQueueGuestPhone) ? "" : rawQueueTel;
+  const rawRetryTomadorEmails = parseEmailList(payload.tomadorEmail || "");
+  const safeRetryTomadorEmail = getPrimaryEmail(
+    resolvedHideFromGuest
+      ? rawRetryTomadorEmails.filter(e => !retryGuestPersonalSet.has(e))
+      : rawRetryTomadorEmails
+  );
+  const rawRetryDeliveryEmails = parseEmailList(payload.nfDeliveryEmails);
+  const safeRetryDeliveryEmails = resolvedHideFromGuest
+    ? rawRetryDeliveryEmails.filter(e => !retryGuestPersonalSet.has(e))
+    : rawRetryDeliveryEmails;
 
   let existing = db.nfseRetryQueue.find(item =>
     (resCode && item.payload?.reservationCode === resCode) ||
@@ -66359,6 +69059,23 @@ function enqueueNfseRetry(payload, errorMessage, engine = "padrao_nacional") {
     existing.attempts = (existing.attempts || 1) + 1;
     existing.lastError = String(errorMessage || "Erro de comunicação com webservice fiscal").slice(0, 500);
     existing.updatedAt = new Date(now).toISOString();
+    if (existing.payload && typeof existing.payload === "object") {
+      existing.payload.nfHideFromGuest = resolvedHideFromGuest;
+      existing.payload.nfDeliveryEmails = safeRetryDeliveryEmails;
+      existing.payload.tomadorEmail = safeRetryTomadorEmail;
+      existing.payload.tomadorTelefone = safeQueueTomadorTel;
+      existing.payload.consolidatedGuestEmails = Array.from(retryGuestPersonalSet);
+      if (resolvedRetryRecType) existing.payload.invoiceRecipientType = resolvedRetryRecType;
+      if (resolvedRetryRequesterIsGuest1 !== undefined) existing.payload.requesterIsGuest1 = resolvedRetryRequesterIsGuest1;
+      if (resolvedRetryStayGuestId) existing.payload.guestId = resolvedRetryStayGuestId;
+      if (resolvedRetryGuestPhone) existing.payload.guestPhone = resolvedRetryGuestPhone;
+      if (resolvedRetryGuestName) existing.payload.guestName = resolvedRetryGuestName;
+      if (resolvedRetryGuestDocument) existing.payload.guestDocument = resolvedRetryGuestDocument;
+      if (payload.agencyId) existing.payload.agencyId = Number(payload.agencyId);
+      if (payload.isConsolidated !== undefined) existing.payload.isConsolidated = Boolean(payload.isConsolidated);
+      if (resIds.length > 0) existing.payload.reservationIds = resIds;
+      if (resCodes.length > 0) existing.payload.reservationCodes = resCodes;
+    }
     if (existing.attempts >= 5) {
       existing.status = "exhausted";
       existing.nextRetryAt = null;
@@ -66385,13 +69102,25 @@ function enqueueNfseRetry(payload, errorMessage, engine = "padrao_nacional") {
     payload: {
       reservationId: resId,
       reservationCode: resCode,
-      guestId: payload.guestId || null,
-      companyId: payload.companyId || null,
+      guestId: resolvedRetryStayGuestId,
+      guestName: resolvedRetryGuestName,
+      guestPhone: resolvedRetryGuestPhone,
+      guestDocument: resolvedRetryGuestDocument,
+      companyId: payload.companyId || matchedRes?.companyId || null,
+      agencyId: payload.agencyId || matchedRes?.agencyId || null,
+      invoiceRecipientType: resolvedRetryRecType,
+      requesterIsGuest1: resolvedRetryRequesterIsGuest1,
+      isConsolidated: Boolean(payload.isConsolidated),
+      reservationIds: resIds,
+      reservationCodes: resCodes,
+      nfHideFromGuest: resolvedHideFromGuest,
+      nfDeliveryEmails: safeRetryDeliveryEmails,
+      consolidatedGuestEmails: Array.from(retryGuestPersonalSet),
       sistemaEmissor: engine,
       tomadorNome: payload.tomadorNome,
       tomadorCpfCnpj: cleanDoc,
-      tomadorEmail: payload.tomadorEmail || "",
-      tomadorTelefone: payload.tomadorTelefone || "",
+      tomadorEmail: safeRetryTomadorEmail,
+      tomadorTelefone: safeQueueTomadorTel,
       tomadorEndereco: payload.tomadorEndereco || payload.tomadorLogradouro || "",
       tomadorLogradouro: payload.tomadorLogradouro || payload.tomadorEndereco || "",
       tomadorNumero: payload.tomadorNumero || "",
@@ -66483,13 +69212,246 @@ async function processSingleNfseRetryItem(item) {
     let emissionResult;
 
     const cleanRetryDoc = onlyDigits(p.tomadorCpfCnpj || "");
-    const resolvedRetryCheckin = cleanRetryDoc.length === 11 ? resolveGuestDigitalCheckinData({
-      guestId: p.guestId,
-      cpfCnpj: cleanRetryDoc,
-      name: p.tomadorNome,
-      reservationId: p.reservationId,
-      reservationCode: p.reservationCode
-    }) : null;
+    const matchedRetryRes = Array.isArray(db.reservations)
+      ? db.reservations.find(r =>
+          r && ((p.reservationId && Number(r.id) === Number(p.reservationId)) || (p.reservationCode && String(r.code) === String(p.reservationCode)))
+        )
+      : null;
+    const consolidatedRetryResList = (p.isConsolidated && Array.isArray(p.reservationIds) && Array.isArray(db.reservations))
+      ? db.reservations.filter(r => r && p.reservationIds.some(rid => Number(r.id) === Number(rid) || String(r.code) === String(rid)))
+      : [];
+    const relevantRetryResList = [
+      ...consolidatedRetryResList,
+      ...(matchedRetryRes && !consolidatedRetryResList.some(cr => Number(cr.id) === Number(matchedRetryRes.id)) ? [matchedRetryRes] : [])
+    ];
+    const resolvedRetryHideFromGuest = Boolean(
+      p.nfHideFromGuest ||
+      matchedRetryRes?.nfHideFromGuest ||
+      consolidatedRetryResList.some(r => Boolean(r?.nfHideFromGuest))
+    );
+    const primaryRetryRefRes = matchedRetryRes || relevantRetryResList[0] || null;
+    const normRetryItemRecType = String(p.invoiceRecipientType || "").trim().toLowerCase();
+    const normResRetryItemRecType = String(primaryRetryRefRes?.invoiceRecipientType || "").trim().toLowerCase();
+    const anyRetryItemRequesterIsGuest1 = p.requesterIsGuest1 === true || relevantRetryResList.some(r => Boolean(r?.requesterIsGuest1));
+    const matchesAnyRetryItemStayGuestDoc = cleanRetryDoc.length === 11 && relevantRetryResList.some(r => {
+      if (!r) return false;
+      const rDoc = onlyDigits(r.guestDocument || r.document || "");
+      if (rDoc && rDoc === cleanRetryDoc) return true;
+      if (Array.isArray(r.guests) && r.guests.some(rg => onlyDigits(rg?.cpf || rg?.document || rg?.documentNumber || "") === cleanRetryDoc)) return true;
+      const reqGuestId = (!r.requesterIsGuest1 && r.requesterInfo?.guestId) ? Number(r.requesterInfo.guestId) : null;
+      const reqName = (!r.requesterIsGuest1 && r.requesterInfo?.name) ? String(r.requesterInfo.name).trim().toLowerCase() : "";
+      const stayIds = new Set();
+      if (r.guestId && (!reqGuestId || Number(r.guestId) !== reqGuestId)) stayIds.add(Number(r.guestId));
+      if (Array.isArray(r.guests)) {
+        for (const rg of r.guests) {
+          if (rg?.guestId && (!reqGuestId || Number(rg.guestId) !== reqGuestId)) stayIds.add(Number(rg.guestId));
+        }
+      }
+      const stayPhones = new Set([cleanPhone(r.guestPhone || r.phone || ""), ...(Array.isArray(r.guests) ? r.guests.map(rg => cleanPhone(rg?.phone || rg?.phoneNumber || "")) : [])].filter(ph => ph && ph.length >= 8));
+      const stayEmails = new Set(parseEmailList([r.guestEmail, ...(Array.isArray(r.guests) ? r.guests.map(rg => rg?.email || rg?.guestEmail) : [])]));
+      const stayNames = new Set();
+      const rGN = String(r.guestName || "").trim().toLowerCase();
+      if (rGN && rGN !== "hóspede" && rGN !== "hospede" && (r.requesterIsGuest1 || !reqName || rGN !== reqName)) stayNames.add(rGN);
+      if (Array.isArray(r.guests)) {
+        for (const rg of r.guests) {
+          const rgN = String(rg?.name || rg?.fullName || "").trim().toLowerCase();
+          if (rgN && rgN !== "hóspede" && rgN !== "hospede" && (r.requesterIsGuest1 || !reqName || rgN !== reqName)) stayNames.add(rgN);
+        }
+      }
+      const matchedIds = new Set(stayIds);
+      for (const g of (Array.isArray(db.guests) ? db.guests : [])) {
+        if (!g) continue;
+        const gId = g.id ? Number(g.id) : null;
+        const gDoc = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+        const gPh = cleanPhone(g.phone || g.phoneNumber || "");
+        const gN = String(g.fullName || g.name || "").trim().toLowerCase();
+        const gEm = parseEmailList([g.email, g.guestEmail]);
+        if (!r.requesterIsGuest1 && ((Array.isArray(g.tags) && g.tags.includes("solicitante_terceiro")) || (reqGuestId && gId === reqGuestId) || (reqName && gN === reqName && !stayNames.has(gN)))) continue;
+        if ((gId && stayIds.has(gId)) || (gPh && gPh.length >= 8 && Array.from(stayPhones).some(sp => sp === gPh || sp.slice(-8) === gPh.slice(-8))) || gEm.some(e => stayEmails.has(e)) || (gN && stayNames.has(gN))) {
+          if (gId) matchedIds.add(gId);
+          if (gDoc && gDoc === cleanRetryDoc) return true;
+        }
+      }
+      for (const acc of (Array.isArray(db.guestAccounts) ? db.guestAccounts : [])) {
+        if (!acc) continue;
+        const aId = acc.guestId ? Number(acc.guestId) : null;
+        const aDoc = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+        const aPh = cleanPhone(acc.phone || acc.phoneNumber || "");
+        const aN = String(acc.fullName || acc.name || "").trim().toLowerCase();
+        const aEm = parseEmailList([acc.email, acc.guestEmail]);
+        if (!r.requesterIsGuest1 && ((reqGuestId && aId === reqGuestId) || (reqName && aN === reqName && !stayNames.has(aN)))) continue;
+        if ((aId && matchedIds.has(aId)) || (aPh && aPh.length >= 8 && Array.from(stayPhones).some(sp => sp === aPh || sp.slice(-8) === aPh.slice(-8))) || aEm.some(e => stayEmails.has(e)) || (aN && stayNames.has(aN))) {
+          if (aDoc && aDoc === cleanRetryDoc) return true;
+        }
+      }
+      return false;
+    });
+    const isRetryThirdPartyRequester = Boolean(
+      cleanRetryDoc.length === 11 &&
+      normRetryItemRecType !== "guest" &&
+      !anyRetryItemRequesterIsGuest1 &&
+      !matchesAnyRetryItemStayGuestDoc &&
+      (
+        ["requester", "other_person", "third_party"].includes(normRetryItemRecType) ||
+        (!normRetryItemRecType && ["requester", "other_person", "third_party"].includes(normResRetryItemRecType)) ||
+        (normRetryItemRecType === "requester_pf" && relevantRetryResList.some(r => r && !r.requesterIsGuest1 && (r.requesterInfo || ["requester", "other_person", "third_party"].includes(String(r.invoiceRecipientType || "").toLowerCase())))) ||
+        relevantRetryResList.some(r => r && !r.requesterIsGuest1 && r.requesterInfo && onlyDigits(r.requesterInfo.cpf || r.requesterInfo.document || "") === cleanRetryDoc)
+      )
+    );
+    const isRetryPayloadGuestIdRequester = Boolean(
+      isRetryThirdPartyRequester &&
+      p.guestId &&
+      (
+        (primaryRetryRefRes?.requesterInfo?.guestId && Number(p.guestId) === Number(primaryRetryRefRes.requesterInfo.guestId)) ||
+        (primaryRetryRefRes?.guestId && Number(p.guestId) !== Number(primaryRetryRefRes.guestId)) ||
+        relevantRetryResList.some(r => r?.requesterInfo?.guestId && Number(p.guestId) === Number(r.requesterInfo.guestId)) ||
+        (Array.isArray(db.guests) && db.guests.some(g => g && Number(g.id) === Number(p.guestId) && onlyDigits(g.documentNumber || g.document || g.cpf || "") === cleanRetryDoc)) ||
+        (Array.isArray(db.guestAccounts) && db.guestAccounts.some(acc => acc && Number(acc.guestId) === Number(p.guestId) && onlyDigits(acc.documentNumber || acc.document || acc.cpf || "") === cleanRetryDoc))
+      )
+    );
+    const resolvedRetryCheckin = cleanRetryDoc.length === 11
+      ? (isRetryThirdPartyRequester
+          ? resolveGuestDigitalCheckinData({
+              cpfCnpj: cleanRetryDoc,
+              name: p.tomadorNome
+            })
+          : resolveGuestDigitalCheckinData({
+              guestId: p.guestId || matchedRetryRes?.guestId,
+              cpfCnpj: cleanRetryDoc,
+              name: p.tomadorNome,
+              phone: p.tomadorTelefone || matchedRetryRes?.guestPhone || "",
+              reservationId: p.reservationId,
+              reservationCode: p.reservationCode
+            }))
+      : null;
+    const retryExtraGuestSources = [
+      !isRetryThirdPartyRequester ? resolvedRetryCheckin?.email : "",
+      ...(!isRetryThirdPartyRequester && Array.isArray(resolvedRetryCheckin?.allEmails) ? resolvedRetryCheckin.allEmails : []),
+      ...(Array.isArray(p.consolidatedGuestEmails) ? p.consolidatedGuestEmails : [])
+    ];
+    if (relevantRetryResList.length === 0) {
+      if (!isRetryPayloadGuestIdRequester && p.guestId && Array.isArray(db.guests)) {
+        const gRec = db.guests.find(g => g && Number(g.id) === Number(p.guestId));
+        if (gRec?.email) retryExtraGuestSources.push(gRec.email);
+      }
+      if (Array.isArray(db.guestAccounts)) {
+        for (const acc of db.guestAccounts) {
+          if (!acc) continue;
+          const aDoc = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+          if ((!isRetryPayloadGuestIdRequester && p.guestId && Number(acc.guestId) === Number(p.guestId)) || (!isRetryThirdPartyRequester && cleanRetryDoc.length === 11 && aDoc === cleanRetryDoc)) {
+            if (acc.email) retryExtraGuestSources.push(acc.email);
+          }
+        }
+      }
+    }
+    const retryGuestPersonalSet = typeof collectReservationGuestPersonalEmails === "function"
+      ? collectReservationGuestPersonalEmails(relevantRetryResList, db, retryExtraGuestSources)
+      : (() => {
+          const srcs = [...retryExtraGuestSources];
+          const gIds = new Set();
+          const gDocs = new Set();
+          const gPhones = new Set();
+          const stayNames = new Set();
+          const exReqIds = new Set();
+          const exReqDocs = new Set();
+          const exReqNames = new Set();
+          if (!isRetryPayloadGuestIdRequester && p.guestId) gIds.add(Number(p.guestId));
+          if (!isRetryThirdPartyRequester && cleanRetryDoc.length === 11) gDocs.add(cleanRetryDoc);
+          for (const r of relevantRetryResList) {
+            if (!r) continue;
+            if (r.guestEmail) srcs.push(r.guestEmail);
+            const reqGId = (!r.requesterIsGuest1 && r.requesterInfo?.guestId) ? Number(r.requesterInfo.guestId) : null;
+            const reqN = (!r.requesterIsGuest1 && r.requesterInfo?.name) ? String(r.requesterInfo.name).trim().toLowerCase() : "";
+            if (!r.requesterIsGuest1 && r.requesterInfo) {
+              if (reqGId) exReqIds.add(reqGId);
+              const rqdEx = onlyDigits(r.requesterInfo.cpf || r.requesterInfo.document || "");
+              if (rqdEx && rqdEx.length !== 14) exReqDocs.add(rqdEx);
+              if (reqN && reqN !== String(r.guestName || "").trim().toLowerCase()) exReqNames.add(reqN);
+            }
+            const rGN = String(r.guestName || "").trim().toLowerCase();
+            if (rGN && rGN !== "hóspede" && rGN !== "hospede" && (r.requesterIsGuest1 || !reqN || rGN !== reqN)) stayNames.add(rGN);
+            if (r.requesterIsGuest1) {
+              if (r.requesterEmail) srcs.push(r.requesterEmail);
+              if (r.requesterInfo?.email) srcs.push(r.requesterInfo.email);
+            }
+            if (r.guestId && (!reqGId || Number(r.guestId) !== reqGId)) gIds.add(Number(r.guestId));
+            const rDoc = onlyDigits(r.guestDocument || r.document || "");
+            if (rDoc && rDoc.length !== 14) gDocs.add(rDoc);
+            const rPh = cleanPhone(r.guestPhone || r.phone || "");
+            if (rPh && rPh.length >= 8) gPhones.add(rPh);
+            if (Array.isArray(r.guests)) {
+              for (const rg of r.guests) {
+                if (!rg) continue;
+                if (rg.email) srcs.push(rg.email);
+                if (rg.guestId && (!reqGId || Number(rg.guestId) !== reqGId)) gIds.add(Number(rg.guestId));
+                const rgDoc = onlyDigits(rg.cpf || rg.document || rg.documentNumber || "");
+                if (rgDoc && rgDoc.length !== 14) gDocs.add(rgDoc);
+                const rgPh = cleanPhone(rg.phone || rg.phoneNumber || "");
+                if (rgPh && rgPh.length >= 8) gPhones.add(rgPh);
+                const rgN = String(rg.name || rg.fullName || "").trim().toLowerCase();
+                if (rgN && rgN !== "hóspede" && rgN !== "hospede" && (r.requesterIsGuest1 || !reqN || rgN !== reqN)) stayNames.add(rgN);
+              }
+            }
+            if (typeof resolveGuestDigitalCheckinData === "function") {
+              const chk = resolveGuestDigitalCheckinData({
+                guestId: r.guestId,
+                cpfCnpj: r.guestDocument || "",
+                name: r.guestName || "",
+                phone: r.guestPhone || "",
+                reservationId: r.id,
+                reservationCode: r.code
+              });
+              if (chk?.email) srcs.push(chk.email);
+              if (Array.isArray(chk?.allEmails)) srcs.push(...chk.allEmails);
+            }
+          }
+          for (const g of (Array.isArray(db.guests) ? db.guests : [])) {
+            if (!g) continue;
+            const gd = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+            const gp = cleanPhone(g.phone || g.phoneNumber || "");
+            const gn = String(g.fullName || g.name || "").trim().toLowerCase();
+            const isEx = (Array.isArray(g.tags) && g.tags.includes("solicitante_terceiro")) || (g.id && exReqIds.has(Number(g.id))) || (gd && exReqDocs.has(gd)) || (gn && exReqNames.has(gn));
+            if ((g.id && gIds.has(Number(g.id))) || (gd && gDocs.has(gd)) || (gp && gp.length >= 8 && Array.from(gPhones).some(ph => ph === gp || ph.slice(-8) === gp.slice(-8))) || (!isEx && gn && stayNames.has(gn))) {
+              if (g.id) gIds.add(Number(g.id));
+              if (gd && gd.length !== 14) gDocs.add(gd);
+              if (gp && gp.length >= 8) gPhones.add(gp);
+              if (g.email) srcs.push(g.email);
+            }
+          }
+          for (const acc of (Array.isArray(db.guestAccounts) ? db.guestAccounts : [])) {
+            if (!acc) continue;
+            const ad = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+            const ap = cleanPhone(acc.phone || acc.phoneNumber || "");
+            const an = String(acc.fullName || acc.name || "").trim().toLowerCase();
+            const isExAcc = (acc.guestId && exReqIds.has(Number(acc.guestId))) || (ad && exReqDocs.has(ad)) || (an && exReqNames.has(an));
+            if ((acc.guestId && gIds.has(Number(acc.guestId))) || (ad && gDocs.has(ad)) || (ap && ap.length >= 8 && Array.from(gPhones).some(ph => ph === ap || ph.slice(-8) === ap.slice(-8))) || (!isExAcc && an && stayNames.has(an))) {
+              if (acc.email) srcs.push(acc.email);
+            }
+          }
+          return new Set(parseEmailList(srcs));
+        })();
+    const rawRetryDelivery = parseEmailList([p.nfDeliveryEmails, !resolvedRetryHideFromGuest ? matchedRetryRes?.nfDeliveryEmails : []]);
+    const resolvedRetryDeliveryEmails = resolvedRetryHideFromGuest
+      ? rawRetryDelivery.filter(e => !retryGuestPersonalSet.has(e))
+      : rawRetryDelivery;
+    const rawRetryTomadorCandidates = parseEmailList([
+      p.tomadorEmail,
+      resolvedRetryDeliveryEmails,
+      !resolvedRetryHideFromGuest ? resolvedRetryCheckin?.email : ""
+    ]);
+    const safeRetryTomadorEmail = getPrimaryEmail(
+      resolvedRetryHideFromGuest
+        ? rawRetryTomadorCandidates.filter(e => !retryGuestPersonalSet.has(e))
+        : rawRetryTomadorCandidates
+    );
+    const retryGuestPhoneSet = typeof collectReservationGuestPersonalPhones === "function"
+      ? collectReservationGuestPersonalPhones(relevantRetryResList, db, [p.guestPhone, !isRetryThirdPartyRequester ? resolvedRetryCheckin?.telefone : ""])
+      : new Set([p.guestPhone, !isRetryThirdPartyRequester ? resolvedRetryCheckin?.telefone : "", ...relevantRetryResList.flatMap(r => [r?.guestPhone, r?.phone, ...(Array.isArray(r?.guests) ? r.guests.map(g => g?.phone || g?.phoneNumber) : [])])].map(ph => cleanPhone(ph || "")).filter(ph => ph.length >= 8));
+    const rawRetryTel = cleanPhone(p.tomadorTelefone || (!resolvedRetryHideFromGuest ? resolvedRetryCheckin?.telefone : "") || "");
+    const isRetryGuestPh = typeof isGuestPersonalPhone === "function"
+      ? isGuestPersonalPhone(rawRetryTel, retryGuestPhoneSet)
+      : (retryGuestPhoneSet instanceof Set && rawRetryTel && rawRetryTel.length >= 8 && Array.from(retryGuestPhoneSet).some(gp => gp && gp.length >= 8 && (gp === rawRetryTel || gp.slice(-8) === rawRetryTel.slice(-8))));
+    const safeRetryTelefone = (resolvedRetryHideFromGuest && isRetryGuestPh) ? "" : rawRetryTel;
     const rawRetryLog = (p.tomadorStreet || p.tomadorEndereco || p.tomadorLogradouro || "").trim();
     const useRetryCheckinAddr = resolvedRetryCheckin && resolvedRetryCheckin.hasRealAddress && isGenericFallbackAddress(rawRetryLog, p.tomadorCep);
     const normRetryAddr = normalizeTomadorAddressFields({
@@ -66528,8 +69490,8 @@ async function processSingleNfseRetryItem(item) {
       tomador: {
         cpfCnpj: cleanRetryDoc,
         nome: toTitleCase(p.tomadorNome),
-        telefone: cleanPhone(p.tomadorTelefone || resolvedRetryCheckin?.telefone || ""),
-        email: p.tomadorEmail || resolvedRetryCheckin?.email || "",
+        telefone: safeRetryTelefone,
+        email: safeRetryTomadorEmail,
         logradouro: normRetryAddr.logradouro,
         numero: normRetryAddr.numero,
         complemento: normRetryAddr.complemento,
@@ -66596,12 +69558,28 @@ async function processSingleNfseRetryItem(item) {
       prestadorRazaoSocial: "Rental Miller's LTDA",
       prestadorCnpj: "47.964.813/0001-65",
       prestadorIm: "142591",
-      companyId: p.companyId ? Number(p.companyId) : null,
-      guestId: p.guestId ? Number(p.guestId) : (resolvedRetryCheckin?.guestId ? Number(resolvedRetryCheckin.guestId) : null),
+      invoiceRecipientType: isRetryThirdPartyRequester
+        ? "requester"
+        : (matchesAnyRetryItemStayGuestDoc && !anyRetryItemRequesterIsGuest1
+            ? "guest"
+            : (["other_person", "third_party"].includes(normRetryItemRecType)
+                ? "requester"
+                : (p.invoiceRecipientType || matchedRetryRes?.invoiceRecipientType || (cleanRetryDoc.length === 14 ? (p.agencyId ? "agency" : "company") : "guest")))),
+      agencyId: p.agencyId ? Number(p.agencyId) : (matchedRetryRes?.agencyId ? Number(matchedRetryRes.agencyId) : null),
+      companyId: p.companyId ? Number(p.companyId) : (matchedRetryRes?.companyId ? Number(matchedRetryRes.companyId) : null),
+      guestId: isRetryThirdPartyRequester
+        ? (primaryRetryRefRes?.guestId ? Number(primaryRetryRefRes.guestId) : (!isRetryPayloadGuestIdRequester && p.guestId ? Number(p.guestId) : null))
+        : (p.guestId ? Number(p.guestId) : (resolvedRetryCheckin?.guestId ? Number(resolvedRetryCheckin.guestId) : (matchedRetryRes?.guestId ? Number(matchedRetryRes.guestId) : null))),
+      guestName: isRetryThirdPartyRequester
+        ? (p.guestName || primaryRetryRefRes?.guestName || null)
+        : (p.guestName || matchedRetryRes?.guestName || null),
+      guestPhone: resolvedRetryHideFromGuest ? "" : (p.guestPhone || primaryRetryRefRes?.guestPhone || ""),
+      nfDeliveryEmails: resolvedRetryDeliveryEmails,
+      nfHideFromGuest: resolvedRetryHideFromGuest,
       tomadorNome: toTitleCase(p.tomadorNome || ""),
       tomadorCpfCnpj: cleanRetryDoc,
-      tomadorEmail: String(p.tomadorEmail || resolvedRetryCheckin?.email || "").trim().toLowerCase(),
-      tomadorTelefone: cleanPhone(p.tomadorTelefone || resolvedRetryCheckin?.telefone || ""),
+      tomadorEmail: safeRetryTomadorEmail,
+      tomadorTelefone: safeRetryTelefone,
       tomadorEndereco: normRetryAddr.logradouro,
       tomadorLogradouro: normRetryAddr.logradouro,
       tomadorNumero: normRetryAddr.numero,
@@ -66636,14 +69614,23 @@ async function processSingleNfseRetryItem(item) {
     };
 
     db.invoices.unshift(newInvoice);
-    if (Array.isArray(db.reservations) && (p.reservationId || p.reservationCode)) {
-      const matchedRes = db.reservations.find(r =>
-        (p.reservationId && Number(r.id) === Number(p.reservationId)) ||
-        (p.reservationCode && String(r.code) === String(p.reservationCode))
-      );
-      if (matchedRes) {
-        matchedRes.invoiceId = newInvoice.id;
-        matchedRes.numeroNfse = newInvoice.numeroNfse;
+    if (Array.isArray(db.reservations)) {
+      if (p.isConsolidated && consolidatedRetryResList.length > 0) {
+        for (const r of consolidatedRetryResList) {
+          r.invoiceId = newInvoice.id;
+          r.consolidatedInvoiceId = newInvoice.id;
+          r.numeroNfse = newInvoice.numeroNfse;
+          r.isConsolidatedInvoice = true;
+        }
+      } else if (p.reservationId || p.reservationCode) {
+        const matchedRes = db.reservations.find(r =>
+          (p.reservationId && Number(r.id) === Number(p.reservationId)) ||
+          (p.reservationCode && String(r.code) === String(p.reservationCode))
+        );
+        if (matchedRes) {
+          matchedRes.invoiceId = newInvoice.id;
+          matchedRes.numeroNfse = newInvoice.numeroNfse;
+        }
       }
     }
     db.nfseRetryQueue = (db.nfseRetryQueue || []).filter(q =>
@@ -66652,7 +69639,7 @@ async function processSingleNfseRetryItem(item) {
       !(p.reservationId && Number(q.payload?.reservationId) === Number(p.reservationId)) &&
       !(onlyDigits(q.payload?.tomadorCpfCnpj) === onlyDigits(p.tomadorCpfCnpj) && Number(q.payload?.valorServico) === Number(p.valorServico))
     );
-    if (process.env.NODE_ENV !== "test" && !newInvoice.nfHideFromGuest && !p.nfHideFromGuest) {
+    if (process.env.NODE_ENV !== "test" && !resolvedRetryHideFromGuest && !newInvoice.nfHideFromGuest && !p.nfHideFromGuest) {
       try {
         await dispatchNfseInvoiceWhatsApp(newInvoice, { autoTriggered: true });
       } catch (waErr) {
@@ -66956,11 +69943,231 @@ app.post("/api/nfse/replace/:id", async (req, res) => {
 
   saveDatabase();
 
+  const linkedRes = (original.reservationId || original.reservationCode)
+    ? (db.reservations || []).find(r =>
+        r && (
+          (original.reservationId && Number(r.id) === Number(original.reservationId)) ||
+          (original.reservationCode && String(r.code) === String(original.reservationCode))
+        )
+      )
+    : null;
+  const linkedResList = (db.reservations || []).filter(r =>
+    r && (
+      (original.reservationId && Number(r.id) === Number(original.reservationId)) ||
+      (original.reservationCode && String(r.code) === String(original.reservationCode)) ||
+      (Array.isArray(original.reservationIds) && original.reservationIds.some(rid => Number(r.id) === Number(rid))) ||
+      (Array.isArray(original.reservationCodes) && original.reservationCodes.some(rc => String(r.code) === String(rc)))
+    )
+  );
+  const resolvedHide = Boolean(
+    original.nfHideFromGuest ||
+    linkedRes?.nfHideFromGuest ||
+    linkedResList.some(r => Boolean(r?.nfHideFromGuest))
+  );
+  let replaceGuestEmailSet = new Set();
+  let replaceGuestPhoneSet = null;
+  if (resolvedHide) {
+    const orphanExtraEmails = [];
+    const orphanExtraPhones = [];
+    if (linkedResList.length === 0) {
+      const origRecType = String(original.invoiceRecipientType || "").trim().toLowerCase();
+      const origDoc = onlyDigits(original.tomadorCpfCnpj || "");
+      const isOrigReqType = ["requester", "requester_pf", "other_person", "third_party"].includes(origRecType);
+      const isOrigNonGuestRec = isOrigReqType || ["company", "agency"].includes(origRecType) || origDoc.length === 14;
+      const orphanGuestIds = new Set();
+      const orphanGuestDocs = new Set();
+      const orphanGuestNames = new Set();
+      const excludedRequesterIds = new Set();
+
+      const origGName = String(original.guestName || "").trim().toLowerCase();
+      const origTName = String(original.tomadorNome || "").trim().toLowerCase();
+      const hasRealOrigGName = Boolean(origGName && origGName !== "hóspede" && origGName !== "hospede");
+      const isStayGuestPosingAsReq = Boolean(isOrigReqType && hasRealOrigGName && origTName && origGName === origTName);
+
+      if ((!isOrigNonGuestRec || isStayGuestPosingAsReq) && origDoc.length === 11) {
+        orphanGuestDocs.add(origDoc);
+      }
+      if (original.guestId) {
+        const gIdNum = Number(original.guestId);
+        let isThirdPartyRequesterGuestId = false;
+        if (isOrigNonGuestRec) {
+          const gRecMatch = (db.guests || []).find(g => g && Number(g.id) === gIdNum);
+          const gRecDoc = onlyDigits(gRecMatch?.documentNumber || gRecMatch?.document || gRecMatch?.cpf || "");
+          const gRecName = String(gRecMatch?.fullName || gRecMatch?.name || "").trim().toLowerCase();
+          const gRecIsTaggedThirdParty = Array.isArray(gRecMatch?.tags) && gRecMatch.tags.includes("solicitante_terceiro");
+          const accMatch = (db.guestAccounts || []).find(acc => acc && Number(acc.guestId) === gIdNum);
+          const accDoc = onlyDigits(accMatch?.documentNumber || accMatch?.document || accMatch?.cpf || "");
+          const accName = String(accMatch?.fullName || accMatch?.name || "").trim().toLowerCase();
+          const matchesStayGuestIdentity = Boolean(
+            hasRealOrigGName && (
+              (gRecName && gRecName === origGName) ||
+              (accName && accName === origGName)
+            )
+          );
+          const isUnflaggedGuestMatchingTomador = Boolean(
+            !hasRealOrigGName &&
+            gRecMatch &&
+            !gRecIsTaggedThirdParty &&
+            (
+              (origDoc.length === 11 && gRecDoc && gRecDoc === origDoc) ||
+              (origTName && gRecName && gRecName === origTName)
+            )
+          );
+          if (
+            (gRecIsTaggedThirdParty && (!hasRealOrigGName || gRecName !== origGName)) ||
+            (!matchesStayGuestIdentity && !isStayGuestPosingAsReq && !isUnflaggedGuestMatchingTomador && isOrigReqType && (
+              (origDoc.length === 11 && (
+                (gRecDoc && gRecDoc === origDoc && (!hasRealOrigGName || !gRecName || gRecName !== origGName)) ||
+                (accDoc && accDoc === origDoc && (hasRealOrigGName || !gRecMatch || gRecIsTaggedThirdParty) && (!hasRealOrigGName || !accName || accName !== origGName))
+              )) ||
+              (origTName && (
+                (gRecName && gRecName === origTName && (!hasRealOrigGName || gRecName !== origGName)) ||
+                (accName && accName === origTName && (hasRealOrigGName || !gRecMatch || gRecIsTaggedThirdParty) && (!hasRealOrigGName || accName !== origGName))
+              ))
+            ))
+          ) {
+            isThirdPartyRequesterGuestId = true;
+            excludedRequesterIds.add(gIdNum);
+          }
+          if (isUnflaggedGuestMatchingTomador && gRecName && gRecName !== "hóspede" && gRecName !== "hospede") {
+            orphanGuestNames.add(gRecName);
+          }
+        }
+        if (!isThirdPartyRequesterGuestId) {
+          orphanGuestIds.add(gIdNum);
+        }
+      } else if (!hasRealOrigGName && isOrigReqType && origDoc.length === 11) {
+        const matchedNonThirdPartyGuest = (db.guests || []).find(g => {
+          if (!g) return false;
+          const isThirdPartyTag = Array.isArray(g.tags) && g.tags.includes("solicitante_terceiro");
+          if (isThirdPartyTag) return false;
+          const gDoc = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+          return Boolean(gDoc && gDoc === origDoc);
+        });
+        if (matchedNonThirdPartyGuest) {
+          orphanGuestDocs.add(origDoc);
+          if (matchedNonThirdPartyGuest.id) orphanGuestIds.add(Number(matchedNonThirdPartyGuest.id));
+          const mName = String(matchedNonThirdPartyGuest.fullName || matchedNonThirdPartyGuest.name || "").trim().toLowerCase();
+          if (mName && mName !== "hóspede" && mName !== "hospede") {
+            orphanGuestNames.add(mName);
+          }
+        } else {
+          const matchedNonThirdPartyAcc = (db.guestAccounts || []).find(acc => {
+            if (!acc || !acc.guestId) return false;
+            const aDoc = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+            if (!aDoc || aDoc !== origDoc) return false;
+            const linkedGuest = (db.guests || []).find(g => g && Number(g.id) === Number(acc.guestId));
+            if (!linkedGuest) return false;
+            const isThirdPartyTag = Array.isArray(linkedGuest.tags) && linkedGuest.tags.includes("solicitante_terceiro");
+            return !isThirdPartyTag;
+          });
+          if (matchedNonThirdPartyAcc) {
+            const linkedGuest = (db.guests || []).find(g => g && Number(g.id) === Number(matchedNonThirdPartyAcc.guestId));
+            orphanGuestDocs.add(origDoc);
+            orphanGuestIds.add(Number(matchedNonThirdPartyAcc.guestId));
+            const lgName = String(linkedGuest?.fullName || linkedGuest?.name || "").trim().toLowerCase();
+            if (lgName && lgName !== "hóspede" && lgName !== "hospede") {
+              orphanGuestNames.add(lgName);
+            }
+          }
+        }
+      }
+      if (hasRealOrigGName && (!isOrigNonGuestRec || origGName !== origTName || isStayGuestPosingAsReq)) {
+        orphanGuestNames.add(origGName);
+      }
+
+      for (const g of (Array.isArray(db.guests) ? db.guests : [])) {
+        if (!g) continue;
+        const gId = g.id ? Number(g.id) : null;
+        if (gId && excludedRequesterIds.has(gId)) continue;
+        const gDoc = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+        const gName = String(g.fullName || g.name || "").trim().toLowerCase();
+        const isThirdPartyTag = Array.isArray(g.tags) && g.tags.includes("solicitante_terceiro");
+        const matchesOrphan =
+          (gId && orphanGuestIds.has(gId) && (!isOrigNonGuestRec || !isThirdPartyTag)) ||
+          (gDoc && orphanGuestDocs.has(gDoc)) ||
+          (!isThirdPartyTag && gName && orphanGuestNames.has(gName));
+        if (matchesOrphan) {
+          if (gId) orphanGuestIds.add(gId);
+          if (gDoc && gDoc.length !== 14) orphanGuestDocs.add(gDoc);
+          if (g.email) orphanExtraEmails.push(g.email);
+          if (g.guestEmail) orphanExtraEmails.push(g.guestEmail);
+          if (g.phone) orphanExtraPhones.push(g.phone);
+          if (g.phoneNumber) orphanExtraPhones.push(g.phoneNumber);
+          if (g.whatsapp) orphanExtraPhones.push(g.whatsapp);
+        }
+      }
+      for (const acc of (Array.isArray(db.guestAccounts) ? db.guestAccounts : [])) {
+        if (!acc) continue;
+        const aGuestId = acc.guestId ? Number(acc.guestId) : null;
+        if (aGuestId && excludedRequesterIds.has(aGuestId)) continue;
+        const aDoc = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+        const aName = String(acc.fullName || acc.name || "").trim().toLowerCase();
+        const matchesOrphanAcc =
+          (aGuestId && orphanGuestIds.has(aGuestId)) ||
+          (aDoc && orphanGuestDocs.has(aDoc)) ||
+          (aName && orphanGuestNames.has(aName));
+        if (matchesOrphanAcc) {
+          if (acc.email) orphanExtraEmails.push(acc.email);
+          if (acc.guestEmail) orphanExtraEmails.push(acc.guestEmail);
+          if (acc.phone) orphanExtraPhones.push(acc.phone);
+          if (acc.phoneNumber) orphanExtraPhones.push(acc.phoneNumber);
+          if (acc.whatsapp) orphanExtraPhones.push(acc.whatsapp);
+        }
+      }
+    }
+    replaceGuestEmailSet = typeof collectReservationGuestPersonalEmails === "function"
+      ? collectReservationGuestPersonalEmails(linkedResList, db, orphanExtraEmails)
+      : (() => {
+          const srcs = [...orphanExtraEmails];
+          for (const r of linkedResList) {
+            if (!r) continue;
+            if (r.guestEmail) srcs.push(r.guestEmail);
+            if (r.requesterIsGuest1) {
+              if (r.requesterEmail) srcs.push(r.requesterEmail);
+              if (r.requesterInfo?.email) srcs.push(r.requesterInfo.email);
+            }
+            if (Array.isArray(r.guests)) {
+              for (const rg of r.guests) {
+                if (rg?.email) srcs.push(rg.email);
+              }
+            }
+          }
+          return new Set(parseEmailList(srcs));
+        })();
+    replaceGuestPhoneSet = typeof collectReservationGuestPersonalPhones === "function"
+      ? collectReservationGuestPersonalPhones(linkedResList, db, orphanExtraPhones)
+      : new Set([...orphanExtraPhones, ...linkedResList.flatMap(r => [r?.guestPhone, r?.phone, r?.requesterIsGuest1 ? (r?.requesterPhone || r?.requesterInfo?.phone) : "", ...(Array.isArray(r?.guests) ? r.guests.map(g => g?.phone || g?.phoneNumber) : [])])].map(p => cleanPhone(p || "")).filter(p => p.length >= 8));
+  }
+  const origReplaceDelivery = parseEmailList(original.nfDeliveryEmails);
+  const rawReplaceDelivery = origReplaceDelivery.length > 0
+    ? origReplaceDelivery
+    : parseEmailList([linkedResList.flatMap(r => parseEmailList(r?.nfDeliveryEmails)), original.tomadorEmail]);
+  const safeReplaceDeliveryEmails = resolvedHide
+    ? rawReplaceDelivery.filter(e => !replaceGuestEmailSet.has(e))
+    : rawReplaceDelivery;
+  const safeReplaceTomadorEmail = getPrimaryEmail(
+    resolvedHide
+      ? parseEmailList(original.tomadorEmail || "").filter(e => !replaceGuestEmailSet.has(e))
+      : parseEmailList(original.tomadorEmail || "")
+  );
+  const rawReplaceTel = cleanPhone(original.tomadorTelefone || "");
+  const isReplaceGuestPhone = resolvedHide && rawReplaceTel && (
+    typeof isGuestPersonalPhone === "function"
+      ? isGuestPersonalPhone(rawReplaceTel, replaceGuestPhoneSet)
+      : (replaceGuestPhoneSet instanceof Set && rawReplaceTel.length >= 8 && Array.from(replaceGuestPhoneSet).some(gp => gp && gp.length >= 8 && (gp === rawReplaceTel || gp.slice(-8) === rawReplaceTel.slice(-8))))
+  );
+  const safeReplaceTomadorTelefone = isReplaceGuestPhone ? "" : (original.tomadorTelefone || "");
+
   const draft = {
     tomadorNome: original.tomadorNome,
     tomadorCpfCnpj: original.tomadorCpfCnpj,
-    tomadorEmail: original.tomadorEmail || "",
-    tomadorTelefone: original.tomadorTelefone || "",
+    tomadorEmail: safeReplaceTomadorEmail,
+    tomadorTelefone: safeReplaceTomadorTelefone,
+    nfHideFromGuest: resolvedHide,
+    nfDeliveryEmails: safeReplaceDeliveryEmails,
+    invoiceRecipientType: original.invoiceRecipientType || linkedRes?.invoiceRecipientType || null,
+    requesterIsGuest1: linkedRes ? Boolean(linkedRes.requesterIsGuest1) : undefined,
     tomadorEndereco: original.tomadorEndereco || original.tomadorLogradouro || "",
     tomadorNumero: original.tomadorNumero || "",
     tomadorComplemento: original.tomadorComplemento || "",
@@ -66981,9 +70188,14 @@ app.post("/api/nfse/replace/:id", async (req, res) => {
     discriminacao: original.discriminacao,
     sistemaEmissor: original.sistemaEmissor,
     companyId: original.companyId || null,
+    agencyId: original.agencyId || linkedRes?.agencyId || null,
     guestId: original.guestId || null,
     reservationId: original.reservationId || null,
     reservationCode: original.reservationCode || null,
+    isConsolidated: Boolean(original.isConsolidated),
+    reservationIds: Array.isArray(original.reservationIds) ? original.reservationIds : (original.reservationId ? [Number(original.reservationId)] : []),
+    reservationCodes: Array.isArray(original.reservationCodes) ? original.reservationCodes : (original.reservationCode ? [original.reservationCode] : []),
+    packageId: original.packageId || linkedRes?.packageId || null,
     substituiNfseId: original.id,
     substituiNumeroNfse: original.numeroNfse,
     substituiChaveAcesso: original.chaveAcesso || null
@@ -67316,25 +70528,133 @@ async function dispatchNfseInvoiceWhatsApp(inv, opts = {}) {
         )
       )
     : null;
+  const linkedResList = Array.isArray(db.reservations)
+    ? db.reservations.filter(r =>
+        r && (
+          (inv.reservationId && Number(r.id) === Number(inv.reservationId)) ||
+          (inv.reservationCode && String(r.code) === String(inv.reservationCode)) ||
+          (Array.isArray(inv.reservationIds) && inv.reservationIds.some(rid => Number(r.id) === Number(rid))) ||
+          (Array.isArray(inv.reservationCodes) && inv.reservationCodes.some(rc => String(r.code) === String(rc)))
+        )
+      )
+    : [];
+  const effectiveLinkedResList = linkedResList.length > 0 ? linkedResList : (linkedRes ? [linkedRes] : []);
+  const invDocClean = onlyDigits(inv.tomadorCpfCnpj || "");
+  const normInvRecType = String(inv.invoiceRecipientType || "").trim().toLowerCase();
+  const isInvThirdPartyRequester = Boolean(
+    invDocClean.length === 11 &&
+    ["requester", "requester_pf", "other_person", "third_party"].includes(normInvRecType) &&
+    !effectiveLinkedResList.some(r => Boolean(r?.requesterIsGuest1)) &&
+    !effectiveLinkedResList.some(r => {
+      const rDoc = onlyDigits(r?.guestDocument || r?.document || "");
+      if (rDoc && rDoc === invDocClean) return true;
+      return Array.isArray(r?.guests) && r.guests.some(rg => onlyDigits(rg?.cpf || rg?.document || rg?.documentNumber || "") === invDocClean);
+    })
+  );
   const linkedGuest = Array.isArray(db.guests)
-    ? db.guests.find(g =>
-        g && (
+    ? db.guests.find(g => {
+        if (!g) return false;
+        if (isInvThirdPartyRequester) {
+          const gDoc = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+          if (gDoc && gDoc === invDocClean) return false;
+          if (linkedRes?.requesterInfo?.guestId && Number(g.id) === Number(linkedRes.requesterInfo.guestId)) return false;
+          if (effectiveLinkedResList.some(r => r?.requesterInfo?.guestId && Number(g.id) === Number(r.requesterInfo.guestId))) return false;
+          if (Array.isArray(g.tags) && g.tags.includes("solicitante_terceiro") && linkedRes?.guestName && String(g.fullName || g.name || "").trim().toLowerCase() !== String(linkedRes.guestName).trim().toLowerCase()) return false;
+        }
+        return (
           (inv.guestId && Number(g.id) === Number(inv.guestId)) ||
           (linkedRes?.guestId && Number(g.id) === Number(linkedRes.guestId)) ||
           (inv.guestName && String(g.fullName || g.name || "").trim().toLowerCase() === String(inv.guestName).trim().toLowerCase())
-        )
-      )
+        );
+      })
     : null;
 
+  const isHiddenFromGuest = Boolean(inv.nfHideFromGuest || linkedRes?.nfHideFromGuest || effectiveLinkedResList.some(r => Boolean(r?.nfHideFromGuest)));
+  const extraWaPhoneSources = [
+    inv.guestPhone,
+    linkedGuest?.phone,
+    linkedGuest?.phoneNumber
+  ];
+  if (effectiveLinkedResList.length === 0) {
+    if (!isInvThirdPartyRequester && inv.guestId && Array.isArray(db.guests)) {
+      const gRec = db.guests.find(g => g && Number(g.id) === Number(inv.guestId));
+      if (gRec?.phone) extraWaPhoneSources.push(gRec.phone);
+      if (gRec?.phoneNumber) extraWaPhoneSources.push(gRec.phoneNumber);
+    }
+    if (Array.isArray(db.guestAccounts)) {
+      for (const acc of db.guestAccounts) {
+        if (!acc) continue;
+        const aDoc = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+        if ((!isInvThirdPartyRequester && inv.guestId && Number(acc.guestId) === Number(inv.guestId)) || (!isInvThirdPartyRequester && invDocClean.length === 11 && aDoc === invDocClean)) {
+          if (acc.phone) extraWaPhoneSources.push(acc.phone);
+          if (acc.phoneNumber) extraWaPhoneSources.push(acc.phoneNumber);
+        }
+      }
+    }
+  }
+  const waGuestPhoneSet = typeof collectReservationGuestPersonalPhones === "function"
+    ? collectReservationGuestPersonalPhones(effectiveLinkedResList, db, extraWaPhoneSources)
+    : (() => {
+        const phSet = new Set();
+        const addPh = (raw) => {
+          const p = cleanPhone(raw || "");
+          if (p && p.length >= 8) {
+            phSet.add(p);
+            if (p.length >= 12 && p.startsWith("55")) phSet.add(p.slice(2));
+          }
+        };
+        for (const s of extraWaPhoneSources) addPh(s);
+        const gIds = new Set(!isInvThirdPartyRequester && inv.guestId ? [Number(inv.guestId)] : []);
+        const gDocs = new Set(!isInvThirdPartyRequester && invDocClean.length === 11 ? [invDocClean] : []);
+        for (const r of effectiveLinkedResList) {
+          if (!r) continue;
+          if (r.guestId) gIds.add(Number(r.guestId));
+          const rDoc = onlyDigits(r.guestDocument || r.document || "");
+          if (rDoc && rDoc.length !== 14) gDocs.add(rDoc);
+          addPh(r.guestPhone || r.phone || r.whatsapp);
+          if (r.requesterIsGuest1) addPh(r.requesterPhone || r.requesterInfo?.phone || r.requesterInfo?.whatsapp);
+          if (Array.isArray(r.guests)) {
+            for (const rg of r.guests) {
+              if (!rg) continue;
+              if (rg.guestId) gIds.add(Number(rg.guestId));
+              const rgD = onlyDigits(rg.cpf || rg.document || rg.documentNumber || "");
+              if (rgD && rgD.length !== 14) gDocs.add(rgD);
+              addPh(rg.phone || rg.phoneNumber || rg.whatsapp);
+            }
+          }
+        }
+        for (const g of (Array.isArray(db.guests) ? db.guests : [])) {
+          if (!g) continue;
+          const gd = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+          const gp = cleanPhone(g.phone || g.phoneNumber || "");
+          if ((g.id && gIds.has(Number(g.id))) || (gd && gDocs.has(gd)) || (gp && gp.length >= 8 && Array.from(phSet).some(p => p === gp || p.slice(-8) === gp.slice(-8)))) addPh(gp);
+        }
+        for (const acc of (Array.isArray(db.guestAccounts) ? db.guestAccounts : [])) {
+          if (!acc) continue;
+          const ad = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+          const ap = cleanPhone(acc.phone || acc.phoneNumber || "");
+          if ((acc.guestId && gIds.has(Number(acc.guestId))) || (ad && gDocs.has(ad)) || (ap && ap.length >= 8 && Array.from(phSet).some(p => p === ap || p.slice(-8) === ap.slice(-8)))) addPh(ap);
+        }
+        return phSet;
+      })();
+  const isWaGuestPhone = (raw) => {
+    const p = cleanPhone(raw || "");
+    if (!p || p.length < 8) return false;
+    return typeof isGuestPersonalPhone === "function"
+      ? isGuestPersonalPhone(p, waGuestPhoneSet)
+      : (waGuestPhoneSet instanceof Set && Array.from(waGuestPhoneSet).some(gp => gp && gp.length >= 8 && (gp === p || gp.slice(-8) === p.slice(-8))));
+  };
   const rawPhone =
     opts.phone ||
-    (!inv.nfHideFromGuest && (inv.guestPhone || linkedRes?.guestPhone || linkedRes?.guests?.[0]?.phone || linkedGuest?.phone)) ||
+    (!isHiddenFromGuest && (inv.guestPhone || linkedRes?.guestPhone || linkedRes?.guests?.[0]?.phone || linkedGuest?.phone)) ||
     inv.tomadorTelefone ||
-    linkedRes?.guestPhone ||
-    linkedGuest?.phone ||
+    (!isHiddenFromGuest ? (linkedRes?.guestPhone || linkedGuest?.phone) : "") ||
     "";
   const cleanPhoneNum = onlyDigits(rawPhone);
-  const displayRecipientName = (!inv.nfHideFromGuest && (inv.guestName || linkedRes?.guestName || linkedGuest?.fullName || linkedGuest?.name)) || inv.tomadorNome || "Hóspede";
+  if (isHiddenFromGuest && (!cleanPhoneNum || isWaGuestPhone(cleanPhoneNum))) {
+    return { success: false, sent: false, pdfSent: false, blockedByPrivacy: true };
+  }
+  const displayRecipientName = (!isHiddenFromGuest && (inv.guestName || linkedRes?.guestName || linkedGuest?.fullName || linkedGuest?.name)) || inv.tomadorNome || "Hóspede";
   const firstName = String(displayRecipientName).trim().split(/\s+/)[0] || "Hóspede";
   const numNota = String(inv.numeroNfse || inv.numeroNota || inv.id);
   const danfseUrl = `https://corpflats.com.br/api/nfse/danfse/${numNota}`;
@@ -68746,7 +72066,28 @@ app.post("/api/companies", (req, res) => {
   const resolvedCnpj = (cnpj || "Isento / Não informado").trim();
   const resolvedStateReg = (stateRegistration || inscricaoEstadual || "").trim();
   const resolvedMunReg = (municipalRegistration || inscricaoMunicipal || "").trim();
-  const resolvedEmail = (financialEmail || emailFinanceiro || email || "").trim();
+  const rawEmailCandidate = financialEmail || emailFinanceiro || email || "";
+  const rawEmailInput = Array.isArray(rawEmailCandidate)
+    ? rawEmailCandidate
+    : String(rawEmailCandidate).trim();
+  const emailCheck = validateEmailList(rawEmailInput);
+  if (!emailCheck.valid) {
+    return res.status(400).json({
+      error: `E-mail financeiro inválido (${emailCheck.invalidTokens.join(", ")}). Use endereços válidos separados por ";".`,
+      invalidTokens: emailCheck.invalidTokens
+    });
+  }
+  const resolvedEmail = emailCheck.emails.join("; ");
+  const rawFinRespEmail = String(
+    req.body.financialResponsibleEmail ?? req.body.financialResponsible?.email ?? ""
+  ).trim();
+  const finRespEmailCheck = validateEmailList(rawFinRespEmail);
+  if (!finRespEmailCheck.valid) {
+    return res.status(400).json({
+      error: `E-mail do responsável financeiro inválido (${finRespEmailCheck.invalidTokens.join(", ")}). Use endereços válidos separados por ";".`,
+      invalidTokens: finRespEmailCheck.invalidTokens
+    });
+  }
   const resolvedPhone = (phone || telefone || "").trim();
   const resolvedContact = (contactPerson || contato || "").trim();
   const resolvedAllowsDirect = allowsDirectReservations !== undefined
@@ -68940,9 +72281,27 @@ const handleUpdateCompany = (req, res) => {
     company.inscricaoMunicipal = val;
   }
   if (b.financialEmail !== undefined || b.emailFinanceiro !== undefined || b.email !== undefined) {
-    const val = (b.financialEmail ?? b.emailFinanceiro ?? b.email ?? "").trim();
+    const rawVal = String(b.financialEmail ?? b.emailFinanceiro ?? b.email ?? "").trim();
+    const emailCheck = validateEmailList(rawVal);
+    if (!emailCheck.valid) {
+      return res.status(400).json({
+        error: `E-mail financeiro inválido (${emailCheck.invalidTokens.join(", ")}). Use endereços válidos separados por ";".`,
+        invalidTokens: emailCheck.invalidTokens
+      });
+    }
+    const val = emailCheck.emails.join("; ");
     company.financialEmail = val;
     company.emailFinanceiro = val;
+  }
+  if (b.financialResponsibleEmail !== undefined || b.financialResponsible?.email !== undefined) {
+    const rawFrEmail = String(b.financialResponsibleEmail ?? b.financialResponsible?.email ?? "").trim();
+    const frCheck = validateEmailList(rawFrEmail);
+    if (!frCheck.valid) {
+      return res.status(400).json({
+        error: `E-mail do responsável financeiro inválido (${frCheck.invalidTokens.join(", ")}). Use endereços válidos separados por ";".`,
+        invalidTokens: frCheck.invalidTokens
+      });
+    }
   }
   if (b.phone !== undefined || b.telefone !== undefined) {
     const val = (b.phone ?? b.telefone ?? "").trim();
@@ -80300,7 +83659,9 @@ function applyCrmBillingConfigFields(entity, body = {}) {
     const prevFr = entity.financialResponsible || {};
     const inFr = typeof body.financialResponsible === "object" && body.financialResponsible ? body.financialResponsible : {};
     const name = String(body.financialResponsibleName ?? inFr.name ?? prevFr.name ?? entity.financialResponsibleName ?? "").trim();
-    const email = String(body.financialResponsibleEmail ?? inFr.email ?? prevFr.email ?? entity.financialResponsibleEmail ?? "").trim();
+    const rawFrEmail = String(body.financialResponsibleEmail ?? inFr.email ?? prevFr.email ?? entity.financialResponsibleEmail ?? "").trim();
+    const frEmailCheck = validateEmailList(rawFrEmail);
+    const email = frEmailCheck.valid && frEmailCheck.emails.length > 0 ? frEmailCheck.emails.join("; ") : rawFrEmail;
     const phone = String(body.financialResponsiblePhone ?? inFr.phone ?? prevFr.phone ?? entity.financialResponsiblePhone ?? "").trim();
     const document = String(body.financialResponsibleDocument ?? inFr.document ?? prevFr.document ?? entity.financialResponsibleDocument ?? "").trim();
     entity.financialResponsible = { name, email, phone, document };
@@ -80482,8 +83843,8 @@ function buildSinglePreBoletoFromReservation(r, targetDb = db) {
     (company ? "company" : (agency ? "agency" : "guest"))
   ).toLowerCase();
 
-  const mainPayer = resolveBoletoPayerData(r, mainPayerType, r.boletoCustomPayer || null);
-  const { flags: recFlags, financialResponsible } = resolveReservationBillingRecipientsList(r);
+  const mainPayer = resolveBoletoPayerData(r, mainPayerType, r.boletoCustomPayer || null, targetDb);
+  const { flags: recFlags, financialResponsible } = resolveReservationBillingRecipientsList(r, null, null, null, targetDb);
   const existingInv = findExistingInvoiceForReservation(targetDb, {
     reservation: r,
     reservationId: r.id,
@@ -80774,9 +84135,132 @@ function resolveReservationCrmLinks(r) {
  * Resolve a lista de destinatários marcados para receber NFS-e + Boleto(s) + Linha Digitável / PIX
  * suportando: Hóspede, Solicitante, Empresa/Agência e Responsável Financeiro (um, vários ou todos)
  */
-function resolveReservationBillingRecipientsList(r, overrideRecipients = null, overrideFinResp = null) {
+function resolveReservationBillingRecipientsList(r, overrideRecipients = null, overrideFinResp = null, extraReservations = null, targetDb = db) {
+  const activeDb = targetDb || (typeof db !== "undefined" ? db : {});
   const { guest, company, agency } = resolveReservationCrmLinks(r || {});
   const crmEntity = company || agency || guest || {};
+  const pkgSibs = Array.isArray(extraReservations) && extraReservations.length > 0
+    ? extraReservations.filter(Boolean)
+    : ((r?.packageCode || r?.packageId) && typeof getPackageReservations === "function"
+        ? getPackageReservations(activeDb, r.packageCode || r.packageId).filter(x => typeof isPackageItemActive !== "function" || isPackageItemActive(x))
+        : []);
+  const resListForHide = pkgSibs.length > 0
+    ? [r, ...pkgSibs.filter(x => x && Number(x.id) !== Number(r?.id))].filter(Boolean)
+    : (r ? [r] : []);
+  const hideGuestNfse = resListForHide.some(x => Boolean(x?.nfHideFromGuest || x?.hideFinancialForGuest));
+  const anyRequesterIsGuest1 = Boolean(r?.requesterIsGuest1 || resListForHide.some(x => Boolean(x?.requesterIsGuest1)));
+  const guestPersonalSet = typeof collectReservationGuestPersonalEmails === "function"
+    ? collectReservationGuestPersonalEmails(resListForHide, activeDb, [r?.guestEmail, guest?.email])
+    : (() => {
+        const srcs = [r?.guestEmail, guest?.email];
+        const gIds = new Set();
+        const gDocs = new Set();
+        const gPhones = new Set();
+        for (const item of resListForHide) {
+          if (!item) continue;
+          if (item.guestEmail) srcs.push(item.guestEmail);
+          if (item.requesterIsGuest1) {
+            if (item.requesterEmail) srcs.push(item.requesterEmail);
+            if (item.requesterInfo?.email) srcs.push(item.requesterInfo.email);
+          }
+          if (item.guestId) gIds.add(Number(item.guestId));
+          const rDoc = onlyDigits(item.guestDocument || item.document || "");
+          if (rDoc && rDoc.length !== 14) gDocs.add(rDoc);
+          const rPh = cleanPhone(item.guestPhone || item.phone || "");
+          if (rPh && rPh.length >= 8) gPhones.add(rPh);
+          if (Array.isArray(item.guests)) {
+            for (const rg of item.guests) {
+              if (!rg) continue;
+              if (rg.email) srcs.push(rg.email);
+              if (rg.guestId) gIds.add(Number(rg.guestId));
+              const rgDoc = onlyDigits(rg.cpf || rg.document || rg.documentNumber || "");
+              if (rgDoc && rgDoc.length !== 14) gDocs.add(rgDoc);
+              const rgPh = cleanPhone(rg.phone || rg.phoneNumber || "");
+              if (rgPh && rgPh.length >= 8) gPhones.add(rgPh);
+            }
+          }
+        }
+        for (const g of (Array.isArray(activeDb?.guests) ? activeDb.guests : [])) {
+          if (!g) continue;
+          const gd = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+          const gp = cleanPhone(g.phone || g.phoneNumber || "");
+          if ((g.id && gIds.has(Number(g.id))) || (gd && gDocs.has(gd)) || (gp && gp.length >= 8 && Array.from(gPhones).some(p => p === gp || p.slice(-8) === gp.slice(-8)))) {
+            if (g.id) gIds.add(Number(g.id));
+            if (gd && gd.length !== 14) gDocs.add(gd);
+            if (gp && gp.length >= 8) gPhones.add(gp);
+            if (g.email) srcs.push(g.email);
+          }
+        }
+        for (const acc of (Array.isArray(activeDb?.guestAccounts) ? activeDb.guestAccounts : [])) {
+          if (!acc) continue;
+          const ad = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+          const ap = cleanPhone(acc.phone || acc.phoneNumber || "");
+          if ((acc.guestId && gIds.has(Number(acc.guestId))) || (ad && gDocs.has(ad)) || (ap && ap.length >= 8 && Array.from(gPhones).some(p => p === ap || p.slice(-8) === ap.slice(-8)))) {
+            if (acc.email) srcs.push(acc.email);
+          }
+        }
+        return new Set(parseEmailList(srcs));
+      })();
+  const guestPersonalPhones = hideGuestNfse
+    ? (typeof collectReservationGuestPersonalPhones === "function"
+        ? collectReservationGuestPersonalPhones(resListForHide, activeDb, [r?.guestPhone, guest?.phone])
+        : (() => {
+            const phSet = new Set();
+            const gIds = new Set();
+            const gDocs = new Set();
+            const addP = (raw) => {
+              const p = cleanPhone(raw || "");
+              if (p && p.length >= 8) phSet.add(p);
+            };
+            addP(r?.guestPhone);
+            addP(guest?.phone);
+            for (const item of resListForHide) {
+              if (!item) continue;
+              addP(item.guestPhone || item.phone || item.whatsapp);
+              if (item.requesterIsGuest1) addP(item.requesterPhone || item.requesterInfo?.phone);
+              if (item.guestId) gIds.add(Number(item.guestId));
+              const rDoc = onlyDigits(item.guestDocument || item.document || "");
+              if (rDoc && rDoc.length !== 14) gDocs.add(rDoc);
+              if (Array.isArray(item.guests)) {
+                for (const rg of item.guests) {
+                  if (!rg) continue;
+                  addP(rg.phone || rg.phoneNumber || rg.whatsapp);
+                  if (rg.guestId) gIds.add(Number(rg.guestId));
+                  const rgD = onlyDigits(rg.cpf || rg.document || rg.documentNumber || "");
+                  if (rgD && rgD.length !== 14) gDocs.add(rgD);
+                }
+              }
+            }
+            for (const g of (Array.isArray(activeDb?.guests) ? activeDb.guests : [])) {
+              if (!g) continue;
+              const gd = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+              const gp = cleanPhone(g.phone || g.phoneNumber || g.whatsapp || "");
+              if ((g.id && gIds.has(Number(g.id))) || (gd && gDocs.has(gd)) || (gp && gp.length >= 8 && Array.from(phSet).some(p => p === gp || p.slice(-8) === gp.slice(-8)))) {
+                if (g.id) gIds.add(Number(g.id));
+                if (gd && gd.length !== 14) gDocs.add(gd);
+                addP(gp);
+              }
+            }
+            for (const acc of (Array.isArray(activeDb?.guestAccounts) ? activeDb.guestAccounts : [])) {
+              if (!acc) continue;
+              const ad = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+              const ap = cleanPhone(acc.phone || acc.phoneNumber || acc.whatsapp || "");
+              if ((acc.guestId && gIds.has(Number(acc.guestId))) || (ad && gDocs.has(ad)) || (ap && ap.length >= 8 && Array.from(phSet).some(p => p === ap || p.slice(-8) === ap.slice(-8)))) {
+                addP(ap);
+              }
+            }
+            return phSet;
+          })())
+    : null;
+  const maskRecipientPhone = (rawPhone) => {
+    const cleaned = cleanPhone(rawPhone || "");
+    if (!cleaned) return "";
+    if (!hideGuestNfse || !guestPersonalPhones) return cleaned;
+    const isGuestPh = typeof isGuestPersonalPhone === "function"
+      ? isGuestPersonalPhone(cleaned, guestPersonalPhones)
+      : (guestPersonalPhones instanceof Set && cleaned.length >= 8 && Array.from(guestPersonalPhones).some(gp => gp && gp.length >= 8 && (gp === cleaned || gp.slice(-8) === cleaned.slice(-8))));
+    return isGuestPh ? "" : cleaned;
+  };
 
   const mergedRawFlags = {
     guest: false,
@@ -80828,6 +84312,11 @@ function resolveReservationBillingRecipientsList(r, overrideRecipients = null, o
     );
   }
 
+  if (hideGuestNfse) {
+    recFlags.guest = false;
+    if (anyRequesterIsGuest1) recFlags.requester = false;
+  }
+
   const finResp = {
     name: String(
       overrideFinResp?.name ??
@@ -80837,7 +84326,14 @@ function resolveReservationBillingRecipientsList(r, overrideRecipients = null, o
       crmEntity.financialResponsibleName ??
       ""
     ).trim(),
-    email: String(
+    email: formatEmailList(
+      overrideFinResp?.email ??
+      r?.financialResponsible?.email ??
+      r?.financialResponsibleEmail ??
+      crmEntity.financialResponsible?.email ??
+      crmEntity.financialResponsibleEmail ??
+      ""
+    ) || String(
       overrideFinResp?.email ??
       r?.financialResponsible?.email ??
       r?.financialResponsibleEmail ??
@@ -80865,63 +84361,83 @@ function resolveReservationBillingRecipientsList(r, overrideRecipients = null, o
 
   const candidates = [];
 
-  if (recFlags.guest) {
-    candidates.push({
+  const pushEmailExpandedCandidates = ({ role, roleLabel, name, rawEmails, phone, document }) => {
+    const emailList = parseEmailList(rawEmails);
+    if (emailList.length === 0) {
+      candidates.push({ role, roleLabel, name, email: "", phone, document });
+      return;
+    }
+    emailList.forEach((emailAddr, idx) => {
+      candidates.push({
+        role,
+        roleLabel: idx === 0 ? roleLabel : `${roleLabel} (E-mail Adicional)`,
+        name,
+        email: emailAddr,
+        phone: idx === 0 ? phone : "",
+        document: idx === 0 ? document : ""
+      });
+    });
+  };
+
+  if (recFlags.guest && !hideGuestNfse) {
+    pushEmailExpandedCandidates({
       role: "guest",
       roleLabel: "Hóspede",
       name: r?.guestName || guest?.fullName || guest?.name || "Hóspede",
-      email: (r?.guestEmail || guest?.email || "").trim(),
+      rawEmails: [r?.guestEmail, guest?.email],
       phone: cleanPhone(r?.guestPhone || guest?.phone || ""),
       document: onlyDigits(r?.guestDocument || guest?.documentNumber || guest?.document || "")
     });
   }
 
-  if (recFlags.requester) {
+  if (recFlags.requester && !(hideGuestNfse && anyRequesterIsGuest1)) {
     const reqInfo = r?.requesterInfo || {};
-    candidates.push({
+    let reqEmails = parseEmailList([reqInfo.email || r?.requesterEmail || r?.agencyAgentEmail || ""]);
+    if (hideGuestNfse && guestPersonalSet.size > 0) {
+      reqEmails = reqEmails.filter(e => !guestPersonalSet.has(e));
+    }
+    pushEmailExpandedCandidates({
       role: "requester",
       roleLabel: "Solicitante da Reserva",
       name: reqInfo.name || r?.agencyAgentName || company?.contactPerson || agency?.contactPerson || "Solicitante",
-      email: (reqInfo.email || r?.agencyAgentEmail || "").trim(),
-      phone: cleanPhone(reqInfo.phone || r?.agencyAgentPhone || ""),
+      rawEmails: reqEmails,
+      phone: maskRecipientPhone(reqInfo.phone || r?.requesterPhone || r?.agencyAgentPhone || ""),
       document: onlyDigits(reqInfo.cpf || reqInfo.document || "")
     });
   }
 
   if (recFlags.company) {
     const targetOrg = company || agency;
-    const extraEmails = Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails : [];
-    const primaryOrgEmail = (targetOrg?.financialEmail || targetOrg?.emailFinanceiro || extraEmails[0] || r?.agencyAgentEmail || "").trim();
-    candidates.push({
+    let orgEmailList = parseEmailList([
+      targetOrg?.financialEmail,
+      targetOrg?.emailFinanceiro,
+      r?.nfDeliveryEmails,
+      r?.agencyAgentEmail
+    ]);
+    if (hideGuestNfse && guestPersonalSet.size > 0) {
+      orgEmailList = orgEmailList.filter(e => !guestPersonalSet.has(e));
+    }
+    pushEmailExpandedCandidates({
       role: "company",
       roleLabel: company ? "Empresa Contratante" : (agency ? "Agência B2B" : "Empresa"),
       name: targetOrg?.corporateName || targetOrg?.tradeName || r?.companyName || r?.agencyName || "Empresa",
-      email: primaryOrgEmail,
-      phone: cleanPhone(targetOrg?.phone || targetOrg?.telefone || r?.agencyAgentPhone || ""),
+      rawEmails: orgEmailList,
+      phone: maskRecipientPhone(targetOrg?.phone || targetOrg?.telefone || r?.agencyAgentPhone || ""),
       document: onlyDigits(targetOrg?.cnpj || r?.companyCnpj || r?.agencyCnpj || "")
     });
-    for (const extraEmail of extraEmails) {
-      const cleanExtra = String(extraEmail || "").trim();
-      if (cleanExtra && cleanExtra.toLowerCase() !== primaryOrgEmail.toLowerCase()) {
-        candidates.push({
-          role: "company",
-          roleLabel: "E-mail Fiscal Adicional",
-          name: targetOrg?.tradeName || r?.companyName || "Financeiro",
-          email: cleanExtra,
-          phone: "",
-          document: ""
-        });
-      }
-    }
   }
 
   if (recFlags.financialResponsible && (finResp.name || finResp.email || finResp.phone)) {
-    candidates.push({
+    let finRespEmails = parseEmailList(finResp.email);
+    if (hideGuestNfse && guestPersonalSet.size > 0) {
+      finRespEmails = finRespEmails.filter(e => !guestPersonalSet.has(e));
+    }
+    pushEmailExpandedCandidates({
       role: "financialResponsible",
       roleLabel: "Responsável Financeiro",
       name: finResp.name || "Responsável Financeiro",
-      email: finResp.email,
-      phone: cleanPhone(finResp.phone),
+      rawEmails: finRespEmails,
+      phone: maskRecipientPhone(finResp.phone),
       document: onlyDigits(finResp.document)
     });
   }
@@ -80930,20 +84446,24 @@ function resolveReservationBillingRecipientsList(r, overrideRecipients = null, o
   if (candidates.length === 0) {
     const fallbackOrg = company || agency;
     if (fallbackOrg) {
-      candidates.push({
+      let fbOrgEmails = parseEmailList([fallbackOrg.financialEmail, fallbackOrg.emailFinanceiro]);
+      if (hideGuestNfse && guestPersonalSet.size > 0) {
+        fbOrgEmails = fbOrgEmails.filter(e => !guestPersonalSet.has(e));
+      }
+      pushEmailExpandedCandidates({
         role: "company",
         roleLabel: "Empresa",
         name: fallbackOrg.corporateName || fallbackOrg.tradeName,
-        email: (fallbackOrg.financialEmail || "").trim(),
-        phone: cleanPhone(fallbackOrg.phone || ""),
+        rawEmails: fbOrgEmails,
+        phone: maskRecipientPhone(fallbackOrg.phone || ""),
         document: onlyDigits(fallbackOrg.cnpj || "")
       });
-    } else if (r || guest) {
-      candidates.push({
+    } else if (!hideGuestNfse && (r || guest)) {
+      pushEmailExpandedCandidates({
         role: "guest",
         roleLabel: "Hóspede",
         name: r?.guestName || guest?.fullName || "Cliente",
-        email: (r?.guestEmail || guest?.email || "").trim(),
+        rawEmails: [r?.guestEmail, guest?.email],
         phone: cleanPhone(r?.guestPhone || guest?.phone || ""),
         document: onlyDigits(r?.guestDocument || guest?.documentNumber || "")
       });
@@ -80957,9 +84477,96 @@ function resolveReservationBillingRecipientsList(r, overrideRecipients = null, o
   };
 }
 
-function resolveBoletoPayerData(r, payerType = "company", customPayer = null) {
+function resolveBoletoPayerData(r, payerType = "company", customPayer = null, targetDb = db, extraReservations = null) {
+  const activeDb = targetDb || (typeof db !== "undefined" ? db : {});
+  const pkgSibs = Array.isArray(extraReservations) && extraReservations.length > 0
+    ? extraReservations.filter(Boolean)
+    : ((r?.packageCode || r?.packageId) && typeof getPackageReservations === "function"
+        ? getPackageReservations(activeDb, r.packageCode || r.packageId).filter(x => typeof isPackageItemActive !== "function" || isPackageItemActive(x))
+        : []);
+  const resListForHide = pkgSibs.length > 0
+    ? [r, ...pkgSibs.filter(x => x && Number(x.id) !== Number(r?.id))].filter(Boolean)
+    : (r ? [r] : []);
+  const hideFromGuest = resListForHide.some(x => Boolean(x?.nfHideFromGuest || x?.hideFinancialForGuest));
+
+  let guestEmailSet = new Set();
+  let guestPhoneSet = null;
+  if (hideFromGuest) {
+    guestEmailSet = typeof collectReservationGuestPersonalEmails === "function"
+      ? collectReservationGuestPersonalEmails(resListForHide, activeDb)
+      : (() => {
+          const srcs = [];
+          const gIds = new Set();
+          const gDocs = new Set();
+          for (const item of resListForHide) {
+            if (!item) continue;
+            if (item.guestEmail) srcs.push(item.guestEmail);
+            if (item.requesterIsGuest1) {
+              if (item.requesterEmail) srcs.push(item.requesterEmail);
+              if (item.requesterInfo?.email) srcs.push(item.requesterInfo.email);
+            }
+            if (item.guestId) gIds.add(Number(item.guestId));
+            const rDoc = onlyDigits(item.guestDocument || item.document || "");
+            if (rDoc && rDoc.length !== 14) gDocs.add(rDoc);
+            if (Array.isArray(item.guests)) {
+              for (const rg of item.guests) {
+                if (rg?.email) srcs.push(rg.email);
+                if (rg?.guestId) gIds.add(Number(rg.guestId));
+                const rgD = onlyDigits(rg?.cpf || rg?.document || rg?.documentNumber || "");
+                if (rgD && rgD.length !== 14) gDocs.add(rgD);
+              }
+            }
+          }
+          for (const g of (Array.isArray(activeDb?.guests) ? activeDb.guests : [])) {
+            if (!g) continue;
+            const gd = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+            if ((g.id && gIds.has(Number(g.id))) || (gd && gDocs.has(gd))) {
+              if (g.id) gIds.add(Number(g.id));
+              if (g.email) srcs.push(g.email);
+            }
+          }
+          for (const acc of (Array.isArray(activeDb?.guestAccounts) ? activeDb.guestAccounts : [])) {
+            if (!acc) continue;
+            const ad = onlyDigits(acc.documentNumber || acc.document || acc.cpf || "");
+            if ((acc.guestId && gIds.has(Number(acc.guestId))) || (ad && gDocs.has(ad))) {
+              if (acc.email) srcs.push(acc.email);
+            }
+          }
+          return new Set(parseEmailList(srcs));
+        })();
+    guestPhoneSet = typeof collectReservationGuestPersonalPhones === "function"
+      ? collectReservationGuestPersonalPhones(resListForHide, activeDb)
+      : new Set(resListForHide.flatMap(item => [item?.guestPhone, item?.phone, item?.requesterIsGuest1 ? (item?.requesterPhone || item?.requesterInfo?.phone) : "", ...(Array.isArray(item?.guests) ? item.guests.map(g => g?.phone || g?.phoneNumber) : [])]).map(p => cleanPhone(p || "")).filter(p => p.length >= 8));
+  }
+
+  const maskBoletoEmailList = (...rawLists) => {
+    const parsed = parseEmailList(rawLists);
+    return getPrimaryEmail(hideFromGuest ? parsed.filter(e => !guestEmailSet.has(e)) : parsed);
+  };
+  const isBoletoGuestPhone = (raw) => {
+    const c = cleanPhone(raw || "");
+    if (!c || c.length < 8) return false;
+    if (typeof isGuestPersonalPhone === "function") return isGuestPersonalPhone(c, guestPhoneSet);
+    return Boolean(guestPhoneSet instanceof Set && Array.from(guestPhoneSet).some(gp => gp && gp.length >= 8 && (gp === c || gp.slice(-8) === c.slice(-8))));
+  };
+  const maskBoletoPhone = (raw) => {
+    const c = cleanPhone(raw || "");
+    if (!c) return "";
+    if (hideFromGuest && isBoletoGuestPhone(c)) return "";
+    return c;
+  };
+
   if (customPayer && typeof customPayer === "object" && (customPayer.name || customPayer.nome || customPayer.document || customPayer.cpfCnpj)) {
-    return normalizeInterBoletoPayer(customPayer);
+    if (!hideFromGuest) return normalizeInterBoletoPayer(customPayer);
+    const sanitizedCustom = { ...customPayer };
+    if (sanitizedCustom.email !== undefined) sanitizedCustom.email = maskBoletoEmailList(sanitizedCustom.email);
+    const rawCustomTel = sanitizedCustom.phone || (sanitizedCustom.ddd && sanitizedCustom.telefone ? `${sanitizedCustom.ddd}${sanitizedCustom.telefone}` : sanitizedCustom.telefone) || "";
+    if (rawCustomTel && isBoletoGuestPhone(rawCustomTel)) {
+      sanitizedCustom.phone = "";
+      sanitizedCustom.telefone = "";
+      sanitizedCustom.ddd = "";
+    }
+    return normalizeInterBoletoPayer(sanitizedCustom);
   }
 
   const { guest, company, agency } = resolveReservationCrmLinks(r || {});
@@ -80969,8 +84576,8 @@ function resolveBoletoPayerData(r, payerType = "company", customPayer = null) {
     return normalizeInterBoletoPayer({
       name: company?.corporateName || company?.tradeName || r?.companyName || "Empresa Contratante",
       document: company?.cnpj || r?.companyCnpj || "",
-      email: company?.financialEmail || r?.financialResponsible?.email || "",
-      phone: company?.phone || r?.financialResponsible?.phone || "",
+      email: maskBoletoEmailList(company?.financialEmail) || maskBoletoEmailList(r?.financialResponsible?.email) || "",
+      phone: maskBoletoPhone(company?.phone) || maskBoletoPhone(r?.financialResponsible?.phone) || "",
       street: company?.address || company?.logradouro || r?.companyAddress || "",
       streetNumber: company?.number || company?.numero || r?.companyNumber || "S/N",
       complement: company?.complement || "",
@@ -80985,8 +84592,8 @@ function resolveBoletoPayerData(r, payerType = "company", customPayer = null) {
     return normalizeInterBoletoPayer({
       name: agency?.corporateName || agency?.tradeName || r?.agencyName || "Agência B2B",
       document: agency?.cnpj || r?.agencyCnpj || "",
-      email: agency?.financialEmail || r?.agencyAgentEmail || "",
-      phone: agency?.phone || r?.agencyAgentPhone || "",
+      email: maskBoletoEmailList(agency?.financialEmail) || maskBoletoEmailList(r?.agencyAgentEmail) || "",
+      phone: maskBoletoPhone(agency?.phone) || maskBoletoPhone(r?.agencyAgentPhone) || "",
       street: agency?.address || agency?.logradouro || "",
       streetNumber: agency?.number || "1000",
       complement: agency?.complement || "",
@@ -80997,12 +84604,13 @@ function resolveBoletoPayerData(r, payerType = "company", customPayer = null) {
     });
   }
 
-  if (pType === "requester" && r?.requesterInfo && (r.requesterInfo.name || r.requesterInfo.cpf || r.requesterInfo.document)) {
+  if (["requester", "requester_pf", "other_person", "third_party"].includes(pType) && r?.requesterInfo && (r.requesterInfo.name || r.requesterInfo.cpf || r.requesterInfo.document)) {
+    const maskReqAsGuest = hideFromGuest && Boolean(r?.requesterIsGuest1);
     return normalizeInterBoletoPayer({
       name: r.requesterInfo.name || "Solicitante",
       document: r.requesterInfo.cpf || r.requesterInfo.document || r?.guestDocument || "",
-      email: r.requesterInfo.email || "",
-      phone: r.requesterInfo.phone || "",
+      email: maskReqAsGuest ? "" : (maskBoletoEmailList(r.requesterInfo.email, r?.requesterEmail) || ""),
+      phone: maskReqAsGuest ? "" : (maskBoletoPhone(r.requesterInfo.phone) || maskBoletoPhone(r?.requesterPhone) || ""),
       street: guest?.street || guest?.address || "",
       streetNumber: guest?.streetNumber || guest?.number || "S/N",
       neighborhood: guest?.neighborhood || "Centro",
@@ -81016,8 +84624,8 @@ function resolveBoletoPayerData(r, payerType = "company", customPayer = null) {
     return normalizeInterBoletoPayer({
       name: r.financialResponsible.name || company?.corporateName || r?.guestName || "Responsável Financeiro",
       document: r.financialResponsible.document || company?.cnpj || r?.guestDocument || "",
-      email: r.financialResponsible.email || "",
-      phone: r.financialResponsible.phone || "",
+      email: maskBoletoEmailList(r.financialResponsible.email) || "",
+      phone: maskBoletoPhone(r.financialResponsible.phone) || "",
       street: company?.address || guest?.street || "",
       streetNumber: company?.number || guest?.number || "S/N",
       neighborhood: company?.neighborhood || guest?.neighborhood || "Centro",
@@ -81030,8 +84638,8 @@ function resolveBoletoPayerData(r, payerType = "company", customPayer = null) {
   return normalizeInterBoletoPayer({
     name: r?.guestName || guest?.fullName || guest?.name || company?.corporateName || "Hóspede",
     document: r?.guestDocument || guest?.documentNumber || guest?.document || company?.cnpj || "",
-    email: r?.guestEmail || guest?.email || "",
-    phone: r?.guestPhone || guest?.phone || "",
+    email: hideFromGuest ? "" : (maskBoletoEmailList(r?.guestEmail) || maskBoletoEmailList(guest?.email) || ""),
+    phone: hideFromGuest ? "" : (maskBoletoPhone(r?.guestPhone) || maskBoletoPhone(guest?.phone) || ""),
     street: r?.street || guest?.street || guest?.address || "",
     streetNumber: r?.streetNumber || guest?.streetNumber || guest?.number || "S/N",
     complement: r?.complement || guest?.complement || "",
@@ -81091,16 +84699,50 @@ function markBoletoAsPaid(boleto, { paidAmount, paidAt, endToEndId, source = "Ma
   syncBoletoWithAccountsReceivable(boleto);
 
   if (Array.isArray(boleto.reservationIds) && boleto.reservationIds.length > 1) {
-    for (const linkedResId of boleto.reservationIds) {
-      const sib = (db.reservations || []).find(x => x && Number(x.id) === Number(linkedResId));
-      if (!sib || isPackageItemCancelled(sib)) continue;
+    const activeSibs = boleto.reservationIds
+      .map(linkedResId => (db.reservations || []).find(x => x && Number(x.id) === Number(linkedResId)))
+      .filter(sib => sib && !isPackageItemCancelled(sib));
+    const round2Local = (v) => Math.round((Number(v) || 0) * 100) / 100;
+    const isConsOnlyBoleto = boleto.billingScope === "consumption_only";
+    const sibConsAmts = isConsOnlyBoleto
+      ? activeSibs.map(sib => {
+          const bdSib = computeReservationAccommodationAndConsumption(sib, db);
+          return round2Local(bdSib.netConsumptionBoletoAmount || bdSib.consumptionAmount || 0);
+        })
+      : [];
+    const anySibHasConsumption = isConsOnlyBoleto && sibConsAmts.some(a => a > 0);
+    const lastConsSibIdx = isConsOnlyBoleto && anySibHasConsumption
+      ? sibConsAmts.reduce((last, amt, idx) => (amt > 0 ? idx : last), -1)
+      : activeSibs.length - 1;
+    let remainingConsToAllocate = isConsOnlyBoleto ? resolvedPaid : 0;
+
+    for (let sIdx = 0; sIdx < activeSibs.length; sIdx++) {
+      const sib = activeSibs[sIdx];
       if (!Array.isArray(sib.payments)) sib.payments = [];
       const payIdSib = `pay_bol_${boleto.id}_res_${sib.id}`;
       const sibTargetAmt = Number(sib.totalAmount) || 0;
-      if (!sib.payments.some(p => p.id === payIdSib)) {
+      const priorSibPaid = round2Local(Number(sib.paidAmount) || 0);
+
+      let pushAmt = 0;
+      if (isConsOnlyBoleto) {
+        const sibConsAmt = sibConsAmts[sIdx] || 0;
+        if (anySibHasConsumption && sibConsAmt <= 0) {
+          pushAmt = 0;
+        } else if (sIdx === lastConsSibIdx) {
+          pushAmt = Math.max(0, round2Local(remainingConsToAllocate));
+        } else {
+          const fallbackEqual = !anySibHasConsumption ? round2Local(resolvedPaid / activeSibs.length) : 0;
+          pushAmt = Math.min(remainingConsToAllocate, sibConsAmt > 0 ? sibConsAmt : fallbackEqual);
+        }
+        remainingConsToAllocate = Math.max(0, round2Local(remainingConsToAllocate - pushAmt));
+      } else {
+        pushAmt = Math.max(0, round2Local(sibTargetAmt - priorSibPaid));
+      }
+
+      if (!sib.payments.some(p => p.id === payIdSib) && pushAmt > 0) {
         sib.payments.push({
           id: payIdSib,
-          amount: sibTargetAmt,
+          amount: pushAmt,
           method: "faturado_boleto",
           date: nowIso,
           packageCode: boleto.packageId || sib.packageCode || null,
@@ -81108,8 +84750,14 @@ function markBoletoAsPaid(boleto, { paidAmount, paidAt, endToEndId, source = "Ma
           notes: `Boleto Único do Pacote #${boleto.code} liquidado (${source})`
         });
       }
-      sib.paidAmount = sibTargetAmt;
-      sib.paymentStatus = "pago_total";
+
+      const sibBoletos = (db.boletos || []).filter(b =>
+        b && b.status !== "cancelado" && doesBoletoCoverReservation(b, sib)
+      );
+      const allSibBoletosPaid = sibBoletos.length === 0 || sibBoletos.every(b => b.status === "pago");
+      const totalPaymentsOnSib = round2Local(sib.payments.reduce((s, p) => s + (Number(p?.amount) || 0), 0));
+      sib.paidAmount = Math.max(priorSibPaid, totalPaymentsOnSib, boleto.billingScope === "consumption_only" ? round2Local(priorSibPaid + pushAmt) : sibTargetAmt);
+      sib.paymentStatus = allSibBoletosPaid ? "pago_total" : (sib.paidAmount > 0 ? "sinal_pago" : "pendente");
       sib.paidAt = nowIso;
       if (sib.status === "pre_reserva" || sib.status === "pendente" || sib.status === "expirada") {
         sib.status = "confirmada";
@@ -81206,23 +84854,48 @@ async function dispatchFaturadoBillingPackage({
       : findExistingInvoiceForReservation(db, { reservation: linkedRes, reservationId: firstBoleto.reservationId, reservationCode: firstBoleto.reservationCode })
   ) || null;
 
+  const pkgSibsForDispatch = (linkedRes && (linkedRes.packageCode || linkedRes.packageId) && typeof getPackageReservations === "function")
+    ? getPackageReservations(db, linkedRes.packageCode || linkedRes.packageId).filter(x => typeof isPackageItemActive !== "function" || isPackageItemActive(x))
+    : [];
+  const resListForDispatch = linkedRes
+    ? (pkgSibsForDispatch.length > 0 ? [linkedRes, ...pkgSibsForDispatch.filter(x => x && Number(x.id) !== Number(linkedRes.id))].filter(Boolean) : [linkedRes])
+    : [];
+  const hidePkgFromGuest = resListForDispatch.some(x => Boolean(x?.nfHideFromGuest || x?.hideFinancialForGuest));
+  const hideNfseFromGuest = Boolean(hidePkgFromGuest || linkedInvoice?.nfHideFromGuest);
+  const effectiveResForRecipients = linkedRes || {
+    guestName: firstBoleto.guestName,
+    guestEmail: firstBoleto.payer?.email,
+    guestPhone: firstBoleto.payer?.telefone ? `${firstBoleto.payer.ddd || "22"}${firstBoleto.payer.telefone}` : "",
+    guestDocument: firstBoleto.payer?.cpfCnpj,
+    companyId: firstBoleto.companyId,
+    agencyId: firstBoleto.agencyId,
+    nfHideFromGuest: hideNfseFromGuest,
+    billingRecipients: firstBoleto.billingRecipients,
+    financialResponsible: firstBoleto.financialResponsible
+  };
   const { recipients, flags, financialResponsible } = resolveReservationBillingRecipientsList(
-    linkedRes || {
-      guestName: firstBoleto.guestName,
-      guestEmail: firstBoleto.payer?.email,
-      guestPhone: firstBoleto.payer?.telefone ? `${firstBoleto.payer.ddd || "22"}${firstBoleto.payer.telefone}` : "",
-      guestDocument: firstBoleto.payer?.cpfCnpj,
-      companyId: firstBoleto.companyId,
-      agencyId: firstBoleto.agencyId,
-      billingRecipients: firstBoleto.billingRecipients,
-      financialResponsible: firstBoleto.financialResponsible
-    },
+    effectiveResForRecipients,
     recipientsOverride || firstBoleto.billingRecipients,
-    financialResponsibleOverride || firstBoleto.financialResponsible
+    financialResponsibleOverride || firstBoleto.financialResponsible,
+    resListForDispatch.length > 0 ? resListForDispatch : null,
+    db
   );
+  const shouldMaskDispatchGuestPhones = Boolean(hidePkgFromGuest || (!linkedRes && linkedInvoice?.nfHideFromGuest));
+  const dispatchGuestPhoneSet = shouldMaskDispatchGuestPhones
+    ? (typeof collectReservationGuestPersonalPhones === "function"
+        ? collectReservationGuestPersonalPhones(resListForDispatch.length > 0 ? resListForDispatch : [effectiveResForRecipients], db)
+        : new Set((resListForDispatch.length > 0 ? resListForDispatch : [effectiveResForRecipients]).flatMap(item => [item?.guestPhone, item?.phone, item?.requesterIsGuest1 ? (item?.requesterPhone || item?.requesterInfo?.phone) : "", ...(Array.isArray(item?.guests) ? item.guests.map(g => g?.phone || g?.phoneNumber) : [])]).map(p => cleanPhone(p || "")).filter(p => p.length >= 8)))
+    : null;
+  const isDispatchGuestPhone = (rawPhone) => {
+    if (!shouldMaskDispatchGuestPhones || !dispatchGuestPhoneSet) return false;
+    const c = cleanPhone(rawPhone || "");
+    if (!c || c.length < 8) return false;
+    if (typeof isGuestPersonalPhone === "function") return isGuestPersonalPhone(c, dispatchGuestPhoneSet);
+    return dispatchGuestPhoneSet instanceof Set && Array.from(dispatchGuestPhoneSet).some(gp => gp && gp.length >= 8 && (gp === c || gp.slice(-8) === c.slice(-8)));
+  };
 
   // Gera buffers PDF dos boletos e da NFS-e (quando vinculada)
-  const attachments = [];
+  const boletoOnlyAttachments = [];
   const boletoPdfBuffersMap = new Map();
 
   for (const bol of validBoletos) {
@@ -81233,7 +84906,7 @@ async function dispatchFaturadoBillingPackage({
       });
       if (pdfBuf) {
         boletoPdfBuffersMap.set(bol.id, pdfBuf);
-        attachments.push({
+        boletoOnlyAttachments.push({
           filename: `Boleto-Inter-${bol.code || bol.id}.pdf`,
           content: pdfBuf,
           contentType: "application/pdf"
@@ -81245,20 +84918,22 @@ async function dispatchFaturadoBillingPackage({
   }
 
   let nfsePdfBuf = null;
+  let nfsePdfAttachment = null;
   if (linkedInvoice && typeof generateNfsePdfBuffer === "function") {
     try {
       nfsePdfBuf = await generateNfsePdfBuffer(linkedInvoice);
       if (nfsePdfBuf) {
-        attachments.push({
+        nfsePdfAttachment = {
           filename: `NFSe-${linkedInvoice.numeroNfse || linkedInvoice.id}.pdf`,
           content: nfsePdfBuf,
           contentType: "application/pdf"
-        });
+        };
       }
     } catch (nfErr) {
       console.warn(`[Faturado Dispatch] Falha ao gerar PDF da NFS-e:`, nfErr.message);
     }
   }
+  const allAttachments = nfsePdfAttachment ? [...boletoOnlyAttachments, nfsePdfAttachment] : boletoOnlyAttachments;
 
   const formatBrl = (v) => Number(v || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const formatBrDate = (d) => {
@@ -81276,13 +84951,22 @@ async function dispatchFaturadoBillingPackage({
   const sentEmailsSet = new Set();
   const sentPhonesSet = new Set();
 
+  const anyResReqIsGuest1 = resListForDispatch.some(x => Boolean(x?.requesterIsGuest1));
   for (const rec of recipients) {
+    const isGuestRecipient = rec.role === "guest" || (rec.role === "requester" && anyResReqIsGuest1);
+    if (hidePkgFromGuest && isGuestRecipient) {
+      continue;
+    }
+    const includeNfseForRec = Boolean(linkedInvoice) && !(hideNfseFromGuest && isGuestRecipient);
+    const recAttachments = includeNfseForRec ? allAttachments : boletoOnlyAttachments;
+    const safeRecPhoneForResult = isDispatchGuestPhone(rec.phone) ? "" : (rec.phone || "");
+
     const recResult = {
       role: rec.role,
       roleLabel: rec.roleLabel,
       name: rec.name,
       email: rec.email || null,
-      phone: rec.phone || null,
+      phone: safeRecPhoneForResult || null,
       emailSent: false,
       whatsappSent: false,
       sentAt: new Date().toISOString()
@@ -81292,14 +84976,13 @@ async function dispatchFaturadoBillingPackage({
       ? (reminderType === "overdue"
           ? `⚠️ Lembrete de Boleto em Atraso — CorpFlats (${firstBoleto.reservationCode || firstBoleto.code})`
           : `⏰ Lembrete: Boleto Vence Hoje — CorpFlats (${firstBoleto.reservationCode || firstBoleto.code})`)
-      : `🏦 Faturamento Emitido: Boleto(s) Banco Inter${linkedInvoice ? ` + NFS-e #${linkedInvoice.numeroNfse}` : ""} — CorpFlats`;
+      : `🏦 Faturamento Emitido: Boleto(s) Banco Inter${includeNfseForRec ? ` + NFS-e #${linkedInvoice.numeroNfse}` : ""} — CorpFlats`;
 
     const hostBase = (process.env.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/+$/, "");
 
     // 1. Disparo por E-mail com PDFs anexados
-    const cleanRecEmail = String(rec.email || "").trim().toLowerCase();
-    if (flags.sendEmail !== false && cleanRecEmail && cleanRecEmail.includes("@") && !sentEmailsSet.has(cleanRecEmail)) {
-      sentEmailsSet.add(cleanRecEmail);
+    const recEmailList = parseEmailList(rec.email).filter(e => !sentEmailsSet.has(e));
+    if (flags.sendEmail !== false && recEmailList.length > 0) {
       try {
         const boletosHtmlBlocks = validBoletos.map((b, idx) => {
           const scopeBadge = b.billingScope === "accommodation_only"
@@ -81339,7 +85022,7 @@ async function dispatchFaturadoBillingPackage({
           `;
         }).join("");
 
-        const nfseHtmlBlock = linkedInvoice
+        const nfseHtmlBlock = includeNfseForRec
           ? `
             <div style="background:#F0F9FF;border:1px solid #BAE6FD;border-radius:10px;padding:12px;margin-bottom:14px;font-size:13px;color:#0C4A6E;">
               <strong>🧾 Nota Fiscal de Hospedagem (NFS-e Nacional):</strong> Nº <strong>${linkedInvoice.numeroNfse}</strong> (Cód. Verificação: ${linkedInvoice.codigoVerificacao || "—"})<br/>
@@ -81358,38 +85041,50 @@ async function dispatchFaturadoBillingPackage({
                 ? (reminderType === "overdue"
                     ? `Identificamos que o(s) boleto(s) faturado(s) referente(s) à reserva <strong>${firstBoleto.reservationCode || firstBoleto.code}</strong> encontra(m)-se em aberto após o vencimento.`
                     : `Lembramos que o(s) boleto(s) faturado(s) referente(s) à reserva <strong>${firstBoleto.reservationCode || firstBoleto.code}</strong> vence(m) <strong>hoje (${formatBrDate(firstBoleto.dueDate)})</strong>.`)
-                : `Seguem em anexo os documentos fiscais e boleto(s) bancário(s) faturado(s) via <strong>Banco Inter</strong> referentes à estadia no Flat <strong>${firstBoleto.flatNumber || linkedRes?.flatNumber || "—"}</strong> (${firstBoleto.guestName || linkedRes?.guestName || "Hóspede"}).`}
+                : `Seguem em anexo os documentos ${includeNfseForRec ? "fiscais e boleto(s) bancário(s)" : "de boleto(s) bancário(s)"} faturado(s) via <strong>Banco Inter</strong> referentes à estadia no Flat <strong>${firstBoleto.flatNumber || linkedRes?.flatNumber || "—"}</strong> (${firstBoleto.guestName || linkedRes?.guestName || "Hóspede"}).`}
             </p>
             ${nfseHtmlBlock}
             ${boletosHtmlBlocks}
             <p style="font-size:12px;color:#64748B;margin-top:14px;">
-              Os arquivos em formato <strong>PDF</strong> do(s) Boleto(s) e da Nota Fiscal seguem anexados a este e-mail.
+              Os arquivos em formato <strong>PDF</strong> do(s) Boleto(s)${includeNfseForRec ? " e da Nota Fiscal" : ""} seguem anexados a este e-mail.
             </p>
           `
         });
 
-        await sendEmailAsync({
-          to: cleanRecEmail,
-          subject: headerTitle,
-          html: bodyHtml,
-          attachments,
-          category: isReminder ? "boleto_reminder" : "boleto_faturado",
-          reservationId: linkedRes?.id || firstBoleto.reservationId || null,
-          db
-        });
-        recResult.emailSent = true;
-        emailCount++;
+        for (const cleanRecEmail of recEmailList) {
+          sentEmailsSet.add(cleanRecEmail);
+          const emailLog = sendEmailAsync({
+            db,
+            saveDatabase,
+            reservationId: linkedRes?.id || firstBoleto.reservationId || null,
+            recipient: cleanRecEmail,
+            subject: headerTitle,
+            bodyHtml,
+            attachments: recAttachments,
+            metadata: {
+              category: isReminder ? "boleto_reminder" : "boleto_faturado",
+              trigger: isReminder ? "boleto_reminder" : "boleto_faturado",
+              packageCode: firstBoleto.packageId || linkedRes?.packageCode || null,
+              boletoCodes: validBoletos.map(b => b.code).filter(Boolean),
+              invoiceNumber: includeNfseForRec ? (linkedInvoice?.numeroNfse || null) : null
+            }
+          });
+          if (emailLog) {
+            recResult.emailSent = true;
+            emailCount++;
+          }
+        }
       } catch (emErr) {
-        console.warn(`[Faturado Dispatch Email Error] (${cleanRecEmail}):`, emErr.message);
+        console.warn(`[Faturado Dispatch Email Error] (${recEmailList.join(", ")}):`, emErr.message);
       }
     }
 
     // 2. Disparo por WhatsApp (Mensagem com Botões de Copiar Boleto e PIX + PDFs via Z-API)
     const cleanRecPhone = cleanPhone(rec.phone || "");
-    if (flags.sendWhatsapp !== false && cleanRecPhone && cleanRecPhone.length >= 10 && !sentPhonesSet.has(cleanRecPhone)) {
+    if (flags.sendWhatsapp !== false && cleanRecPhone && cleanRecPhone.length >= 10 && !isDispatchGuestPhone(cleanRecPhone) && !sentPhonesSet.has(cleanRecPhone)) {
       sentPhonesSet.add(cleanRecPhone);
       try {
-        const nfLine = linkedInvoice
+        const nfLine = includeNfseForRec
           ? `🧾 *NFS-e Hospedagem:* Nº ${linkedInvoice.numeroNfse} — R$ ${formatBrl(linkedInvoice.valorServico)}\n\n`
           : "";
 
@@ -81441,7 +85136,7 @@ async function dispatchFaturadoBillingPackage({
 
           const footerHint = boletoButtons.length > 0
             ? `\n\n👇 *Toque nos botões abaixo para copiar o código do boleto${bol.pixCopiaECola ? " ou o código PIX" : ""} com 1 clique.*\n📎 _O arquivo PDF segue logo abaixo._`
-            : `\n\n📎 *Os arquivos PDF do Boleto e da Nota Fiscal estão sendo enviados logo abaixo.*`;
+            : `\n\n📎 *${includeNfseForRec ? "Os arquivos PDF do Boleto e da Nota Fiscal estão sendo enviados" : "O arquivo PDF do Boleto está sendo enviado"} logo abaixo.*`;
 
           const waMsg = introBlock + bolCardText + footerHint;
 
@@ -81477,7 +85172,7 @@ async function dispatchFaturadoBillingPackage({
           }
         }
 
-        if (typeof sendZapiDocument === "function" && nfsePdfBuf && linkedInvoice && !isReminder) {
+        if (typeof sendZapiDocument === "function" && nfsePdfBuf && includeNfseForRec && !isReminder) {
           const b64Nf = `data:application/pdf;base64,${nfsePdfBuf.toString("base64")}`;
           await sendZapiDocument(db.zapiConfig, {
             phone: cleanRecPhone,
@@ -81544,16 +85239,36 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
   if (!r && consolidatedPackageItems.length > 0) {
     r = consolidatedPackageItems[0];
   }
-  if (consolidatedPackageItems.length >= 2 && options.accommodationAmount === undefined) {
-    const pkgAccommSum = Math.round(consolidatedPackageItems.reduce((s, item) => s + (Number(item.totalAmount) || 0), 0) * 100) / 100;
-    options = {
-      ...options,
-      accommodationAmount: pkgAccommSum,
-      description: options.description || `Fatura Única Pacote ${pkgCodeForBoleto || r?.code} (${consolidatedPackageItems.length} Flats: ${consolidatedPackageItems.map(x => x.flatNumber).join(", ")})`
+  let breakdown;
+  if (consolidatedPackageItems.length >= 2) {
+    if (!options.description) {
+      options = {
+        ...options,
+        description: `Fatura Única Pacote ${pkgCodeForBoleto || r?.code} (${consolidatedPackageItems.length} Flats: ${consolidatedPackageItems.map(x => x.flatNumber).join(", ")})`
+      };
+    }
+    const itemBreakdowns = consolidatedPackageItems.map(item => computeReservationAccommodationAndConsumption(item, db));
+    const round2Pkg = (v) => Math.round((Number(v) || 0) * 100) / 100;
+    const sumAccomm = round2Pkg(itemBreakdowns.reduce((s, bd) => s + (Number(bd.accommodationAmount) || 0), 0));
+    const sumCons = round2Pkg(itemBreakdowns.reduce((s, bd) => s + (Number(bd.consumptionAmount) || 0), 0));
+    const sumPrior = round2Pkg(itemBreakdowns.reduce((s, bd) => s + (Number(bd.priorPaidAmount) || 0), 0));
+    const netAccomm = Math.max(0, round2Pkg(sumAccomm - sumPrior));
+    const leftoverCredit = Math.max(0, round2Pkg(sumPrior - sumAccomm));
+    const netCons = Math.max(0, round2Pkg(sumCons - leftoverCredit));
+    breakdown = {
+      accommodationAmount: sumAccomm,
+      consumptionAmount: sumCons,
+      totalWithConsumption: round2Pkg(sumAccomm + sumCons),
+      priorPaidAmount: sumPrior,
+      netAccommodationBoletoAmount: netAccomm,
+      netConsumptionBoletoAmount: netCons,
+      netTotalBoletoAmount: round2Pkg(netAccomm + netCons),
+      consumptionItems: itemBreakdowns.flatMap(bd => bd.consumptionItems || []),
+      minibarOrderIds: itemBreakdowns.flatMap(bd => bd.minibarOrderIds || [])
     };
+  } else {
+    breakdown = computeReservationAccommodationAndConsumption(r, db);
   }
-
-  const breakdown = computeReservationAccommodationAndConsumption(r, db);
   const { guest, company, agency } = resolveReservationCrmLinks(r || {});
   const crmEntity = company || agency || guest || {};
 
@@ -81583,10 +85298,13 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
       reservationCode: r.code
     });
     if (!invoice && shouldEmitNfse) {
+      const effectiveNfRecipientType = options.invoiceRecipientType || r.invoiceRecipientType || r.boletoPayerType || (company ? "company" : (agency ? "agency" : "guest"));
       const payerForNf = resolveBoletoPayerData(
         r,
-        options.invoiceRecipientType || r.invoiceRecipientType || r.boletoPayerType || (company ? "company" : (agency ? "agency" : "guest")),
-        options.payer || options.customPayer
+        effectiveNfRecipientType,
+        options.payer || options.customPayer,
+        db,
+        consolidatedPackageItems
       );
       const nfValue = Number(options.accommodationAmount ?? breakdown.accommodationAmount ?? r.totalAmount ?? 250);
       const isConsolidatedPkgNf = consolidatedPackageItems.length >= 2;
@@ -81598,6 +85316,49 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
       const nfDiscriminacao = isConsolidatedPkgNf
         ? `Hospedagem consolidada Pacote ${pkgCodeForBoleto || r.packageCode || r.code} (${consolidatedPackageItems.length} Flats: ${nfFlatNumbers}) - ${consolidatedPackageItems.map(x => `Flat ${x.flatNumber} (${x.checkinDate} a ${x.checkoutDate}): R$ ${Number(x.totalAmount || 0).toFixed(2)}`).join(" | ")}. Nota emitida exclusivamente sobre hospedagem.`
         : `Hospedagem Flat ${r.flatNumber || ""} - Reserva ${r.code || r.id} (${r.guestName || payerForNf.nome}). Nota emitida exclusivamente sobre hospedagem.`;
+      const resolvedFatNfHide = isConsolidatedPkgNf ? consolidatedPackageItems.some(x => Boolean(x?.nfHideFromGuest)) : Boolean(r.nfHideFromGuest);
+      const fatGuestResList = isConsolidatedPkgNf ? consolidatedPackageItems : [r];
+      const parseEmailsSafe = (raw) => (
+        typeof parseEmailList === "function"
+          ? parseEmailList(raw)
+          : Array.from(new Set(
+              (Array.isArray(raw) ? raw : [raw])
+                .flatMap(v => String(v || "").split(/[;,\r\n\s]+/))
+                .map(s => s.trim().toLowerCase())
+                .filter(s => s.includes("@"))
+            ))
+      );
+      const primaryEmailSafe = (raw) => (
+        typeof getPrimaryEmail === "function"
+          ? getPrimaryEmail(raw)
+          : (parseEmailsSafe(raw)[0] || "")
+      );
+      const cleanPhoneSafe = (raw) => (
+        typeof cleanPhone === "function"
+          ? cleanPhone(raw || "")
+          : onlyDigits(raw || "")
+      );
+      const fatGuestEmailSet = typeof collectReservationGuestPersonalEmails === "function"
+        ? collectReservationGuestPersonalEmails(fatGuestResList, db)
+        : new Set(parseEmailsSafe(fatGuestResList.flatMap(x => [x?.guestEmail, x?.requesterIsGuest1 ? x?.requesterEmail : "", ...(Array.isArray(x?.guests) ? x.guests.map(g => g?.email) : [])])));
+      const fatGuestPhoneSet = typeof collectReservationGuestPersonalPhones === "function"
+        ? collectReservationGuestPersonalPhones(fatGuestResList, db)
+        : new Set(fatGuestResList.flatMap(x => [x?.guestPhone, x?.phone, x?.requesterIsGuest1 ? (x?.requesterPhone || x?.requesterInfo?.phone) : "", ...(Array.isArray(x?.guests) ? x.guests.map(g => g?.phone || g?.phoneNumber) : [])]).map(p => cleanPhoneSafe(p)).filter(p => p.length >= 8));
+      const rawFatEmailList = parseEmailsSafe([payerForNf.email, company?.financialEmail, agency?.financialEmail, r?.nfDeliveryEmails]);
+      const safeFatDeliveryEmails = resolvedFatNfHide
+        ? rawFatEmailList.filter(e => !fatGuestEmailSet.has(e))
+        : rawFatEmailList;
+      const safeFatTomadorEmail = primaryEmailSafe(
+        resolvedFatNfHide
+          ? parseEmailsSafe(payerForNf.email).filter(e => !fatGuestEmailSet.has(e))
+          : parseEmailsSafe(payerForNf.email)
+      ) || (resolvedFatNfHide ? primaryEmailSafe(safeFatDeliveryEmails) : "");
+      const rawFatTomadorTelCandidate = cleanPhoneSafe(`${payerForNf.ddd || ""}${payerForNf.telefone || ""}`);
+      const rawFatTomadorTel = (resolvedFatNfHide && rawFatTomadorTelCandidate === "22999999999") ? "" : rawFatTomadorTelCandidate;
+      const isFatGuestPhone = typeof isGuestPersonalPhone === "function"
+        ? isGuestPersonalPhone(rawFatTomadorTel, fatGuestPhoneSet)
+        : (fatGuestPhoneSet instanceof Set && rawFatTomadorTel && rawFatTomadorTel.length >= 8 && Array.from(fatGuestPhoneSet).some(gp => gp && gp.length >= 8 && (gp === rawFatTomadorTel || gp.slice(-8) === rawFatTomadorTel.slice(-8))));
+      const safeFatTomadorTel = (resolvedFatNfHide && isFatGuestPhone) ? "" : rawFatTomadorTel;
       try {
         if (typeof executeNfseEmissionInternal === "function") {
           const nfResult = await executeNfseEmissionInternal({
@@ -81611,11 +85372,14 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
             companyId: company?.id || r.companyId || null,
             agencyId: agency?.id || r.agencyId || null,
             guestId: guest?.id || r.guestId || null,
+            invoiceRecipientType: effectiveNfRecipientType,
+            requesterIsGuest1: Boolean(r.requesterIsGuest1),
             tomadorType: payerForNf.tipoPessoa === "JURIDICA" ? "pj" : "pf",
             tomadorNome: payerForNf.nome,
             tomadorCpfCnpj: payerForNf.cpfCnpj,
-            tomadorEmail: payerForNf.email,
-            tomadorTelefone: `${payerForNf.ddd || ""}${payerForNf.telefone || ""}`,
+            tomadorEmail: safeFatTomadorEmail,
+            nfDeliveryEmails: safeFatDeliveryEmails,
+            tomadorTelefone: safeFatTomadorTel,
             tomadorEndereco: payerForNf.endereco,
             tomadorNumero: payerForNf.numero,
             tomadorComplemento: payerForNf.complemento,
@@ -81627,7 +85391,8 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
             discriminacao: nfDiscriminacao,
             checkinDate: r.checkinDate,
             checkoutDate: isConsolidatedPkgNf ? (consolidatedPackageItems[consolidatedPackageItems.length - 1]?.checkoutDate || r.checkoutDate) : r.checkoutDate,
-            skipAutoWhatsApp: true
+            nfHideFromGuest: resolvedFatNfHide,
+            skipAutoWhatsapp: true
           });
           if (nfResult?.invoice) {
             invoice = nfResult.invoice;
@@ -81669,6 +85434,8 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
           status: "autorizada",
           simulated: true,
           isConsolidated: isConsolidatedPkgNf,
+          nfHideFromGuest: resolvedFatNfHide,
+          nfDeliveryEmails: safeFatDeliveryEmails,
           packageId: pkgCodeForBoleto || r.packageId || null,
           reservationId: r.id,
           reservationIds: nfResIds,
@@ -81678,11 +85445,12 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
           companyId: company?.id || r.companyId || null,
           agencyId: agency?.id || r.agencyId || null,
           guestId: guest?.id || r.guestId || null,
+          invoiceRecipientType: effectiveNfRecipientType,
           tomadorType: payerForNf.tipoPessoa === "JURIDICA" ? "pj" : "pf",
           tomadorNome: payerForNf.nome,
           tomadorCpfCnpj: payerForNf.cpfCnpj,
-          tomadorEmail: payerForNf.email,
-          tomadorTelefone: `${payerForNf.ddd || ""}${payerForNf.telefone || ""}`,
+          tomadorEmail: safeFatTomadorEmail,
+          tomadorTelefone: safeFatTomadorTel,
           tomadorEndereco: payerForNf.endereco,
           tomadorNumero: payerForNf.numero,
           tomadorComplemento: payerForNf.complemento,
@@ -81774,12 +85542,14 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
         }
       : (r?.boletoCustomPayer || null)
   );
-  const mainPayer = resolveBoletoPayerData(r, mainPayerType, customMainPayerInput);
+  const mainPayer = resolveBoletoPayerData(r, mainPayerType, customMainPayerInput, db, consolidatedPackageItems);
 
   const { flags: recFlags, financialResponsible } = resolveReservationBillingRecipientsList(
     r,
     options.billingRecipients || options.billingDeliveryRecipients,
-    options.financialResponsible
+    options.financialResponsible,
+    consolidatedPackageItems,
+    db
   );
 
   // Salvar configurações atualizadas na Reserva e no CRM se aplicável
@@ -81853,7 +85623,7 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
 
     const consPayer = sameConsumptionPayerAndDue
       ? mainPayer
-      : resolveBoletoPayerData(r, consPayerType, customConsPayerInput);
+      : resolveBoletoPayerData(r, consPayerType, customConsPayerInput, db, consolidatedPackageItems);
 
     specsToEmit.push({
       suffix: "HOSP",

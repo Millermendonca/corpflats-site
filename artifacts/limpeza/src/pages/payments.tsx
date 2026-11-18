@@ -23,6 +23,7 @@ import { AccessDenied } from "@/components/access-denied"
 import { PaymentMethodsModal } from "@/components/payment-methods-modal"
 import { useToast } from "@/hooks/use-toast"
 import { useBackTabState } from "@/lib/back-navigation"
+import { validateEmailList, formatEmailList } from "@/lib/email-utils"
 
 function formatBrDateStr(iso?: string | null) {
   if (!iso) return "—"
@@ -344,6 +345,26 @@ export default function Payments() {
   const handleSavePreBoleto = async (e: React.FormEvent, andOpenEmit = false) => {
     e.preventDefault()
     if (!activePreBoleto) return
+    const pbFinEmailCheck = validateEmailList(pbFinRespEmail)
+    if (!pbFinEmailCheck.valid) {
+      toast({
+        title: "E-mail do Responsável Financeiro inválido",
+        description: `Corrija: ${pbFinEmailCheck.invalidTokens.join(", ")}. Separe múltiplos e-mails por ";".`,
+        variant: "destructive"
+      })
+      return
+    }
+    if (pbPayerType === "custom") {
+      const pbPayerEmailCheck = validateEmailList(pbCustomPayerEmail)
+      if (!pbPayerEmailCheck.valid) {
+        toast({
+          title: "E-mail do Pagador inválido",
+          description: `Corrija: ${pbPayerEmailCheck.invalidTokens.join(", ")}. Separe múltiplos e-mails por ";".`,
+          variant: "destructive"
+        })
+        return
+      }
+    }
     setSavingPreBoleto(true)
     try {
       const payload: any = {
@@ -361,7 +382,7 @@ export default function Payments() {
         notes: pbNotes.trim(),
         financialResponsible: {
           name: pbFinRespName.trim(),
-          email: pbFinRespEmail.trim(),
+          email: formatEmailList(pbFinRespEmail),
           phone: pbFinRespPhone.trim(),
           document: pbFinRespDoc.trim()
         },
@@ -378,7 +399,7 @@ export default function Payments() {
       if (pbPayerType === "custom") {
         payload.payerName = pbCustomPayerName.trim()
         payload.payerDoc = pbCustomPayerDoc.trim()
-        payload.payerEmail = pbCustomPayerEmail.trim()
+        payload.payerEmail = formatEmailList(pbCustomPayerEmail)
       } else {
         payload.customPayer = null
       }
@@ -480,6 +501,15 @@ export default function Payments() {
   const handleSaveEditBoleto = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!editingBoleto) return
+    const finEmailCheck = validateEmailList(editBoletoFinRespEmail)
+    if (!finEmailCheck.valid) {
+      toast({
+        title: "E-mail do Responsável Financeiro inválido",
+        description: `Corrija: ${finEmailCheck.invalidTokens.join(", ")}. Separe múltiplos e-mails por ";".`,
+        variant: "destructive"
+      })
+      return
+    }
     setSavingBoletoEdit(true)
     try {
       const resp = await fetch(`/api/boletos/${editingBoleto.id}`, {
@@ -495,7 +525,7 @@ export default function Payments() {
           jurosMonthlyPct: Number(editBoletoJurosPct ?? 1),
           financialResponsible: {
             name: editBoletoFinRespName.trim(),
-            email: editBoletoFinRespEmail.trim(),
+            email: formatEmailList(editBoletoFinRespEmail),
             phone: editBoletoFinRespPhone.trim()
           },
           notes: editBoletoNotes.trim()
@@ -567,6 +597,8 @@ export default function Payments() {
       if (resp.ok && data.success) {
         toast({ title: "Envios concluídos!", description: "PDFs, linha digitável e PIX enviados aos destinatários marcados." })
         fetchPayments()
+      } else {
+        toast({ title: "Erro ao reenviar", description: data.error || "Não foi possível disparar o boleto aos destinatários.", variant: "destructive" })
       }
     } catch (err: any) {
       toast({ title: "Erro ao reenviar", description: err.message, variant: "destructive" })
@@ -711,7 +743,7 @@ export default function Payments() {
 
     const matchSearch = (item: any) => {
       if (!q) return true
-      const hay = `${item.payerName || ""} ${item.payerDoc || ""} ${item.guestName || ""} ${item.companyName || ""} ${item.agencyName || ""} ${item.reservationCode || ""} ${item.nossoNumero || ""} ${item.code || ""} ${item.flatNumber || ""} ${item.financialResponsible?.name || ""}`.toLowerCase()
+      const hay = `${item.payerName || ""} ${item.payerDoc || ""} ${item.payerEmail || ""} ${item.guestName || ""} ${item.companyName || ""} ${item.agencyName || ""} ${item.reservationCode || ""} ${item.nossoNumero || ""} ${item.code || ""} ${item.flatNumber || ""} ${item.financialResponsible?.name || ""} ${item.financialResponsible?.email || ""}`.toLowerCase()
       return hay.includes(q)
     }
 
@@ -1534,7 +1566,10 @@ export default function Payments() {
                                     {dr.company && <Badge variant="outline" className="text-[9px] px-1.5 py-0">Empresa/Ag.</Badge>}
                                     {dr.financialResponsible && <Badge variant="outline" className="text-[9px] px-1.5 py-0">Resp. Fin.</Badge>}
                                   </div>
-                                  <div className="text-[10px] text-muted-foreground mt-1 truncate max-w-[190px]">
+                                  <div
+                                    className="text-[10px] text-muted-foreground mt-1 truncate max-w-[190px]"
+                                    title={item.financialResponsible?.email || ""}
+                                  >
                                     {item.financialResponsible?.name
                                       ? `${item.financialResponsible.name} (${item.financialResponsible.email || item.financialResponsible.phone || "s/ contato"})`
                                       : `${dr.sendEmail !== false ? "E-mail" : ""}${dr.sendEmail !== false && dr.sendWhatsApp !== false ? " + " : ""}${dr.sendWhatsApp !== false ? "WhatsApp" : ""}`}
@@ -2060,7 +2095,7 @@ export default function Payments() {
                     <Input
                       value={pbCustomPayerEmail}
                       onChange={e => setPbCustomPayerEmail(e.target.value)}
-                      placeholder="E-mail do Pagador"
+                      placeholder="E-mail do Pagador (ou ; para cópias)"
                       className="h-8.5 text-xs rounded-xl"
                     />
                   </div>
@@ -2217,7 +2252,7 @@ export default function Payments() {
                   <Input
                     value={pbFinRespEmail}
                     onChange={e => setPbFinRespEmail(e.target.value)}
-                    placeholder="E-mail Financeiro"
+                    placeholder="E-mail(s) Fin. (separe por ;)"
                     className="h-8 text-xs rounded-xl"
                   />
                   <Input
@@ -2233,6 +2268,9 @@ export default function Payments() {
                     className="h-8 text-xs rounded-xl font-mono"
                   />
                 </div>
+                <p className="text-[10px] text-muted-foreground">
+                  Aceita múltiplos e-mails separados por ponto e vírgula (<code className="font-mono">;</code>).
+                </p>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
                   <label className="flex items-center gap-1.5 p-2 rounded-xl border border-border bg-background cursor-pointer font-semibold">
@@ -2478,7 +2516,7 @@ export default function Payments() {
                   <Input
                     value={editBoletoFinRespEmail}
                     onChange={e => setEditBoletoFinRespEmail(e.target.value)}
-                    placeholder="E-mail"
+                    placeholder="E-mail(s) separados por ;"
                     className="h-8 text-xs rounded-xl"
                   />
                   <Input
@@ -2488,6 +2526,9 @@ export default function Payments() {
                     className="h-8 text-xs rounded-xl font-mono"
                   />
                 </div>
+                <p className="text-[10px] text-muted-foreground">
+                  Aceita múltiplos e-mails separados por ponto e vírgula (<code className="font-mono">;</code>).
+                </p>
               </div>
 
               <div className="space-y-1">

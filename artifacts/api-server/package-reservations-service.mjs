@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { parseEmailList } from "./mail-service.mjs";
 
 function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
@@ -39,10 +40,11 @@ export function isReservationSettledInPackage(r) {
   const total = Number(r.totalAmount) || 0;
   const paid = Number(r.paidAmount) || 0;
   const st = String(r.status || "").toLowerCase().trim();
-  const isUnpaidPre = st === "pre_reserva" && r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago";
+  const isUnpaidPre = st === "pre_reserva" && r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago" && r.paymentStatus !== "paid";
   return Boolean(
     r.paymentStatus === "pago_total" ||
     r.paymentStatus === "pago" ||
+    r.paymentStatus === "paid" ||
     (!isUnpaidPre && total > 0 && paid >= total - 0.01)
   );
 }
@@ -281,18 +283,27 @@ export function computePackageSummary(db, packageIdOrRes, opts = {}) {
   const isAllCancelled = activeItems.length === 0 && expiredItems.length === 0 && cancelledItems.length > 0;
   const isAllExpired = activeItems.length === 0 && expiredItems.length > 0;
 
-  const sharedPixCopiaECola =
-    !isAllPaid && activeItems.length > 0
-      ? primary.packagePixCopiaECola || primary.pixCopiaECola || activeItems.find((x) => x.pixCopiaECola)?.pixCopiaECola || null
-      : null;
-  const sharedPixTxId =
-    !isAllPaid && activeItems.length > 0
-      ? primary.packagePixTxId || primary.pixTxId || activeItems.find((x) => x.pixTxId)?.pixTxId || null
-      : null;
-  const sharedMpInitPoint =
-    !isAllPaid && activeItems.length > 0
-      ? primary.packageMpInitPoint || primary.mpInitPoint || null
-      : null;
+  const primaryPm = String(primary?.paymentMethod || "").toLowerCase().trim();
+  const isFaturadoPkg = Boolean(
+    primary?.isFaturadoBoleto ||
+    primaryPm === "boleto_faturado" ||
+    primaryPm === "faturado_boleto" ||
+    primaryPm === "boleto" ||
+    primaryPm === "faturado_pj" ||
+    primaryPm === "faturado_b2b" ||
+    String(primary?.b2bPaymentType || "").toUpperCase() === "FATURADO"
+  );
+  const canExposePkgPay = !isAllPaid && !isFaturadoPkg && activeItems.length > 0;
+
+  const sharedPixCopiaECola = canExposePkgPay
+    ? primary.packagePixCopiaECola || primary.pixCopiaECola || activeItems.find((x) => x.pixCopiaECola)?.pixCopiaECola || null
+    : null;
+  const sharedPixTxId = canExposePkgPay
+    ? primary.packagePixTxId || primary.pixTxId || activeItems.find((x) => x.pixTxId)?.pixTxId || null
+    : null;
+  const sharedMpInitPoint = canExposePkgPay
+    ? primary.packageMpInitPoint || primary.mpInitPoint || null
+    : null;
 
   const consolidatedInvoice =
     all.find((r) => r.consolidatedInvoiceId || r.numeroNfse || r.nfseNumber) || null;
@@ -551,6 +562,7 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
   const all = getPackageReservations(db, summary.packageCode);
   const activeItems = all.filter((r) => isPackageItemActive(r));
   const nowIso = new Date().toISOString();
+  const isConfirmedNoHold = activeItems.every((r) => String(r.status || "").toLowerCase() === "confirmada") && !activeItems[0]?.expiresAt;
   const holdLabel = activeItems[0]?.holdDurationLabel || "30 minutos";
   const isFaturado = summary.isFaturadoBoleto;
   const isPaid = summary.isPaid;
@@ -604,13 +616,20 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
         : "") +
       `\n🔗 *Painel do Pacote:*\n${summary.packagePortalUrl}`;
   } else {
+    const hasPartialDeposit = round2(Number(summary.paidAmount) || 0) > 0;
     msgText =
       `Olá, *${reqNameFirst}*! Tudo bem? 😊\n\n` +
       `Preparamos sua pré-reserva unificada de *${summary.activeFlatsCount} flats* no *CorpFlats* (*${summary.packageCode}*) com *pagamento único*!\n\n` +
       `🏢 *Flats incluídos no pacote:*\n${flatsLines}\n\n` +
-      `💎 *Total Único no PIX:* *R$ ${formatMoneyBr(summary.pendingAmount)}*\n` +
+      (hasPartialDeposit
+        ? `💰 *Total do Pacote:* R$ ${formatMoneyBr(summary.totalAmount)}\n` +
+          `✅ *Sinal Já Pago:* - R$ ${formatMoneyBr(summary.paidAmount)}\n` +
+          `💎 *Saldo Restante no PIX:* *R$ ${formatMoneyBr(summary.pendingAmount)}*\n`
+        : `💎 *Total Único no PIX:* *R$ ${formatMoneyBr(summary.pendingAmount)}*\n`) +
       `💳 *Ou no Cartão de Crédito:* R$ ${formatMoneyBr(summary.cardPendingAmount)}\n` +
-      `⏳ *Prazo de garantia dos flats:* ${holdLabel}\n\n` +
+      (isConfirmedNoHold
+        ? `✅ *Status dos flats:* Confirmado com sinal pago\n\n`
+        : `⏳ *Prazo de garantia dos flats:* ${holdLabel}\n\n`) +
       `🔗 *Pagar PIX Único ou Cartão / Acompanhar Pacote:*\n${summary.packagePortalUrl}\n\n` +
       (summary.pixCopiaECola ? `📋 *Copiar Chave PIX Única:*\n${summary.packageCopyPixUrl}\n\n` : "") +
       `_Assim que o pagamento único for confirmado, enviaremos seu recibo unificado` +
@@ -677,6 +696,7 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
           buttons,
           triggerEvent: triggerEvt,
           reservationCode: activeItems[0]?.code || summary.packageCode,
+          packageCode: summary.packageCode,
           status: sentWhatsapp ? "delivered" : "failed",
           timestamp: nowIso,
           messageId: zRes?.messageId || `msg_pkg_${Date.now()}`
@@ -687,7 +707,8 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
     }
   }
 
-  if (summary.requesterEmail && summary.requesterEmail.includes("@") && typeof deps.sendEmailAsync === "function" && !deps.suppressExternalSend) {
+  const requesterEmailList = parseEmailList(summary.requesterEmail);
+  if (requesterEmailList.length > 0 && typeof deps.sendEmailAsync === "function" && !deps.suppressExternalSend) {
     try {
       const subject = isPaid
         ? `Confirmação do Pacote ${summary.packageCode} (${summary.activeFlatsCount} Flats) — CorpFlats`
@@ -728,6 +749,12 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
           </table>
           <p style="font-size:16px;"><strong>Total do Pacote: R$ ${formatMoneyBr(summary.totalAmount)}</strong></p>
           ${
+            !isPaid && !isFaturado && round2(Number(summary.paidAmount) || 0) > 0
+              ? `<p style="font-size:15px;color:#15803d;margin:4px 0;"><strong>Sinal / Valor Já Pago: - R$ ${formatMoneyBr(summary.paidAmount)}</strong></p>
+                 <p style="font-size:16px;color:#0f172a;margin:4px 0;"><strong>Saldo Restante a Pagar: R$ ${formatMoneyBr(summary.pendingAmount)}</strong></p>`
+              : ""
+          }
+          ${
             !isPaid && !isFaturado && summary.pixCopiaECola
               ? `<div style="background:#f0fdf4;border:1px solid #86efac;padding:12px;border-radius:8px;margin:16px 0;">
                   <strong>Chave PIX Copia e Cola Única (Pacote Completo):</strong>
@@ -760,7 +787,7 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
         db,
         saveDatabase: deps.saveDatabase,
         reservationId: activeItems[0]?.code || summary.packageCode,
-        recipient: summary.requesterEmail,
+        recipient: requesterEmailList.join(", "),
         subject,
         bodyHtml: htmlWrapped,
         overrides: deps.emailOverrides,
@@ -1011,6 +1038,7 @@ export async function settlePackagePaymentAtomically(db, triggerResOrPkgId, paym
 
   for (const r of activeItems) {
     const baseTotalBefore = round2(Number(r.totalAmount) || 0);
+    const priorPaidBeforeSettle = round2(Math.min(baseTotalBefore, Math.max(0, Number(r.paidAmount) || 0)));
     const cardAllocation = cardProratedTotals.get(r.id);
     if (cardAllocation) {
       r.basePixTotalAmount = r.basePixTotalAmount || baseTotalBefore;
@@ -1058,8 +1086,9 @@ export async function settlePackagePaymentAtomically(db, triggerResOrPkgId, paym
     const hasSettledEntry = r.payments.some(
       (p) => p && (p.packageBatchPaid || (paymentMeta.endToEndId && p.endToEndId === paymentMeta.endToEndId) || (paymentMeta.mpPaymentId && String(p.mpPaymentId) === String(paymentMeta.mpPaymentId)))
     );
-    if (!hasSettledEntry && rTotal > 0) {
-      const entryAmount = cardAllocation ? cardAllocation.sharePaid : rTotal;
+    const remainingPixShare = Math.max(0, round2(rTotal - priorPaidBeforeSettle));
+    const entryAmount = cardAllocation ? cardAllocation.sharePaid : remainingPixShare;
+    if (!hasSettledEntry && entryAmount > 0) {
       r.payments.push({
         id: `pay_pkg_${r.id}_${Date.now()}`,
         date: paidAtIso.slice(0, 10),
@@ -1165,6 +1194,7 @@ export async function settlePackagePaymentAtomically(db, triggerResOrPkgId, paym
             buttons,
             triggerEvent: "payment_confirmed",
             reservationCode: primary?.code || pkgCode,
+            packageCode: pkgCode,
             status: sentReceiptWhatsapp ? "delivered" : "failed",
             timestamp: nowIso,
             messageId: zRes?.messageId || `msg_pkgrec_${Date.now()}`
@@ -1175,7 +1205,8 @@ export async function settlePackagePaymentAtomically(db, triggerResOrPkgId, paym
       }
     }
 
-    if (summary.requesterEmail && summary.requesterEmail.includes("@") && typeof deps.sendEmailAsync === "function" && !suppressSend) {
+    const settleRequesterEmails = parseEmailList(summary.requesterEmail);
+    if (settleRequesterEmails.length > 0 && typeof deps.sendEmailAsync === "function" && !suppressSend) {
       try {
         const subject = `Pagamento Confirmado — Pacote ${pkgCode} (${summary.activeFlatsCount} Flats) — CorpFlats`;
         const htmlRows = summary.items
@@ -1229,7 +1260,7 @@ export async function settlePackagePaymentAtomically(db, triggerResOrPkgId, paym
           db,
           saveDatabase: deps.saveDatabase,
           reservationId: primary?.code || pkgCode,
-          recipient: summary.requesterEmail,
+          recipient: settleRequesterEmails.join(", "),
           subject,
           bodyHtml: wrappedReceiptHtml,
           overrides: deps.emailOverrides,
