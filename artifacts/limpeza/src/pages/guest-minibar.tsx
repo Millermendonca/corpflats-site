@@ -363,9 +363,14 @@ export default function GuestMinibar() {
   };
 
   const applyStatementData = (data: any) => {
-    setIsCheckedOut(Boolean(data.isCheckedOut));
-    setHasFinalCheckoutInspection(Boolean(data.hasFinalCheckoutInspection));
+    const checkedOutFlag = Boolean(data.isCheckedOut);
+    const finalInspFlag = Boolean(data.hasFinalCheckoutInspection);
+    setIsCheckedOut(checkedOutFlag);
+    setHasFinalCheckoutInspection(finalInspFlag);
     setCheckoutTime(data.checkoutTime || "");
+    if (!(checkedOutFlag && finalInspFlag)) {
+      setStep((prev) => (prev === "checkout" ? "catalog" : prev));
+    }
     const launches: DailyLaunchGroup[] = Array.isArray(data.dailyLaunches) ? data.dailyLaunches : [];
     const pendingList: PendingLaunchedItem[] = Array.isArray(data.pendingLaunchedItems) ? data.pendingLaunchedItems : [];
     const courtesyList: any[] = Array.isArray(data.consumedCourtesyItems) ? data.consumedCourtesyItems : [];
@@ -1124,6 +1129,7 @@ export default function GuestMinibar() {
 
   // Iniciar pagamento direto da parte de um hóspede específico no card de divisão
   const handleStartPayGuestShare = (guestIndex: number) => {
+    if (!isCheckedOut || !hasFinalCheckoutInspection) return;
     const slot = reservationGuests.find((g) => g.index === guestIndex);
     if (slot) {
       handleSelectConsumerGuest(slot);
@@ -1137,8 +1143,8 @@ export default function GuestMinibar() {
 
   // Submissão do Pagamento no Checkout
   const handleCheckoutSubmit = async () => {
-    if (!hasFinalCheckoutInspection) {
-      setOrderError("O pagamento fica disponível somente após a conferência de consumo pós check-out.");
+    if (!isCheckedOut || !hasFinalCheckoutInspection) {
+      setOrderError("O pagamento fica disponível somente após o check-out e a conferência de consumo pós check-out.");
       return;
     }
 
@@ -1433,7 +1439,7 @@ export default function GuestMinibar() {
   // 4. TELA PRINCIPAL: EXTRATO DE CONSUMO POR DIA + PAGAMENTO APÓS CONFERÊNCIA PÓS CHECK-OUT
   // ─────────────────────────────────────────────────────────────────────────────
   if (step === "catalog") {
-    const isPaymentReleased = Boolean(hasFinalCheckoutInspection);
+    const isPaymentReleased = Boolean(isCheckedOut && hasFinalCheckoutInspection);
     const canPayNow = isPaymentReleased && pendingBalance > 0 && paymentSelectionSummary.amountToPay > 0;
     const sharesList: any[] = Array.isArray(splitBreakdown?.shares) ? splitBreakdown.shares : [];
 

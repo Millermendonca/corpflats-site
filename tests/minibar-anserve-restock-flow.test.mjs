@@ -534,6 +534,16 @@ describe("Anserve Minibar Restock — Statuses, Dobradinha, Unoccupied Flats, So
     assert.strictEqual(Array.isArray(resCtx.consumedCourtesyItems), true);
     assert.strictEqual(resCtx.consumedCourtesyItems.length, 2, "Portal do hóspede recebe consumedCourtesyItems no topo");
     assert.strictEqual(resCtx.courtesyConsumed, true);
+    assert.strictEqual(
+      resCtx.isCheckedOut,
+      false,
+      "Hóspede hospedado com saída apenas amanhã deve ter isCheckedOut = false após lançamento diário"
+    );
+    assert.strictEqual(
+      resCtx.hasFinalCheckoutInspection,
+      false,
+      "Lançamento diário parcial durante a estadia NÃO pode liberar pagamento (hasFinalCheckoutInspection = false)"
+    );
   });
 
   it("6. Contrato de UI em anserve-restock.tsx (Ordenamento salvo, Filtro Pendentes Todos, Modal Ver Consumo e Botão Cortesia)", () => {
@@ -1168,6 +1178,211 @@ describe("Anserve Minibar Restock — Statuses, Dobradinha, Unoccupied Flats, So
       restockCode,
       /handleSaveViewModalCourtesyCorrection\("last_departed"\)/,
       "Janelinha Ver Consumo deve permitir corrigir cortesia da última reserva que saiu (dobradinha / pós-saída)"
+    );
+  });
+
+  it("15. Bloqueio de pagamento antes do check-out e antes da conferência pós-check-out em hóspede hospedado", async () => {
+    // Cria flat e reserva dedicada em estadia ativa (check-in ontem, check-out amanhã) para não interferir nos testes anteriores
+    db.flats.push({ id: 99, number: "510", colName: "Flat 510", active: true });
+    db.reservations.push({
+      id: 99510,
+      code: "RES-510-INSTAY",
+      guestName: "Hóspede Hospedado Teste",
+      guestPhone: "5522999887766",
+      guestDocument: "11122233399",
+      guestEmail: "hospedado510@teste.com",
+      flatId: 99,
+      flatNumber: "510",
+      checkinDate: yesterdayStr,
+      checkoutDate: tomorrowStr,
+      status: "in_house",
+      checkedIn: true
+    });
+
+    // 1. Repositora registra lançamento diário com consumo pago durante a estadia (isFinalCheckoutInspection: false)
+    const dailyResp = await fetch(`${BASE_URL}/api/minibar/inspections`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        flatNumber: "510",
+        reservationCode: "RES-510-INSTAY",
+        inspectedBy: "Maria Repositora",
+        status: "lancamento_diario",
+        isDailyLaunch: true,
+        isFinalCheckoutInspection: false,
+        launchDate: todayStr,
+        consumedItems: [{ productId: "prod_refrigerante", quantity: 1 }],
+        restockedItems: [{ productId: "prod_refrigerante", quantity: 1, isCourtesy: false }]
+      })
+    });
+    assert.strictEqual(dailyResp.status, 200);
+    const dailyData = await dailyResp.json();
+    assert.strictEqual(dailyData.success, true);
+    assert.strictEqual(dailyData.inspection.status, "divergencia");
+    assert.strictEqual(dailyData.inspection.isDailyLaunch, true);
+    assert.strictEqual(dailyData.inspection.isFinalCheckoutInspection, false);
+    assert.strictEqual(dailyData.postCheckoutNotificationType, "daily_summary");
+    assert.strictEqual(dailyData.statement.isCheckedOut, false);
+    assert.strictEqual(dailyData.statement.hasFinalCheckoutInspection, false);
+    assert.ok(dailyData.chargeOrderId);
+
+    // 2. Contextos do hóspede (reservation-context e flat-context) DEVEM manter pagamento bloqueado (isCheckedOut = false, hasFinalCheckoutInspection = false)
+    const ctxResp = await fetch(`${BASE_URL}/api/minibar/reservation-context/RES-510-INSTAY`);
+    assert.strictEqual(ctxResp.status, 200);
+    const ctxData = await ctxResp.json();
+    assert.strictEqual(ctxData.isCheckedOut, false);
+    assert.strictEqual(ctxData.hasFinalCheckoutInspection, false);
+    assert.ok(ctxData.pendingBalance > 0);
+    assert.strictEqual(ctxData.dailyLaunches.length, 1);
+
+    const flatCtxResp = await fetch(`${BASE_URL}/api/minibar/flat-context`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ flatNumber: "510", last4Digits: "7766" })
+    });
+    assert.strictEqual(flatCtxResp.status, 200);
+    const flatCtxData = await flatCtxResp.json();
+    assert.strictEqual(flatCtxData.isCheckedOut, false);
+    assert.strictEqual(flatCtxData.hasFinalCheckoutInspection, false);
+
+    const launchItem = ctxData.pendingLaunchedItems[0];
+    assert.ok(launchItem?.itemKey);
+    const selectedPayloadItem = {
+      itemKey: launchItem.itemKey,
+      orderId: launchItem.orderId,
+      launchOrderId: launchItem.orderId,
+      productId: launchItem.productId,
+      productName: launchItem.productName,
+      quantity: 1,
+      unitPrice: launchItem.unitPrice
+    };
+
+    // 3. Tentativas de pagar via POST /api/minibar/orders (com e sem requireCheckout) DEVEM falhar com 400 CHECKOUT_INSPECTION_REQUIRED
+    const tryWithRequireCheckout = await fetch(`${BASE_URL}/api/minibar/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reservationCode: "RES-510-INSTAY",
+        flatNumber: "510",
+        requireCheckout: true,
+        partialMode: "configured_split",
+        selectedLaunchItems: [selectedPayloadItem],
+        paymentMethod: "pix",
+        invoicePreference: "detailed",
+        document: "11122233399",
+        email: "hospedado510@teste.com"
+      })
+    });
+    assert.strictEqual(tryWithRequireCheckout.status, 400);
+    assert.strictEqual((await tryWithRequireCheckout.json()).code, "CHECKOUT_INSPECTION_REQUIRED");
+
+    const trySettleLaunchWithoutFlag = await fetch(`${BASE_URL}/api/minibar/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        orderId: dailyData.chargeOrderId,
+        reservationCode: "RES-510-INSTAY",
+        flatNumber: "510",
+        partialMode: "items",
+        selectedLaunchItems: [selectedPayloadItem],
+        paymentMethod: "pix",
+        invoicePreference: "detailed",
+        document: "11122233399",
+        email: "hospedado510@teste.com"
+      })
+    });
+    assert.strictEqual(trySettleLaunchWithoutFlag.status, 400);
+    assert.strictEqual((await trySettleLaunchWithoutFlag.json()).code, "CHECKOUT_INSPECTION_REQUIRED");
+
+    // 4. Mesmo após o hóspede informar check-out no link, ANTES da conferência pós-check-out o pagamento continua bloqueado
+    // (o lançamento parcial anterior com status="divergencia" não pode destravar pagamento!)
+    const guestOutResp = await fetch(`${BASE_URL}/api/public/minibar/confirm-checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reservationCode: "RES-510-INSTAY",
+        flatNumber: "510"
+      })
+    });
+    assert.strictEqual(guestOutResp.status, 200);
+    const guestOutData = await guestOutResp.json();
+    assert.strictEqual(guestOutData.isCheckedOut, true);
+    assert.strictEqual(guestOutData.statement.hasFinalCheckoutInspection, false);
+
+    const ctxAfterOutResp = await fetch(`${BASE_URL}/api/minibar/reservation-context/RES-510-INSTAY`);
+    const ctxAfterOut = await ctxAfterOutResp.json();
+    assert.strictEqual(ctxAfterOut.isCheckedOut, true);
+    assert.strictEqual(ctxAfterOut.hasFinalCheckoutInspection, false);
+
+    const tryBeforeFinalInsp = await fetch(`${BASE_URL}/api/minibar/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reservationCode: "RES-510-INSTAY",
+        flatNumber: "510",
+        requireCheckout: true,
+        partialMode: "configured_split",
+        selectedLaunchItems: [selectedPayloadItem],
+        paymentMethod: "pix",
+        invoicePreference: "detailed",
+        document: "11122233399",
+        email: "hospedado510@teste.com"
+      })
+    });
+    assert.strictEqual(tryBeforeFinalInsp.status, 400);
+    assert.strictEqual((await tryBeforeFinalInsp.json()).code, "CHECKOUT_INSPECTION_REQUIRED");
+
+    // 5. Repositora conclui a conferência final pós-check-out (isFinalCheckoutInspection: true) -> libera pagamento
+    const finalInspResp = await fetch(`${BASE_URL}/api/minibar/inspections`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        flatNumber: "510",
+        reservationCode: "RES-510-INSTAY",
+        inspectedBy: "Maria Repositora",
+        status: "conforme",
+        isDailyLaunch: false,
+        isFinalCheckoutInspection: true,
+        launchDate: todayStr
+      })
+    });
+    assert.strictEqual(finalInspResp.status, 200);
+    const finalInspData = await finalInspResp.json();
+    assert.strictEqual(finalInspData.inspection.isFinalCheckoutInspection, true);
+    assert.strictEqual(finalInspData.statement.isCheckedOut, true);
+    assert.strictEqual(finalInspData.statement.hasFinalCheckoutInspection, true);
+
+    const ctxAfterFinalResp = await fetch(`${BASE_URL}/api/minibar/reservation-context/RES-510-INSTAY`);
+    const ctxAfterFinal = await ctxAfterFinalResp.json();
+    assert.strictEqual(ctxAfterFinal.isCheckedOut, true);
+    assert.strictEqual(ctxAfterFinal.hasFinalCheckoutInspection, true);
+
+    const payOkResp = await fetch(`${BASE_URL}/api/minibar/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reservationCode: "RES-510-INSTAY",
+        flatNumber: "510",
+        requireCheckout: true,
+        partialMode: "full",
+        selectedLaunchItems: [selectedPayloadItem],
+        paymentMethod: "pix",
+        invoicePreference: "detailed",
+        document: "11122233399",
+        email: "hospedado510@teste.com"
+      })
+    });
+    assert.strictEqual(payOkResp.status, 200, "Após check-out + conferência final, pagamento deve ser liberado");
+
+    // 6. Contrato de UI em guest-minibar.tsx: isPaymentReleased exige ambos isCheckedOut e hasFinalCheckoutInspection
+    const guestMinibarCode = fs.readFileSync(
+      path.join(ROOT_DIR, "artifacts/limpeza/src/pages/guest-minibar.tsx"),
+      "utf-8"
+    );
+    assert.match(
+      guestMinibarCode,
+      /const\s+isPaymentReleased\s*=\s*Boolean\(isCheckedOut\s*&&\s*hasFinalCheckoutInspection\)/,
+      "guest-minibar.tsx deve exigir isCheckedOut && hasFinalCheckoutInspection para liberar o botão Pagar"
     );
   });
 });

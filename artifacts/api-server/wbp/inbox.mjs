@@ -841,11 +841,14 @@ export function routeToQuarantine({ db, booking, reason, reasonDetails = {}, ale
 export function handleOtaCancellation({ db, normalized, alertsManager = null, vault = null }) {
   const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
   const matching = reservations.filter((r) =>
-    (r.externalOrderId && String(r.externalOrderId) === String(normalized.externalOrderId)) ||
-    (r.parentExternalOrderId && String(r.parentExternalOrderId) === String(normalized.externalOrderId)) ||
-    (r.channexBookingId && normalized.channexBookingId && String(r.channexBookingId) === String(normalized.channexBookingId)) ||
-    (r.wbpBookingId && String(r.wbpBookingId) === String(normalized.externalOrderId)) ||
-    (r.code && String(r.code) === String(normalized.externalOrderId))
+    !r.isRoomMoveHistoricalSegment &&
+    (
+      (r.externalOrderId && String(r.externalOrderId) === String(normalized.externalOrderId)) ||
+      (r.parentExternalOrderId && String(r.parentExternalOrderId) === String(normalized.externalOrderId)) ||
+      (r.channexBookingId && normalized.channexBookingId && String(r.channexBookingId) === String(normalized.channexBookingId)) ||
+      (r.wbpBookingId && String(r.wbpBookingId) === String(normalized.externalOrderId)) ||
+      (r.code && String(r.code) === String(normalized.externalOrderId))
+    )
   );
 
   if (matching.length === 0) {
@@ -938,6 +941,7 @@ export function handleOtaCancellation({ db, normalized, alertsManager = null, va
 export function handleOtaModification({ db, normalized, alertsManager = null }) {
   const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
   const matching = reservations.filter((r) =>
+    !r.isRoomMoveHistoricalSegment &&
     r.status !== "cancelada" &&
     r.status !== "cancelled" &&
     (
@@ -1259,8 +1263,73 @@ export function handleOtaModification({ db, normalized, alertsManager = null }) 
 
   const oldCheckin = existing.checkinDate;
   const oldCheckout = existing.checkoutDate;
-  const newCheckin = normalized.checkinDate;
+  const isRoomMovedExisting = Boolean(existing.roomMoveGroupId && existing.roomMoveCutDate);
+  const newCheckin =
+    isRoomMovedExisting && normalized.checkinDate < existing.roomMoveCutDate
+      ? existing.roomMoveCutDate
+      : normalized.checkinDate;
   const newCheckout = normalized.checkoutDate;
+
+  let priorSegmentsAccomTotal = 0;
+  if (isRoomMovedExisting) {
+    const priorSegments = reservations.filter(
+      (r) =>
+        r &&
+        r.id !== existing.id &&
+        r.roomMoveGroupId === existing.roomMoveGroupId &&
+        r.isRoomMoveHistoricalSegment &&
+        r.status !== "cancelada" &&
+        r.status !== "cancelled"
+    );
+    for (const ps of priorSegments) {
+      if (Array.isArray(ps.dailyRates) && ps.dailyRates.length > 0) {
+        priorSegmentsAccomTotal += ps.dailyRates.reduce((s, d) => s + (Number(d?.rate ?? d?.amount) || 0), 0);
+      } else {
+        const psCharges = Array.isArray(ps.charges)
+          ? ps.charges.reduce((s, c) => s + (Number(c?.amount) || 0), 0)
+          : (Number(ps.cleaningFee) || 0);
+        priorSegmentsAccomTotal += Math.max(0, (Number(ps.totalAmount) || 0) - psCharges);
+      }
+    }
+    priorSegmentsAccomTotal = Number(priorSegmentsAccomTotal.toFixed(2));
+  }
+
+  const effectiveTotalPrice = isRoomMovedExisting
+    ? Math.max(0, Number((Number(normalized.totalPrice || 0) - priorSegmentsAccomTotal).toFixed(2)))
+    : Number(normalized.totalPrice || 0);
+  const activeNightsCount =
+    newCheckin && newCheckout && newCheckin < newCheckout
+      ? getNightsBetween(newCheckin, newCheckout).length
+      : Math.max(1, Number(normalized.nights) || 1);
+  const effectiveDailyRate =
+    activeNightsCount > 0 ? Number((effectiveTotalPrice / activeNightsCount).toFixed(2)) : effectiveTotalPrice;
+
+  const applyAdjustedDailyRates = (targetRes) => {
+    const stayNights = getNightsBetween(newCheckin, newCheckout);
+    if (stayNights.length === 0) return;
+    if (Array.isArray(normalized.dayRates) && normalized.dayRates.length > 0) {
+      const filtered = normalized.dayRates
+        .map((d) => ({
+          date: normalizeDateStr(d.Date || d.date),
+          rate: Number(d.Rate ?? d.rate ?? 0),
+          channel: targetRes.channel || normalized.channel || "booking"
+        }))
+        .filter((d) => d.date && d.date >= newCheckin && d.date < newCheckout);
+      if (filtered.length === stayNights.length) {
+        targetRes.dailyRates = filtered;
+        return;
+      }
+    }
+    if (isRoomMovedExisting || (Array.isArray(targetRes.dailyRates) && targetRes.dailyRates.length > 0)) {
+      const baseRate = Number((Math.floor((effectiveTotalPrice / stayNights.length) * 100) / 100).toFixed(2));
+      const rem = Number((effectiveTotalPrice - baseRate * stayNights.length).toFixed(2));
+      targetRes.dailyRates = stayNights.map((dt, idx) => ({
+        date: dt,
+        rate: idx === stayNights.length - 1 ? Math.max(0, Number((baseRate + rem).toFixed(2))) : baseRate,
+        channel: targetRes.channel || normalized.channel || "booking"
+      }));
+    }
+  };
 
   const before = {
     flatId: existing.flatId,
@@ -1289,8 +1358,13 @@ export function handleOtaModification({ db, normalized, alertsManager = null }) 
   if (sameFlatFree) {
     existing.checkinDate = newCheckin;
     existing.checkoutDate = newCheckout;
-    existing.totalAmount = normalized.totalPrice;
-    existing.dailyRate = normalized.nights > 0 ? Number((normalized.totalPrice / normalized.nights).toFixed(2)) : normalized.totalPrice;
+    if (isRoomMovedExisting && normalized.checkinDate < existing.roomMoveCutDate) {
+      existing.originalStayCheckinDate = normalized.checkinDate;
+    }
+    existing.totalAmount = effectiveTotalPrice;
+    existing.totalPrice = effectiveTotalPrice;
+    existing.dailyRate = effectiveDailyRate;
+    applyAdjustedDailyRates(existing);
     if (normalized.netAmount != null) existing.netAmount = normalized.netAmount;
     if (normalized.commissionAmount != null) existing.commissionAmount = normalized.commissionAmount;
     existing.breakfastIncluded = normalized.includeBreakfast;
@@ -1372,8 +1446,13 @@ export function handleOtaModification({ db, normalized, alertsManager = null }) 
     existing.flatNumber = String(alloc.flat.number);
     existing.checkinDate = newCheckin;
     existing.checkoutDate = newCheckout;
-    existing.totalAmount = normalized.totalPrice;
-    existing.dailyRate = normalized.nights > 0 ? Number((normalized.totalPrice / normalized.nights).toFixed(2)) : normalized.totalPrice;
+    if (isRoomMovedExisting && normalized.checkinDate < existing.roomMoveCutDate) {
+      existing.originalStayCheckinDate = normalized.checkinDate;
+    }
+    existing.totalAmount = effectiveTotalPrice;
+    existing.totalPrice = effectiveTotalPrice;
+    existing.dailyRate = effectiveDailyRate;
+    applyAdjustedDailyRates(existing);
     if (normalized.netAmount != null) existing.netAmount = normalized.netAmount;
     if (normalized.commissionAmount != null) existing.commissionAmount = normalized.commissionAmount;
     existing.breakfastIncluded = normalized.includeBreakfast;
@@ -1530,10 +1609,13 @@ export async function processIncomingOTA(rawPayload, options = {}) {
   // 4. Check if this electronic reservation is ALREADY imported
   const reservations = Array.isArray(db.reservations) ? db.reservations : [];
   const existingElectronic = reservations.find((r) =>
-    (r.externalOrderId && String(r.externalOrderId) === String(normalized.externalOrderId)) ||
-    (r.parentExternalOrderId && String(r.parentExternalOrderId) === String(normalized.externalOrderId)) ||
-    (r.channexBookingId && normalized.channexBookingId && String(r.channexBookingId) === String(normalized.channexBookingId)) ||
-    (r.wbpBookingId && String(r.wbpBookingId) === String(normalized.externalOrderId))
+    !r.isRoomMoveHistoricalSegment &&
+    (
+      (r.externalOrderId && String(r.externalOrderId) === String(normalized.externalOrderId)) ||
+      (r.parentExternalOrderId && String(r.parentExternalOrderId) === String(normalized.externalOrderId)) ||
+      (r.channexBookingId && normalized.channexBookingId && String(r.channexBookingId) === String(normalized.channexBookingId)) ||
+      (r.wbpBookingId && String(r.wbpBookingId) === String(normalized.externalOrderId))
+    )
   );
 
   if (existingElectronic) {

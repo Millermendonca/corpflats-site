@@ -50,7 +50,7 @@ const DEFAULT_FLATS = [
   { id: 21, number: "1304", colName: "1304 Solteiro(ferro unindo)", isOccupied: true }
 ];
 
-import { processChatConversation, formatarDescricaoComTemplate, DEFAULT_FISCAL_TEMPLATE, buildOfficialNfseDraftForReservation } from "./chat-service.mjs";
+import { processChatConversation, formatarDescricaoComTemplate, DEFAULT_FISCAL_TEMPLATE, buildOfficialNfseDraftForReservation as _rawBuildOfficialNfseDraftForReservation } from "./chat-service.mjs";
 import {
   lookupCep,
   lookupCnpj,
@@ -98,7 +98,7 @@ import {
   sendZapiOtpButton,
   evaluateZapiChannelPolicy,
   scheduleUpcomingReservationTriggers,
-  triggerCheckoutWhatsApp,
+  triggerCheckoutWhatsApp as _rawTriggerCheckoutWhatsApp,
   applyReservationCheckoutAndEarlyRelease,
   findCheckoutTargetReservationsForFlat,
   formatCheckoutReporterLabel,
@@ -361,6 +361,104 @@ import {
   setProvisionalReviewsEnabled
 } from "./wbp/provisional.mjs";
 import { createHrRouter, ensureHrCollections, initHrWhatsAppAutomation } from "./hr/index.mjs";
+import {
+  isRoomMoveGroupMember,
+  getRoomMoveGroupReservations,
+  getActiveRoomMoveReservation,
+  computeRoomMoveConsolidatedSummary,
+  getFlatCleanlinessSnapshot,
+  previewRoomMoveOrSwap,
+  executeRoomMove,
+  executeFlatSwap,
+  undoLastRoomMove
+} from "./room-move-service.mjs";
+
+async function triggerCheckoutWhatsApp(dbOrGetter, saveDb, reservation, source = "manual") {
+  if (reservation?.isRoomMoveHistoricalSegment) {
+    return { skipped: true, reason: "room_move_historical_segment" };
+  }
+  return _rawTriggerCheckoutWhatsApp(dbOrGetter, saveDb, reservation, source);
+}
+
+function buildOfficialNfseDraftForReservation(targetDb, options = {}) {
+  const isResObject =
+    options &&
+    typeof options === "object" &&
+    ("checkinDate" in options || "flatNumber" in options || "guestName" in options) &&
+    !("reservation" in options);
+  const rawRes = isResObject ? options : (options?.reservation || null);
+  const rmSummary = rawRes?.roomMoveGroupId ? computeRoomMoveConsolidatedSummary(targetDb, rawRes) : null;
+  if (!rmSummary || rmSummary.segments.length <= 1) {
+    return _rawBuildOfficialNfseDraftForReservation(targetDb, options);
+  }
+  const activeSeg = rmSummary.activeReservation || rawRes;
+  const flatTrailRaw = Array.isArray(rmSummary.flatTrail) ? rmSummary.flatTrail : [];
+  const flatTrailNumbers = Array.from(
+    new Set(
+      flatTrailRaw
+        .map(ft => (typeof ft === "object" && ft ? String(ft.flatNumber || "").trim() : String(ft || "").trim()))
+        .filter(Boolean)
+    )
+  );
+  if (flatTrailNumbers.length === 0 && activeSeg?.flatNumber) {
+    flatTrailNumbers.push(String(activeSeg.flatNumber).trim());
+  }
+  const consolidatedFlatLabel = flatTrailNumbers.length > 1
+    ? `${flatTrailNumbers.slice(0, -1).join(", ")} e ${flatTrailNumbers[flatTrailNumbers.length - 1]}`
+    : (flatTrailNumbers[0] || String(activeSeg?.flatNumber || ""));
+  const hasApprovedCustomVal = Boolean(
+    activeSeg?.confirmedFiscalData?.managerApprovedValue &&
+    Number(activeSeg?.confirmedFiscalData?.valorServico) > 0
+  );
+  const consolidatedValor = hasApprovedCustomVal
+    ? Number(activeSeg.confirmedFiscalData.valorServico)
+    : Number(rmSummary.accommodationTotal || rmSummary.totalAmount || 0);
+  const syntheticRes = {
+    ...activeSeg,
+    checkinDate: rmSummary.originalCheckinDate || activeSeg.checkinDate,
+    checkoutDate: rmSummary.finalCheckoutDate || activeSeg.checkoutDate,
+    originalCheckoutDate: (activeSeg.earlyCheckout && activeSeg.originalCheckoutDate)
+      ? activeSeg.originalCheckoutDate
+      : (rmSummary.finalCheckoutDate || activeSeg.checkoutDate),
+    flatNumber: consolidatedFlatLabel,
+    quantidadeDiarias: rmSummary.totalNights || activeSeg.quantidadeDiarias || 1,
+    diarias: rmSummary.totalNights || activeSeg.diarias || 1,
+    nights: rmSummary.totalNights || activeSeg.nights || 1,
+    totalAmount: consolidatedValor
+  };
+  const nextOpts = isResObject ? syntheticRes : { ...options, reservation: syntheticRes };
+  const draft = _rawBuildOfficialNfseDraftForReservation(targetDb, nextOpts);
+  if (!draft) return draft;
+  let desc = String(draft.descricaoServico || "");
+  if (flatTrailNumbers.length > 1 && desc) {
+    desc = desc.replace(`, no Flat ${consolidatedFlatLabel}`, `, nos Flats ${consolidatedFlatLabel}`);
+    desc = desc.replace(`Flat ${consolidatedFlatLabel}`, `Flats ${consolidatedFlatLabel}`);
+  }
+  return {
+    ...draft,
+    reservationId: activeSeg.id,
+    reservationCode: activeSeg.code,
+    flatNumber: String(activeSeg.flatNumber || draft.flatNumber || ""),
+    flatTrail: flatTrailRaw.length > 0 ? flatTrailRaw : flatTrailNumbers,
+    flatTrailNumbers,
+    allReservationIds: rmSummary.allReservationIds,
+    allReservationCodes: rmSummary.allReservationCodes,
+    isRoomMoveConsolidated: true,
+    roomMoveGroupId: rmSummary.roomMoveGroupId,
+    roomMoveSummary: rmSummary,
+    checkIn: rmSummary.originalCheckinDate || draft.checkIn,
+    checkOut: rmSummary.finalCheckoutDate || draft.checkOut,
+    checkinDate: rmSummary.originalCheckinDate || draft.checkinDate,
+    checkoutDate: rmSummary.finalCheckoutDate || draft.checkoutDate,
+    quantidadeDiarias: rmSummary.totalNights || draft.quantidadeDiarias,
+    diarias: rmSummary.totalNights || draft.diarias,
+    valorOriginal: rmSummary.accommodationTotal || draft.valorOriginal,
+    valorServico: hasApprovedCustomVal ? draft.valorServico : (rmSummary.accommodationTotal || draft.valorServico),
+    descricaoServico: desc,
+    discriminacao: desc,
+    discriminacaoSugerida: desc
+  };
+}
 
 const { Pool, Client } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -8177,6 +8275,55 @@ function sanitizeReservationFlags() {
       console.log(
         `[Auto-Fix] Pedidos de teste do frigobar da reserva RES-509-0564 expurgados (${purgeRes509.removedOrderIds.length} pedidos, ${purgeRes509.removedInspectionIds.length} inspeções).`
       );
+    } catch (_) {}
+  }
+  if (!db.settings.sanitizedPrematureInStayMinibarFinalFlagsV1) {
+    const todayForMinibarSanitize = getBrasiliaNow().date;
+    let fixedInStayCount = 0;
+    let fixedDailyInspCount = 0;
+    for (const r of (db.reservations || [])) {
+      if (!r || !r.finalMinibarInspectionAt) continue;
+      const outDateStr = String(r.checkoutDate || "").slice(0, 10);
+      const hasRealCheckout = Boolean(
+        r.checkoutDone ||
+        r.actualCheckoutAt ||
+        r.earlyCheckoutReleasedAt ||
+        r.checkedOutAt ||
+        r.digitalCheckoutAt ||
+        r.status === "completed" ||
+        r.status === "checked_out"
+      );
+      if (outDateStr > todayForMinibarSanitize && !hasRealCheckout) {
+        const resCodeStr = String(r.code || (r.id ? `RES-${r.id}` : "")).trim();
+        const linkedInsps = (db.minibarInspections || []).filter(
+          i =>
+            i &&
+            ((resCodeStr && String(i.reservationCode || "").trim() === resCodeStr) ||
+              (r.id && String(i.reservationId || "") === String(r.id)))
+        );
+        const hasExplicitFinalInsp = linkedInsps.some(
+          i => i.isFinalCheckoutInspection === true && !i.isDailyLaunch && i.status !== "lancamento_diario"
+        );
+        if (!hasExplicitFinalInsp) {
+          delete r.finalMinibarInspectionAt;
+          fixedInStayCount++;
+          for (const insp of linkedInsps) {
+            if (insp.isFinalCheckoutInspection) {
+              insp.isFinalCheckoutInspection = false;
+              fixedDailyInspCount++;
+            }
+          }
+        }
+      }
+    }
+    db.settings.sanitizedPrematureInStayMinibarFinalFlagsV1 = true;
+    try {
+      saveDatabase("sanitize_premature_in_stay_minibar_final_v1");
+      if (fixedInStayCount > 0 || fixedDailyInspCount > 0) {
+        console.log(
+          `[Auto-Fix] Sinalizações prematuras de conferência final do frigobar higienizadas (${fixedInStayCount} reservas hospedadas, ${fixedDailyInspCount} lançamentos diários).`
+        );
+      }
     } catch (_) {}
   }
   if (sanitizeContaminatedSmokingFlags(db)) {
@@ -21631,6 +21778,17 @@ app.post("/api/public/checkout", async (req, res) => {
     : findCheckoutTargetReservationsForFlat(db, flat.id, flat.number, todayStr);
   let anyEarlyCheckout = false;
   for (const r of matchingResList) {
+    if (r?.isRoomMoveHistoricalSegment) {
+      r.checkoutDone = true;
+      if (r.status !== "completed" && r.status !== "checked_out") {
+        r.previousStatus = r.status;
+        r.status = "completed";
+      }
+      if (!r.actualCheckoutAt) r.actualCheckoutAt = now;
+      r.checkoutMethod = r.checkoutMethod || "room_transfer";
+      r.updatedAt = now;
+      continue;
+    }
     const earlyRes = await applyReservationCheckoutAndEarlyRelease(db, saveDatabase, r, {
       source: "link_digital",
       actorName: r.guestName || guestDisplayName,
@@ -21647,11 +21805,13 @@ app.post("/api/public/checkout", async (req, res) => {
   }
 
   // Cancela qualquer lembrete pendente de check-out ou estadia na fila (WhatsApp e E-mail) para este flat
-  cancelPendingStayRemindersForCheckout(db, saveDatabase, {
-    flatId: flat.id,
-    flatNumber: flat.number,
-    reason: "Cancelado: check-out realizado via link digital"
-  });
+  if (matchingResList.length === 0 || matchingResList.some(r => r && !r.isRoomMoveHistoricalSegment)) {
+    cancelPendingStayRemindersForCheckout(db, saveDatabase, {
+      flatId: flat.id,
+      flatNumber: flat.number,
+      reason: "Cancelado: check-out realizado via link digital"
+    });
+  }
 
   // Reconciliar pedidos de café da manhã complementares (para hoje antes do horário ou futuros caso check-out antecipado):
   if (!db.breakfastOrders) db.breakfastOrders = [];
@@ -22922,31 +23082,44 @@ app.patch("/api/flats/:id", (req, res) => {
       (r.checkoutDate === todayStr || r.earlyCheckoutDate === todayStr)
     );
     if (checkoutRes) {
-      if (!req.body.isOccupied) {
-        applyReservationCheckoutAndEarlyRelease(db, saveDatabase, checkoutRes, {
-          source: "manual_card",
-          actorName: authUser?.name || authUser?.username || "Governança / Card",
-          nowIso: now,
-          todayStr
-        }).catch(e => console.warn("[Flat Vacancy Checkout Error]:", e?.message));
-        cancelPendingStayRemindersForCheckout(db, null, {
-          reservation: checkoutRes,
-          flatId: f.id,
-          flatNumber: f.number,
-          reason: "Cancelado: flat marcado como desocupado"
-        });
-        triggerCheckoutWhatsApp(db, saveDatabase, checkoutRes, "manual_card").catch(e => {
-          console.warn("[Flat Vacancy Checkout Trigger Error]:", e.message);
-        });
+      if (checkoutRes.isRoomMoveHistoricalSegment) {
+        if (!req.body.isOccupied) {
+          checkoutRes.checkoutDone = true;
+          if (checkoutRes.status !== "completed" && checkoutRes.status !== "checked_out") {
+            checkoutRes.previousStatus = checkoutRes.status;
+            checkoutRes.status = "completed";
+          }
+          if (!checkoutRes.actualCheckoutAt) checkoutRes.actualCheckoutAt = now;
+          checkoutRes.checkoutMethod = checkoutRes.checkoutMethod || "room_transfer";
+          checkoutRes.updatedAt = now;
+        }
       } else {
-        undoReservationCheckoutAndRestoreStay(db, checkoutRes, {
-          actorUser: authUser,
-          source: "Governança / Card Ocupado",
-          nowIso: now,
-          todayStr
-        });
+        if (!req.body.isOccupied) {
+          applyReservationCheckoutAndEarlyRelease(db, saveDatabase, checkoutRes, {
+            source: "manual_card",
+            actorName: authUser?.name || authUser?.username || "Governança / Card",
+            nowIso: now,
+            todayStr
+          }).catch(e => console.warn("[Flat Vacancy Checkout Error]:", e?.message));
+          cancelPendingStayRemindersForCheckout(db, null, {
+            reservation: checkoutRes,
+            flatId: f.id,
+            flatNumber: f.number,
+            reason: "Cancelado: flat marcado como desocupado"
+          });
+          triggerCheckoutWhatsApp(db, saveDatabase, checkoutRes, "manual_card").catch(e => {
+            console.warn("[Flat Vacancy Checkout Trigger Error]:", e.message);
+          });
+        } else {
+          undoReservationCheckoutAndRestoreStay(db, checkoutRes, {
+            actorUser: authUser,
+            source: "Governança / Card Ocupado",
+            nowIso: now,
+            todayStr
+          });
+        }
+        checkoutRes.updatedAt = now;
       }
-      checkoutRes.updatedAt = now;
     } else if (!req.body.isOccupied) {
       cancelPendingStayRemindersForCheckout(db, null, {
         flatId: f.id,
@@ -25208,7 +25381,12 @@ app.get("/api/reservations/checkouts", (req, res) => {
 app.get("/api/reservations/checkins", (req, res) => {
   const dateStr = req.query.date || getTodayStr();
   const list = (db.reservations || [])
-    .filter(r => (r.checkinDate === dateStr || r.checkinDate?.substring(0, 10) === dateStr) && r.status !== "cancelada")
+    .filter(r =>
+      (r.checkinDate === dateStr || r.checkinDate?.substring(0, 10) === dateStr) &&
+      r.status !== "cancelada" &&
+      !r.isRoomMoveHistoricalSegment &&
+      r.roomMoveCutDate !== dateStr
+    )
     .map(r => {
       const flat = db.flats.find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber)) || { id: r.flatId, number: r.flatNumber || "113" };
       const matchedGuest = (db.guests || []).find(g =>
@@ -26444,31 +26622,44 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
         )
       ) : null;
       if (checkoutRes) {
-        if (isVacant) {
-          applyReservationCheckoutAndEarlyRelease(db, saveDatabase, checkoutRes, {
-            source: "card_desocupado",
-            actorName: userAuth?.name || userAuth?.username || "Camareira / Governança",
-            nowIso: now,
-            todayStr: targetDate
-          }).catch(e => console.warn("[Cleaning Card Checkout Error]:", e?.message));
-          cancelPendingStayRemindersForCheckout(db, null, {
-            reservation: checkoutRes,
-            flatId: item.flatId,
-            flatNumber: item.flatNumber || relatedFlat?.number,
-            reason: "Cancelado: card de limpeza marcado como desocupado"
-          });
-          triggerCheckoutWhatsApp(db, saveDatabase, checkoutRes, "card_desocupado").catch(e => {
-            console.warn("[Cleaning Card Vacant Checkout Trigger Error]:", e.message);
-          });
+        if (checkoutRes.isRoomMoveHistoricalSegment) {
+          if (isVacant) {
+            checkoutRes.checkoutDone = true;
+            if (checkoutRes.status !== "completed" && checkoutRes.status !== "checked_out") {
+              checkoutRes.previousStatus = checkoutRes.status;
+              checkoutRes.status = "completed";
+            }
+            if (!checkoutRes.actualCheckoutAt) checkoutRes.actualCheckoutAt = now;
+            checkoutRes.checkoutMethod = checkoutRes.checkoutMethod || "room_transfer";
+            checkoutRes.updatedAt = now;
+          }
         } else {
-          undoReservationCheckoutAndRestoreStay(db, checkoutRes, {
-            actorUser: userAuth,
-            source: "Governança / Card Ocupado",
-            nowIso: now,
-            todayStr: todayRefVacant
-          });
+          if (isVacant) {
+            applyReservationCheckoutAndEarlyRelease(db, saveDatabase, checkoutRes, {
+              source: "card_desocupado",
+              actorName: userAuth?.name || userAuth?.username || "Camareira / Governança",
+              nowIso: now,
+              todayStr: targetDate
+            }).catch(e => console.warn("[Cleaning Card Checkout Error]:", e?.message));
+            cancelPendingStayRemindersForCheckout(db, null, {
+              reservation: checkoutRes,
+              flatId: item.flatId,
+              flatNumber: item.flatNumber || relatedFlat?.number,
+              reason: "Cancelado: card de limpeza marcado como desocupado"
+            });
+            triggerCheckoutWhatsApp(db, saveDatabase, checkoutRes, "card_desocupado").catch(e => {
+              console.warn("[Cleaning Card Vacant Checkout Trigger Error]:", e.message);
+            });
+          } else {
+            undoReservationCheckoutAndRestoreStay(db, checkoutRes, {
+              actorUser: userAuth,
+              source: "Governança / Card Ocupado",
+              nowIso: now,
+              todayStr: todayRefVacant
+            });
+          }
+          checkoutRes.updatedAt = now;
         }
-        checkoutRes.updatedAt = now;
       } else if (isVacant) {
         cancelPendingStayRemindersForCheckout(db, null, {
           flatId: item.flatId,
@@ -26530,23 +26721,34 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
       (r.checkoutDate === targetDate || r.checkoutDate === (date || todayRefClean))
     ) : null;
     if (checkoutRes) {
-      checkoutRes.checkoutDone = true;
-      if (checkoutRes.status !== "completed" && checkoutRes.status !== "checked_out") {
-        checkoutRes.previousStatus = checkoutRes.status;
-        checkoutRes.status = "completed";
+      if (checkoutRes.isRoomMoveHistoricalSegment) {
+        checkoutRes.checkoutDone = true;
+        if (checkoutRes.status !== "completed" && checkoutRes.status !== "checked_out") {
+          checkoutRes.previousStatus = checkoutRes.status;
+          checkoutRes.status = "completed";
+        }
+        if (!checkoutRes.actualCheckoutAt) checkoutRes.actualCheckoutAt = now;
+        checkoutRes.checkoutMethod = checkoutRes.checkoutMethod || item.vacantSource || "room_transfer";
+        checkoutRes.updatedAt = now;
+      } else {
+        checkoutRes.checkoutDone = true;
+        if (checkoutRes.status !== "completed" && checkoutRes.status !== "checked_out") {
+          checkoutRes.previousStatus = checkoutRes.status;
+          checkoutRes.status = "completed";
+        }
+        if (!checkoutRes.actualCheckoutAt) checkoutRes.actualCheckoutAt = now;
+        checkoutRes.checkoutMethod = checkoutRes.checkoutMethod || item.vacantSource || autoSource;
+        checkoutRes.updatedAt = now;
+        cancelPendingStayRemindersForCheckout(db, null, {
+          reservation: checkoutRes,
+          flatId: item.flatId,
+          flatNumber: item.flatNumber || relatedFlat?.number,
+          reason: `Cancelado: card de limpeza marcado como ${status === "clean" ? "limpo" : "limpeza iniciada"}`
+        });
+        triggerCheckoutWhatsApp(db, saveDatabase, checkoutRes, autoSource).catch(e => {
+          console.warn("[Cleaning Started Checkout Trigger Error]:", e.message);
+        });
       }
-      if (!checkoutRes.actualCheckoutAt) checkoutRes.actualCheckoutAt = now;
-      checkoutRes.checkoutMethod = checkoutRes.checkoutMethod || item.vacantSource || autoSource;
-      checkoutRes.updatedAt = now;
-      cancelPendingStayRemindersForCheckout(db, null, {
-        reservation: checkoutRes,
-        flatId: item.flatId,
-        flatNumber: item.flatNumber || relatedFlat?.number,
-        reason: `Cancelado: card de limpeza marcado como ${status === "clean" ? "limpo" : "limpeza iniciada"}`
-      });
-      triggerCheckoutWhatsApp(db, saveDatabase, checkoutRes, autoSource).catch(e => {
-        console.warn("[Cleaning Started Checkout Trigger Error]:", e.message);
-      });
     } else {
       cancelPendingStayRemindersForCheckout(db, null, {
         flatId: item.flatId,
@@ -40111,6 +40313,218 @@ app.post("/api/pms/reservations/:id/cancel-package-item", async (req, res) => {
   }
 });
 
+function buildRoomMoveEndpointDeps(req, actor) {
+  const origin = (
+    req?.protocol && req?.get?.("host")
+      ? `${req.protocol}://${req.get("host")}`
+      : (process.env.SERVER_BASE_URL || "https://corpflats.com.br")
+  ).replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
+
+  return {
+    findActiveOverbookingConflicts,
+    invalidateReservationCheckinSignatures,
+    syncCleaningCardsForConfirmedReservation,
+    notifyPmsMutation,
+    logAuditEvent,
+    addReservationAuditLog,
+    onAfterReservationRoomMoved: async (r, ctx = {}) => {
+      if (!r) return;
+      const changesList = Array.isArray(ctx?.changes) ? ctx.changes : [];
+
+      if (!isPreReservationBlocked(r)) {
+        if (r.needsReSignature) {
+          dispatchReservationReSignatureNotifications(r, changesList, {
+            origin,
+            source: ctx?.source || "pms_room_move",
+            actor: ctx?.actor || actor
+          });
+        } else {
+          triggerImmediateWhatsApp(
+            db,
+            saveDatabase,
+            "reservation_updated",
+            { ...r, _changesContext: changesList },
+            origin
+          ).catch(err => {
+            console.warn("[RoomMove WhatsApp Trigger Error]:", err?.message || err);
+          });
+        }
+
+        if (isReservationForTodayOrPast(r) && hasReceptionReceivedReservation(r, db)) {
+          try {
+            const flat = (db.flats || []).find(f => Number(f.id) === Number(r.flatId) || String(f.number) === String(r.flatNumber));
+            const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
+            const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || receptionEmail;
+            const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes: changesList, settings: db.settings });
+
+            if (isReservationForToday(r)) {
+              const nowIso = new Date().toISOString();
+              r.morningEmailSentDate = getBrasiliaTodayStr();
+              r.morningEmailSentAt = nowIso;
+              r.receptionNotifiedAt = nowIso;
+            }
+
+            sendEmailAsync({
+              db,
+              saveDatabase,
+              reservationId: r.code || r.id,
+              recipient: receptionEmail,
+              cc: garageEmail !== receptionEmail ? garageEmail : undefined,
+              subject,
+              bodyHtml,
+              type: "email",
+              direction: "outbound",
+              metadata: {
+                trigger: "reservation_update",
+                flatNumber: r.flatNumber,
+                guestName: r.guestName,
+                changes: changesList
+              }
+            });
+          } catch (mailErr) {
+            console.warn("[RoomMove MailService] Erro ao disparar aviso de alteração à portaria:", mailErr?.message || mailErr);
+          }
+        }
+
+        if (r.vehicle && r.vehicle.plate) {
+          try {
+            triggerGarageEmailNotification(db, saveDatabase, r, r.vehicle, {
+              trigger: "pms_room_move",
+              source: ctx?.source || "PMS Troca de Flat",
+              force: false,
+              retriggerIfAlreadySent: true
+            });
+          } catch (gErr) {
+            console.warn("[RoomMove GarageService] Erro ao disparar autorização de garagem:", gErr?.message || gErr);
+          }
+        }
+
+        if (db.settings?.checkinProvider === "gov_fnrh") {
+          try {
+            if (r.serproReservaId) {
+              await fnrhSerproService.cancelReserva(r.serproReservaId, db.settings).catch(() => {});
+            }
+            const serproRes = await fnrhSerproService.registerReservation(r, db.settings);
+            if (serproRes && (serproRes.link_precheckin || serproRes.serproPrecheckinUrl)) {
+              r.serproReservaId = serproRes.reserva_id || serproRes.serproReservaId;
+              r.serproPrecheckinUrl = serproRes.link_precheckin || serproRes.serproPrecheckinUrl;
+              r.link_precheckin = serproRes.link_precheckin || serproRes.serproPrecheckinUrl;
+              r.serproStatus = serproRes.situacao_reserva_id || serproRes.serproStatus || "CRIADA";
+              r.serproUpdatedAt = new Date().toISOString();
+              delete r.serproError;
+              saveDatabase("room_move_serpro_sync");
+            }
+          } catch (serproErr) {
+            console.warn(`[FNRH SERPRO RoomMove] Falha ao atualizar reserva ${r.code} no SERPRO:`, serproErr?.message || serproErr);
+            r.serproError = serproErr?.message || String(serproErr);
+          }
+        }
+
+        try {
+          scheduleUpcomingReservationTriggers(db, saveDatabase);
+          ensureReservationScheduledEmails(db, saveDatabase, r);
+        } catch (schedErr) {
+          console.warn("[RoomMove Scheduler Sync Error]:", schedErr?.message || schedErr);
+        }
+      }
+    }
+  };
+}
+
+function sendRoomMoveError(res, err, fallbackMessage) {
+  return res.status(Number(err?.statusCode) || 400).json({
+    error: err?.message || fallbackMessage,
+    ...(err?.code ? { code: err.code } : {}),
+    ...(err?.details !== undefined ? { details: err.details } : {}),
+    ...(err?.requiresFlatLockConfirmation !== undefined
+      ? { requiresFlatLockConfirmation: Boolean(err.requiresFlatLockConfirmation) }
+      : {}),
+    ...(err?.lockedFlats !== undefined ? { lockedFlats: err.lockedFlats } : {}),
+    ...(err?.flatNumber !== undefined ? { flatNumber: err.flatNumber } : {}),
+    ...(err?.flatLockReason !== undefined ? { flatLockReason: err.flatLockReason } : {}),
+    ...(err?.conflicts !== undefined ? { conflicts: err.conflicts } : {})
+  });
+}
+
+app.post("/api/pms/reservations/room-move-preview", (req, res) => {
+  try {
+    const authUser = requirePmsPackageStaffAuth(req, res);
+    if (!authUser) return;
+    const preview = previewRoomMoveOrSwap(db, req.body || {});
+    return res.json(preview);
+  } catch (err) {
+    return sendRoomMoveError(res, err, "Erro ao simular troca de flat.");
+  }
+});
+
+app.post("/api/pms/reservations/:id/room-move", async (req, res) => {
+  try {
+    const authUser = requirePmsPackageStaffAuth(req, res);
+    if (!authUser) return;
+    const actor = {
+      id: authUser.id,
+      name: authUser.username || authUser.name || "Operador PMS",
+      role: authUser.role || "admin",
+      type: "user"
+    };
+    const result = await executeRoomMove(
+      db,
+      { ...(req.body || {}), reservationId: req.params.id, actor },
+      buildRoomMoveEndpointDeps(req, actor)
+    );
+    saveDatabase("room_move");
+    return res.json(result);
+  } catch (err) {
+    return sendRoomMoveError(res, err, "Erro ao executar troca de flat.");
+  }
+});
+
+app.post("/api/pms/reservations/swap-flats", async (req, res) => {
+  try {
+    const authUser = requirePmsPackageStaffAuth(req, res);
+    if (!authUser) return;
+    const actor = {
+      id: authUser.id,
+      name: authUser.username || authUser.name || "Operador PMS",
+      role: authUser.role || "admin",
+      type: "user"
+    };
+    const result = await executeFlatSwap(
+      db,
+      { ...(req.body || {}), actor },
+      buildRoomMoveEndpointDeps(req, actor)
+    );
+    saveDatabase("flat_swap");
+    return res.json(result);
+  } catch (err) {
+    return sendRoomMoveError(res, err, "Erro ao executar inversão de flats.");
+  }
+});
+
+app.post("/api/pms/reservations/:id/undo-room-move", async (req, res) => {
+  try {
+    const authUser = requirePmsPackageStaffAuth(req, res);
+    if (!authUser) return;
+    const actor = {
+      id: authUser.id,
+      name: authUser.username || authUser.name || "Operador PMS",
+      role: authUser.role || "admin",
+      type: "user"
+    };
+    const result = await Promise.resolve(
+      undoLastRoomMove(
+        db,
+        { ...(req.body || {}), reservationId: req.params.id, actor },
+        buildRoomMoveEndpointDeps(req, actor)
+      )
+    );
+    saveDatabase("undo_room_move");
+    return res.json(result);
+  } catch (err) {
+    return sendRoomMoveError(res, err, "Erro ao desfazer troca de flat.");
+  }
+});
+
 app.post("/api/pms/reservations", async (req, res) => {
   if (Array.isArray(req.body?.packageFlats) && req.body.packageFlats.length >= 2) {
     try {
@@ -44128,16 +44542,18 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   r.updatedAt = new Date().toISOString();
   if (r.checkoutDone === true || r.status === "completed" || r.status === "checkout" || r.status === "checked_out") {
     r.checkoutDone = true;
-    cancelPendingStayRemindersForCheckout(db, null, {
-      reservation: r,
-      flatId: r.flatId,
-      flatNumber: r.flatNumber,
-      reason: "Cancelado: reserva marcada como check-out concluído"
-    });
-    if (oldStatus !== "completed" && oldStatus !== "checkout" && oldStatus !== "checked_out") {
-      triggerCheckoutWhatsApp(db, saveDatabase, r, "pms_edit").catch(e => {
-        console.warn("[PMS Edit Checkout Trigger Error]:", e.message);
+    if (!r.isRoomMoveHistoricalSegment) {
+      cancelPendingStayRemindersForCheckout(db, null, {
+        reservation: r,
+        flatId: r.flatId,
+        flatNumber: r.flatNumber,
+        reason: "Cancelado: reserva marcada como check-out concluído"
       });
+      if (oldStatus !== "completed" && oldStatus !== "checkout" && oldStatus !== "checked_out") {
+        triggerCheckoutWhatsApp(db, saveDatabase, r, "pms_edit").catch(e => {
+          console.warn("[PMS Edit Checkout Trigger Error]:", e.message);
+        });
+      }
     }
   }
 
@@ -45132,7 +45548,7 @@ function getAllReservationNames(resItem) {
   return names;
 }
 
-function findReservationByLocatorOrContact(query) {
+function findReservationByLocatorOrContact(query, options = {}) {
   if (!query || !db.reservations) return null;
   let raw = String(query).trim();
   try {
@@ -45140,10 +45556,19 @@ function findReservationByLocatorOrContact(query) {
   } catch {}
   if (!raw || ["undefined", "null", "none"].includes(raw.toLowerCase())) return null;
 
+  const finalizeMatch = (matched) => {
+    if (!matched) return null;
+    if (options?.preserveHistoricalSegment) return matched;
+    if (matched.isRoomMoveHistoricalSegment) {
+      return getActiveRoomMoveReservation(db, matched) || matched;
+    }
+    return matched;
+  };
+
   // 0. Código de Pacote Multi-Flat (PKG-XXXXXX) -> retorna reserva primária ativa do pacote
   if (isPackageCode(raw)) {
     const pkgPrimary = getPrimaryPackageReservation(db, raw);
-    if (pkgPrimary) return pkgPrimary;
+    if (pkgPrimary) return finalizeMatch(pkgPrimary);
   }
 
   // 1. Código exato, token de café, número B2B, RLOC, OTA ou ID numérico
@@ -45157,20 +45582,20 @@ function findReservationByLocatorOrContact(query) {
     (resItem.otaReservationCode && String(resItem.otaReservationCode).toUpperCase() === raw.toUpperCase()) ||
     String(resItem.id) === raw
   );
-  if (r) return r;
+  if (r) return finalizeMatch(r);
 
   // 1b. Tokens sintéticos de café da manhã (bfk_<id>, bfk_<id>_<hex>, bfk_b2b_<num>, bfk_<codeNorm>)
   if (/^bfk_/i.test(raw)) {
     const bfkIdMatch = raw.match(/^bfk_(\d+)(?:_[a-z0-9]+)?$/i);
     if (bfkIdMatch) {
       r = db.reservations.find(resItem => String(resItem.id) === bfkIdMatch[1] || Number(resItem.id) === Number(bfkIdMatch[1]));
-      if (r) return r;
+      if (r) return finalizeMatch(r);
     }
     const bfkB2bMatch = raw.match(/^bfk_b2b_(.+)$/i);
     if (bfkB2bMatch) {
       const targetB2b = bfkB2bMatch[1].replace(/[^a-z0-9]/gi, "").toUpperCase();
       r = db.reservations.find(resItem => String(resItem.b2bReservationNumber || "").replace(/[^a-z0-9]/gi, "").toUpperCase() === targetB2b);
-      if (r) return r;
+      if (r) return finalizeMatch(r);
     }
     const strippedBfk = raw.replace(/^bfk_/i, "").replace(/[^a-z0-9]/gi, "").toUpperCase();
     if (strippedBfk) {
@@ -45180,7 +45605,7 @@ function findReservationByLocatorOrContact(query) {
         const synUnpadded = `RES${resItem.flatNumber || ""}${resItem.id}`.replace(/[^a-z0-9]/gi, "").toUpperCase();
         return cNorm === strippedBfk || synPadded === strippedBfk || synUnpadded === strippedBfk || String(resItem.id) === strippedBfk;
       });
-      if (r) return r;
+      if (r) return finalizeMatch(r);
     }
   }
 
@@ -45190,9 +45615,9 @@ function findReservationByLocatorOrContact(query) {
     const flatPart = resFlatIdMatch[1];
     const idNum = Number(resFlatIdMatch[2]);
     r = db.reservations.find(resItem => Number(resItem.id) === idNum && String(resItem.flatNumber) === String(flatPart));
-    if (r) return r;
+    if (r) return finalizeMatch(r);
     r = db.reservations.find(resItem => Number(resItem.id) === idNum);
-    if (r) return r;
+    if (r) return finalizeMatch(r);
   }
 
   // 2. Código normalizado (sem caracteres especiais/hífens), incluindo comparação com código sintético RES-<flat>-<id>
@@ -45212,7 +45637,7 @@ function findReservationByLocatorOrContact(query) {
         String(resItem.b2bLocatorRloc || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase() === norm
       );
     });
-    if (r) return r;
+    if (r) return finalizeMatch(r);
   }
 
   // 2b. Busca por número do Flat (ex: "RES-101", "flat-101" ou "101") priorizando reserva ativa hoje
@@ -45223,16 +45648,29 @@ function findReservationByLocatorOrContact(query) {
     const activeInFlat = db.reservations.filter(resItem =>
       String(resItem.flatNumber) === String(targetFlat) &&
       resItem.status !== "cancelada" &&
-      resItem.status !== "cancelado"
+      resItem.status !== "cancelado" &&
+      !(resItem.isRoomMoveHistoricalSegment && resItem.checkoutDate <= todayStr)
     );
-    r = activeInFlat.find(resItem => resItem.checkinDate <= todayStr && resItem.checkoutDate >= todayStr) || activeInFlat[activeInFlat.length - 1] || null;
-    if (r) return r;
+    r =
+      activeInFlat.find(resItem => !resItem.isRoomMoveHistoricalSegment && resItem.checkinDate <= todayStr && resItem.checkoutDate >= todayStr) ||
+      activeInFlat.find(resItem => resItem.checkinDate <= todayStr && resItem.checkoutDate >= todayStr) ||
+      activeInFlat[activeInFlat.length - 1] ||
+      null;
+    if (r) return finalizeMatch(r);
   }
 
   // 3. Telefone / WhatsApp ou CPF / Documento (se tiver 8 ou mais dígitos)
   const digits = raw.replace(/\D/g, "");
   if (digits.length >= 8) {
-    r = db.reservations.slice().reverse().find(resItem => {
+    const nonHistMatch = db.reservations.slice().reverse().find(resItem => {
+      if (resItem.isRoomMoveHistoricalSegment) return false;
+      const phones = getAllReservationPhones(resItem);
+      const docs = getAllReservationDocuments(resItem);
+      const hasPhoneMatch = phones.some(p => matchBrazilianPhone(digits, p));
+      const hasDocMatch = docs.some(d => d === digits || d.includes(digits) || digits.includes(d));
+      return hasPhoneMatch || hasDocMatch;
+    });
+    r = nonHistMatch || db.reservations.slice().reverse().find(resItem => {
       const phones = getAllReservationPhones(resItem);
       const docs = getAllReservationDocuments(resItem);
 
@@ -45241,18 +45679,24 @@ function findReservationByLocatorOrContact(query) {
 
       return hasPhoneMatch || hasDocMatch;
     });
-    if (r) return r;
+    if (r) return finalizeMatch(r);
   }
 
   // 4. E-mail
   if (raw.includes("@")) {
     const email = raw.toLowerCase();
     r = db.reservations.slice().reverse().find(resItem =>
+      !resItem.isRoomMoveHistoricalSegment && (
+        (resItem.guestEmail || "").trim().toLowerCase() === email ||
+        (resItem.requesterInfo?.email || "").trim().toLowerCase() === email ||
+        (resItem.guests || []).some(g => (g.email || "").trim().toLowerCase() === email)
+      )
+    ) || db.reservations.slice().reverse().find(resItem =>
       (resItem.guestEmail || "").trim().toLowerCase() === email ||
       (resItem.requesterInfo?.email || "").trim().toLowerCase() === email ||
       (resItem.guests || []).some(g => (g.email || "").trim().toLowerCase() === email)
     );
-    if (r) return r;
+    if (r) return finalizeMatch(r);
   }
 
   // 5. Nome completo do hóspede ou solicitante (exige correspondência exata ou ao menos nome + sobrenome com 6+ caracteres para evitar enumeração por 3 letras)
@@ -45260,13 +45704,20 @@ function findReservationByLocatorOrContact(query) {
   const queryWords = normQuery.split(/\s+/).filter(Boolean);
   if (normQuery.length >= 6 && queryWords.length >= 2 && /[a-zA-Z]/.test(normQuery)) {
     r = db.reservations.slice().reverse().find(resItem => {
+      if (resItem.isRoomMoveHistoricalSegment) return false;
+      const names = getAllReservationNames(resItem);
+      return names.some(n => {
+        const normN = String(n).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+        return normN === normQuery || normN.includes(normQuery);
+      });
+    }) || db.reservations.slice().reverse().find(resItem => {
       const names = getAllReservationNames(resItem);
       return names.some(n => {
         const normN = String(n).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
         return normN === normQuery || normN.includes(normQuery);
       });
     });
-    if (r) return r;
+    if (r) return finalizeMatch(r);
   }
 
   return null;
@@ -45802,28 +46253,36 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const isB2b = isB2bReservation(r);
   const isFaturadoPortal = isFaturadoBoletoReservation(r);
   const isUnpaidPre = isUnverifiedPreReservation(r) || isExpiredPreRes;
+  const rmSummary = r.roomMoveGroupId ? computeRoomMoveConsolidatedSummary(db, r) : null;
+  const hasRoomMoveGroup = Boolean(rmSummary && rmSummary.segments.length > 1);
   const hasPartialPendingBalance = Boolean(
     !isB2b &&
-    (r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial") &&
-    Number(r.paidAmount || 0) > 0 &&
-    Number(r.paidAmount || 0) < Number(r.totalAmount || 0) - 0.01
+    (hasRoomMoveGroup
+      ? (rmSummary.paidAmount > 0 && rmSummary.pendingAmount > 0.01)
+      : ((r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial") &&
+         Number(r.paidAmount || 0) > 0 &&
+         Number(r.paidAmount || 0) < Number(r.totalAmount || 0) - 0.01))
   );
   let isPaid = !isCancelledRes && !isExpiredPreRes && !isUnpaidPre && !hasPartialPendingBalance && (isOta || (
     isFaturadoPortal
       ? (hasRealSettlementForFaturadoBoleto(r, db) && Boolean(r.paymentStatus === "pago_total" || r.paymentStatus === "pago"))
-      : Boolean(
-          r.paymentStatus === "pago_total" ||
-          r.paymentStatus === "pago" ||
-          (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)
-        )
+      : (hasRoomMoveGroup
+          ? Boolean(rmSummary.isFullyPaid)
+          : Boolean(
+              r.paymentStatus === "pago_total" ||
+              r.paymentStatus === "pago" ||
+              (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)
+            ))
   ));
 
   // Se a reserva ainda não consta como paga e NÃO está cancelada nem expirada (e não é B2B nem Boleto Faturado a prazo), verifica ativamente no Mercado Pago / Extrato do Banco Inter
-  if (!isCancelledRes && !isExpiredPreRes && !isPaid && !isB2b && !isFaturadoPortal && Number(r.totalAmount) > 0) {
+  const expectedTotalForPoll = hasRoomMoveGroup ? Number(rmSummary.totalAmount || 0) : Number(r.totalAmount || 0);
+  const expectedPendingForPoll = hasRoomMoveGroup ? Number(rmSummary.pendingAmount || 0) : expectedTotalForPoll;
+  if (!isCancelledRes && !isExpiredPreRes && !isPaid && !isB2b && !isFaturadoPortal && expectedTotalForPoll > 0) {
     const portalPkgSumPre = (r.packageId || r.packageCode) ? computePackageSummary(db, r.packageId || r.packageCode, { computeCardAmountFromPix }) : null;
     const mpRefCode = r.packageCode || r.code;
-    const fallbackExpectedPix = portalPkgSumPre ? portalPkgSumPre.pendingAmount : r.totalAmount;
-    const fallbackExpectedCard = portalPkgSumPre ? portalPkgSumPre.cardPendingAmount : r.totalAmount;
+    const fallbackExpectedPix = portalPkgSumPre ? portalPkgSumPre.pendingAmount : expectedPendingForPoll;
+    const fallbackExpectedCard = portalPkgSumPre ? portalPkgSumPre.cardPendingAmount : computeCardAmountFromPix(expectedPendingForPoll);
     const effectivePixTxId = r.packagePixTxId || r.pixTxId;
     const prefersCard = Boolean(
       req.query?.payment === "success" ||
@@ -45925,13 +46384,16 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     }
   }
 
-  const resolvedTotal = Number(r.totalAmount) || 0;
-  const resolvedPaid = isPaid ? (resolvedTotal > 0 ? resolvedTotal : (isOta ? 0 : (Number(r.paidAmount) || 0))) : (isUnpaidPre && !isPaid ? 0 : (Number(r.paidAmount) || 0));
+  const refreshedRmSummary = hasRoomMoveGroup ? computeRoomMoveConsolidatedSummary(db, r) : rmSummary;
+  const resolvedTotal = hasRoomMoveGroup ? Number(refreshedRmSummary?.totalAmount || 0) : (Number(r.totalAmount) || 0);
+  const resolvedPaid = hasRoomMoveGroup
+    ? (isPaid ? resolvedTotal : Number(refreshedRmSummary?.paidAmount || 0))
+    : (isPaid ? (resolvedTotal > 0 ? resolvedTotal : (isOta ? 0 : (Number(r.paidAmount) || 0))) : (isUnpaidPre && !isPaid ? 0 : (Number(r.paidAmount) || 0)));
   const pendingAmount = Math.max(0, Math.round((resolvedTotal - resolvedPaid) * 100) / 100);
   const cardTotalAmount = computeCardAmountFromPix(resolvedTotal);
   const cardPendingAmount = computeCardAmountFromPix(pendingAmount);
 
-  if (isPaid && resolvedTotal > 0 && r.paidAmount !== resolvedTotal) {
+  if (!hasRoomMoveGroup && isPaid && resolvedTotal > 0 && r.paidAmount !== resolvedTotal) {
     r.paidAmount = resolvedTotal;
     saveDatabase();
   }
@@ -46097,21 +46559,37 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       cancellationReason: r.cancellationReason || null,
       refundStatus: r.refundStatus || null,
       refundAmount: hideFinancialForGuest ? 0 : (Number(r.refundAmount) || 0),
-      doorPassword: (isPortalUnlocked && (isCheckinToday || (todayStr >= r.checkinDate && todayStr <= r.checkoutDate) || r.status === "in_house" || r.status === "checkin")) ? (r.doorPassword || null) : null,
-      accessCode: (isPortalUnlocked && (isCheckinToday || (todayStr >= r.checkinDate && todayStr <= r.checkoutDate) || r.status === "in_house" || r.status === "checkin")) ? (r.accessCode || null) : null,
+      doorPassword: (isPortalUnlocked && (isCheckinToday || (todayStr >= (hasRoomMoveGroup ? (refreshedRmSummary?.originalCheckinDate || r.checkinDate) : r.checkinDate) && todayStr <= (hasRoomMoveGroup ? (refreshedRmSummary?.finalCheckoutDate || r.checkoutDate) : r.checkoutDate)) || r.status === "in_house" || r.status === "checkin")) ? (r.doorPassword || null) : null,
+      accessCode: (isPortalUnlocked && (isCheckinToday || (todayStr >= (hasRoomMoveGroup ? (refreshedRmSummary?.originalCheckinDate || r.checkinDate) : r.checkinDate) && todayStr <= (hasRoomMoveGroup ? (refreshedRmSummary?.finalCheckoutDate || r.checkoutDate) : r.checkoutDate)) || r.status === "in_house" || r.status === "checkin")) ? (r.accessCode || null) : null,
       guestName: r.guestName,
       guestPhone: r.guestPhone,
       guestEmail: r.guestEmail,
-      checkinDate: r.checkinDate,
-      checkoutDate: r.checkoutDate,
+      checkinDate: hasRoomMoveGroup ? (refreshedRmSummary?.originalCheckinDate || r.checkinDate) : r.checkinDate,
+      checkoutDate: hasRoomMoveGroup ? (refreshedRmSummary?.finalCheckoutDate || r.checkoutDate) : r.checkoutDate,
+      originalCheckinDate: hasRoomMoveGroup ? (refreshedRmSummary?.originalCheckinDate || r.checkinDate) : (r.originalStayCheckinDate || r.checkinDate),
+      roomMoveGroupId: r.roomMoveGroupId || null,
+      roomMoveTrail: hasRoomMoveGroup ? (refreshedRmSummary?.flatTrail || null) : null,
+      roomMoveSummary: hasRoomMoveGroup ? refreshedRmSummary : null,
       guestCount: r.guestCount || r.adults || 1,
       guests: r.guests || [],
       channel: r.channel || "site",
       dailyRate: hideFinancialForGuest ? 0 : (Number(r.dailyRate) || 0),
-      dailyRates: hideFinancialForGuest ? [] : (Array.isArray(r.dailyRates) ? r.dailyRates : []),
+      dailyRates: hideFinancialForGuest
+        ? []
+        : (hasRoomMoveGroup
+            ? (refreshedRmSummary?.segments || []).flatMap(seg => Array.isArray(seg.dailyRates) ? seg.dailyRates : [])
+            : (Array.isArray(r.dailyRates) ? r.dailyRates : [])),
       cleaningFee: hideFinancialForGuest ? 0 : (Number(r.cleaningFee) || 0),
-      charges: hideFinancialForGuest ? [] : (Array.isArray(r.charges) ? r.charges : []),
-      payments: hideFinancialForGuest ? [] : enrichReservationPayments(r),
+      charges: hideFinancialForGuest
+        ? []
+        : (hasRoomMoveGroup
+            ? (refreshedRmSummary?.segments || []).flatMap(seg => Array.isArray(seg.charges) ? seg.charges : [])
+            : (Array.isArray(r.charges) ? r.charges : [])),
+      payments: hideFinancialForGuest
+        ? []
+        : (hasRoomMoveGroup
+            ? (refreshedRmSummary?.segments || []).flatMap(seg => enrichReservationPayments(seg))
+            : enrichReservationPayments(r)),
       totalAmount: hideFinancialForGuest ? 0 : portalEffectiveTotal,
       paidAmount: hideFinancialForGuest ? 0 : portalEffectivePaid,
       cardTotalAmount: hideFinancialForGuest ? 0 : portalEffectiveCardTotal,
@@ -52318,7 +52796,12 @@ app.get("/api/pms/guests", (req, res) => {
       }
     }
 
-    const totalStays = Math.max(guestReservations.length, g.totalStays || (guestInvoices.length > 0 ? guestInvoices.length : 0));
+    const stayKeys = new Set();
+    for (const gr of guestReservations) {
+      if (!gr) continue;
+      stayKeys.add(gr.roomMoveGroupId ? `rm_${gr.roomMoveGroupId}` : `res_${gr.id || gr.code || stayKeys.size}`);
+    }
+    const totalStays = Math.max(stayKeys.size, g.totalStays || (guestInvoices.length > 0 ? guestInvoices.length : 0));
     const averageTicket = totalStays > 0 ? (totalSpent / totalStays) : 0;
 
     // Geração de Tags Automáticas Inteligentes
@@ -54681,7 +55164,17 @@ app.get("/api/pms/guests/:id", async (req, res) => {
     fnhrCompletedAt: guest.fnhrCompletedAt || fnhrCompletedAt,
     totalSpent: Number(totalSpent.toFixed(2)),
     minibarSpent: Number(minibarSpent.toFixed(2)),
-    totalStays: Math.max(guestReservations.length, guest.totalStays || 0),
+    totalStays: Math.max(
+      (() => {
+        const stayKeys = new Set();
+        for (const gr of guestReservations) {
+          if (!gr) continue;
+          stayKeys.add(gr.roomMoveGroupId ? `rm_${gr.roomMoveGroupId}` : `res_${gr.id || gr.code || stayKeys.size}`);
+        }
+        return stayKeys.size;
+      })(),
+      guest.totalStays || 0
+    ),
     reservations: guestReservations,
     stays: guestReservations,
     invoices: guestInvoices,
@@ -56075,6 +56568,10 @@ export function buildSanitizedReceptionItem(r, { now = null, bNow = null, todayC
     reSignatureReason: r.reSignatureReason || (isReSignatureNeeded ? "Alteração de acomodação (flat) ou período da estadia" : null),
     hasPreCheckin: Boolean(!isReSignatureNeeded && someCheckinDone),
     isCheckoutToday: Boolean(r.checkoutDate === today),
+    isRoomTransferToday: Boolean(!r.isRoomMoveHistoricalSegment && r.roomMoveCutDate && r.roomMoveCutDate === today),
+    roomMoveCutDate: r.roomMoveCutDate || null,
+    transferredFromFlatNumber: r.transferredFromFlatNumber || null,
+    roomMoveGroupId: r.roomMoveGroupId || null,
     isPartialCheckin: Boolean(r.isPartialCheckin),
     hasMinor: Boolean(r.hasMinor || sanitizedGuests.some(g => g.isMinor)),
     isCamposResident: Boolean(r.isCamposResident),
@@ -56100,7 +56597,9 @@ app.get("/api/reception/today", (req, res) => {
     // Pré-reservas aguardando pagamento NUNCA são enviadas/exibidas na recepção/portaria.
     const arrivals = (db.reservations || [])
       .filter(r => {
+        if (r.isRoomMoveHistoricalSegment) return false;
         const resDate = r.checkinDate ? r.checkinDate.substring(0, 10) : "";
+        if (r.roomMoveCutDate === today) return false;
         if (r.status === "cancelada" || r.status === "cancelado" || r.status === "completed" || r.status === "checked_out" || r.status === "expirada") {
           return false;
         }
@@ -56120,6 +56619,7 @@ app.get("/api/reception/today", (req, res) => {
     // 2. Hóspedes Atualmente Hospedados (In House)
     const inHouse = (db.reservations || [])
       .filter(r => {
+        if (r.isRoomMoveHistoricalSegment) return false;
         if (r.status === "cancelada" || r.status === "cancelado" || r.status === "completed" || r.status === "checked_out" || r.status === "expirada") {
           return false;
         }
@@ -56127,6 +56627,9 @@ app.get("/api/reception/today", (req, res) => {
           return false;
         }
         if (r.status === "in_house") {
+          return true;
+        }
+        if (r.roomMoveCutDate === today && !r.checkoutDone) {
           return true;
         }
         if (r.checkinDate < today && r.checkoutDate >= today && r.status !== "pendente" && r.status !== "pre_reserva") {
@@ -56138,12 +56641,12 @@ app.get("/api/reception/today", (req, res) => {
 
     // 3. Checkouts Realizados Hoje (com opção de desfazer permanente)
     const completedToday = (db.reservations || [])
-      .filter(r => r.status === "completed" && (r.actualCheckoutAt?.startsWith(today) || r.checkoutDate === today))
+      .filter(r => !r.isRoomMoveHistoricalSegment && r.status === "completed" && (r.actualCheckoutAt?.startsWith(today) || r.checkoutDate === today))
       .map(r => buildSanitizedReceptionItem(r, ctx));
 
     // 4. Todas as Saídas Previstas para Hoje
     const departures = (db.reservations || [])
-      .filter(r => r.checkoutDate === today && r.status !== "cancelada" && r.status !== "cancelado" && r.status !== "expirada" && !isPreReservationBlocked(r))
+      .filter(r => !r.isRoomMoveHistoricalSegment && r.checkoutDate === today && r.status !== "cancelada" && r.status !== "cancelado" && r.status !== "expirada" && !isPreReservationBlocked(r))
       .map(r => buildSanitizedReceptionItem(r, ctx));
 
     // 5. Reserva focada via deep-link de e-mail (?res=CODIGO) — higienizada e bloqueada se pré-reserva/cancelada
@@ -56151,11 +56654,14 @@ app.get("/api/reception/today", (req, res) => {
     const rawFocusCode = String(req.query?.res || "").trim();
     if (rawFocusCode) {
       const upperFocus = rawFocusCode.toUpperCase();
-      const targetRes = (db.reservations || []).find(r =>
+      let targetRes = (db.reservations || []).find(r =>
         String(r.id) === rawFocusCode ||
         String(r.code || "").trim().toUpperCase() === upperFocus ||
         String(r.reservationCode || "").trim().toUpperCase() === upperFocus
       );
+      if (targetRes?.isRoomMoveHistoricalSegment) {
+        targetRes = getActiveRoomMoveReservation(db, targetRes) || targetRes;
+      }
       if (
         targetRes &&
         targetRes.status !== "cancelada" &&
@@ -56667,6 +57173,46 @@ const handleCheckout = async (req, res) => {
   const r = (db.reservations || []).find(x => x.id === id || String(x.id) === String(rawId));
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
 
+  if (r.isRoomMoveHistoricalSegment) {
+    ensureReservationAuditLogs(r);
+    const nowIso = new Date().toISOString();
+    const todayCheck = getTodayStr();
+    r.previousStatus = r.status;
+    r.checkoutDone = true;
+    if (r.status !== "completed" && r.status !== "checked_out") {
+      r.status = "completed";
+    }
+    if (!r.actualCheckoutAt) r.actualCheckoutAt = nowIso;
+    r.checkoutMethod = r.checkoutMethod || "room_transfer";
+    r.updatedAt = nowIso;
+
+    const flatHist = db.flats.find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+    const hasIncomingOccupantToday = (db.reservations || []).some(other =>
+      other &&
+      other.id !== r.id &&
+      !other.isRoomMoveHistoricalSegment &&
+      (other.flatId === r.flatId || String(other.flatNumber) === String(r.flatNumber)) &&
+      other.status !== "cancelada" &&
+      other.status !== "cancelled" &&
+      other.status !== "no_show" &&
+      !other.checkoutDone &&
+      other.checkinDate <= todayCheck &&
+      other.checkoutDate > todayCheck
+    );
+    if (flatHist && !hasIncomingOccupantToday) {
+      flatHist.isOccupied = false;
+      flatHist.updatedAt = nowIso;
+    }
+    saveDatabase("historical_room_move_checkout");
+    return res.json({
+      success: true,
+      silentHistoricalTransferCheckout: true,
+      message: `Segmento histórico ${r.code} do Apt ${r.flatNumber} encerrado silenciosamente.`,
+      reservationId: r.id,
+      flatNumber: r.flatNumber
+    });
+  }
+
   ensureReservationAuditLogs(r);
   const previousStatus = r.status;
   r.previousStatus = previousStatus;
@@ -56792,9 +57338,12 @@ const handleCheckout = async (req, res) => {
         const nfseOut = await executeNfseEmissionInternal({
           reservationId: r.id,
           reservationCode: r.reservationCode || r.code || null,
+          isConsolidated: Boolean(officialDraft?.isRoomMoveConsolidated),
+          reservationIds: Array.isArray(officialDraft?.allReservationIds) ? officialDraft.allReservationIds : [Number(r.id)],
+          reservationCodes: Array.isArray(officialDraft?.allReservationCodes) ? officialDraft.allReservationCodes : [r.reservationCode || r.code].filter(Boolean),
           flatNumber: String(r.flatNumber || "113"),
-          checkinDate: r.checkinDate,
-          checkoutDate: effectiveInvoiceCheckout,
+          checkinDate: officialDraft?.checkinDate || r.checkinDate,
+          checkoutDate: officialDraft?.checkoutDate || effectiveInvoiceCheckout,
           guestId: guest ? Number(guest.id) : (r.guestId ? Number(r.guestId) : null),
           guestName: r.guestName || officialDraft?.guestName || tomadorNome,
           guestPhone: cleanPhone(r.guestPhone || guest?.phone || ""),
@@ -66070,14 +66619,22 @@ app.get("/api/nfse/invoices", (req, res) => {
 // Helper para construir a discriminação detalhada de NFS-e B2B / 4-Pontas
 function buildB2bNfseDescription(r, guest = null, company = null, agency = null) {
   if (!r) return "SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. DIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.";
-  let diarias = 1;
-  if (r.checkinDate && r.checkoutDate) {
-    const diff = Math.round((new Date(r.checkoutDate) - new Date(r.checkinDate)) / 86400000);
+  const rmSummary = r.roomMoveGroupId ? computeRoomMoveConsolidatedSummary(db, r) : null;
+  const hasRmGroup = Boolean(rmSummary && rmSummary.segments.length > 1);
+  const effCheckin = hasRmGroup ? (rmSummary.originalCheckinDate || r.checkinDate) : r.checkinDate;
+  const effCheckout = hasRmGroup ? (rmSummary.finalCheckoutDate || r.checkoutDate) : r.checkoutDate;
+  let diarias = hasRmGroup && rmSummary.totalNights ? Number(rmSummary.totalNights) : 1;
+  if (!hasRmGroup && effCheckin && effCheckout) {
+    const diff = Math.round((new Date(effCheckout) - new Date(effCheckin)) / 86400000);
     if (diff > 0) diarias = diff;
   }
   const guestName = (r.guestName || guest?.fullName || guest?.name || "Hóspede").toUpperCase();
-  const flatNum = r.flatNumber || "N/D";
-  const periodStr = `${r.checkinDate || ""} A ${r.checkoutDate || ""} (${diarias} ${diarias === 1 ? "DIÁRIA" : "DIÁRIAS"} COM CAFÉ DA MANHÃ, WI-FI, ENERGIA E LIMPEZA INCLUSA)`;
+  const flatTrailArr = hasRmGroup && Array.isArray(rmSummary.flatTrail)
+    ? rmSummary.flatTrail.map(ft => (typeof ft === "object" ? ft.flatNumber : ft)).filter(Boolean)
+    : [];
+  const flatNum = flatTrailArr.length > 1 ? flatTrailArr.join(" / ") : (r.flatNumber || "N/D");
+  const flatLabel = flatTrailArr.length > 1 ? `FLATS: ${flatNum}` : `FLAT: ${flatNum}`;
+  const periodStr = `${effCheckin || ""} A ${effCheckout || ""} (${diarias} ${diarias === 1 ? "DIÁRIA" : "DIÁRIAS"} COM CAFÉ DA MANHÃ, WI-FI, ENERGIA E LIMPEZA INCLUSA)`;
   const metaParts = [];
   if (r.b2bReservationNumber || r.externalReservationNumber) {
     metaParts.push(`RESERVA B2B Nº ${r.b2bReservationNumber || r.externalReservationNumber}`);
@@ -66096,7 +66653,7 @@ function buildB2bNfseDescription(r, guest = null, company = null, agency = null)
   if (agName) {
     metaParts.push(`AGÊNCIA: ${agName.toUpperCase()}${r.agencyPosUnit ? ` (${r.agencyPosUnit.toUpperCase()})` : ""}`);
   }
-  return `SERVIÇOS DE HOSPEDAGEM CORPORATIVA EM FLAT MOBILIADO CORPFLATS. HÓSPEDE: ${guestName} | FLAT: ${flatNum} | PERÍODO: ${periodStr}${metaParts.length > 0 ? " | " + metaParts.join(" | ") : ""}.`;
+  return `SERVIÇOS DE HOSPEDAGEM CORPORATIVA EM FLAT MOBILIADO CORPFLATS. HÓSPEDE: ${guestName} | ${flatLabel} | PERÍODO: ${periodStr}${metaParts.length > 0 ? " | " + metaParts.join(" | ") : ""}.`;
 }
 
 // Fila de Reservas Pendentes de Emissão de NFS-e
@@ -66113,19 +66670,25 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       for (const id of inv.reservationIds) authorizedResIds.add(Number(id));
     }
     if (inv.reservationCode) authorizedResCodes.add(String(inv.reservationCode));
+    if (Array.isArray(inv.reservationCodes)) {
+      for (const c of inv.reservationCodes) authorizedResCodes.add(String(c));
+    }
   }
 
   const reservations = db.reservations || [];
   const pending = [];
 
   for (const r of reservations) {
+    if (r.isRoomMoveHistoricalSegment) continue;
     if (r.status === "cancelada" || r.status === "cancelled" || r.status === "no_show") continue;
 
-    if (authorizedResIds.has(Number(r.id)) || (r.code && authorizedResCodes.has(String(r.code)))) continue;
-    if (r.invoiceId) {
-      const linked = (db.invoices || []).find(i => i.id === r.invoiceId && i.status === "autorizada");
-      if (linked) continue;
-    }
+    const rmGroupSegsForSkip = r.roomMoveGroupId ? getRoomMoveGroupReservations(db, r) : [r];
+    const anySegAuthorized = rmGroupSegsForSkip.some(seg =>
+      authorizedResIds.has(Number(seg.id)) ||
+      (seg.code && authorizedResCodes.has(String(seg.code))) ||
+      (seg.invoiceId && (db.invoices || []).some(i => i.id === seg.invoiceId && i.status === "autorizada"))
+    );
+    if (anySegAuthorized) continue;
 
     const guest = (db.guests || []).find(g =>
       (r.guestId && Number(g.id) === Number(r.guestId)) ||
@@ -66511,16 +67074,35 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       pendingReasons.push("Endereço não cadastrado");
     }
 
-    let diarias = 1;
-    if (r.checkinDate && r.checkoutDate) {
-      const diff = Math.round((new Date(r.checkoutDate) - new Date(r.checkinDate)) / 86400000);
+    const rmSummaryPending = r.roomMoveGroupId ? computeRoomMoveConsolidatedSummary(db, r) : null;
+    const hasRmGroupPending = Boolean(rmSummaryPending && rmSummaryPending.segments.length > 1);
+    const effPendingCheckin = hasRmGroupPending ? (rmSummaryPending.originalCheckinDate || r.checkinDate) : r.checkinDate;
+    const effPendingCheckout = hasRmGroupPending ? (rmSummaryPending.finalCheckoutDate || r.checkoutDate) : r.checkoutDate;
+    let diarias = hasRmGroupPending && rmSummaryPending.totalNights ? Number(rmSummaryPending.totalNights) : 1;
+    if (!hasRmGroupPending && effPendingCheckin && effPendingCheckout) {
+      const diff = Math.round((new Date(effPendingCheckout) - new Date(effPendingCheckin)) / 86400000);
       if (diff > 0) diarias = diff;
     }
     const breakdown = computeReservationAccommodationAndConsumption(r, db);
-    const valorServico = Number(breakdown.accommodationAmount || (Number(r.dailyRate || 0) * diarias) || 250);
+    const valorServico = Number(
+      breakdown.accommodationAmount ||
+      (hasRmGroupPending ? rmSummaryPending.accommodationTotal : 0) ||
+      (Number(r.dailyRate || 0) * diarias) ||
+      250
+    );
     const discriminacaoSugerida = buildB2bNfseDescription(r, guest, company, agency);
+    const rmPendingGroupIds = new Set(
+      (hasRmGroupPending ? rmSummaryPending.allReservationIds : [r.id]).map(id => Number(id))
+    );
+    const rmPendingGroupCodes = new Set(
+      (hasRmGroupPending ? rmSummaryPending.allReservationCodes : [r.code]).filter(Boolean).map(String)
+    );
     const resBoletos = (db.boletos || []).filter(b =>
-      b && (Number(b.reservationId) === Number(r.id) || (r.code && b.reservationCode === r.code))
+      b && (
+        rmPendingGroupIds.has(Number(b.reservationId)) ||
+        (b.reservationCode && rmPendingGroupCodes.has(String(b.reservationCode))) ||
+        (Array.isArray(b.reservationIds) && b.reservationIds.some(id => rmPendingGroupIds.has(Number(id))))
+      )
     ).map(b => enrichBoletoDynamicStatus(b));
     const crmEntity = company || agency || guest || {};
 
@@ -66529,8 +67111,14 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       reservationId: r.id,
       code: r.code || `RES-${r.flatNumber || '000'}-${r.id}`,
       flatNumber: String(r.flatNumber || ""),
-      checkinDate: r.checkinDate,
-      checkoutDate: r.checkoutDate,
+      checkinDate: effPendingCheckin,
+      checkoutDate: effPendingCheckout,
+      originalCheckinDate: effPendingCheckin,
+      totalAmount: hasRmGroupPending ? rmSummaryPending.totalAmount : Number(r.totalAmount || 0),
+      paidAmount: hasRmGroupPending ? rmSummaryPending.paidAmount : Number(r.paidAmount || 0),
+      roomMoveGroupId: r.roomMoveGroupId || null,
+      flatTrail: hasRmGroupPending ? rmSummaryPending.flatTrail : null,
+      roomMoveSummary: hasRmGroupPending ? rmSummaryPending : null,
       diarias,
       valorServico,
       valorSugerido: valorServico,
@@ -66761,9 +67349,11 @@ export async function executeNfseEmissionInternal(payload) {
       )
     : null;
 
+  const matchedRmSummary = matchedRes?.roomMoveGroupId ? computeRoomMoveConsolidatedSummary(db, matchedRes) : null;
+  const matchedRmSegments = matchedRmSummary && matchedRmSummary.segments.length > 1 ? matchedRmSummary.segments : [];
   const consolidatedResList = (payload.isConsolidated && Array.isArray(payload.reservationIds) && Array.isArray(db.reservations))
     ? db.reservations.filter(r => r && payload.reservationIds.some(rid => Number(r.id) === Number(rid) || String(r.code) === String(rid)))
-    : [];
+    : matchedRmSegments;
   const relevantGuestReservations = [
     ...consolidatedResList,
     ...(matchedRes && !consolidatedResList.some(cr => Number(cr.id) === Number(matchedRes.id)) ? [matchedRes] : [])
@@ -67767,15 +68357,21 @@ export async function executeNfseEmissionInternal(payload) {
 
   const defaultDesc = matchedRes
     ? buildB2bNfseDescription(
-        matchedRes,
+        matchedRmSummary?.activeReservation || matchedRes,
         null,
         resolvedCompanyId ? db.companies.find(c => Number(c.id) === Number(resolvedCompanyId)) : null,
         resolvedAgencyId ? db.agencies.find(a => Number(a.id) === Number(resolvedAgencyId)) : null
       )
     : `SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. FLAT ${payload.flatNumber || ''}. DIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.`;
   const resolvedDiscriminacao = payload.discriminacao || payload.descricaoServico || defaultDesc;
-  const resolvedCheckinDate = payload.checkinDate || payload.checkIn || matchedRes?.checkinDate || null;
-  const resolvedCheckoutDate = payload.checkoutDate || payload.checkOut || matchedRes?.checkoutDate || null;
+  const resolvedCheckinDate =
+    matchedRmSegments.length > 0 && (!payload.checkinDate || String(payload.checkinDate).slice(0, 10) === String(matchedRes?.checkinDate || "").slice(0, 10))
+      ? (matchedRmSummary.originalCheckinDate || matchedRes?.checkinDate || null)
+      : (payload.checkinDate || payload.checkIn || matchedRes?.checkinDate || null);
+  const resolvedCheckoutDate =
+    matchedRmSegments.length > 0 && (!payload.checkoutDate || String(payload.checkoutDate).slice(0, 10) === String(matchedRes?.checkoutDate || "").slice(0, 10))
+      ? (matchedRmSummary.finalCheckoutDate || matchedRes?.checkoutDate || null)
+      : (payload.checkoutDate || payload.checkOut || matchedRes?.checkoutDate || null);
   const resolvedAliquota = Number(payload.aliquota || payload.aliquotaIss || 2.0);
   const targetCompForDelivery = resolvedCompanyId ? (db.companies || []).find(c => Number(c.id) === Number(resolvedCompanyId)) : null;
   const isTargetCompNoBilling = Boolean(targetCompForDelivery && (targetCompForDelivery.billingEnabled === false || targetCompForDelivery.isInvoiceOnly === true));
@@ -67935,9 +68531,21 @@ export async function executeNfseEmissionInternal(payload) {
       checkoutDate: resolvedCheckoutDate,
       reservationId: payload.reservationId ? Number(payload.reservationId) : (matchedRes?.id ? Number(matchedRes.id) : null),
       reservationCode: payload.reservationCode || matchedRes?.code || null,
-      isConsolidated: Boolean(payload.isConsolidated),
-      reservationIds: Array.isArray(payload.reservationIds) ? payload.reservationIds.map(Number) : (payload.reservationId ? [Number(payload.reservationId)] : (matchedRes?.id ? [Number(matchedRes.id)] : [])),
-      reservationCodes: Array.isArray(payload.reservationCodes) ? payload.reservationCodes : (payload.reservationCode ? [payload.reservationCode] : (matchedRes?.code ? [matchedRes.code] : [])),
+      isConsolidated: Boolean(payload.isConsolidated || matchedRmSegments.length > 0),
+      roomMoveGroupId: matchedRmSummary?.roomMoveGroupId || null,
+      flatTrail: matchedRmSegments.length > 0 ? matchedRmSummary.flatTrail : undefined,
+      reservationIds: Array.from(
+        new Set([
+          ...(Array.isArray(payload.reservationIds) ? payload.reservationIds.map(Number) : (payload.reservationId ? [Number(payload.reservationId)] : (matchedRes?.id ? [Number(matchedRes.id)] : []))),
+          ...(matchedRmSegments.length > 0 ? matchedRmSummary.allReservationIds.map(Number) : [])
+        ].filter(n => !isNaN(n)))
+      ),
+      reservationCodes: Array.from(
+        new Set([
+          ...(Array.isArray(payload.reservationCodes) ? payload.reservationCodes : (payload.reservationCode ? [payload.reservationCode] : (matchedRes?.code ? [matchedRes.code] : []))),
+          ...(matchedRmSegments.length > 0 ? matchedRmSummary.allReservationCodes : [])
+        ].filter(Boolean))
+      ),
       consolidatedStaysCount: payload.consolidatedStaysCount || (payload.reservationId ? 1 : (Array.isArray(payload.reservationIds) ? payload.reservationIds.length : 1)),
       valorServico: valor,
       aliquota: resolvedAliquota,
@@ -67960,6 +68568,12 @@ export async function executeNfseEmissionInternal(payload) {
     if (matchedRes) {
       matchedRes.invoiceId = newInvoice.id;
       matchedRes.numeroNfse = newInvoice.numeroNfse;
+    }
+    for (const seg of matchedRmSegments) {
+      if (seg) {
+        seg.invoiceId = newInvoice.id;
+        seg.numeroNfse = newInvoice.numeroNfse;
+      }
     }
 
     enableAutoEmitInvoiceForGuestAndReservations(db, {
@@ -68789,9 +69403,21 @@ app.post("/api/nfse/emit-batch", async (req, res) => {
             : (batchGuestPhoneSet instanceof Set && rawBatchTel && rawBatchTel.length >= 8 && Array.from(batchGuestPhoneSet).some(gp => gp && gp.length >= 8 && (gp === rawBatchTel || gp.slice(-8) === rawBatchTel.slice(-8))))
         )) ? "" : rawBatchTel;
 
+        const rmSummaryBatch = reservationObj.roomMoveGroupId ? computeRoomMoveConsolidatedSummary(db, reservationObj) : null;
+        const hasRmBatch = Boolean(rmSummaryBatch && rmSummaryBatch.segments.length > 1);
+        const batchBreakdown = computeReservationAccommodationAndConsumption(reservationObj, db);
+        const batchValorServico = Number(
+          batchBreakdown.accommodationAmount ||
+          (hasRmBatch ? rmSummaryBatch.accommodationTotal : Number(reservationObj.totalAmount)) ||
+          (Number(reservationObj.dailyRate || 0) * (hasRmBatch ? (rmSummaryBatch.totalNights || diarias) : diarias)) ||
+          250
+        );
         payload = {
           reservationId: reservationObj.id,
           reservationCode: reservationObj.code,
+          reservationIds: hasRmBatch ? rmSummaryBatch.allReservationIds : [Number(reservationObj.id)],
+          reservationCodes: hasRmBatch ? rmSummaryBatch.allReservationCodes : [reservationObj.code].filter(Boolean),
+          isConsolidated: hasRmBatch,
           guestId: guest?.id || reservationObj.guestId,
           companyId: company?.id ? Number(company.id) : null,
           agencyId: agency?.id ? Number(agency.id) : null,
@@ -68813,9 +69439,9 @@ app.post("/api/nfse/emit-batch", async (req, res) => {
           tomadorCidade: isAg ? agency.city : (isReq ? reqCrm?.city : (isPj ? (company?.city || guest?.city) : guest?.city)),
           tomadorUf: isAg ? agency.state : (isReq ? reqCrm?.state : (isPj ? (company?.state || guest?.state) : guest?.state)),
           flatNumber: reservationObj.flatNumber,
-          checkinDate: reservationObj.checkinDate,
-          checkoutDate: reservationObj.checkoutDate,
-          valorServico: Number(reservationObj.totalAmount || (Number(reservationObj.dailyRate || 0) * diarias) || 250),
+          checkinDate: hasRmBatch ? (rmSummaryBatch.originalCheckinDate || reservationObj.checkinDate) : reservationObj.checkinDate,
+          checkoutDate: hasRmBatch ? (rmSummaryBatch.finalCheckoutDate || reservationObj.checkoutDate) : reservationObj.checkoutDate,
+          valorServico: batchValorServico,
           discriminacao: buildB2bNfseDescription(reservationObj, guest, company, agency)
         };
       } else if (item && typeof item === "object") {
@@ -69006,11 +69632,27 @@ app.post("/api/nfse/emit-batch", async (req, res) => {
         }
       }
 
-      if (payload && payload.reservationId) {
+      if (payload && (payload.reservationId || payload.reservationCode)) {
+        const batchGroupIds = new Set(
+          [
+            ...(Array.isArray(payload.reservationIds) ? payload.reservationIds.map(Number) : []),
+            ...(payload.reservationId ? [Number(payload.reservationId)] : []),
+            ...(reservationObj?.roomMoveGroupId ? getRoomMoveGroupReservations(db, reservationObj).map(s => Number(s.id)) : [])
+          ].filter(n => !isNaN(n))
+        );
+        const batchGroupCodes = new Set(
+          [
+            ...(Array.isArray(payload.reservationCodes) ? payload.reservationCodes : []),
+            ...(payload.reservationCode ? [String(payload.reservationCode)] : []),
+            ...(reservationObj?.roomMoveGroupId ? getRoomMoveGroupReservations(db, reservationObj).map(s => String(s.code || "")) : [])
+          ].filter(Boolean)
+        );
         const existingInv = (db.invoices || []).find(i =>
           i.status === "autorizada" && (
-            Number(i.reservationId) === Number(payload.reservationId) ||
-            (Array.isArray(i.reservationIds) && i.reservationIds.includes(Number(payload.reservationId)))
+            (i.reservationId != null && batchGroupIds.has(Number(i.reservationId))) ||
+            (i.reservationCode && batchGroupCodes.has(String(i.reservationCode))) ||
+            (Array.isArray(i.reservationIds) && i.reservationIds.some(id => batchGroupIds.has(Number(id)))) ||
+            (Array.isArray(i.reservationCodes) && i.reservationCodes.some(c => batchGroupCodes.has(String(c))))
           )
         );
         if (existingInv) {
@@ -75119,7 +75761,7 @@ function buildBroadcastDataset() {
   const stayCountByGuestId = new Map();
 
   for (const r of reservations) {
-    if (!r) continue;
+    if (!r || r.isRoomMoveHistoricalSegment) continue;
     const st = String(r.status || "").toLowerCase().trim();
     if (["cancelada", "cancelled", "cancelado", "expirada", "no_show"].includes(st)) continue;
     const titular = (Array.isArray(r.guests) && (r.guests.find(g => Number(g?.index) === 1) || r.guests[0])) || null;
@@ -75140,7 +75782,7 @@ function buildBroadcastDataset() {
   const knownLocalityByGuestId = new Map();
 
   for (const r of reservations) {
-    if (!r) continue;
+    if (!r || r.isRoomMoveHistoricalSegment) continue;
     const st = String(r.status || "").toLowerCase().trim();
     if (["cancelada", "cancelled", "cancelado", "expirada", "no_show"].includes(st)) continue;
 
@@ -80393,10 +81035,11 @@ app.get("/api/pms/garage/daily-sheet", (req, res) => {
   try {
     const todayStr = getIsoDateStr(new Date());
 
-    // Busca reservas ativas hoje ou com checkin hoje (exclui canceladas, expiradas e pré-reservas não pagas)
+    // Busca reservas ativas hoje ou com checkin hoje (exclui canceladas, expiradas, segmentos históricos já encerrados e pré-reservas não pagas)
     const activeReservations = (db.reservations || []).filter(r =>
       r.checkinDate <= todayStr &&
       r.checkoutDate >= todayStr &&
+      !(r.isRoomMoveHistoricalSegment && r.checkoutDate <= todayStr) &&
       r.status !== "cancelada" &&
       r.status !== "cancelado" &&
       r.status !== "expirada" &&
@@ -81398,7 +82041,7 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
             ) ||
             (db.reservations || []).find((resItem) => resItem && matchesWebhookRes(resItem));
           if (r) {
-            if ((r.packageId || r.packageCode) && !r.pendingStayExtension) {
+            if ((r.packageId || r.packageCode || (r.roomMoveGroupId && getRoomMoveGroupReservations(db, r).length > 1)) && !r.pendingStayExtension) {
               await confirmReservationPayment(r, {
                 amount: valorPago,
                 paidAt: item.horario || new Date().toISOString(),
@@ -81707,15 +82350,22 @@ async function checkInterBankingExtratoPix(r) {
 
     const isPkgExtrato = Boolean((r.packageId || r.packageCode) && !r.pendingStayExtension);
     const pkgSumExtrato = isPkgExtrato ? computePackageSummary(db, r.packageId || r.packageCode, { computeCardAmountFromPix }) : null;
+    const rmSumExtrato = (!pkgSumExtrato && r.roomMoveGroupId) ? computeRoomMoveConsolidatedSummary(db, r) : null;
+    const hasRmExtrato = Boolean(rmSumExtrato && rmSumExtrato.segments.length > 1);
 
     const cleanResCode = String(r.code || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+    const cleanRmCodes = hasRmExtrato
+      ? rmSumExtrato.allReservationCodes.map(c => String(c || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase()).filter(c => c.length >= 5)
+      : [];
     const cleanPkgCode = String(r.packageCode || r.packageId || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
     const cleanPixTxId = String(r.pixTxId || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
     const cleanPkgPixTxId = String(r.packagePixTxId || pkgSumExtrato?.pixTxId || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
-    const expectedAmount = pkgSumExtrato ? Number(pkgSumExtrato.totalAmount || 0) : Number(r.totalAmount || 0);
+    const expectedAmount = pkgSumExtrato
+      ? Number(pkgSumExtrato.totalAmount || 0)
+      : (hasRmExtrato ? Number(rmSumExtrato.totalAmount || 0) : Number(r.totalAmount || 0));
     const pendingAmount = pkgSumExtrato
       ? Math.max(0, Number(pkgSumExtrato.pendingAmount || 0))
-      : Math.max(0, expectedAmount - (Number(r.paidAmount) || 0));
+      : (hasRmExtrato ? Math.max(0, Number(rmSumExtrato.pendingAmount || 0)) : Math.max(0, expectedAmount - (Number(r.paidAmount) || 0)));
 
     for (const t of data.transacoes) {
       if (t.tipoTransacao !== "PIX" || t.tipoOperacao !== "C") continue;
@@ -81724,11 +82374,12 @@ async function checkInterBankingExtratoPix(r) {
       const txIdFromDetails = String(t.detalhes?.txId || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
       const endToEndId = t.detalhes?.endToEndId || t.idTransacao;
 
-      // Verifica se essa transação já foi vinculada a OUTRA reserva (ignorando irmãs do mesmo pacote)
+      // Verifica se essa transação já foi vinculada a OUTRA reserva (ignorando irmãs do mesmo pacote ou grupo de troca de flat)
       const alreadyClaimedByOther = (db.reservations || []).some(other =>
         other.id !== r.id &&
         !(r.packageId && other.packageId === r.packageId) &&
         !(r.packageCode && other.packageCode === r.packageCode) &&
+        !(r.roomMoveGroupId && other.roomMoveGroupId === r.roomMoveGroupId) &&
         other.pixEndToEndId === endToEndId &&
         other.paymentStatus === "pago_total"
       );
@@ -81738,6 +82389,7 @@ async function checkInterBankingExtratoPix(r) {
       const txIdMatched = Boolean(
         txIdFromDetails && (
           txIdFromDetails === cleanResCode ||
+          cleanRmCodes.some(rc => txIdFromDetails === rc || txIdFromDetails.includes(rc) || rc.includes(txIdFromDetails)) ||
           (cleanPkgCode && txIdFromDetails === cleanPkgCode) ||
           txIdFromDetails === cleanPixTxId ||
           (cleanPkgPixTxId && txIdFromDetails === cleanPkgPixTxId) ||
@@ -81791,6 +82443,7 @@ async function checkInterBankingExtratoPix(r) {
       const descPixUpper = String(t.detalhes?.descricaoPix || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
       const descMatched = Boolean(
         (cleanResCode.length >= 5 && descPixUpper.includes(cleanResCode)) ||
+        cleanRmCodes.some(rc => descPixUpper.includes(rc)) ||
         (cleanPkgCode.length >= 5 && descPixUpper.includes(cleanPkgCode))
       );
 
@@ -82758,6 +83411,170 @@ async function confirmReservationPayment(r, {
     }
   }
 
+  const cascadeGroupSegs = r.roomMoveGroupId ? getRoomMoveGroupReservations(db, r) : [r];
+  if (cascadeGroupSegs.length > 1) {
+    const activeCascadeSeg = getActiveRoomMoveReservation(db, r) || cascadeGroupSegs[cascadeGroupSegs.length - 1];
+    const priorGroupPaid = Math.round(
+      cascadeGroupSegs.reduce((s, seg) => s + Math.max(0, Number(seg.paidAmount || 0)), 0) * 100
+    ) / 100;
+    const totalGroupAmount = Math.round(
+      cascadeGroupSegs.reduce((s, seg) => s + Math.max(0, Number(seg.totalAmount || 0)), 0) * 100
+    ) / 100;
+    const pendingGroupBefore = Math.max(0, Math.round((totalGroupAmount - priorGroupPaid) * 100) / 100);
+    const explicitPaidInput = amount !== undefined && amount !== null && amount !== "" ? Number(amount) : null;
+    const valorPago = explicitPaidInput !== null ? explicitPaidInput : (pendingGroupBefore || totalGroupAmount || 0);
+    const isCard = Boolean(
+      mpPaymentId ||
+      /cart[aã]o|card|credito|crédito|debito|débito|mercadopago|infinite/i.test(String(paymentMethod || "")) ||
+      String(source || "").toLowerCase().includes("mercado pago")
+    );
+    const cardPendingBefore = computeCardAmountFromPix(pendingGroupBefore);
+    const isComplementaryPayment = Boolean(
+      priorGroupPaid > 0 &&
+      pendingGroupBefore > 0 &&
+      valorPago > 0 &&
+      (
+        Math.abs(valorPago - pendingGroupBefore) <= 0.5 ||
+        (isCard && Math.abs(valorPago - cardPendingBefore) <= 0.5)
+      )
+    );
+    const amountToCascade = explicitPaidInput === null
+      ? pendingGroupBefore
+      : (priorGroupPaid > 0 && Math.abs(valorPago - totalGroupAmount) <= 0.5 && !isComplementaryPayment
+          ? Math.max(0, Math.round((valorPago - priorGroupPaid) * 100) / 100)
+          : valorPago);
+
+    const nowCascadeIso = paidAt || r.paidAt || new Date().toISOString();
+    const isPix = /pix/i.test(source) || /pix/i.test(paymentMethod || "") || (!isCard && (Boolean(endToEndId) || Boolean(txId)));
+    let remainingToCascade = amountToCascade;
+    let wasAnyPreReserva = false;
+
+    for (let idx = 0; idx < cascadeGroupSegs.length; idx++) {
+      const seg = cascadeGroupSegs[idx];
+      const segPrior = Math.max(0, Number(seg.paidAmount || 0));
+      const segTotal = Number(seg.totalAmount || 0);
+      const segPending = Math.max(0, Math.round((segTotal - segPrior) * 100) / 100);
+      const isLastSeg = idx === cascadeGroupSegs.length - 1;
+      const alloc = isLastSeg
+        ? Math.max(0, Math.round(remainingToCascade * 100) / 100)
+        : Math.min(segPending, Math.max(0, Math.round(remainingToCascade * 100) / 100));
+
+      const segWasPre =
+        seg.status === "pre_reserva" ||
+        seg.status === "pendente" ||
+        seg.status === "expirada" ||
+        !seg.status ||
+        seg.isPreReservation ||
+        Boolean(seg.holdPreset || seg._preReservationRulerSentAt);
+      if (segWasPre) wasAnyPreReserva = true;
+
+      if (alloc > 0) {
+        const nextSegPaid = Math.round((segPrior + alloc) * 100) / 100;
+        if (isCard && isLastSeg && nextSegPaid > segTotal && segTotal > 0) {
+          seg.basePixTotalAmount = seg.basePixTotalAmount || segTotal;
+          seg.totalAmount = nextSegPaid;
+          seg.cardTotalAmount = nextSegPaid;
+        }
+        const effSegTotal = Number(seg.totalAmount || 0);
+        seg.paidAmount = nextSegPaid;
+        seg.paymentStatus = effSegTotal > 0 && nextSegPaid + 0.01 < effSegTotal ? "sinal_pago" : "pago_total";
+        seg.paidAt = paidAt || seg.paidAt || nowCascadeIso;
+
+        if (isCard) {
+          if (mpPaymentId || txId) seg.mpPaymentId = String(mpPaymentId || txId);
+          if (!seg.pixEndToEndId) seg.pixTxId = null;
+          seg.paymentMethod = (paymentMethod && paymentMethod !== "pix") ? paymentMethod : "cartao_credito";
+        } else {
+          if (endToEndId) seg.pixEndToEndId = endToEndId;
+          if (txId) seg.pixTxId = txId;
+          if (paymentMethod) seg.paymentMethod = paymentMethod;
+        }
+
+        if (!Array.isArray(seg.payments)) seg.payments = [];
+        const existingSegSum = seg.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+        const segPayNote = isCard
+          ? `Cartão de Crédito confirmado (Rateio Troca de Flat) via ${source}`
+          : (isPix
+              ? `PIX confirmado (Rateio Troca de Flat) via ${source}${endToEndId ? ` (E2E: ${endToEndId})` : ""}`
+              : `Pagamento confirmado via ${source}`);
+        const deltaRecord = Math.max(alloc, Math.round((nextSegPaid - existingSegSum) * 100) / 100);
+        if (deltaRecord > 0) {
+          seg.payments.push({
+            id: isCard ? `pay_card_rm_${seg.id}_${Date.now()}_${idx}` : (isPix ? `pay_pix_rm_${seg.id}_${Date.now()}_${idx}` : `pay_rm_${seg.id}_${Date.now()}_${idx}`),
+            amount: alloc,
+            method: seg.paymentMethod || (isCard ? "cartao_credito" : (isPix ? "pix" : "outro")),
+            date: seg.paidAt,
+            ...(isCard
+              ? { mpPaymentId: mpPaymentId || seg.mpPaymentId || undefined }
+              : (isPix ? { endToEndId: endToEndId || seg.pixEndToEndId || undefined, txId: txId || seg.pixTxId || undefined } : {})),
+            notes: segPayNote
+          });
+        }
+        seg.payments = enrichReservationPayments(seg);
+
+        if ((seg.paymentStatus === "pago_total" || seg.paymentStatus === "sinal_pago") && segWasPre) {
+          seg.status = "confirmada";
+          delete seg.expiredAt;
+          delete seg.expiresAt;
+        }
+        remainingToCascade = Math.max(0, Math.round((remainingToCascade - alloc) * 100) / 100);
+      } else if (segTotal > 0 && segPrior + 0.01 >= segTotal) {
+        seg.paymentStatus = "pago_total";
+      }
+
+      if (seg.pendingStayExtension) {
+        seg.pendingStayExtension.status = "paid";
+        seg.pendingStayExtension.paidAt = seg.paidAt || nowCascadeIso;
+        if (endToEndId) seg.pendingStayExtension.pixEndToEndId = endToEndId;
+      }
+    }
+
+    const cumulativeGroupPaid = Math.round(
+      cascadeGroupSegs.reduce((s, seg) => s + Math.max(0, Number(seg.paidAmount || 0)), 0) * 100
+    ) / 100;
+
+    createNotification({
+      category: "checkout",
+      title: isCard
+        ? `💳 Cartão Aprovado (${source}): R$ ${valorPago.toLocaleString("pt-BR")} (Apt ${activeCascadeSeg.flatNumber || ""})`
+        : `💰 PIX Confirmado: R$ ${valorPago.toLocaleString("pt-BR")} (Apt ${activeCascadeSeg.flatNumber || ""})`,
+      message: `Reserva ${activeCascadeSeg.code} liquidada com sucesso via ${source} por ${pagador || activeCascadeSeg.guestName}!`,
+      severity: "success",
+      metadata: { reservationCode: activeCascadeSeg.code, txid: activeCascadeSeg.pixTxId, mpPaymentId: activeCascadeSeg.mpPaymentId, amount: valorPago, endToEndId: activeCascadeSeg.pixEndToEndId },
+      targetUrl: `/reservas`
+    });
+
+    saveDatabase();
+
+    if (activeCascadeSeg.paymentStatus === "pago_total") {
+      try {
+        await dispatchServerSidePurchaseConversion(db, activeCascadeSeg, {
+          value: isComplementaryPayment ? valorPago : (cumulativeGroupPaid || valorPago),
+          paymentMethod: activeCascadeSeg.paymentMethod || (isCard ? "cartao_credito" : "pix"),
+          source
+        });
+        saveDatabase();
+      } catch (capiErr) {
+        console.warn("[confirmReservationPayment CAPI] Aviso:", capiErr?.message || capiErr);
+      }
+    }
+
+    if (
+      activeCascadeSeg.paymentStatus === "pago_total" &&
+      (isComplementaryPayment || Boolean(activeCascadeSeg.pendingStayExtension) || (activeCascadeSeg.previousCheckoutDate && activeCascadeSeg.previousCheckoutDate < activeCascadeSeg.checkoutDate))
+    ) {
+      await ensureExtensionPaymentConfirmationDispatched(activeCascadeSeg, {
+        valorPago,
+        priorPaid: priorGroupPaid,
+        paymentMethod: activeCascadeSeg.paymentMethod || (isCard ? "cartao_credito" : "pix"),
+        source
+      });
+    }
+
+    await ensurePaymentConfirmationDispatched(activeCascadeSeg, { wasPreReserva: wasAnyPreReserva });
+    return;
+  }
+
   const priorPaid = Math.max(0, Number(r.paidAmount || 0));
   const totalAmount = Number(r.totalAmount || 0);
   const pendingBefore = Math.max(0, Math.round((totalAmount - priorPaid) * 100) / 100);
@@ -82965,9 +83782,12 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
     await sweepExpiredPreReservations(db, saveDatabase);
     const { code } = req.params;
     const isPkgLookup = isPackageCode(code);
-    const r = isPkgLookup
+    let r = isPkgLookup
       ? getPrimaryPackageReservation(db, code)
       : (db.reservations || []).find(x => x.code === code || String(x.id) === code || x.pixTxId === code || x.packagePixTxId === code);
+    if (r?.isRoomMoveHistoricalSegment) {
+      r = getActiveRoomMoveReservation(db, r) || r;
+    }
     if (!r) return res.status(404).json({ error: "Reserva não encontrada." });
 
     const statusGuestParam = String(req.query?.guest || req.query?.guestIndex || req.query?.hospede || "").trim();
@@ -83184,12 +84004,16 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
         mpPreferenceId: null
       }));
     }
-    const hasPendingDirectBalance = (r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial" || r.paymentStatus === "pendente") &&
-      Number(r.totalAmount) > 0 &&
-      Number(r.paidAmount || 0) + 0.01 < Number(r.totalAmount);
+    const rmSummaryStatus = r.roomMoveGroupId ? computeRoomMoveConsolidatedSummary(db, r) : null;
+    const hasRmGroupStatus = Boolean(rmSummaryStatus && rmSummaryStatus.segments.length > 1);
+    const hasPendingDirectBalance = hasRmGroupStatus
+      ? rmSummaryStatus.pendingAmount > 0.01
+      : ((r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial" || r.paymentStatus === "pendente") &&
+          Number(r.totalAmount) > 0 &&
+          Number(r.paidAmount || 0) + 0.01 < Number(r.totalAmount));
 
     // Se já está marcado como pago ou canal OTA sem saldo direto pendente (Booking/Airbnb), retorna de imediato
-    if (!isUnverifiedPreReservation(r) && !hasPendingDirectBalance && (isOta || r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0))) {
+    if (!isUnverifiedPreReservation(r) && !hasPendingDirectBalance && (isOta || (hasRmGroupStatus ? rmSummaryStatus.isFullyPaid : (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0))))) {
       if (!isOta && (r.guestPhone || reservationHasAnyContact(r, db))) {
         ensurePaymentConfirmationDispatched(r);
       }
@@ -83217,10 +84041,10 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
         paymentStatus: "pago_total",
         paymentMethod: isSettledByCard ? (r.paymentMethod && r.paymentMethod !== "pix" ? r.paymentMethod : "cartao_credito") : (r.paymentMethod || "pix"),
         paidAt: r.paidAt || null,
-        paidAmount: Number(r.totalAmount) > 0 ? Number(r.totalAmount) : (Number(r.paidAmount) || 0),
-        totalAmount: r.totalAmount || 0,
-        checkinDate: r.checkinDate,
-        checkoutDate: r.checkoutDate,
+        paidAmount: hasRmGroupStatus ? rmSummaryStatus.paidAmount : (Number(r.totalAmount) > 0 ? Number(r.totalAmount) : (Number(r.paidAmount) || 0)),
+        totalAmount: hasRmGroupStatus ? rmSummaryStatus.totalAmount : (r.totalAmount || 0),
+        checkinDate: hasRmGroupStatus ? rmSummaryStatus.originalCheckinDate : r.checkinDate,
+        checkoutDate: hasRmGroupStatus ? rmSummaryStatus.finalCheckoutDate : r.checkoutDate,
         dailyRates: Array.isArray(r.dailyRates) ? r.dailyRates : [],
         pendingStayExtension: r.pendingStayExtension || null,
         expiredStayExtension: r.expiredStayExtension || null,
@@ -84977,25 +85801,36 @@ function computeReservationAccommodationAndConsumption(r, dbRef = db) {
     };
   }
 
-  const charges = Array.isArray(r.charges) ? r.charges : [];
+  const groupSegsRaw = r.roomMoveGroupId ? getRoomMoveGroupReservations(dbRef, r) : [r];
+  const groupSegs = groupSegsRaw.length > 0 ? groupSegsRaw : [r];
+  const groupSegIdStrs = new Set(groupSegs.map(s => String(s.id)));
+  const groupSegCodes = new Set(groupSegs.map(s => String(s.code || "").trim()).filter(Boolean));
+
+  const charges = groupSegs.flatMap(seg => (Array.isArray(seg.charges) ? seg.charges : []));
   const consumptionCharges = charges.filter(c =>
     c && /minibar|frigobar|consumo|consumption|anserve/i.test(String(c.type || c.category || c.title || c.description || ""))
   );
-  const nonConsumptionChargesSum = charges
-    .filter(c => c && !consumptionCharges.includes(c))
-    .reduce((s, c) => s + (Number(c.amount) || 0), 0);
-
   const consumptionFromCharges = consumptionCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
 
-  // Pedidos de frigobar / consumo em db.minibarOrders vinculados à reserva e ainda não pagos separadamente
+  // Pedidos de frigobar / consumo em db.minibarOrders vinculados à reserva (ou ao grupo de troca de flat, contados UMA única vez)
   const minibarOrders = (dbRef?.minibarOrders || []).filter(o => {
     if (!o || o.status === "cancelado" || o.paymentStatus === "pago") return false;
-    if (o.reservationId && Number(o.reservationId) === Number(r.id)) return true;
-    if (r.code && o.reservationCode && String(o.reservationCode) === String(r.code)) return true;
+    if (o.reservationId !== undefined && o.reservationId !== null && groupSegIdStrs.has(String(o.reservationId))) {
+      return true;
+    }
+    if (o.historicalSegmentId !== undefined && o.historicalSegmentId !== null && groupSegIdStrs.has(String(o.historicalSegmentId))) {
+      return true;
+    }
+    if (o.reservationCode && groupSegCodes.has(String(o.reservationCode).trim())) {
+      return true;
+    }
     return false;
   });
   const consumptionFromMinibarOrders = minibarOrders.reduce((s, o) => s + (Number(o.totalAmount || o.amount) || 0), 0);
-  const explicitConsumption = Number(r.extraConsumptionAmount || r.consumptionAmount || 0);
+  const explicitConsumption = groupSegs.reduce(
+    (s, seg) => s + Number(seg.extraConsumptionAmount || seg.consumptionAmount || 0),
+    0
+  );
 
   const consumptionItems = [
     ...consumptionCharges.map(c => ({
@@ -85006,7 +85841,7 @@ function computeReservationAccommodationAndConsumption(r, dbRef = db) {
     })),
     ...minibarOrders.map(o => ({
       id: o.id,
-      title: `Consumo Frigobar / Anserve (${Array.isArray(o.items) ? o.items.map(i => `${i.quantity || 1}x ${i.name}`).join(", ") : "Itens"})`,
+      title: `Consumo Frigobar / Anserve${o.flatNumber ? ` (Flat ${o.flatNumber})` : ""} (${Array.isArray(o.items) ? o.items.map(i => `${i.quantity || 1}x ${i.name}`).join(", ") : "Itens"})`,
       amount: Number(o.totalAmount || o.amount) || 0,
       source: "minibar_order"
     }))
@@ -85017,40 +85852,58 @@ function computeReservationAccommodationAndConsumption(r, dbRef = db) {
     Math.round(((consumptionFromCharges + consumptionFromMinibarOrders) || explicitConsumption) * 100) / 100
   );
 
-  // Cálculo do valor puro de hospedagem
-  const ratesSum = Array.isArray(r.dailyRates) && r.dailyRates.length > 0
-    ? r.dailyRates.reduce((s, d) => s + (Number(d.rate ?? d.amount) || 0), 0)
-    : 0;
-  const rawTotal = Number(r.totalAmount) || 0;
+  // Cálculo do valor puro de hospedagem por segmento (evita dupla contagem)
+  const computeSegmentAccommodation = (seg) => {
+    const segCharges = Array.isArray(seg.charges) ? seg.charges : [];
+    const segConsumptionCharges = segCharges.filter(c =>
+      c && /minibar|frigobar|consumo|consumption|anserve/i.test(String(c.type || c.category || c.title || c.description || ""))
+    );
+    const segNonConsumptionSum = segCharges
+      .filter(c => c && !segConsumptionCharges.includes(c))
+      .reduce((s, c) => s + (Number(c.amount) || 0), 0);
+    const segConsumptionFromCharges = segConsumptionCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
 
-  let accommodationAmount = 0;
-  if (ratesSum > 0) {
-    if (consumptionFromCharges > 0 && rawTotal >= ratesSum + consumptionFromCharges - 0.05) {
-      accommodationAmount = Math.max(0, Math.round((rawTotal - consumptionFromCharges) * 100) / 100);
-    } else if (rawTotal > 0) {
-      accommodationAmount = Math.max(0, Math.round(rawTotal * 100) / 100);
+    const ratesSum = Array.isArray(seg.dailyRates) && seg.dailyRates.length > 0
+      ? seg.dailyRates.reduce((s, d) => s + (Number(d.rate ?? d.amount) || 0), 0)
+      : 0;
+    const rawTotal = Number(seg.totalAmount) || 0;
+
+    let segAccomm = 0;
+    if (ratesSum > 0) {
+      if (segConsumptionFromCharges > 0 && rawTotal >= ratesSum + segConsumptionFromCharges - 0.05) {
+        segAccomm = Math.max(0, Math.round((rawTotal - segConsumptionFromCharges) * 100) / 100);
+      } else if (rawTotal > 0) {
+        segAccomm = Math.max(0, Math.round(rawTotal * 100) / 100);
+      } else {
+        segAccomm = Math.max(0, Math.round((ratesSum + segNonConsumptionSum) * 100) / 100);
+      }
     } else {
-      accommodationAmount = Math.max(0, Math.round((ratesSum + nonConsumptionChargesSum) * 100) / 100);
+      segAccomm = Math.max(0, Math.round((rawTotal - segConsumptionFromCharges) * 100) / 100);
     }
-  } else {
-    accommodationAmount = Math.max(0, Math.round((rawTotal - consumptionFromCharges) * 100) / 100);
-  }
 
-  if (accommodationAmount <= 0 && Number(r.dailyRate) > 0) {
-    const d1 = r.checkinDate ? new Date(r.checkinDate) : null;
-    const d2 = r.checkoutDate ? new Date(r.checkoutDate) : null;
-    const nights = d1 && d2 ? Math.max(1, Math.round((d2 - d1) / 86400000)) : 1;
-    accommodationAmount = Math.round(Number(r.dailyRate) * nights * 100) / 100;
-  }
+    if (segAccomm <= 0 && Number(seg.dailyRate) > 0) {
+      const d1 = seg.checkinDate ? new Date(seg.checkinDate) : null;
+      const d2 = seg.checkoutDate ? new Date(seg.checkoutDate) : null;
+      const nights = d1 && d2 ? Math.max(1, Math.round((d2 - d1) / 86400000)) : 1;
+      segAccomm = Math.round(Number(seg.dailyRate) * nights * 100) / 100;
+    }
+    return segAccomm;
+  };
+
+  const accommodationAmount = Math.round(
+    groupSegs.reduce((sum, seg) => sum + computeSegmentAccommodation(seg), 0) * 100
+  ) / 100;
 
   const totalWithConsumption = Math.round((accommodationAmount + totalConsumption) * 100) / 100;
 
   // Adiantamentos / Sinais pagos previamente (excluindo liquidações dos próprios boletos faturados)
-  const paymentsArr = Array.isArray(r.payments) ? r.payments : [];
-  const boletoPaymentsSum = paymentsArr
-    .filter(p => p && (String(p.id || "").startsWith("pay_bol_") || p.method === "faturado_boleto"))
-    .reduce((s, p) => s + (Number(p.amount) || 0), 0);
-  const rawPaidAmount = Math.max(0, Number(r.paidAmount || 0) - boletoPaymentsSum);
+  const rawPaidAmount = groupSegs.reduce((sum, seg) => {
+    const paymentsArr = Array.isArray(seg.payments) ? seg.payments : [];
+    const boletoPaymentsSum = paymentsArr
+      .filter(p => p && (String(p.id || "").startsWith("pay_bol_") || p.method === "faturado_boleto"))
+      .reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    return sum + Math.max(0, Number(seg.paidAmount || 0) - boletoPaymentsSum);
+  }, 0);
   const priorPaidAmount = Math.round(Math.min(rawPaidAmount, totalWithConsumption) * 100) / 100;
 
   // Abate sinal primeiramente da hospedagem; se sobrar crédito, abate do consumo
@@ -85805,12 +86658,14 @@ async function dispatchFaturadoBillingPackage({
   recipientsOverride = null,
   financialResponsibleOverride = null,
   isReminder = false,
-  reminderType = null
+  reminderType = null,
+  includeNfse = !isReminder
 }) {
   const validBoletos = (Array.isArray(boletos) ? boletos : [boletos]).filter(Boolean).map(b => enrichBoletoDynamicStatus(b));
   if (validBoletos.length === 0) {
     return { success: false, dispatchedTo: [], emailCount: 0, whatsappCount: 0 };
   }
+  const shouldIncludeNfse = Boolean(includeNfse) && !isReminder;
 
   const firstBoleto = validBoletos[0];
   const linkedRes = reservation || (db.reservations || []).find(r =>
@@ -85888,7 +86743,7 @@ async function dispatchFaturadoBillingPackage({
 
   let nfsePdfBuf = null;
   let nfsePdfAttachment = null;
-  if (linkedInvoice && typeof generateNfsePdfBuffer === "function") {
+  if (shouldIncludeNfse && linkedInvoice && typeof generateNfsePdfBuffer === "function") {
     try {
       nfsePdfBuf = await generateNfsePdfBuffer(linkedInvoice);
       if (nfsePdfBuf) {
@@ -85926,7 +86781,7 @@ async function dispatchFaturadoBillingPackage({
     if (hidePkgFromGuest && isGuestRecipient) {
       continue;
     }
-    const includeNfseForRec = Boolean(linkedInvoice) && !(hideNfseFromGuest && isGuestRecipient);
+    const includeNfseForRec = Boolean(shouldIncludeNfse && linkedInvoice) && !(hideNfseFromGuest && isGuestRecipient);
     const recAttachments = includeNfseForRec ? allAttachments : boletoOnlyAttachments;
     const safeRecPhoneForResult = isDispatchGuestPhone(rec.phone) ? "" : (rec.phone || "");
 
@@ -85974,6 +86829,7 @@ async function dispatchFaturadoBillingPackage({
                 <strong>Vencimento:</strong> <span style="color:#C2410C;font-weight:700;">${formatBrDate(b.dueDate)}</span><br/>
                 <strong>Multa/Juros após vencimento:</strong> Multa ${b.finePct ?? 2}% + Juros ${b.interestPct ?? 1}% a.m. (Baixa automática em ${b.autoWriteOffDays ?? 60} dias)
               </div>
+              ${!isReminder ? `
               <div style="margin-top:10px;padding:10px;background:#FFFFFF;border:1px dashed #FB923C;border-radius:6px;">
                 <div style="font-size:11px;font-weight:700;color:#64748B;">LINHA DIGITÁVEL (COPIE E COLE NO BANCO):</div>
                 <div style="font-family:monospace;font-size:13px;font-weight:700;color:#EA580C;word-break:break-all;margin-top:3px;">${b.linhaDigitavel || "—"}</div>
@@ -85982,6 +86838,7 @@ async function dispatchFaturadoBillingPackage({
                 <div style="font-family:monospace;font-size:11px;color:#334155;word-break:break-all;margin-top:3px;">${b.pixCopiaECola}</div>
                 ` : ""}
               </div>
+              ` : ""}
               <div style="margin-top:12px;">
                 ${b.linhaDigitavel ? `<a href="${copyBoletoUrl}" target="_blank" style="display:inline-block;background:#EA580C;color:#FFFFFF;font-size:12px;font-weight:700;text-decoration:none;padding:9px 14px;border-radius:8px;margin-right:8px;margin-bottom:6px;">📋 Copiar Código do Boleto</a>` : ""}
                 ${b.pixCopiaECola ? `<a href="${copyPixUrl}" target="_blank" style="display:inline-block;background:#059669;color:#FFFFFF;font-size:12px;font-weight:700;text-decoration:none;padding:9px 14px;border-radius:8px;margin-right:8px;margin-bottom:6px;">⚡ Copiar Código PIX</a>` : ""}
@@ -86081,9 +86938,7 @@ async function dispatchFaturadoBillingPackage({
             `🏦 *Boleto ${validBoletos.length > 1 ? `${idx + 1}/${validBoletos.length} ` : ""}#${bol.code} (${scopeLabel})*\n` +
             `• *Pagador:* ${bol.payer?.nome || "—"}\n` +
             `• *Valor:* R$ ${formatBrl(bol.amount)}${bol.daysOverdue > 0 ? ` (Atualizado c/ encargos: R$ ${formatBrl(bol.updatedTotalWithCharges)})` : ""}\n` +
-            `• *Vencimento:* ${formatBrDate(bol.dueDate)}` +
-            (bol.linhaDigitavel ? `\n• *Cód. do Boleto (Linha Digitável):*\n\`${bol.linhaDigitavel}\`` : "") +
-            (bol.pixCopiaECola ? `\n• *PIX Copia e Cola (QR Code):*\n\`${bol.pixCopiaECola}\`` : "");
+            `• *Vencimento:* ${formatBrDate(bol.dueDate)}`;
 
           const boletoButtons = [];
           if (bol.linhaDigitavel) {
@@ -86103,8 +86958,13 @@ async function dispatchFaturadoBillingPackage({
             });
           }
 
+          const copyTargetLabel = bol.linhaDigitavel && bol.pixCopiaECola
+            ? "o código do boleto ou o código PIX"
+            : bol.linhaDigitavel
+            ? "o código do boleto"
+            : "o código PIX";
           const footerHint = boletoButtons.length > 0
-            ? `\n\n👇 *Toque nos botões abaixo para copiar o código do boleto${bol.pixCopiaECola ? " ou o código PIX" : ""} com 1 clique.*\n📎 _O arquivo PDF segue logo abaixo._`
+            ? `\n\n👇 *Toque ${boletoButtons.length > 1 ? "nos botões abaixo" : "no botão abaixo"} para copiar ${copyTargetLabel} com 1 clique.*\n📎 _O arquivo PDF segue logo abaixo._`
             : `\n\n📎 *${includeNfseForRec ? "Os arquivos PDF do Boleto e da Nota Fiscal estão sendo enviados" : "O arquivo PDF do Boleto está sendo enviado"} logo abaixo.*`;
 
           const waMsg = introBlock + bolCardText + footerHint;
@@ -86208,6 +87068,9 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
   if (!r && consolidatedPackageItems.length > 0) {
     r = consolidatedPackageItems[0];
   }
+  const rmSummaryFat = r?.roomMoveGroupId ? computeRoomMoveConsolidatedSummary(db, r) : null;
+  const hasRmFat = Boolean(rmSummaryFat && rmSummaryFat.segments.length > 1);
+
   let breakdown;
   if (consolidatedPackageItems.length >= 2) {
     if (!options.description) {
@@ -86216,7 +87079,14 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
         description: `Fatura Única Pacote ${pkgCodeForBoleto || r?.code} (${consolidatedPackageItems.length} Flats: ${consolidatedPackageItems.map(x => x.flatNumber).join(", ")})`
       };
     }
-    const itemBreakdowns = consolidatedPackageItems.map(item => computeReservationAccommodationAndConsumption(item, db));
+    const seenRmGroupsPkg = new Set();
+    const pkgItemsForBreakdown = consolidatedPackageItems.filter(item => {
+      if (!item?.roomMoveGroupId) return true;
+      if (seenRmGroupsPkg.has(item.roomMoveGroupId)) return false;
+      seenRmGroupsPkg.add(item.roomMoveGroupId);
+      return true;
+    });
+    const itemBreakdowns = pkgItemsForBreakdown.map(item => computeReservationAccommodationAndConsumption(item, db));
     const round2Pkg = (v) => Math.round((Number(v) || 0) * 100) / 100;
     const sumAccomm = round2Pkg(itemBreakdowns.reduce((s, bd) => s + (Number(bd.accommodationAmount) || 0), 0));
     const sumCons = round2Pkg(itemBreakdowns.reduce((s, bd) => s + (Number(bd.consumptionAmount) || 0), 0));
@@ -86241,10 +87111,11 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
   const { guest, company, agency } = resolveReservationCrmLinks(r || {});
   const crmEntity = company || agency || guest || {};
 
-  // 1. Verificar se já existem boletos ativos para esta reserva (ou pacote) quando for disparo automático de check-out
+  // 1. Verificar se já existem boletos ativos para esta reserva (ou pacote / grupo de troca) quando for disparo automático de check-out
   if (options.triggerSource === "checkout_auto" && !options.forceReissue) {
+    const segsToCheck = hasRmFat ? rmSummaryFat.segments : (r ? [r] : []);
     const existingActiveBoletos = (db.boletos || []).filter(b =>
-      b && b.status !== "cancelado" && doesBoletoCoverReservation(b, r)
+      b && b.status !== "cancelado" && segsToCheck.some(seg => doesBoletoCoverReservation(b, seg))
     );
     if (existingActiveBoletos.length > 0) {
       const existingInv = findExistingInvoiceForReservation(db, { reservation: r, reservationId: r?.id, reservationCode: r?.code });
@@ -86277,16 +87148,28 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
       );
       const nfValue = Number(options.accommodationAmount ?? breakdown.accommodationAmount ?? r.totalAmount ?? 250);
       const isConsolidatedPkgNf = consolidatedPackageItems.length >= 2;
+      const isConsolidatedRmNf = !isConsolidatedPkgNf && hasRmFat;
+      const rmFlatTrailNumbers = isConsolidatedRmNf
+        ? rmSummaryFat.flatTrail.map(ft => (typeof ft === "object" && ft ? ft.flatNumber : ft)).filter(Boolean)
+        : [];
       const nfFlatNumbers = isConsolidatedPkgNf
         ? consolidatedPackageItems.map(x => x.flatNumber).filter(Boolean).join(", ")
-        : String(r.flatNumber || "");
-      const nfResIds = isConsolidatedPkgNf ? consolidatedPackageItems.map(x => Number(x.id)) : [Number(r.id)];
-      const nfResCodes = isConsolidatedPkgNf ? consolidatedPackageItems.map(x => x.code).filter(Boolean) : [r.code].filter(Boolean);
+        : (isConsolidatedRmNf ? (rmFlatTrailNumbers.join(", ") || String(r.flatNumber || "")) : String(r.flatNumber || ""));
+      const nfResIds = isConsolidatedPkgNf
+        ? consolidatedPackageItems.map(x => Number(x.id))
+        : (isConsolidatedRmNf ? rmSummaryFat.allReservationIds : [Number(r.id)]);
+      const nfResCodes = isConsolidatedPkgNf
+        ? consolidatedPackageItems.map(x => x.code).filter(Boolean)
+        : (isConsolidatedRmNf ? rmSummaryFat.allReservationCodes : [r.code].filter(Boolean));
       const nfDiscriminacao = isConsolidatedPkgNf
         ? `Hospedagem consolidada Pacote ${pkgCodeForBoleto || r.packageCode || r.code} (${consolidatedPackageItems.length} Flats: ${nfFlatNumbers}) - ${consolidatedPackageItems.map(x => `Flat ${x.flatNumber} (${x.checkinDate} a ${x.checkoutDate}): R$ ${Number(x.totalAmount || 0).toFixed(2)}`).join(" | ")}. Nota emitida exclusivamente sobre hospedagem.`
-        : `Hospedagem Flat ${r.flatNumber || ""} - Reserva ${r.code || r.id} (${r.guestName || payerForNf.nome}). Nota emitida exclusivamente sobre hospedagem.`;
+        : (isConsolidatedRmNf
+            ? `Hospedagem consolidada Flats ${nfFlatNumbers} (${rmSummaryFat.originalCheckinDate} a ${rmSummaryFat.finalCheckoutDate}) - Reserva ${r.code || r.id} (${r.guestName || payerForNf.nome}). Nota emitida exclusivamente sobre hospedagem.`
+            : `Hospedagem Flat ${r.flatNumber || ""} - Reserva ${r.code || r.id} (${r.guestName || payerForNf.nome}). Nota emitida exclusivamente sobre hospedagem.`);
       const resolvedFatNfHide = isConsolidatedPkgNf ? consolidatedPackageItems.some(x => Boolean(x?.nfHideFromGuest)) : Boolean(r.nfHideFromGuest);
-      const fatGuestResList = isConsolidatedPkgNf ? consolidatedPackageItems : [r];
+      const fatGuestResList = isConsolidatedPkgNf
+        ? consolidatedPackageItems
+        : (isConsolidatedRmNf ? rmSummaryFat.segments : [r]);
       const parseEmailsSafe = (raw) => (
         typeof parseEmailList === "function"
           ? parseEmailList(raw)
@@ -86334,7 +87217,7 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
             reservationId: r.id,
             reservationCode: isConsolidatedPkgNf ? (pkgCodeForBoleto || r.code) : r.code,
             packageId: pkgCodeForBoleto || r.packageId || null,
-            isConsolidated: isConsolidatedPkgNf,
+            isConsolidated: isConsolidatedPkgNf || isConsolidatedRmNf,
             reservationIds: nfResIds,
             reservationCodes: nfResCodes,
             flatNumber: nfFlatNumbers,
@@ -86358,8 +87241,10 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
             tomadorCep: payerForNf.cep,
             valorServico: nfValue,
             discriminacao: nfDiscriminacao,
-            checkinDate: r.checkinDate,
-            checkoutDate: isConsolidatedPkgNf ? (consolidatedPackageItems[consolidatedPackageItems.length - 1]?.checkoutDate || r.checkoutDate) : r.checkoutDate,
+            checkinDate: isConsolidatedRmNf ? (rmSummaryFat.originalCheckinDate || r.checkinDate) : r.checkinDate,
+            checkoutDate: isConsolidatedPkgNf
+              ? (consolidatedPackageItems[consolidatedPackageItems.length - 1]?.checkoutDate || r.checkoutDate)
+              : (isConsolidatedRmNf ? (rmSummaryFat.finalCheckoutDate || r.checkoutDate) : r.checkoutDate),
             nfHideFromGuest: resolvedFatNfHide,
             skipAutoWhatsapp: true
           });
@@ -86375,6 +87260,15 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
                 sib.consolidatedInvoiceId = invoice.id;
                 sib.numeroNfse = invoice.numeroNfse;
                 sib.isConsolidatedInvoice = true;
+              }
+            } else if (isConsolidatedRmNf) {
+              invoice.isConsolidated = true;
+              invoice.roomMoveGroupId = rmSummaryFat.roomMoveGroupId;
+              invoice.reservationIds = nfResIds;
+              invoice.reservationCodes = nfResCodes;
+              for (const seg of rmSummaryFat.segments) {
+                seg.invoiceId = invoice.id;
+                seg.numeroNfse = invoice.numeroNfse;
               }
             } else {
               r.invoiceId = invoice.id;
@@ -86399,10 +87293,11 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
           chaveAcesso: `33010092247964813000165900000000${nextNum}`,
           codigoVerificacao: Math.random().toString(36).substring(2, 10).toUpperCase(),
           dataEmissao: new Date().toISOString(),
-          competencia: (r.checkoutDate || new Date().toISOString()).slice(0, 7),
+          competencia: ((isConsolidatedRmNf ? rmSummaryFat.finalCheckoutDate : r.checkoutDate) || new Date().toISOString()).slice(0, 7),
           status: "autorizada",
           simulated: true,
-          isConsolidated: isConsolidatedPkgNf,
+          isConsolidated: isConsolidatedPkgNf || isConsolidatedRmNf,
+          ...(isConsolidatedRmNf ? { roomMoveGroupId: rmSummaryFat.roomMoveGroupId } : {}),
           nfHideFromGuest: resolvedFatNfHide,
           nfDeliveryEmails: safeFatDeliveryEmails,
           packageId: pkgCodeForBoleto || r.packageId || null,
@@ -86443,6 +87338,11 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
             sib.numeroNfse = fallbackInvoice.numeroNfse;
             sib.isConsolidatedInvoice = true;
           }
+        } else if (isConsolidatedRmNf) {
+          for (const seg of rmSummaryFat.segments) {
+            seg.invoiceId = fallbackInvoice.id;
+            seg.numeroNfse = fallbackInvoice.numeroNfse;
+          }
         } else {
           r.invoiceId = fallbackInvoice.id;
           r.numeroNfse = fallbackInvoice.numeroNfse;
@@ -86452,7 +87352,7 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
   }
 
   // 3. Resolver parâmetros de prazo, multa, juros, baixa e separação de boletos
-  const baseCheckoutDate = r?.checkoutDate || getBrasiliaDateStr();
+  const baseCheckoutDate = hasRmFat ? (rmSummaryFat.finalCheckoutDate || r?.checkoutDate || getBrasiliaDateStr()) : (r?.checkoutDate || getBrasiliaDateStr());
   const mainTermDays = Number(options.boletoTermDays ?? r?.boletoTermDays ?? crmEntity.defaultBoletoTermDays ?? 15);
   const explicitDueDate = options.dueDate || options.customDueDate || options.boletoCustomDueDate || r?.boletoCustomDueDate || null;
   const mainDueDate = explicitDueDate || addDaysToIsoDate(baseCheckoutDate, mainTermDays);
@@ -86776,7 +87676,8 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
       invoice,
       recipientsOverride: recFlags,
       financialResponsibleOverride: financialResponsible,
-      isReminder: false
+      isReminder: false,
+      includeNfse: true
     });
   }
 
@@ -86810,7 +87711,8 @@ async function processAutomaticBoletoReminders({ force = false } = {}) {
       const disp = await dispatchFaturadoBillingPackage({
         boletos: [bol],
         isReminder: true,
-        reminderType: "due_today"
+        reminderType: "due_today",
+        includeNfse: false
       });
       bol.lastDueTodayReminderDate = todayStr;
       results.push({ boletoId: bol.id, code: bol.code, type: "due_today", dispatch: disp });
@@ -86818,7 +87720,8 @@ async function processAutomaticBoletoReminders({ force = false } = {}) {
       const disp = await dispatchFaturadoBillingPackage({
         boletos: [bol],
         isReminder: true,
-        reminderType: "overdue"
+        reminderType: "overdue",
+        includeNfse: false
       });
       bol.lastOverdueReminderDate = todayStr;
       results.push({ boletoId: bol.id, code: bol.code, type: "overdue", daysOverdue: enriched.daysOverdue, dispatch: disp });
@@ -87200,7 +88103,8 @@ const handleUpdateBoleto = async (req, res) => {
       dispatchResult = await dispatchFaturadoBillingPackage({
         boletos: [bol],
         recipientsOverride: bol.billingRecipients,
-        financialResponsibleOverride: bol.financialResponsible
+        financialResponsibleOverride: bol.financialResponsible,
+        includeNfse: Boolean(b.includeNfse)
       });
     }
 
@@ -87366,7 +88270,8 @@ app.post("/api/boletos/:id/dispatch", async (req, res) => {
       recipientsOverride: incomingRec || bol.billingRecipients,
       financialResponsibleOverride: b.financialResponsible || bol.financialResponsible,
       isReminder: Boolean(b.isReminder),
-      reminderType: b.reminderType || null
+      reminderType: b.reminderType || null,
+      includeNfse: Boolean(b.includeNfse)
     });
 
     saveDatabase("boleto_dispatched_" + bol.id);
@@ -91688,6 +92593,7 @@ function getReservationCourtesyInspections(reservation, flatStr) {
     .filter(i => {
       if (!i || i.isSkipMark || i.status === "nq" || i.status === "np") return false;
       if (isUnlinkedInternalMinibarInspection(i)) return false;
+      if (effectiveFlat && String(i.flatNumber || "").trim() !== effectiveFlat) return false;
       if (resCode && i.reservationCode && resCandidateCodes.has(String(i.reservationCode).trim())) return true;
       if (reservation.id && i.reservationId && String(i.reservationId) === String(reservation.id)) return true;
       if (i.reservationCode && resCode && !resCandidateCodes.has(String(i.reservationCode).trim())) return false;
@@ -92157,27 +93063,81 @@ function reconcileInternalFlatWelcomeKitToday({
   };
 }
 
+function getReservationCanonicalActualCheckoutIso(resv) {
+  return String(
+    resv?.actualCheckoutAt ||
+      resv?.earlyCheckoutReleasedAt ||
+      resv?.checkedOutAt ||
+      resv?.digitalCheckoutAt ||
+      ""
+  ).trim();
+}
+
+function isCompletedPostCheckoutMinibarInspectionRecord(insp, resv, actualOutIsoOverride = "") {
+  if (
+    !insp ||
+    insp.status === "nq" ||
+    insp.status === "np" ||
+    insp.isSkipMark ||
+    insp.isCourtesyCorrectionOnly ||
+    insp.unoccupiedLaunchMode === "internal_adjustment" ||
+    insp.status === "ocorrencia_interna"
+  ) {
+    return false;
+  }
+
+  const undoneAt = String(resv?._checkoutUndoneAt || "").trim();
+  if (undoneAt && insp.inspectedAt && String(insp.inspectedAt) <= undoneAt) {
+    return false;
+  }
+
+  if (insp.isFinalCheckoutInspection === true) return true;
+
+  const actualOutIso = String(actualOutIsoOverride || getReservationCanonicalActualCheckoutIso(resv)).trim();
+  if (actualOutIso && insp.inspectedAt && String(insp.inspectedAt) >= actualOutIso) {
+    return true;
+  }
+
+  // Lançamento diário durante a estadia grava status="divergencia" quando há consumo pago,
+  // mas isFinalCheckoutInspection === false — nunca deve liberar pagamento antes da conferência pós-check-out.
+  if (insp.isFinalCheckoutInspection === false || insp.isDailyLaunch === true) {
+    return false;
+  }
+
+  // Fallback legado (inspeções antigas sem o booleano isFinalCheckoutInspection) somente após saída real/data de check-out expirada
+  if (insp.isFinalCheckoutInspection === undefined && insp.status === "divergencia") {
+    const todayBrl = getBrasiliaNow().date;
+    const hasDepartedOrPastOut = Boolean(
+      actualOutIso ||
+        resv?.checkoutDone ||
+        resv?.status === "completed" ||
+        resv?.status === "checked_out" ||
+        (resv?.checkoutDate && String(resv.checkoutDate).slice(0, 10) < todayBrl)
+    );
+    if (hasDepartedOrPastOut) return true;
+  }
+
+  return false;
+}
+
 function hasReservationCompletedPostCheckoutMinibarInspection(resv, flatStr, todayStr) {
   if (!resv) return false;
-  if (resv.finalMinibarInspectionAt) return true;
+  if (
+    resv.finalMinibarInspectionAt &&
+    (!resv._checkoutUndoneAt || String(resv.finalMinibarInspectionAt) > String(resv._checkoutUndoneAt))
+  ) {
+    return true;
+  }
   const resCode = String(resv.code || (resv.id ? `RES-${resv.id}` : "")).trim();
-  const actualOutIso =
-    resv.actualCheckoutAt ||
-    resv.earlyCheckoutReleasedAt ||
-    resv.checkedOutAt ||
-    resv.digitalCheckoutAt ||
-    "";
+  const actualOutIso = getReservationCanonicalActualCheckoutIso(resv);
   return (db.minibarInspections || []).some(i => {
     if (!i || i.status === "nq" || i.status === "np" || i.isSkipMark || i.isCourtesyCorrectionOnly) return false;
+    if (flatStr && i.flatNumber && String(i.flatNumber).trim() !== String(flatStr).trim()) return false;
     const matchRes =
       (resCode && i.reservationCode && String(i.reservationCode).trim() === resCode) ||
       (resv.id && i.reservationId && String(i.reservationId) === String(resv.id));
     if (!matchRes) return false;
-    if (i.isFinalCheckoutInspection || i.status === "divergencia") return true;
-    if (actualOutIso && i.inspectedAt && String(i.inspectedAt) >= String(actualOutIso)) {
-      return true;
-    }
-    return false;
+    return isCompletedPostCheckoutMinibarInspectionRecord(i, resv, actualOutIso);
   });
 }
 
@@ -93354,17 +94314,61 @@ function sanitizeMinibarOrderForResponse(order) {
 
 function doesMinibarOrderMatchReservation(order, reservation) {
   if (!order || !reservation) return false;
+  const flatStr = String(reservation.flatNumber || reservation.flatId || "").trim();
+  const buildCandidateCodes = (seg) => {
+    const segFlat = String(seg.flatNumber || seg.flatId || "").trim();
+    return new Set(
+      [
+        seg.code,
+        seg.id ? `RES-${seg.id}` : "",
+        segFlat && seg.id ? `RES-${segFlat}-${String(seg.id).padStart(3, "0")}` : ""
+      ].filter(Boolean)
+    );
+  };
+
+  if (reservation.isRoomMoveHistoricalSegment) {
+    if (order.historicalSegmentId && String(order.historicalSegmentId) === String(reservation.id)) {
+      return true;
+    }
+    if (order.historicalSegmentCode && reservation.code && String(order.historicalSegmentCode).trim() === String(reservation.code).trim()) {
+      return true;
+    }
+    if (order.reservationId && String(order.reservationId) === String(reservation.id) && (!order.historicalSegmentId || String(order.historicalSegmentId) === String(reservation.id))) {
+      return true;
+    }
+    const segCodes = buildCandidateCodes(reservation);
+    if (order.reservationCode && segCodes.has(String(order.reservationCode).trim())) {
+      if (!order.flatNumber || !flatStr || String(order.flatNumber).trim() === flatStr) {
+        return true;
+      }
+    }
+    if (reservation.roomMoveGroupId && flatStr && String(order.flatNumber || "").trim() === flatStr && !order.historicalSegmentId) {
+      const groupSegs = getRoomMoveGroupReservations(db, reservation);
+      const matchesGroupOrder = groupSegs.some(seg => {
+        if (order.reservationId && String(order.reservationId) === String(seg.id)) return true;
+        const codes = buildCandidateCodes(seg);
+        return Boolean(order.reservationCode && codes.has(String(order.reservationCode).trim()));
+      });
+      if (matchesGroupOrder) return true;
+    }
+    return false;
+  }
+
+  if (reservation.roomMoveGroupId) {
+    const groupSegs = getRoomMoveGroupReservations(db, reservation);
+    for (const seg of groupSegs) {
+      if (order.reservationId && String(order.reservationId) === String(seg.id)) return true;
+      if (order.historicalSegmentId && String(order.historicalSegmentId) === String(seg.id)) return true;
+      const segCodes = buildCandidateCodes(seg);
+      if (order.reservationCode && segCodes.has(String(order.reservationCode).trim())) return true;
+      if (order.historicalSegmentCode && segCodes.has(String(order.historicalSegmentCode).trim())) return true;
+    }
+  }
+
   if (order.reservationId && String(order.reservationId) === String(reservation.id)) {
     return true;
   }
-  const flatStr = String(reservation.flatNumber || reservation.flatId || "").trim();
-  const candidateCodes = new Set(
-    [
-      reservation.code,
-      reservation.id ? `RES-${reservation.id}` : "",
-      flatStr && reservation.id ? `RES-${flatStr}-${String(reservation.id).padStart(3, "0")}` : ""
-    ].filter(Boolean)
-  );
+  const candidateCodes = buildCandidateCodes(reservation);
   if (order.reservationCode && candidateCodes.has(String(order.reservationCode).trim())) {
     return true;
   }
@@ -93404,6 +94408,9 @@ function getVisibleReservationMinibarOrders(reservation) {
     })
     .map(o => ({
       id: o.id,
+      flatNumber: o.flatNumber || null,
+      historicalSegmentId: o.historicalSegmentId || null,
+      historicalSegmentCode: o.historicalSegmentCode || null,
       source: o.source || "",
       guestName: o.guestName || reservation.guestName,
       guestIndex: o.guestIndex || 1,
@@ -93427,32 +94434,39 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
   const resCode = reservation?.code || (reservation?.id ? `RES-${reservation.id}` : "");
   const todayStr = getBrasiliaNow().date;
 
+  const actualOutIso = reservation ? getReservationCanonicalActualCheckoutIso(reservation) : "";
+
+  const isActuallyCheckedOut = Boolean(
+    reservation &&
+      (isReservationOrFlatCheckedOut(db, reservation, reservation.flatId, flatStr) ||
+        reservation.checkoutDone ||
+        reservation.status === "completed" ||
+        reservation.status === "checked_out" ||
+        actualOutIso ||
+        (reservation.checkoutDate && String(reservation.checkoutDate).slice(0, 10) < todayStr))
+  );
+
+  const hasValidFinalInspTimestamp = Boolean(
+    reservation?.finalMinibarInspectionAt &&
+      (!reservation?._checkoutUndoneAt ||
+        String(reservation.finalMinibarInspectionAt) > String(reservation._checkoutUndoneAt))
+  );
+
   const hasFinalCheckoutInspection = Boolean(
     reservation &&
-      (reservation.finalMinibarInspectionAt ||
+      (hasValidFinalInspTimestamp ||
         (db.minibarInspections || []).some(
           i =>
             i &&
-            (i.isFinalCheckoutInspection || i.status === "divergencia") &&
+            (!flatStr || !i.flatNumber || String(i.flatNumber).trim() === flatStr) &&
             ((resCode && i.reservationCode === resCode) ||
-              (reservation.id && String(i.reservationId) === String(reservation.id)))
+              (reservation.id && String(i.reservationId) === String(reservation.id))) &&
+            isCompletedPostCheckoutMinibarInspectionRecord(i, reservation, actualOutIso)
         ))
   );
 
   // 1. Verifica status canônico de check-out
-  const isCheckedOut = Boolean(
-    reservation &&
-      (isReservationOrFlatCheckedOut(db, reservation, reservation.flatId, flatStr) ||
-        hasFinalCheckoutInspection ||
-        reservation.checkoutDone ||
-        reservation.status === "completed" ||
-        reservation.status === "checked_out" ||
-        reservation.actualCheckoutAt ||
-        reservation.earlyCheckoutReleasedAt ||
-        reservation.checkedOutAt ||
-        reservation.digitalCheckoutAt ||
-        (reservation.checkoutDate && reservation.checkoutDate < todayStr))
-  );
+  const isCheckedOut = Boolean(isActuallyCheckedOut || hasFinalCheckoutInspection);
 
   let checkoutTime = reservation?.actualCheckoutTime || "";
   if (!checkoutTime && reservation) {
@@ -93554,6 +94568,7 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
         itemKey,
         orderId: lOrd.id,
         launchOrderId: lOrd.id,
+        flatNumber: lOrd.flatNumber || null,
         launchDate: rawDate,
         launchDateYmd: rawDate,
         launchDateBr: dateBr,
@@ -93610,6 +94625,7 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
         itemKey: `${pOrd.id}::${it.productId}::${idx}`,
         orderId: pOrd.id,
         launchOrderId: pOrd.id,
+        flatNumber: pOrd.flatNumber || null,
         launchDate: rawDate,
         launchDateYmd: rawDate,
         launchDateBr: dateBr,
@@ -95201,6 +96217,17 @@ app.post("/api/public/minibar/confirm-checkout", async (req, res) => {
     let anyEarlyCheckout = false;
 
     for (const r of matchingResList) {
+      if (r?.isRoomMoveHistoricalSegment) {
+        r.checkoutDone = true;
+        if (r.status !== "completed" && r.status !== "checked_out") {
+          r.previousStatus = r.status;
+          r.status = "completed";
+        }
+        if (!r.actualCheckoutAt) r.actualCheckoutAt = now;
+        r.checkoutMethod = r.checkoutMethod || "room_transfer";
+        r.updatedAt = now;
+        continue;
+      }
       const earlyRes = await applyReservationCheckoutAndEarlyRelease(db, saveDatabase, r, {
         source: "link_digital",
         actorName: guestDisplayName || r.guestName,
@@ -95215,11 +96242,13 @@ app.post("/api/public/minibar/confirm-checkout", async (req, res) => {
       });
     }
 
-    cancelPendingStayRemindersForCheckout(db, saveDatabase, {
-      flatId: flatIdVal,
-      flatNumber: flatNumberStr,
-      reason: "Cancelado: check-out informado pelo hóspede no portal de frigobar"
-    });
+    if (matchingResList.length === 0 || matchingResList.some(r => r && !r.isRoomMoveHistoricalSegment)) {
+      cancelPendingStayRemindersForCheckout(db, saveDatabase, {
+        flatId: flatIdVal,
+        flatNumber: flatNumberStr,
+        reason: "Cancelado: check-out informado pelo hóspede no portal de frigobar"
+      });
+    }
 
     if (!db.breakfastOrders) db.breakfastOrders = [];
     db.breakfastOrders.forEach(o => {
@@ -95344,12 +96373,22 @@ app.post("/api/minibar/orders", async (req, res) => {
     const finalResCode = reservation?.code || reservationCode || "";
     const statement = reservation ? buildReservationMinibarStatement(reservation, flatStr) : null;
 
-    // Trava de pagamento antes da conferência pós check-out quando solicitado pela tela do hóspede
-    if (requireCheckout && statement && !statement.hasFinalCheckoutInspection) {
+    // Trava de pagamento antes do check-out e da conferência pós check-out
+    const isSettlingRestockerLaunch =
+      Boolean(requireCheckout) ||
+      partialMode === "configured_split" ||
+      (Array.isArray(selectedLaunchItems) && selectedLaunchItems.length > 0) ||
+      existingOrder?.source === "restocker_launch";
+
+    if (
+      isSettlingRestockerLaunch &&
+      statement &&
+      (!statement.isCheckedOut || !statement.hasFinalCheckoutInspection)
+    ) {
       return res.status(400).json({
         success: false,
         code: "CHECKOUT_INSPECTION_REQUIRED",
-        error: "Pagamento disponível apenas após a conferência de consumo pós check-out."
+        error: "Pagamento disponível apenas após o check-out e a conferência de consumo pós check-out."
       });
     }
 
@@ -96404,8 +97443,8 @@ app.post("/api/minibar/inspections", async (req, res) => {
       const targetCode = String(targetLastReservationCode || reservationCode || "").trim();
       if (targetCode) {
         reservation =
-          findReservationByLocatorOrContact(targetCode) ||
-          (db.reservations || []).find(r => r.code === targetCode || String(r.id) === targetCode);
+          (db.reservations || []).find(r => r && (r.code === targetCode || String(r.id) === targetCode)) ||
+          findReservationByLocatorOrContact(targetCode, { preserveHistoricalSegment: true });
       }
       if (!reservation) {
         reservation = findLastDepartedReservationForFlat(flatStr, todayStr);
@@ -96418,8 +97457,9 @@ app.post("/api/minibar/inspections", async (req, res) => {
       }
     } else {
       if (reservationCode) {
-        reservation = findReservationByLocatorOrContact(reservationCode) ||
-          (db.reservations || []).find(r => r.code === reservationCode || String(r.id) === reservationCode);
+        reservation =
+          (db.reservations || []).find(r => r && (r.code === reservationCode || String(r.id) === reservationCode)) ||
+          findReservationByLocatorOrContact(reservationCode, { preserveHistoricalSegment: true });
       }
       if (!reservation) {
         const candidateToday = findActiveOrRecentReservationForFlat(flatStr, {
@@ -96442,21 +97482,49 @@ app.post("/api/minibar/inspections", async (req, res) => {
     }
 
     const finalResCode = isInternalAdjustmentMode ? "" : (reservation?.code || reservationCode || "");
+    const billingTargetRes = isInternalAdjustmentMode
+      ? null
+      : (reservation?.isRoomMoveHistoricalSegment
+          ? (getActiveRoomMoveReservation(db, reservation) || reservation)
+          : reservation);
+    const billingResCode = billingTargetRes
+      ? (billingTargetRes.code || (billingTargetRes.id ? `RES-${billingTargetRes.id}` : finalResCode))
+      : finalResCode;
+    const isGuestStillInHouseAfterTransfer = Boolean(
+      reservation?.isRoomMoveHistoricalSegment &&
+      billingTargetRes &&
+      billingTargetRes !== reservation &&
+      !isReservationOrFlatCheckedOut(db, billingTargetRes, billingTargetRes.flatId, String(billingTargetRes.flatNumber || "")) &&
+      !billingTargetRes.checkoutDone &&
+      billingTargetRes.status !== "completed" &&
+      billingTargetRes.status !== "checked_out"
+    );
     const launchDateStr = String(bodyLaunchDate || todayStr).slice(0, 10);
     const launchDateBr = formatMinibarDateBr(launchDateStr);
 
     // Checagem antecipada se o flat/reserva já realizou check-out real no PMS
+    const isExplicitInStayDailyLaunch =
+      Boolean(isDailyLaunch || normalizedReqStatus === "lancamento_diario") &&
+      req.body?.isFinalCheckoutInspection !== true;
+    const hasValidFinalMinibarInspAt = Boolean(
+      reservation?.finalMinibarInspectionAt &&
+        (!reservation?._checkoutUndoneAt ||
+          String(reservation.finalMinibarInspectionAt) > String(reservation._checkoutUndoneAt))
+    );
     const earlyCheckActuallyCheckedOut = reservation
       ? isReservationOrFlatCheckedOut(db, reservation, reservation.flatId, flatStr) ||
         Boolean(
           reservation.checkoutDone ||
           reservation.actualCheckoutAt ||
-          reservation.earlyCheckoutReleasedAt
+          reservation.earlyCheckoutReleasedAt ||
+          reservation.checkedOutAt ||
+          reservation.digitalCheckoutAt
         )
       : false;
     const earlyResCheckedOut =
       earlyCheckActuallyCheckedOut ||
-      Boolean(req.body?.isFinalCheckoutInspection || reservation?.finalMinibarInspectionAt);
+      Boolean(req.body?.isFinalCheckoutInspection) ||
+      (!isExplicitInStayDailyLaunch && hasValidFinalMinibarInspAt);
 
     // Trava determinística: se o hóspede ativou Não Perturbe pelo Portal e ainda NÃO fez check-out,
     // bloqueia lançamentos/passagens das repositoras (exceto override administrativo explícito)
@@ -96760,8 +97828,9 @@ app.post("/api/minibar/inspections", async (req, res) => {
       } else {
         // Itens já pagos na reserva (usado apenas se o payload vier no formato antigo de contagem acumulada)
         const paidOrders = (db.minibarOrders || []).filter(o =>
-          (o.reservationCode === finalResCode || String(o.reservationId) === String(reservation?.id)) &&
-          o.paymentStatus === "pago"
+          o &&
+          o.paymentStatus === "pago" &&
+          (doesMinibarOrderMatchReservation(o, reservation) || o.reservationCode === finalResCode || String(o.reservationId) === String(reservation?.id))
         );
 
         const paidMap = {};
@@ -96811,14 +97880,19 @@ app.post("/api/minibar/inspections", async (req, res) => {
           const pendingOrder = {
             id: chargeOrderId,
             flatNumber: flatStr,
-            reservationId: reservation?.id || null,
-            reservationCode: finalResCode,
+            reservationId: billingTargetRes?.id || reservation?.id || null,
+            reservationCode: billingResCode || finalResCode,
+            ...(reservation?.isRoomMoveHistoricalSegment ? {
+              historicalSegmentId: reservation.id,
+              historicalSegmentCode: finalResCode,
+              roomMoveGroupId: reservation.roomMoveGroupId || billingTargetRes?.roomMoveGroupId || null
+            } : {}),
             guestIndex: 1,
             guestRole: "titular",
-            guestName: reservation?.guestName || "Hóspede CorpFlats",
-            guestPhone: reservation?.guestPhone || "",
-            guestDocument: reservation?.guestDocument || "",
-            guestEmail: reservation?.guestEmail || "",
+            guestName: billingTargetRes?.guestName || reservation?.guestName || "Hóspede CorpFlats",
+            guestPhone: billingTargetRes?.guestPhone || reservation?.guestPhone || "",
+            guestDocument: billingTargetRes?.guestDocument || reservation?.guestDocument || "",
+            guestEmail: billingTargetRes?.guestEmail || reservation?.guestEmail || "",
             launchDate: launchDateStr,
             launchDateBr,
             inspectorName: resolvedInspectorName,
@@ -96832,10 +97906,10 @@ app.post("/api/minibar/inspections", async (req, res) => {
             fiscalPreferences: {
               invoiceDescriptionType: "detailed",
               documentType: "cpf",
-              documentNumber: (reservation?.guestDocument || "").replace(/\D/g, ""),
-              email: reservation?.guestEmail || "",
-              phone: reservation?.guestPhone || "",
-              payerName: reservation?.guestName || "Hóspede CorpFlats"
+              documentNumber: (billingTargetRes?.guestDocument || reservation?.guestDocument || "").replace(/\D/g, ""),
+              email: billingTargetRes?.guestEmail || reservation?.guestEmail || "",
+              phone: billingTargetRes?.guestPhone || reservation?.guestPhone || "",
+              payerName: billingTargetRes?.guestName || reservation?.guestName || "Hóspede CorpFlats"
             },
             invoice: { status: "pendente" },
             notes:
@@ -96854,19 +97928,25 @@ app.post("/api/minibar/inspections", async (req, res) => {
     }
 
     const isFinalCheckoutInspection = Boolean(req.body?.isFinalCheckoutInspection);
-    const actuallyCheckedOutInPms = reservation
-      ? isReservationOrFlatCheckedOut(db, reservation, reservation.flatId, flatStr) ||
-        Boolean(
-          reservation.checkoutDone ||
-          reservation.actualCheckoutAt ||
-          reservation.earlyCheckoutReleasedAt
-        )
-      : false;
+    const actuallyCheckedOutInPms = earlyCheckActuallyCheckedOut;
     const resCheckedOut =
       actuallyCheckedOutInPms ||
-      Boolean(reservation && (reservation.finalMinibarInspectionAt || isFinalCheckoutInspection));
+      Boolean(
+        reservation &&
+          (isFinalCheckoutInspection || (!isExplicitInStayDailyLaunch && hasValidFinalMinibarInspAt))
+      );
 
-    if (reservation && (isFinalCheckoutInspection || resCheckedOut || (!isDailyLaunch && status === "divergencia"))) {
+    const isEffectiveFinalCheckoutInspection =
+      !isSkipMark &&
+      !isInternalAdjustmentMode &&
+      !isGuestStillInHouseAfterTransfer &&
+      Boolean(
+        isFinalCheckoutInspection ||
+          resCheckedOut ||
+          (!isDailyLaunch && normalizedReqStatus !== "lancamento_diario" && normalizedReqStatus === "divergencia")
+      );
+
+    if (reservation && isEffectiveFinalCheckoutInspection) {
       reservation.finalMinibarInspectionAt = new Date().toISOString();
       if (actuallyCheckedOutInPms) {
         reservation.checkoutDone = true;
@@ -96946,7 +98026,10 @@ app.post("/api/minibar/inspections", async (req, res) => {
       inspectedAt: nowIsoForInsp,
       launchDate: launchDateStr,
       launchDateBr,
-      isFinalCheckoutInspection: isSkipMark ? false : Boolean(resCheckedOut),
+      isDailyLaunch: isSkipMark
+        ? false
+        : Boolean((isDailyLaunch || normalizedReqStatus === "lancamento_diario") && !isEffectiveFinalCheckoutInspection),
+      isFinalCheckoutInspection: isEffectiveFinalCheckoutInspection,
       postCheckoutNotificationType: "none_needed",
       pendingBalanceAtInspection: 0,
       totalPaidAtInspection: 0,
@@ -96987,9 +98070,13 @@ app.post("/api/minibar/inspections", async (req, res) => {
     if (
       reservation &&
       updatedStatement &&
-      (resCheckedOut || isFinalCheckoutInspection || (!isDailyLaunch && status === "divergencia"))
+      !isGuestStillInHouseAfterTransfer &&
+      isEffectiveFinalCheckoutInspection
     ) {
-      autoSplitOrders = syncReservationAutoSplitOrders(reservation, flatStr, updatedStatement);
+      const splitTargetRes = billingTargetRes || reservation;
+      const splitStatement =
+        splitTargetRes !== reservation ? buildReservationMinibarStatement(splitTargetRes) : updatedStatement;
+      autoSplitOrders = syncReservationAutoSplitOrders(splitTargetRes, flatStr, splitStatement);
     }
 
     const totalPendingNow = Number(updatedStatement?.pendingBalance || 0);
@@ -96998,9 +98085,9 @@ app.post("/api/minibar/inspections", async (req, res) => {
     let postCheckoutNotificationType = suppressAutoWhatsapp ? "suppressed_unoccupied_flat" : "none_needed";
 
     const isInStayDailyLaunchOnly =
-      Boolean(isDailyLaunch || status === "lancamento_diario") &&
-      !isFinalCheckoutInspection &&
-      !resCheckedOut;
+      isGuestStillInHouseAfterTransfer ||
+      (Boolean(isDailyLaunch || normalizedReqStatus === "lancamento_diario") &&
+        !isEffectiveFinalCheckoutInspection);
 
     const shouldSendDailySummaryNow =
       !suppressAutoWhatsapp &&
@@ -97012,7 +98099,7 @@ app.post("/api/minibar/inspections", async (req, res) => {
       discrepancyTotalAmount > 0;
 
     const isPureCourtesyCorrectionWithoutNewPaid = Boolean(
-      isSetCourtesyTotalMode && discrepancyItems.length === 0 && !isFinalCheckoutInspection
+      isSetCourtesyTotalMode && discrepancyItems.length === 0 && !isEffectiveFinalCheckoutInspection
     );
 
     const shouldNotifySofiaNow =
@@ -97022,12 +98109,12 @@ app.post("/api/minibar/inspections", async (req, res) => {
       Boolean(reservation) &&
       db.minibarSettings?.autoNotifySofiaOnDiscrepancy !== false &&
       !isInStayDailyLaunchOnly &&
-      (bodyNotifySofia === true || resCheckedOut || isFinalCheckoutInspection || status === "divergencia") &&
+      (bodyNotifySofia === true || isEffectiveFinalCheckoutInspection) &&
       totalPendingNow > 0;
 
     if (shouldSendDailySummaryNow) {
       // Disparo do Resumo Diário de Consumo para TODOS os hóspedes cadastrados na reserva (Passagem "Sem Consumo" não envia nada)
-      const allGuestsInFlat = getReservationAllGuests(reservation);
+      const allGuestsInFlat = getReservationAllGuests(billingTargetRes || reservation);
       const guestsToNotify =
         allGuestsInFlat.length > 0
           ? allGuestsInFlat
@@ -97060,7 +98147,7 @@ app.post("/api/minibar/inspections", async (req, res) => {
         sentCleanPhones.add(cleanPhone);
 
         const firstName = guestSlot.firstName || (guestSlot.name || "Hóspede").trim().split(" ")[0];
-        const portalUrl = `${serverBaseUrl}/minha-reserva/${finalResCode}/frigobar${
+        const portalUrl = `${serverBaseUrl}/minha-reserva/${billingResCode || finalResCode}/frigobar${
           guestSlot.index > 1 ? `?guestIndex=${guestSlot.index}` : ""
         }`;
 
@@ -97112,7 +98199,7 @@ app.post("/api/minibar/inspections", async (req, res) => {
         }
       }
     } else if (shouldNotifySofiaNow) {
-      const allGuestsInFlat = getReservationAllGuests(reservation);
+      const allGuestsInFlat = getReservationAllGuests(billingTargetRes || reservation);
       const splitBreakdown = updatedStatement?.splitBreakdown || null;
       const splitMode = splitBreakdown?.mode || "titular";
       const linkedOrderId = autoSplitOrders[0]?.id || chargeOrderId || updatedStatement?.primaryPendingOrder?.id || "";
@@ -97152,7 +98239,7 @@ app.post("/api/minibar/inspections", async (req, res) => {
               ? `\n📌 *Nota:* Itens lançados na vistoria final sem marcação prévia foram atribuídos automaticamente ao Hóspede Principal (Titular).\n`
               : "";
 
-          const paymentUrl = `${serverBaseUrl}/minha-reserva/${finalResCode}/frigobar?guestIndex=${share.guestIndex}${
+          const paymentUrl = `${serverBaseUrl}/minha-reserva/${billingResCode || finalResCode}/frigobar?guestIndex=${share.guestIndex}${
             targetOrdId ? `&ord=${targetOrdId}` : ""
           }`;
 
@@ -97218,7 +98305,7 @@ app.post("/api/minibar/inspections", async (req, res) => {
               ];
         const titularGuest = guestsToNotify[0];
         const ordQuery = linkedOrderId ? `?ord=${linkedOrderId}` : "";
-        const paymentUrl = `${serverBaseUrl}/minha-reserva/${finalResCode}/frigobar${ordQuery}`;
+        const paymentUrl = `${serverBaseUrl}/minha-reserva/${billingResCode || finalResCode}/frigobar${ordQuery}`;
 
         const dayBlocks = (updatedStatement?.dailyLaunches || [])
           .map(day => {
@@ -97477,8 +98564,8 @@ const handleCourtesyCorrection = (req, res) => {
     let reservation = null;
     if (targetCode) {
       reservation =
-        findReservationByLocatorOrContact(targetCode) ||
-        (db.reservations || []).find(r => r.code === targetCode || String(r.id) === targetCode);
+        (db.reservations || []).find(r => r && (r.code === targetCode || String(r.id) === targetCode)) ||
+        findReservationByLocatorOrContact(targetCode, { preserveHistoricalSegment: true });
     }
     if (!reservation && unoccupiedLaunchMode === "link_last_reservation") {
       if (flatStr) {
@@ -97632,7 +98719,7 @@ app.post("/api/minibar/inspections/undo-skip", (req, res) => {
   }
 });
 
-app.get("/api/minibar/inspections/flats-status", (req, res) => {
+app.get(["/api/minibar/inspections/flats-status", "/api/anserve/flats-status"], (req, res) => {
   try {
     const nowBrl = getBrasiliaNow();
     const todayStr = nowBrl.date;
@@ -97689,9 +98776,11 @@ app.get("/api/minibar/inspections/flats-status", (req, res) => {
           // Transita para a nova reserva do dia ("entrada_hoje" antes do check-in e "ocupado" a partir da entrada/horário padrão).
           resActive = checkinTodayRes;
           scheduledCheckinTime = resolveScheduledCheckinTimeHHMM(checkinTodayRes);
-          const incomingOccupied = hasSameDayArrivalBecomeOccupied(checkinTodayRes, nowBrl, {
-            isTurnoverToday: true
-          });
+          const incomingOccupied =
+            checkinTodayRes.roomMoveCutDate === todayStr ||
+            hasSameDayArrivalBecomeOccupied(checkinTodayRes, nowBrl, {
+              isTurnoverToday: true
+            });
           status = incomingOccupied ? "ocupado" : "entrada_hoje";
 
           const departingFinalInsp = (db.minibarInspections || [])
@@ -97728,9 +98817,11 @@ app.get("/api/minibar/inspections/flats-status", (req, res) => {
       } else if (checkinTodayRes) {
         resActive = checkinTodayRes;
         scheduledCheckinTime = resolveScheduledCheckinTimeHHMM(checkinTodayRes);
-        status = hasSameDayArrivalBecomeOccupied(checkinTodayRes, nowBrl, { isTurnoverToday: false })
-          ? "ocupado"
-          : "entrada_hoje";
+        status =
+          checkinTodayRes.roomMoveCutDate === todayStr ||
+          hasSameDayArrivalBecomeOccupied(checkinTodayRes, nowBrl, { isTurnoverToday: false })
+            ? "ocupado"
+            : "entrada_hoje";
       } else {
         resActive = null;
         status = "livre";
@@ -97794,9 +98885,7 @@ app.get("/api/minibar/inspections/flats-status", (req, res) => {
       // Todos os pedidos da reserva atual (pagos e pendentes)
       const allResOrders = resActive
         ? (db.minibarOrders || []).filter(
-            o =>
-              (o.reservationCode === resActive.code || String(o.reservationId) === String(resActive.id)) &&
-              o.paymentStatus !== "cancelado"
+            o => o && doesMinibarOrderMatchReservation(o, resActive) && o.paymentStatus !== "cancelado"
           )
         : [];
 
@@ -98058,6 +99147,9 @@ app.get("/api/minibar/inspections/flats-status", (req, res) => {
         totalPaidAmount: statement ? statement.totalPaidAmount : declaredAmount,
         splitConfig: statement ? statement.splitConfig : null,
         splitBreakdown: statement ? statement.splitBreakdown : null,
+        isRoomTransferOut: Boolean(resActive?.isRoomMoveHistoricalSegment),
+        transferredToFlatNumber: resActive?.isRoomMoveHistoricalSegment ? (resActive.transferredToFlatNumber || null) : null,
+        activeReservationCode: resActive?.isRoomMoveHistoricalSegment ? (resActive.activeReservationCode || null) : null,
         currentReservation: resActive ? {
           code: resActive.code,
           guestName: resActive.guestName,
@@ -98067,6 +99159,9 @@ app.get("/api/minibar/inspections/flats-status", (req, res) => {
           phone: resActive.guestPhone,
           isCheckedOut: isCheckedOutToday,
           checkoutTime: resolvedCheckoutTime,
+          isRoomTransferOut: Boolean(resActive.isRoomMoveHistoricalSegment),
+          transferredToFlatNumber: resActive.transferredToFlatNumber || null,
+          activeReservationCode: resActive.activeReservationCode || null,
           numGuests: Math.max(Number(resActive.numGuests || 1), reservationGuests.length),
           guests: reservationGuests.map(g => ({
             index: g.index,

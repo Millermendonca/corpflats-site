@@ -51,6 +51,10 @@ import {
   updateGuestPhoneAndResendInstructions,
 } from './package-reservations-service.mjs';
 
+function round2Local(n) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
 function normalizePhoneDigits(phone) {
   return String(phone || '').replace(/\D+/g, '');
 }
@@ -189,6 +193,9 @@ export function injectSessionContext(params = {}) {
       if (!r) return false;
       const st = String(r.status || '').toLowerCase().trim();
       if (['cancelada', 'cancelado', 'cancelled', 'expirada', 'expired', 'no_show'].includes(st)) return false;
+      if (r.isRoomMoveHistoricalSegment && String(r.checkoutDate || '').slice(0, 10) <= todayStr) {
+        return false;
+      }
       const paySt = String(r.paymentStatus || '').toLowerCase().trim();
       const isPaid = ['paid', 'pago', 'pago_total', 'pago_integralmente', 'confirmado'].includes(paySt);
       const holdExp = r.expiresAt || r.holdExpiresAt;
@@ -227,6 +234,8 @@ export function injectSessionContext(params = {}) {
     const co = String(r.checkoutDate || '').slice(0, 10);
     const completed = Boolean(
       r.checkoutCompleted ||
+        r.checkoutDone ||
+        r.status === 'completed' ||
         r.status === 'concluida' ||
         r.status === 'checked_out' ||
         guestContext?.isCheckoutCompleted
@@ -404,6 +413,75 @@ export function injectSessionContext(params = {}) {
           })
         : null;
 
+    let roomMoveGroupSummary = null;
+    if (sourceRes.roomMoveGroupId && Array.isArray(db?.reservations)) {
+      const grpId = String(sourceRes.roomMoveGroupId).trim();
+      const grpSegments = db.reservations
+        .filter((seg) => {
+          if (!seg || String(seg.roomMoveGroupId || '').trim() !== grpId) return false;
+          const sst = String(seg.status || '').toLowerCase().trim();
+          return !['cancelada', 'cancelado', 'cancelled', 'expirada', 'expired', 'no_show'].includes(sst);
+        })
+        .sort((a, b) => {
+          const ciCmp = String(a?.checkinDate || '').slice(0, 10).localeCompare(String(b?.checkinDate || '').slice(0, 10));
+          if (ciCmp !== 0) return ciCmp;
+          const idxDiff = (Number(a?.roomMoveIndex) || 0) - (Number(b?.roomMoveIndex) || 0);
+          if (idxDiff !== 0) return idxDiff;
+          return (Number(a?.id) || 0) - (Number(b?.id) || 0);
+        });
+
+      if (grpSegments.length > 0) {
+        let grpTotal = 0;
+        let grpPaid = 0;
+        let minCi = String(sourceRes.originalStayCheckinDate || grpSegments[0]?.checkinDate || '').slice(0, 10);
+        const trailFlats = [];
+
+        for (const seg of grpSegments) {
+          const segCi = String(seg.checkinDate || '').slice(0, 10);
+          if (segCi && (!minCi || segCi < minCi)) minCi = segCi;
+          const segFlat = String(seg.flatNumber || '');
+          if (segFlat) trailFlats.push(segFlat);
+
+          const segTot = round2Local(Number(seg.totalAmount) || 0);
+          const segPaySt = String(seg.paymentStatus || '').toLowerCase().trim();
+          const segSettled =
+            ['paid', 'pago', 'pago_total', 'pago_integralmente', 'confirmado'].includes(segPaySt) ||
+            (segTot > 0 && (Number(seg.paidAmount) || 0) >= segTot - 0.01);
+          const segPaid =
+            seg.paidAmount != null
+              ? round2Local(Number(seg.paidAmount) || 0)
+              : (segSettled ? segTot : 0);
+
+          grpTotal = round2Local(grpTotal + segTot);
+          grpPaid = round2Local(grpPaid + segPaid);
+        }
+
+        const grpPending = round2Local(Math.max(0, grpTotal - grpPaid));
+        roomMoveGroupSummary = {
+          roomMoveGroupId: grpId,
+          originalCheckinDate: minCi,
+          totalAmount: grpTotal,
+          paidAmount: grpPaid,
+          pendingAmount: grpPending,
+          isFullyPaid: grpTotal > 0 ? grpPending <= 0.01 : isPaid,
+          flatTrailNumbers: trailFlats,
+        };
+      }
+    }
+
+    const effectiveIsPaid = roomMoveGroupSummary ? roomMoveGroupSummary.isFullyPaid : isPaid;
+    const effectiveTotalAmount = pkgSummaryCtx
+      ? Number(pkgSummaryCtx.totalAmount || 0)
+      : (roomMoveGroupSummary ? roomMoveGroupSummary.totalAmount : round2Local(Number(sourceRes.totalAmount || 0)));
+    const effectivePaidAmount = pkgSummaryCtx
+      ? Number(pkgSummaryCtx.paidAmount || 0)
+      : (roomMoveGroupSummary ? roomMoveGroupSummary.paidAmount : round2Local(Number(sourceRes.paidAmount || 0)));
+    const effectivePendingAmount = pkgSummaryCtx
+      ? Number(pkgSummaryCtx.pendingAmount || 0)
+      : (roomMoveGroupSummary
+          ? roomMoveGroupSummary.pendingAmount
+          : round2Local(Math.max(0, effectiveTotalAmount - effectivePaidAmount)));
+
     reservaSessao = {
       id: resCode,
       reserva_id: resCode,
@@ -414,7 +492,7 @@ export function injectSessionContext(params = {}) {
       data_checkout: checkoutDate,
       check_in: `${checkinDate}T${sourceRes.checkinTime || '14:00'}:00`,
       check_out: `${checkoutDate}T${sourceRes.lateCheckoutTime || sourceRes.checkoutTime || '12:00'}:00`,
-      ...(ocultarFinanceiro ? {} : { status_pagamento: isPaid ? 'PAGO_INTEGRALMENTE' : 'PENDENTE' }),
+      ...(ocultarFinanceiro ? {} : { status_pagamento: effectiveIsPaid ? 'PAGO_INTEGRALMENTE' : 'PENDENTE' }),
       status_reserva: isUnconfirmedPreRes ? 'PRE_RESERVA' : 'CONFIRMADA',
       plano_tarifa: includeBreakfast ? 'COM_CAFE_DA_MANHA' : 'SOMENTE_HOSPEDAGEM',
       cafe_incluso: includeBreakfast,
@@ -428,11 +506,23 @@ export function injectSessionContext(params = {}) {
           ? 'ACOMPANHANTE'
           : 'HOSPEDE_TITULAR',
       indice_hospede: isCompanionSender ? matchedCompanionGuestNumber : 1,
+      ...(roomMoveGroupSummary
+        ? {
+            possui_troca_flat: true,
+            roomMoveGroupId: roomMoveGroupSummary.roomMoveGroupId,
+            flat_anterior: sourceRes.transferredFromFlatNumber || null,
+            data_corte_troca: sourceRes.roomMoveCutDate || null,
+            data_checkin_estadia_original: roomMoveGroupSummary.originalCheckinDate,
+            trilha_flats: roomMoveGroupSummary.flatTrailNumbers,
+          }
+        : {}),
       ...(ocultarFinanceiro
         ? {}
         : {
             valor_diaria: Number(sourceRes.dailyRate || 237),
-            valor_total: pkgSummaryCtx ? Number(pkgSummaryCtx.totalAmount || 0) : Number(sourceRes.totalAmount || 0),
+            valor_total: effectiveTotalAmount,
+            valor_pago: effectivePaidAmount,
+            saldo_pendente: effectivePendingAmount,
           }),
       quantidade_hospedes: resolveReservationGuestCount(sourceRes),
       acesso_imovel: 'Cartão NFC retirado na recepção 24h',
@@ -541,6 +631,7 @@ export function injectSessionContext(params = {}) {
   if (cleanPhone && cleanPhone.length >= 8) {
     for (const r of reservations) {
       if (!r) continue;
+      if (r.isRoomMoveHistoricalSegment) continue;
       const st = String(r.status || '').toLowerCase().trim();
       if (['cancelada', 'cancelado', 'cancelled', 'expirada', 'expired', 'no_show', 'concluida', 'checked_out'].includes(st)) continue;
       if (r.checkoutCompleted) continue;
@@ -637,6 +728,8 @@ export function buildContextoSessaoJson(context) {
           const clone = { ...rawRes };
           delete clone.valor_diaria;
           delete clone.valor_total;
+          delete clone.valor_pago;
+          delete clone.saldo_pendente;
           delete clone.status_pagamento;
           delete clone.link_comprovante_pagamento;
           delete clone.oferta_domingo_sem_pressa;

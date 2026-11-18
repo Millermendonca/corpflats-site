@@ -233,6 +233,9 @@ export function injectSessionContext(
       if (['cancelada', 'cancelado', 'cancelled', 'expirada', 'expired', 'no_show'].includes(st)) {
         return false;
       }
+      if (r.isRoomMoveHistoricalSegment && String(r.checkoutDate || '').slice(0, 10) <= todayStr) {
+        return false;
+      }
       const paySt = String(r.paymentStatus || '').toLowerCase().trim();
       const isPaid = ['paid', 'pago', 'pago_total', 'pago_integralmente', 'confirmado'].includes(paySt);
       const holdExp = r.expiresAt || r.holdExpiresAt;
@@ -483,6 +486,84 @@ export function injectSessionContext(
         ? buildPackageSummaryForSession(db, sourceRes, baseUrl)
         : null;
 
+    let roomMoveGroupSummary: {
+      roomMoveGroupId: string;
+      originalCheckinDate: string;
+      totalAmount: number;
+      paidAmount: number;
+      pendingAmount: number;
+      isFullyPaid: boolean;
+      flatTrailNumbers: string[];
+    } | null = null;
+
+    if (sourceRes.roomMoveGroupId && Array.isArray(db?.reservations)) {
+      const grpId = String(sourceRes.roomMoveGroupId).trim();
+      const grpSegments = db.reservations
+        .filter((seg: any) => {
+          if (!seg || String(seg.roomMoveGroupId || '').trim() !== grpId) return false;
+          const sst = String(seg.status || '').toLowerCase().trim();
+          return !['cancelada', 'cancelado', 'cancelled', 'expirada', 'expired', 'no_show'].includes(sst);
+        })
+        .sort((a: any, b: any) => {
+          const ciCmp = String(a?.checkinDate || '').slice(0, 10).localeCompare(String(b?.checkinDate || '').slice(0, 10));
+          if (ciCmp !== 0) return ciCmp;
+          const idxDiff = (Number(a?.roomMoveIndex) || 0) - (Number(b?.roomMoveIndex) || 0);
+          if (idxDiff !== 0) return idxDiff;
+          return (Number(a?.id) || 0) - (Number(b?.id) || 0);
+        });
+
+      if (grpSegments.length > 0) {
+        let grpTotal = 0;
+        let grpPaid = 0;
+        let minCi = String(sourceRes.originalStayCheckinDate || grpSegments[0]?.checkinDate || '').slice(0, 10);
+        const trailFlats: string[] = [];
+
+        for (const seg of grpSegments) {
+          const segCi = String(seg.checkinDate || '').slice(0, 10);
+          if (segCi && (!minCi || segCi < minCi)) minCi = segCi;
+          const segFlat = String(seg.flatNumber || '');
+          if (segFlat) trailFlats.push(segFlat);
+
+          const segTot = round2(Number(seg.totalAmount) || 0);
+          const segPaySt = String(seg.paymentStatus || '').toLowerCase().trim();
+          const segSettled =
+            ['paid', 'pago', 'pago_total', 'pago_integralmente', 'confirmado'].includes(segPaySt) ||
+            (segTot > 0 && (Number(seg.paidAmount) || 0) >= segTot - 0.01);
+          const segPaid =
+            seg.paidAmount != null
+              ? round2(Number(seg.paidAmount) || 0)
+              : (segSettled ? segTot : 0);
+
+          grpTotal = round2(grpTotal + segTot);
+          grpPaid = round2(grpPaid + segPaid);
+        }
+
+        const grpPending = round2(Math.max(0, grpTotal - grpPaid));
+        roomMoveGroupSummary = {
+          roomMoveGroupId: grpId,
+          originalCheckinDate: minCi,
+          totalAmount: grpTotal,
+          paidAmount: grpPaid,
+          pendingAmount: grpPending,
+          isFullyPaid: grpTotal > 0 ? grpPending <= 0.01 : isPaid,
+          flatTrailNumbers: trailFlats,
+        };
+      }
+    }
+
+    const effectiveIsPaid = roomMoveGroupSummary ? roomMoveGroupSummary.isFullyPaid : isPaid;
+    const effectiveTotalAmount = pkgSummaryCtx
+      ? pkgSummaryCtx.totalAmount
+      : (roomMoveGroupSummary ? roomMoveGroupSummary.totalAmount : round2(Number(sourceRes.totalAmount || 0)));
+    const effectivePaidAmount = pkgSummaryCtx
+      ? pkgSummaryCtx.paidAmount
+      : (roomMoveGroupSummary ? roomMoveGroupSummary.paidAmount : round2(Number(sourceRes.paidAmount || 0)));
+    const effectivePendingAmount = pkgSummaryCtx
+      ? pkgSummaryCtx.pendingAmount
+      : (roomMoveGroupSummary
+          ? roomMoveGroupSummary.pendingAmount
+          : round2(Math.max(0, effectiveTotalAmount - effectivePaidAmount)));
+
     reservaSessao = {
       id: resCode,
       reserva_id: resCode,
@@ -492,7 +573,7 @@ export function injectSessionContext(
       data_checkout: checkoutDate,
       check_in: `${checkinDate}T${sourceRes.checkinTime || '14:00'}:00`,
       check_out: `${checkoutDate}T${sourceRes.lateCheckoutTime || sourceRes.checkoutTime || '12:00'}:00`,
-      status_pagamento: isPaid ? 'PAGO_INTEGRALMENTE' : 'PENDENTE',
+      status_pagamento: effectiveIsPaid ? 'PAGO_INTEGRALMENTE' : 'PENDENTE',
       status_reserva: isUnconfirmedPreRes ? 'PRE_RESERVA' : 'CONFIRMADA',
       quantidade_hospedes: qtdHospedes,
       canal_reserva: rawChan,
@@ -524,11 +605,23 @@ export function injectSessionContext(
           : null,
       link_pre_checkin: linkPreCheckinResolved,
       link_portal_hospede: linkPortalHospedeIndividual,
+      ...(roomMoveGroupSummary
+        ? {
+            possui_troca_flat: true,
+            roomMoveGroupId: roomMoveGroupSummary.roomMoveGroupId,
+            flat_anterior: sourceRes.transferredFromFlatNumber || null,
+            data_corte_troca: sourceRes.roomMoveCutDate || null,
+            data_checkin_estadia_original: roomMoveGroupSummary.originalCheckinDate,
+            trilha_flats: roomMoveGroupSummary.flatTrailNumbers,
+          }
+        : {}),
       ...(ocultarFinanceiro
         ? {}
         : {
             valor_diaria: Number(sourceRes.dailyRate || 237),
-            valor_total: pkgSummaryCtx ? pkgSummaryCtx.totalAmount : Number(sourceRes.totalAmount || 0),
+            valor_total: effectiveTotalAmount,
+            valor_pago: effectivePaidAmount,
+            saldo_pendente: effectivePendingAmount,
             link_comprovante_pagamento: pkgSummaryCtx
               ? pkgSummaryCtx.packagePortalUrl
               : `${baseUrl}/minha-reserva/${resCode}`,
@@ -568,6 +661,7 @@ export function injectSessionContext(
   if (cleanPhone && cleanPhone.length >= 8) {
     for (const r of reservations) {
       if (!r) continue;
+      if (r.isRoomMoveHistoricalSegment) continue;
       const st = String(r.status || '').toLowerCase().trim();
       if (['cancelada', 'cancelado', 'cancelled', 'expirada', 'expired', 'no_show', 'concluida', 'checked_out'].includes(st)) continue;
       if (r.checkoutCompleted) continue;
@@ -647,6 +741,8 @@ export function buildContextoSessaoJson(context: ContextoSessaoInjetado): string
           const clone = { ...rawRes };
           delete clone.valor_diaria;
           delete clone.valor_total;
+          delete clone.valor_pago;
+          delete clone.saldo_pendente;
           delete clone.status_pagamento;
           delete clone.link_comprovante_pagamento;
           delete clone.oferta_domingo_sem_pressa;

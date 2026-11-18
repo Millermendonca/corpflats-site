@@ -586,7 +586,7 @@ export default function Payments() {
 
   const handleDispatchBoleto = async (b: any) => {
     try {
-      toast({ title: "Disparando E-mail e WhatsApp...", description: `Enviando PDF da NFS-e + Boleto #${b.code || b.id} aos destinatários.` })
+      toast({ title: "Disparando E-mail e WhatsApp...", description: `Enviando Boleto #${b.code || b.id} por E-mail e WhatsApp aos destinatários.` })
       const resp = await fetch(`/api/boletos/${b.id}/dispatch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -595,7 +595,7 @@ export default function Payments() {
       })
       const data = await resp.json()
       if (resp.ok && data.success) {
-        toast({ title: "Envios concluídos!", description: "PDFs, linha digitável e PIX enviados aos destinatários marcados." })
+        toast({ title: "Envios concluídos!", description: "PDF do boleto e botões de cópia enviados aos destinatários marcados." })
         fetchPayments()
       } else {
         toast({ title: "Erro ao reenviar", description: data.error || "Não foi possível disparar o boleto aos destinatários.", variant: "destructive" })
@@ -1754,7 +1754,7 @@ export default function Payments() {
                                     variant="outline"
                                     onClick={() => handleDispatchBoleto(b)}
                                     className="h-7 px-2 text-[10px] font-bold rounded-lg gap-1"
-                                    title="Reenviar PDF da NFS-e + Boleto por E-mail e WhatsApp"
+                                    title="Reenviar Boleto (PDF + Botões de Cópia) por E-mail e WhatsApp"
                                   >
                                     <Send className="w-3 h-3" />
                                     <span>Enviar</span>

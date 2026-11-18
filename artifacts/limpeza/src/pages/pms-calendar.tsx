@@ -20,7 +20,7 @@ import {
   CalendarDays, Plus, Wand2, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Search, 
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
   Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy,
-  LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight, CreditCard, ExternalLink, QrCode, Link2, DoorOpen, Car,
+  LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight, ArrowLeftRight, CreditCard, ExternalLink, QrCode, Link2, DoorOpen, Car,
   Download, Upload, FileSpreadsheet, Wrench, Camera, Refrigerator, Bell, Gift, ListOrdered
 } from "lucide-react"
 import { compressImage } from "@/lib/image-compression"
@@ -56,6 +56,7 @@ import { AccessDenied } from "@/components/access-denied"
 import { PdfViewerDialog } from "@/components/pdf-preview"
 import { FLAT_AMENITIES_CATALOG, AMENITY_CATEGORIES, renderAmenityIcon, getFlatActiveAmenities, FlatAmenityDefinition } from "@/lib/flat-amenities"
 import { ReservationHoverCard } from "@/components/reservation-hover-card"
+import { RoomMoveSwapDialog } from "@/components/room-move-swap-dialog"
 import { QuickMessageConfirmDialog } from "@/components/quick-message-confirm-dialog"
 import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients, sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildQuickMessageWaWebUrl, buildDirectWaWebUrl, cleanWhatsAppPhone, formatReservationChannelLabel, resolveReservationGuestCount } from "@/hooks/use-quick-messages"
 import { PaymentMethodsModal, PaymentMethod } from "@/components/payment-methods-modal"
@@ -2593,6 +2594,31 @@ export default function PmsCalendar(props?: {
   const [savingRes, setSavingRes] = useState(false)
   const [mobileCardResId, setMobileCardResId] = useState<number | string | null>(null)
   useBackLayer(mobileCardResId !== null, () => setMobileCardResId(null), "pms-mobile-res-card")
+  const [roomMoveModalState, setRoomMoveModalState] = useState<{
+    open: boolean;
+    originReservation: any | null;
+    initialTargetFlatId?: number | string | null;
+    initialConflictingReservation?: any | null;
+    initialMode?: "split" | "move_whole" | "swap";
+  }>({ open: false, originReservation: null })
+  const [undoingRoomMoveId, setUndoingRoomMoveId] = useState<number | string | null>(null)
+  const openRoomMoveDialog = (
+    res: any,
+    opts?: {
+      targetFlatId?: number | string | null;
+      conflictingReservation?: any | null;
+      mode?: "split" | "move_whole" | "swap";
+    }
+  ) => {
+    if (!res) return
+    setRoomMoveModalState({
+      open: true,
+      originReservation: res,
+      initialTargetFlatId: opts?.targetFlatId ?? null,
+      initialConflictingReservation: opts?.conflictingReservation ?? null,
+      initialMode: opts?.mode,
+    })
+  }
 
   // Export CSV States
   const [csvExportModalOpen, setCsvExportModalOpen] = useState(false)
@@ -4194,12 +4220,15 @@ export default function PmsCalendar(props?: {
       }
 
       // Validação de Conflitos
-      const hasConflict = data.reservations.some(r => {
-        if (r.id === current.res.id || r.status === "cancelada") return false;
+      const conflictingReservations = data.reservations.filter(r => {
+        if (r.id === current.res.id) return false;
+        const stLow = String(r.status || "").toLowerCase();
+        if (stLow === "cancelada" || stLow === "cancelled" || stLow === "expirada" || stLow === "no_show") return false;
         const sameFlat = r.flatId === current.currentFlatId || String(r.flatNumber) === String(current.currentFlatNumber);
         if (!sameFlat) return false;
         return r.checkinDate < current.currentCheckout && r.checkoutDate > current.currentCheckin;
       });
+      const hasConflict = conflictingReservations.length > 0;
 
       const serviceBlockConflict = data.blocks.find(b => {
         const isService = Boolean(b.isServiceBlock || b.reason === "service_order");
@@ -4215,6 +4244,22 @@ export default function PmsCalendar(props?: {
         if (!sameFlat) return false;
         return b.startDate <= current.currentCheckout && b.endDate >= current.currentCheckin;
       });
+
+      const dragTodayStr = format(new Date(), "yyyy-MM-dd");
+      const isVerticalFlatMove =
+        current.mode === "move" &&
+        Number(current.currentFlatId) !== Number(current.originFlatId);
+
+      if (isVerticalFlatMove && !hasHardBlockConflict && conflictingReservations.length === 1) {
+        const occupyingRes = conflictingReservations[0];
+        openRoomMoveDialog(current.res, {
+          targetFlatId: current.currentFlatId,
+          conflictingReservation: occupyingRes,
+          mode: "swap",
+        });
+        setResDragState(null);
+        return;
+      }
 
       if (hasConflict || hasHardBlockConflict) {
         alert(`Não foi possível alterar a reserva: o Apt ${current.currentFlatNumber} já possui ocupação ou bloqueio no período (${format(parseISO(current.currentCheckin), "dd/MM")} a ${format(parseISO(current.currentCheckout), "dd/MM")}).`);
@@ -4235,6 +4280,24 @@ export default function PmsCalendar(props?: {
           setResDragState(null);
           return;
         }
+      }
+
+      if (
+        isVerticalFlatMove &&
+        !hasConflict &&
+        !hasHardBlockConflict &&
+        current.originCheckin === current.currentCheckin &&
+        current.originCheckout === current.currentCheckout &&
+        current.res.checkinDate < dragTodayStr &&
+        current.res.checkoutDate > dragTodayStr
+      ) {
+        openRoomMoveDialog(current.res, {
+          targetFlatId: current.currentFlatId,
+          conflictingReservation: null,
+          mode: "split",
+        });
+        setResDragState(null);
+        return;
       }
 
       const originNights = differenceInDays(parseISO(current.originCheckout), parseISO(current.originCheckin)) || 1;
@@ -10076,6 +10139,41 @@ export default function PmsCalendar(props?: {
     }
   }
 
+  const handleUndoRoomMove = async (targetRes: any, options?: { closeModal?: boolean }) => {
+    if (!targetRes?.id) return
+    setUndoingRoomMoveId(targetRes.id)
+    try {
+      const resp = await fetch(`/api/pms/reservations/${encodeURIComponent(String(targetRes.id))}/undo-room-move`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({})
+      })
+      const json = await resp.json().catch(() => ({}))
+      if (!resp.ok) throw new Error(json.error || "Falha ao desfazer última troca de quarto.")
+      toast({
+        title: "Troca de quarto desfeita e reunificada! ↩️",
+        description: `Reserva ${targetRes.code || ""} restaurada para o flat anterior com diárias e taxas reunificadas.`
+      })
+      setMobileCardResId(null)
+      await fetchData(false)
+      notifyCalendarUpdated()
+      if (json.reservation && selectedRes && String(selectedRes.id) === String(targetRes.id) && options?.closeModal === false) {
+        handleOpenEditRes(json.reservation)
+      } else if (options?.closeModal !== false) {
+        setResModalOpen(false)
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro ao desfazer troca de quarto",
+        description: err?.message || "Não foi possível reunificar os segmentos.",
+        variant: "destructive"
+      })
+    } finally {
+      setUndoingRoomMoveId(null)
+    }
+  }
+
   const handleClearFalseEarlyCheckout = async (targetRes: any, options?: { closeModal?: boolean }) => {
     if (!targetRes?.id) return
     setClearingFalseEarlyCheckoutId(targetRes.id)
@@ -11741,6 +11839,7 @@ export default function PmsCalendar(props?: {
                                 isBeingDragged={Boolean(resDragState && (resDragState.hasMoved || resDragState.isLongPressReady))}
                                 onOpenDetails={handleOpenEditRes}
                                 onUndoEarlyCheckout={(r) => handleUndoEarlyCheckout(r, { closeModal: false })}
+                                onOpenRoomMoveSwap={(r) => openRoomMoveDialog(r)}
                                 channelCfg={channelCfg}
                                 isMensalista={isMensalista}
                                 isOpenMobile={mobileCardResId === resItem.id}
@@ -11912,6 +12011,24 @@ export default function PmsCalendar(props?: {
                                     {(resItem.isFlatLocked || resItem.flatLocked) && (
                                       <span title={`Quarto Preferencial / Bloqueado${resItem.flatLockReason ? `: ${resItem.flatLockReason}` : ""}`} className="shrink-0 text-[9px] px-1.5 py-0.2 bg-amber-400 text-slate-950 font-black rounded shadow-xs flex items-center gap-0.5">
                                         🔒 Fixo
+                                      </span>
+                                    )}
+                                    {resItem.isRoomMoveHistoricalSegment && resItem.transferredToFlatNumber && (
+                                      <span
+                                        data-room-move-out-badge="true"
+                                        title={`Troca de quarto${resItem.roomMoveCutDate ? ` em ${resItem.roomMoveCutDate}` : ""}: hóspede transferido para o Flat ${resItem.transferredToFlatNumber}`}
+                                        className="shrink-0 text-[9px] px-1.5 py-0.2 bg-amber-300 text-slate-950 border border-amber-500 font-black rounded shadow-xs flex items-center gap-0.5"
+                                      >
+                                        🔀 → {resItem.transferredToFlatNumber}
+                                      </span>
+                                    )}
+                                    {!resItem.isRoomMoveHistoricalSegment && resItem.transferredFromFlatNumber && (
+                                      <span
+                                        data-room-move-in-badge="true"
+                                        title={`Hóspede transferido do Flat ${resItem.transferredFromFlatNumber}${resItem.roomMoveCutDate ? ` em ${resItem.roomMoveCutDate}` : ""}`}
+                                        className="shrink-0 text-[9px] px-1.5 py-0.2 bg-indigo-500 text-white border border-indigo-300/80 font-black rounded shadow-xs flex items-center gap-0.5"
+                                      >
+                                        🔀 ← {resItem.transferredFromFlatNumber}
                                       </span>
                                     )}
                                     {resItem.packageCode && (
@@ -12628,6 +12745,155 @@ export default function PmsCalendar(props?: {
             {(!selectedRes || resModalTab === "reservation" || resModalTab === "details" || resModalTab === "payments") && (
               <form noValidate onSubmit={handleSaveRes}>
                 <div className="py-2.5 space-y-4">
+                {/* Botão Trocar / Inverter Flat & Jornada de Troca de Quarto */}
+                {selectedRes &&
+                  !["cancelada", "cancelled", "expirada", "no_show"].includes(
+                    String(selectedRes.status || "").toLowerCase()
+                  ) && (() => {
+                    const groupId = String(selectedRes.roomMoveGroupId || "").trim()
+                    const groupSegments = groupId
+                      ? (data.reservations || [])
+                          .filter((r: any) => String(r.roomMoveGroupId || "") === groupId)
+                          .sort((a: any, b: any) => {
+                            const cmpDate = String(a.checkinDate || "").localeCompare(String(b.checkinDate || ""))
+                            if (cmpDate !== 0) return cmpDate
+                            const cmpIdx = (Number(a.roomMoveIndex) || 0) - (Number(b.roomMoveIndex) || 0)
+                            if (cmpIdx !== 0) return cmpIdx
+                            return (Number(a.id) || 0) - (Number(b.id) || 0)
+                          })
+                      : []
+                    const activeGroupSeg =
+                      groupSegments.find(
+                        (s: any) =>
+                          !s.isRoomMoveHistoricalSegment &&
+                          !["cancelada", "cancelled", "expirada", "no_show"].includes(String(s.status || "").toLowerCase())
+                      ) ||
+                      (selectedRes.isRoomMoveHistoricalSegment ? null : selectedRes)
+                    const canUndoMove = Boolean(
+                      !selectedRes.isRoomMoveHistoricalSegment && selectedRes.previousSegmentReservationId
+                    )
+
+                    return (
+                      <div className="space-y-2.5">
+                        <div className="p-2.5 rounded-2xl border border-indigo-200 dark:border-indigo-800/70 bg-indigo-50/50 dark:bg-indigo-950/25 flex flex-wrap items-center justify-between gap-2 text-xs">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <ArrowLeftRight className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                            <span className="font-bold text-slate-900 dark:text-slate-100">
+                              Troca de Apartamento / Inversão (⇄)
+                            </span>
+                            {selectedRes.transferredFromFlatNumber && !selectedRes.isRoomMoveHistoricalSegment && (
+                              <Badge variant="outline" className="text-[10px] font-bold bg-indigo-100/80 text-indigo-800 border-indigo-300 dark:bg-indigo-950 dark:text-indigo-200 dark:border-indigo-700">
+                                🔀 ← Flat {selectedRes.transferredFromFlatNumber}
+                              </Badge>
+                            )}
+                            {selectedRes.transferredToFlatNumber && (
+                              <Badge variant="outline" className="text-[10px] font-bold bg-amber-100/90 text-amber-900 border-amber-300 dark:bg-amber-950 dark:text-amber-200 dark:border-amber-700">
+                                🔀 → Flat {selectedRes.transferredToFlatNumber}
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {canUndoMove && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={undoingRoomMoveId === selectedRes.id}
+                                onClick={() => handleUndoRoomMove(selectedRes, { closeModal: false })}
+                                className="h-7 px-2.5 text-[11px] font-bold border-amber-400 text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40 gap-1 cursor-pointer"
+                              >
+                                <RotateCcw className={`w-3 h-3 ${undoingRoomMoveId === selectedRes.id ? "animate-spin" : ""}`} />
+                                <span>
+                                  {undoingRoomMoveId === selectedRes.id
+                                    ? "Reunificando..."
+                                    : "↩️ Desfazer Última Troca / Reunificar"}
+                                </span>
+                              </Button>
+                            )}
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => openRoomMoveDialog(activeGroupSeg || selectedRes)}
+                              className="h-7 px-2.5 text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white gap-1 cursor-pointer"
+                            >
+                              <span>🔄 Trocar / Inverter Flat</span>
+                            </Button>
+                          </div>
+                        </div>
+
+                        {Boolean(selectedRes.roomMoveGroupId) && (
+                          <div className="p-3 rounded-2xl border-2 border-sky-300 dark:border-sky-800 bg-sky-50/50 dark:bg-sky-950/25 space-y-2 text-xs">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-1.5 font-black text-sky-950 dark:text-sky-100">
+                                <span>🔀 Jornada de Troca de Quarto</span>
+                                <Badge variant="outline" className="font-mono text-[10px]">
+                                  {selectedRes.roomMoveGroupId}
+                                </Badge>
+                              </div>
+                              <span className="text-[11px] font-semibold text-muted-foreground">
+                                {(groupSegments.length > 0 ? groupSegments : [selectedRes]).length} segmento(s)
+                              </span>
+                            </div>
+
+                            <div className="space-y-1.5">
+                              {(groupSegments.length > 0 ? groupSegments : [selectedRes]).map((seg: any, sIdx: number) => {
+                                const isCurrent = Number(seg.id) === Number(selectedRes.id)
+                                const isHist = Boolean(seg.isRoomMoveHistoricalSegment)
+                                return (
+                                  <button
+                                    key={seg.id || sIdx}
+                                    type="button"
+                                    onClick={() => {
+                                      if (!isCurrent) handleOpenEditRes(seg)
+                                    }}
+                                    className={cn(
+                                      "w-full text-left p-2 rounded-xl border flex flex-wrap items-center justify-between gap-2 transition-colors",
+                                      isCurrent
+                                        ? "bg-sky-600 text-white border-sky-700 shadow-xs"
+                                        : isHist
+                                          ? "bg-white/80 dark:bg-slate-900/70 border-amber-300/80 dark:border-amber-800 hover:bg-amber-50/60 cursor-pointer"
+                                          : "bg-white dark:bg-slate-900 border-sky-200 dark:border-sky-800 hover:bg-sky-50/60 cursor-pointer"
+                                    )}
+                                  >
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <Badge
+                                        variant={isCurrent ? "secondary" : "outline"}
+                                        className="text-[10px] font-black"
+                                      >
+                                        Parte {seg.roomMoveIndex || sIdx + 1} • Flat {seg.flatNumber || seg.flatId}
+                                      </Badge>
+                                      <span className="font-bold">
+                                        {seg.checkinDate ? format(parseISO(seg.checkinDate), "dd/MM/yyyy") : "—"} →{" "}
+                                        {seg.checkoutDate ? format(parseISO(seg.checkoutDate), "dd/MM/yyyy") : "—"}
+                                      </span>
+                                      <Badge
+                                        variant="outline"
+                                        className={cn(
+                                          "text-[9.5px] font-bold",
+                                          isCurrent
+                                            ? "bg-white/20 text-white border-white/40"
+                                            : isHist
+                                              ? "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/60 dark:text-amber-200"
+                                              : "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-200"
+                                        )}
+                                      >
+                                        {isHist ? "Histórico" : "Segmento Ativo"}
+                                      </Badge>
+                                    </div>
+                                    <div className="flex items-center gap-2 font-black">
+                                      <span>R$ {Number(seg.totalAmount || 0).toFixed(2)}</span>
+                                      {!isCurrent && <span className="text-[10px] underline">Abrir →</span>}
+                                    </div>
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
+
                 {/* Painel de Gestão de Reserva Pertencente a Pacote Multi-Flat (Edição) */}
                 {selectedRes && Boolean(selectedRes.packageId || selectedRes.packageCode) && (() => {
                   const pkgCode = String(selectedRes.packageCode || selectedRes.packageId || "")
@@ -14680,6 +14946,14 @@ export default function PmsCalendar(props?: {
                                               <span className="font-bold text-slate-900 dark:text-slate-100">
                                                 {ord.guestName || selectedRes.guestName || "Hóspede"}
                                               </span>
+                                              {ord.flatNumber && (
+                                                <Badge
+                                                  variant="outline"
+                                                  className="bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-400/40 text-[10px] font-bold"
+                                                >
+                                                  Flat {ord.flatNumber}
+                                                </Badge>
+                                              )}
                                               <Badge
                                                 variant="outline"
                                                 className={
@@ -20168,6 +20442,30 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
             )}
           </DialogContent>
         </Dialog>
+
+        <RoomMoveSwapDialog
+          open={roomMoveModalState.open}
+          onOpenChange={(open) => {
+            if (!open) {
+              setRoomMoveModalState((prev) => ({ ...prev, open: false }))
+            }
+          }}
+          originReservation={roomMoveModalState.originReservation}
+          flats={data.flats || []}
+          reservations={data.reservations || []}
+          blocks={data.blocks || []}
+          todayStr={todayStr}
+          initialTargetFlatId={roomMoveModalState.initialTargetFlatId}
+          initialConflictingReservation={roomMoveModalState.initialConflictingReservation}
+          initialMode={roomMoveModalState.initialMode}
+          onSuccess={async () => {
+            await fetchData(false)
+            notifyCalendarUpdated()
+            if (resModalOpen) {
+              setResModalOpen(false)
+            }
+          }}
+        />
       </div>
     </MaybeShell>
   )

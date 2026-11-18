@@ -255,6 +255,22 @@ export const ReservationQuickDrawer: React.FC<ReservationQuickDrawerProps> = ({
                   Flat {row.flatNumber}
                 </Badge>
               )}
+              {row.transferredToFlatNumber && (
+                <Badge
+                  variant="outline"
+                  className="text-[10.5px] font-bold bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-700"
+                >
+                  🔀 → Flat {row.transferredToFlatNumber}
+                </Badge>
+              )}
+              {!row.isRoomMoveHistoricalSegment && row.transferredFromFlatNumber && (
+                <Badge
+                  variant="outline"
+                  className="text-[10.5px] font-bold bg-indigo-50 text-indigo-700 border-indigo-300 dark:bg-indigo-950/50 dark:text-indigo-300 dark:border-indigo-700"
+                >
+                  🔀 ← Flat {row.transferredFromFlatNumber}
+                </Badge>
+              )}
               {row.packageCode && (
                 <button
                   type="button"

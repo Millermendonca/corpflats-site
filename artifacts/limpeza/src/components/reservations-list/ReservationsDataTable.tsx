@@ -772,24 +772,54 @@ export const ReservationsDataTable: React.FC<ReservationsDataTableProps> = ({
                     {/* 4. Flat */}
                     <td className="gfm-res-cell whitespace-nowrap">
                       {row.flatNumber ? (
-                        <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-muted/80 border border-border font-black text-foreground">
-                          <span
-                            className={`w-2 h-2 rounded-full ${
-                              row.cleaningStatusToday === "dirty"
-                                ? "bg-rose-500"
-                                : row.cleaningStatusToday === "cleaning_now"
-                                  ? "bg-amber-500 animate-pulse"
-                                  : "bg-emerald-500"
-                            }`}
-                            title={
-                              row.cleaningStatusToday === "dirty"
-                                ? "Flat Sujo hoje"
-                                : row.cleaningStatusToday === "cleaning_now"
-                                  ? "Em limpeza agora"
-                                  : "Flat Limpo"
-                            }
-                          />
-                          <span>{row.flatNumber}</span>
+                        <div className="flex flex-col items-start gap-1">
+                          <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-muted/80 border border-border font-black text-foreground">
+                            <span
+                              className={`w-2 h-2 rounded-full ${
+                                row.cleaningStatusToday === "dirty"
+                                  ? "bg-rose-500"
+                                  : row.cleaningStatusToday === "cleaning_now"
+                                    ? "bg-amber-500 animate-pulse"
+                                    : "bg-emerald-500"
+                              }`}
+                              title={
+                                row.cleaningStatusToday === "dirty"
+                                  ? "Flat Sujo hoje"
+                                  : row.cleaningStatusToday === "cleaning_now"
+                                    ? "Em limpeza agora"
+                                    : "Flat Limpo"
+                              }
+                            />
+                            <span>{row.flatNumber}</span>
+                          </div>
+                          {row.transferredToFlatNumber && (
+                            <Badge
+                              variant="outline"
+                              className="text-[9.5px] px-1.5 py-0 h-4 bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-700 font-bold"
+                              title={`Segmento histórico transferido para o Flat ${row.transferredToFlatNumber}`}
+                            >
+                              🔀 → Flat {row.transferredToFlatNumber}
+                            </Badge>
+                          )}
+                          {!row.isRoomMoveHistoricalSegment && row.transferredFromFlatNumber && (
+                            <Badge
+                              variant="outline"
+                              className="text-[9.5px] px-1.5 py-0 h-4 bg-indigo-50 text-indigo-700 border-indigo-300 dark:bg-indigo-950/50 dark:text-indigo-300 dark:border-indigo-700 font-bold"
+                              title={`Hóspede transferido do Flat ${row.transferredFromFlatNumber}`}
+                            >
+                              🔀 ← Flat {row.transferredFromFlatNumber}
+                            </Badge>
+                          )}
+                          {row.roomMoveGroupId &&
+                            !row.transferredToFlatNumber &&
+                            !row.transferredFromFlatNumber && (
+                              <Badge
+                                variant="outline"
+                                className="text-[9.5px] px-1.5 py-0 h-4 bg-sky-50 text-sky-700 border-sky-300 dark:bg-sky-950/50 dark:text-sky-300 dark:border-sky-700 font-bold"
+                              >
+                                🔀 Troca de Flat
+                              </Badge>
+                            )}
                         </div>
                       ) : (
                         <Badge className="bg-rose-600 text-white text-[10px] font-bold">

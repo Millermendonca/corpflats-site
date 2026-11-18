@@ -205,7 +205,7 @@ export function computeReconciliationScore(pmsRes, otaBooking) {
   }
 
   // 2. Date Matching (max 30 pts)
-  const pmsIn = String(pmsRes.checkinDate || "").substring(0, 10);
+  const pmsIn = String(pmsRes.originalStayCheckinDate || pmsRes.checkinDate || "").substring(0, 10);
   const pmsOut = String(pmsRes.checkoutDate || "").substring(0, 10);
   const otaIn = String(otaBooking.checkinDate || otaBooking.StartDate || "").substring(0, 10);
   const otaOut = String(otaBooking.checkoutDate || otaBooking.EndDate || "").substring(0, 10);
@@ -328,13 +328,14 @@ export function findBestManualMatch(db, otaBooking) {
   let bestScoreResult = null;
 
   for (const r of db.reservations) {
-    // Skip cancelled or already linked reservations with a DIFFERENT orderId
+    // Skip cancelled, historical room-move segments, or already linked reservations with a DIFFERENT orderId
     if (r.status === "cancelada" || r.status === "cancelled") continue;
+    if (r.isRoomMoveHistoricalSegment) continue;
     if (r.externalOrderId && String(r.externalOrderId) !== String(otaBooking.externalOrderId || otaBooking.OrderId || otaBooking.wbpBookingId)) {
       continue;
     }
 
-    const rIn = String(r.checkinDate || "").substring(0, 10);
+    const rIn = String(r.originalStayCheckinDate || r.checkinDate || "").substring(0, 10);
     const rOut = String(r.checkoutDate || "").substring(0, 10);
 
     // Rough date window filter: check-in within +/- 5 days of OTA checkin
@@ -488,6 +489,7 @@ export function generateReconciliationReport({ db, otaBookings = [], options = {
   // Find active manual reservations in PMS that have channel = booking/airbnb/expedia or channexBookingId/channexRevisionId but no OTA counterpart
   const unmatchedPms = pmsReservations.filter(r => {
     if (r.status === "cancelada" || r.status === "cancelled") return false;
+    if (r.isRoomMoveHistoricalSegment) return false;
     const chan = String(r.channel || "").toLowerCase();
     const isOta =
       chan.includes("booking") ||

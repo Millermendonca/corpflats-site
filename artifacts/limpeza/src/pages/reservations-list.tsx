@@ -203,9 +203,23 @@ export default function ReservationsListPage() {
         if (!res.ok) throw new Error("Falha ao carregar Central de Reservas");
         const data = await res.json();
 
-        const incomingRows: UnifiedReservationRow[] = Array.isArray(data.items)
+        const rawItems: UnifiedReservationRow[] = Array.isArray(data.items)
           ? data.items
           : [];
+        const incomingRows: UnifiedReservationRow[] = rawItems.map((item: any) => ({
+          ...item,
+          roomMoveGroupId: item.roomMoveGroupId ?? item.rawReservation?.roomMoveGroupId ?? null,
+          transferredToFlatNumber:
+            item.transferredToFlatNumber ?? item.rawReservation?.transferredToFlatNumber ?? null,
+          transferredFromFlatNumber:
+            item.transferredFromFlatNumber ?? item.rawReservation?.transferredFromFlatNumber ?? null,
+          isRoomMoveHistoricalSegment: Boolean(
+            item.isRoomMoveHistoricalSegment ?? item.rawReservation?.isRoomMoveHistoricalSegment
+          ),
+          isRoomMoveActiveSegment: Boolean(
+            item.isRoomMoveActiveSegment ?? item.rawReservation?.isRoomMoveActiveSegment
+          ),
+        }));
         if (data.todayStr) setTodayStr(data.todayStr);
         if (Array.isArray(data.flats)) setFlats(data.flats);
         if (data.wbpTelemetry?.mode) setWbpMode(data.wbpTelemetry.mode);

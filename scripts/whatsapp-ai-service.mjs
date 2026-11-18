@@ -12,7 +12,92 @@
  */
 
 import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, isOwnHotelWhatsAppPhone, isBotMessage, DEVELOPER_PHONES, doesReservationMatchPhone, findAllReservationsByPhone, formatPhoneDisplay, evaluateZapiChannelPolicy, ensureZapiChannels, getReservationRecipients, triggerImmediateWhatsApp, formatReservationChannelLabel, resolveReservationGuestCount, computeCardAmountFromPix } from "./zapi-service.mjs";
-import { buildOfficialNfseDraftForReservation } from "./chat-service.mjs";
+import { buildOfficialNfseDraftForReservation as _rawBuildOfficialNfseDraftForReservation } from "./chat-service.mjs";
+import {
+  getRoomMoveGroupReservations,
+  getActiveRoomMoveReservation,
+  computeRoomMoveConsolidatedSummary
+} from "./room-move-service.mjs";
+
+function buildOfficialNfseDraftForReservation(db, options = {}) {
+  const isResObject =
+    options &&
+    typeof options === "object" &&
+    ("checkinDate" in options || "flatNumber" in options || "guestName" in options) &&
+    !("reservation" in options);
+  const rawRes = isResObject ? options : (options?.reservation || null);
+  const rmSummary = rawRes?.roomMoveGroupId ? computeRoomMoveConsolidatedSummary(db, rawRes) : null;
+  if (!rmSummary || rmSummary.segments.length <= 1) {
+    return _rawBuildOfficialNfseDraftForReservation(db, options);
+  }
+  const activeSeg = rmSummary.activeReservation || rawRes;
+  const flatTrailRaw = Array.isArray(rmSummary.flatTrail) ? rmSummary.flatTrail : [];
+  const flatTrailNumbers = Array.from(
+    new Set(
+      flatTrailRaw
+        .map(ft => (typeof ft === "object" && ft ? String(ft.flatNumber || "").trim() : String(ft || "").trim()))
+        .filter(Boolean)
+    )
+  );
+  if (flatTrailNumbers.length === 0 && activeSeg?.flatNumber) {
+    flatTrailNumbers.push(String(activeSeg.flatNumber).trim());
+  }
+  const consolidatedFlatLabel = flatTrailNumbers.length > 1
+    ? `${flatTrailNumbers.slice(0, -1).join(", ")} e ${flatTrailNumbers[flatTrailNumbers.length - 1]}`
+    : (flatTrailNumbers[0] || String(activeSeg?.flatNumber || ""));
+  const hasApprovedCustomVal = Boolean(
+    activeSeg?.confirmedFiscalData?.managerApprovedValue &&
+    Number(activeSeg?.confirmedFiscalData?.valorServico) > 0
+  );
+  const consolidatedValor = hasApprovedCustomVal
+    ? Number(activeSeg.confirmedFiscalData.valorServico)
+    : Number(rmSummary.accommodationTotal || rmSummary.totalAmount || 0);
+  const syntheticRes = {
+    ...activeSeg,
+    checkinDate: rmSummary.originalCheckinDate || activeSeg.checkinDate,
+    checkoutDate: rmSummary.finalCheckoutDate || activeSeg.checkoutDate,
+    originalCheckoutDate: (activeSeg.earlyCheckout && activeSeg.originalCheckoutDate)
+      ? activeSeg.originalCheckoutDate
+      : (rmSummary.finalCheckoutDate || activeSeg.checkoutDate),
+    flatNumber: consolidatedFlatLabel,
+    quantidadeDiarias: rmSummary.totalNights || activeSeg.quantidadeDiarias || 1,
+    diarias: rmSummary.totalNights || activeSeg.diarias || 1,
+    nights: rmSummary.totalNights || activeSeg.nights || 1,
+    totalAmount: consolidatedValor
+  };
+  const nextOpts = isResObject ? syntheticRes : { ...options, reservation: syntheticRes };
+  const draft = _rawBuildOfficialNfseDraftForReservation(db, nextOpts);
+  if (!draft) return draft;
+  let desc = String(draft.descricaoServico || "");
+  if (flatTrailNumbers.length > 1 && desc) {
+    desc = desc.replace(`, no Flat ${consolidatedFlatLabel}`, `, nos Flats ${consolidatedFlatLabel}`);
+    desc = desc.replace(`Flat ${consolidatedFlatLabel}`, `Flats ${consolidatedFlatLabel}`);
+  }
+  return {
+    ...draft,
+    reservationId: activeSeg.id,
+    reservationCode: activeSeg.code,
+    flatNumber: String(activeSeg.flatNumber || draft.flatNumber || ""),
+    flatTrail: flatTrailRaw.length > 0 ? flatTrailRaw : flatTrailNumbers,
+    flatTrailNumbers,
+    allReservationIds: rmSummary.allReservationIds,
+    allReservationCodes: rmSummary.allReservationCodes,
+    isRoomMoveConsolidated: true,
+    roomMoveGroupId: rmSummary.roomMoveGroupId,
+    roomMoveSummary: rmSummary,
+    checkIn: rmSummary.originalCheckinDate || draft.checkIn,
+    checkOut: rmSummary.finalCheckoutDate || draft.checkOut,
+    checkinDate: rmSummary.originalCheckinDate || draft.checkinDate,
+    checkoutDate: rmSummary.finalCheckoutDate || draft.checkoutDate,
+    quantidadeDiarias: rmSummary.totalNights || draft.quantidadeDiarias,
+    diarias: rmSummary.totalNights || draft.diarias,
+    valorOriginal: rmSummary.accommodationTotal || draft.valorOriginal,
+    valorServico: hasApprovedCustomVal ? draft.valorServico : (rmSummary.accommodationTotal || draft.valorServico),
+    descricaoServico: desc,
+    discriminacao: desc,
+    discriminacaoSugerida: desc
+  };
+}
 
 export function isNonRequesterGuestForReservation(reservation, senderPhone = "", db = {}) {
   if (!reservation) return false;
@@ -794,6 +879,7 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
         if (!r) return false;
         const st = String(r.status || "").toLowerCase();
         if (["cancelada", "cancelado", "cancelled", "expirada", "expired", "no_show"].includes(st)) return false;
+        if (r.isRoomMoveHistoricalSegment && r.checkoutDate && r.checkoutDate <= todayStr) return false;
         const paySt = String(r.paymentStatus || "").toLowerCase();
         const isPaid = ["paid", "pago", "pago_total", "pago_integralmente", "confirmado"].includes(paySt);
         const holdExp = r.expiresAt || r.holdExpiresAt;
@@ -960,6 +1046,10 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
         ))
   );
 
+  const rmSummary = matchedReservation?.roomMoveGroupId
+    ? computeRoomMoveConsolidatedSummary(db, matchedReservation)
+    : null;
+
   const baseGuestContext = {
     todayStr,
     timeStr,
@@ -983,13 +1073,16 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
     reservation: matchedReservation ? {
       code: canonicalResCode,
       guestName: matchedReservation.guestName,
-      checkinDate: matchedReservation.checkinDate,
-      checkoutDate: matchedReservation.checkoutDate,
+      checkinDate: rmSummary?.originalCheckinDate || matchedReservation.checkinDate,
+      checkoutDate: rmSummary?.finalCheckoutDate || matchedReservation.checkoutDate,
       flatNumber: matchedReservation.flatNumber,
       status: matchedReservation.status,
       paymentStatus: hideFinancialForGuest ? undefined : matchedReservation.paymentStatus,
       channel: matchedReservation.channel,
-      totalAmount: hideFinancialForGuest ? undefined : matchedReservation.totalAmount,
+      totalAmount: hideFinancialForGuest ? undefined : (rmSummary ? rmSummary.totalAmount : matchedReservation.totalAmount),
+      paidAmount: hideFinancialForGuest ? undefined : (rmSummary ? rmSummary.paidAmount : matchedReservation.paidAmount),
+      roomMoveGroupId: matchedReservation.roomMoveGroupId || null,
+      flatTrail: rmSummary?.flatTrail || null,
       hideFinancialForGuest,
       requesterName,
       checkinUrl,
@@ -1192,6 +1285,7 @@ export async function querySystemData(db, {
         const flatNum = String(f.number);
         const activeRes = reservations.find(r => {
           if (!r || (r.flatId !== f.id && String(r.flatNumber) !== flatNum)) return false;
+          if (r.isRoomMoveHistoricalSegment && r.checkoutDate && r.checkoutDate <= todayStr) return false;
           const st = String(r.status || "").toLowerCase();
           if (["cancelada", "cancelado", "cancelled", "expirada", "expired", "no_show"].includes(st)) return false;
           const holdExp = r.expiresAt || r.holdExpiresAt;
@@ -1704,16 +1798,40 @@ export async function querySystemData(db, {
       const orders = Array.isArray(db?.minibarOrders) ? db.minibarOrders : [];
       const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
       const cleanPhone = normalizePhone(requesterPhone || "");
+      const todayMinibarStr = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Sao_Paulo",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }).format(new Date());
 
       let matchedRes = null;
       if (cleanPhone) {
-        matchedRes = reservations.find(r => r.status !== "cancelada" && doesReservationMatchPhone(r, cleanPhone));
+        const candidates = reservations.filter(r =>
+          r &&
+          r.status !== "cancelada" &&
+          r.status !== "cancelled" &&
+          !(r.isRoomMoveHistoricalSegment && r.checkoutDate && r.checkoutDate <= todayMinibarStr) &&
+          doesReservationMatchPhone(r, cleanPhone)
+        );
+        matchedRes =
+          candidates.find(r => !r.isRoomMoveHistoricalSegment && r.checkinDate <= todayMinibarStr && r.checkoutDate >= todayMinibarStr) ||
+          candidates.find(r => !r.isRoomMoveHistoricalSegment) ||
+          candidates[0] ||
+          null;
+        if (matchedRes?.isRoomMoveHistoricalSegment) {
+          matchedRes = getActiveRoomMoveReservation(db, matchedRes) || matchedRes;
+        }
       }
+
+      const groupSegs = matchedRes?.roomMoveGroupId ? getRoomMoveGroupReservations(db, matchedRes) : (matchedRes ? [matchedRes] : []);
+      const groupIds = new Set(groupSegs.map(s => String(s.id)));
+      const groupCodes = new Set(groupSegs.map(s => s.code).filter(Boolean));
 
       const guestOrders = orders.filter(o => {
         if (!o) return false;
         if (cleanPhone && normalizePhone(o.guestPhone || "") === cleanPhone) return true;
-        if (matchedRes && (o.reservationCode === matchedRes.code || String(o.reservationId) === String(matchedRes.id))) return true;
+        if (matchedRes && ((o.reservationCode && groupCodes.has(o.reservationCode)) || (o.reservationId && groupIds.has(String(o.reservationId))))) return true;
         return false;
       });
 
@@ -10695,6 +10813,12 @@ export function findExistingInvoiceForReservation(db, {
   const effResId = resObj?.id !== undefined && resObj?.id !== null ? Number(resObj.id) : (reservationId !== null && reservationId !== undefined && !isNaN(Number(reservationId)) ? Number(reservationId) : null);
   const effResCode = resObj?.code || resObj?.reservationCode || reservationCode || null;
 
+  const groupSegs = resObj?.roomMoveGroupId ? getRoomMoveGroupReservations(db, resObj) : (resObj ? [resObj] : []);
+  const groupResIds = new Set(groupSegs.map(s => Number(s.id)).filter(n => !isNaN(n)));
+  if (effResId !== null) groupResIds.add(effResId);
+  const groupResCodes = new Set(groupSegs.map(s => String(s.code || s.reservationCode || "").trim()).filter(Boolean));
+  if (effResCode) groupResCodes.add(String(effResCode).trim());
+
   const invoices = Array.isArray(db.invoices) ? db.invoices : [];
   const activeInvoices = invoices.filter(i => {
     if (!i) return false;
@@ -10709,16 +10833,16 @@ export function findExistingInvoiceForReservation(db, {
   if (!found && resObj?.numeroNfse) {
     found = activeInvoices.find(i => String(i.numeroNfse) === String(resObj.numeroNfse));
   }
-  if (!found && effResId !== null) {
+  if (!found && groupResIds.size > 0) {
     found = activeInvoices.find(i =>
-      Number(i.reservationId) === effResId ||
-      (Array.isArray(i.reservationIds) && i.reservationIds.map(Number).includes(effResId))
+      (i.reservationId != null && groupResIds.has(Number(i.reservationId))) ||
+      (Array.isArray(i.reservationIds) && i.reservationIds.some(id => groupResIds.has(Number(id))))
     );
   }
-  if (!found && effResCode) {
+  if (!found && groupResCodes.size > 0) {
     found = activeInvoices.find(i =>
-      String(i.reservationCode) === String(effResCode) ||
-      (Array.isArray(i.reservationCodes) && i.reservationCodes.map(String).includes(String(effResCode)))
+      (i.reservationCode && groupResCodes.has(String(i.reservationCode).trim())) ||
+      (Array.isArray(i.reservationCodes) && i.reservationCodes.some(c => groupResCodes.has(String(c).trim())))
     );
   }
 
@@ -11721,7 +11845,7 @@ export function findContactAndReservation(db, cleanTarget) {
     })
     .sort((a, b) => rankFiscalCandidate(a) - rankFiscalCandidate(b));
   const confirmedOnly = nonCancelled.filter(r => !isPreReservationHoldStatus(r));
-  const candidatePool = confirmedOnly.length > 0 ? confirmedOnly : nonCancelled;
+  const candidatePoolAll = confirmedOnly.length > 0 ? confirmedOnly : nonCancelled;
 
   const now = new Date();
   const brasiliaDateStr = new Intl.DateTimeFormat("en-CA", {
@@ -11730,6 +11854,9 @@ export function findContactAndReservation(db, cleanTarget) {
     month: "2-digit",
     day: "2-digit"
   }).format(now);
+  const candidatePool = candidatePoolAll.filter(
+    r => !(r.isRoomMoveHistoricalSegment && r.checkoutDate && r.checkoutDate <= brasiliaDateStr)
+  );
 
   // Priorização da melhor reserva elegível:
   // 1) Ativa hoje
@@ -11749,6 +11876,10 @@ export function findContactAndReservation(db, cleanTarget) {
       .slice()
       .sort((a, b) => (b.checkoutDate || b.checkinDate || "").localeCompare(a.checkoutDate || a.checkinDate || ""));
     matchedReservation = past[0];
+  }
+  if (!matchedReservation && candidatePoolAll.length > 0) {
+    const activeFallback = getActiveRoomMoveReservation(db, candidatePoolAll[0]);
+    if (activeFallback) matchedReservation = activeFallback;
   }
 
   // Identifica o papel exato de quem está falando no WhatsApp (Hóspede vs Solicitante Terceiro vs Empresa vs Agência)
@@ -11879,10 +12010,17 @@ export function findContactAndReservation(db, cleanTarget) {
     });
     if (byGuestRes.length > 0) {
       const confirmedByGuest = byGuestRes.filter(r => !isPreReservationHoldStatus(r));
-      const guestResPool = confirmedByGuest.length > 0 ? confirmedByGuest : byGuestRes;
-      matchedReservation = guestResPool.find(r =>
+      const guestResPoolAll = confirmedByGuest.length > 0 ? confirmedByGuest : byGuestRes;
+      const guestResPool = guestResPoolAll.filter(
+        r => !(r.isRoomMoveHistoricalSegment && r.checkoutDate && r.checkoutDate <= brasiliaDateStr)
+      );
+      const poolToPick = guestResPool.length > 0 ? guestResPool : guestResPoolAll;
+      matchedReservation = poolToPick.find(r =>
         (r.checkinDate === brasiliaDateStr || r.checkoutDate === brasiliaDateStr || (r.checkinDate <= brasiliaDateStr && r.checkoutDate >= brasiliaDateStr))
-      ) || guestResPool.slice().sort((a, b) => (b.checkoutDate || b.checkinDate || "").localeCompare(a.checkoutDate || a.checkinDate || ""))[0];
+      ) || poolToPick.slice().sort((a, b) => (b.checkoutDate || b.checkinDate || "").localeCompare(a.checkoutDate || a.checkinDate || ""))[0];
+      if (matchedReservation?.isRoomMoveHistoricalSegment) {
+        matchedReservation = getActiveRoomMoveReservation(db, matchedReservation) || matchedReservation;
+      }
     }
   }
 
@@ -13557,6 +13695,7 @@ export async function handleWhatsAppFiscalFlow({
           )
         : null;
       conf.descricaoServico = buildDefaultStayDescription(resForLegacy, {
+        db,
         guestName: resForLegacy?.guestName || conf.tomadorNome,
         flatNumber: conf.flatNumber
       });
@@ -16162,10 +16301,12 @@ export async function generateSofiaRealtimeAssistance({
         senderName: guestName
       });
       const hasCrmNfse = Boolean(crmNfseTomador && crmNfseTomador.tomadorCpfCnpj);
-      const nfseDesc = buildDefaultStayDescription(res, {
+      const nfseDraftForCopilot = res ? buildOfficialNfseDraftForReservation(db, { reservation: res }) : null;
+      const nfseDesc = nfseDraftForCopilot?.descricaoServico || buildDefaultStayDescription(res, {
+        db,
         guestName: res?.guestName || guestName || crmNfseTomador?.tomadorNome
       });
-      const nfseVal = Number(res?.totalAmount || res?.valorTotal || 600);
+      const nfseVal = Number(nfseDraftForCopilot?.valorServico || res?.totalAmount || res?.valorTotal || 600);
       const nfseMsg = hasCrmNfse
         ? buildConferencePresentationMessage(
             {

@@ -37,9 +37,9 @@
   - **Financeiro, Tarifas, Fiscal & Frigobar**: `financial-dashboard.tsx` (`/financeiro`), `payments.tsx` (`/pagamentos`), `fiscal-invoices.tsx` (`/notas`, `/nfse`), `tarifas.tsx` (`/tarifas`), `precificacao-sebrae.tsx` (`/precificacao-sebrae`), `minibar-admin.tsx` (`/frigobar-admin`), `minibar-invoices.tsx` (`/frigobar-notas`), `anserve-dashboard.tsx` (`/anserve`), `anserve-restock.tsx` (`/frigobar-reposicao`).
   - **RH, Equipe, Site & Sistema**: `hr-dashboard.tsx` (`/rh`), `ponto-mobile.tsx` (`/ponto`), `equipe.tsx` (`/equipe`), `property-settings.tsx` (`/propriedade`), `site-editor.tsx` (`/editor-site`), `marketing-traffic.tsx` (`/funil-vendas`), `settings.tsx` (`/configuracoes`), `system-logs.tsx` (`/logs`), `server-monitor.tsx` (`/monitor-servidor`).
 
-## Git & Controle de Versão
-- **Sempre fazer `git push` por padrão**: Sempre que um `git commit` for realizado para implementar ou corrigir uma funcionalidade, execute imediatamente o `git push` para o repositório remoto (`origin main` ou a branch ativa). Nunca deixe commits pendentes localmente sem envio.
-- **Build de Verificação**: Ao alterar arquivos em `artifacts/limpeza/src`, rode o build (`npm run build` na pasta `artifacts/limpeza`) e inclua os arquivos gerados em `artifacts/limpeza/dist/` no commit quando aplicável para garantir o deploy contínuo em produção.
+## Git, Controle de Versão & Deploy Autorizado (`/deploy`)
+- **PROIBIDO fazer deploy / `git push` sem autorização explícita**: É terminantemente PROIBIDO executar `git push` (que aciona o deploy automático em produção no Render / `corpflats.com.br`) por iniciativa própria após implementar ou corrigir qualquer funcionalidade. Faça todas as edições, sincronização de espelhos (`scripts/`) e validações apenas localmente e **aguarde o usuário autorizar expressamente o deploy** (usando o comando `/deploy` ou autorizando explicitamente no chat, ex.: `"pode fazer deploy"` / `"autorizo o deploy"`).
+- **Build de Verificação**: Ao alterar arquivos em `artifacts/limpeza/src`, rode o build (`npm run build` na pasta `artifacts/limpeza`) localmente para validar a compilação; a inclusão e envio de `artifacts/limpeza/dist/` via `git commit` + `git push` só devem ocorrer quando o deploy for autorizado pelo usuário.
 
 ## Execução de Testes (Escopo Estrito e Não Solicitação)
 - **NUNCA executar testes globais, varreduras ou em lote**: É terminantemente PROIBIDO rodar `tests/*.test.mjs`, scripts que varrem a pasta `tests/`, ou suítes completas do projeto.

@@ -42,7 +42,8 @@ describe("Frigobar — Expurgo dos Pedidos de Teste (02/11) e Endpoint DELETE /a
     const initialDb = {
       flats: [
         { id: 1, number: "212", floor: 2, status: "clean" },
-        { id: 2, number: "605", floor: 6, status: "clean" }
+        { id: 2, number: "605", floor: 6, status: "clean" },
+        { id: 3, number: "509", floor: 5, status: "clean" }
       ],
       reservations: [
         {
@@ -84,6 +85,39 @@ describe("Frigobar — Expurgo dos Pedidos de Teste (02/11) e Endpoint DELETE /a
             },
             updatedAt: "2026-11-02T22:00:41.637Z"
           }
+        },
+        {
+          id: 564,
+          code: "RES-509-0564",
+          flatId: 3,
+          flatNumber: "509",
+          guestId: 33,
+          guestName: "Miller Mendonça Pessanha",
+          guestPhone: "22998505276",
+          guestDocument: "12585736792",
+          guestEmail: "millerpessanha@gmail.com",
+          status: "checked_out",
+          checkinDate: "2026-10-30",
+          checkoutDate: "2026-11-01",
+          checkoutDone: true,
+          finalMinibarInspectionAt: "2026-10-30T14:19:34.058Z",
+          minibarPayments: [
+            {
+              orderId: "ORD-MB-1793369576372-440",
+              amount: 26,
+              paidAt: "2026-10-30T14:14:32.047Z",
+              paymentMethod: "pix"
+            }
+          ],
+          timeline: [
+            {
+              id: "tl_mb_ORD-MB-1793369576372-440",
+              type: "minibar_payment",
+              title: "Consumo de Frigobar Pago",
+              description: "Pedido ORD-MB-1793369576372-440 pago via PIX.",
+              timestamp: "2026-10-30T14:14:32.047Z"
+            }
+          ]
         },
         {
           id: 937,
@@ -149,6 +183,50 @@ describe("Frigobar — Expurgo dos Pedidos de Teste (02/11) e Endpoint DELETE /a
           ]
         },
         {
+          id: "ORD-MB-1793369576372-440",
+          flatNumber: "509",
+          reservationId: 564,
+          reservationCode: "RES-509-0564",
+          guestName: "Miller Mendonça Pessanha",
+          totalAmount: 26,
+          paymentMethod: "pix",
+          paymentStatus: "pago",
+          source: "guest_mobile",
+          paidAt: "2026-10-30T14:14:32.047Z",
+          createdAt: "2026-10-30T14:12:57.028Z",
+          invoice: { status: "pendente" },
+          items: [
+            {
+              productId: "prod_agua_sem_gas",
+              productName: "Água Mineral sem Gás 500ml",
+              quantity: 2,
+              unitPrice: 6,
+              totalPrice: 12
+            }
+          ]
+        },
+        {
+          id: "ORD-MB-DIV-1793369974058",
+          flatNumber: "509",
+          reservationId: 564,
+          reservationCode: "RES-509-0564",
+          guestName: "Miller Mendonça Pessanha",
+          totalAmount: 12,
+          paymentMethod: "pendente",
+          paymentStatus: "pendente",
+          source: "anserve_discrepancy",
+          createdAt: "2026-10-30T14:19:34.058Z",
+          items: [
+            {
+              productId: "prod_agua_sem_gas",
+              productName: "Água Mineral sem Gás 500ml",
+              quantity: 2,
+              unitPrice: 6,
+              totalPrice: 12
+            }
+          ]
+        },
+        {
           id: "ORD-MB-DIV-REAL-KEEP",
           flatNumber: "605",
           reservationId: 937,
@@ -189,6 +267,18 @@ describe("Frigobar — Expurgo dos Pedidos de Teste (02/11) e Endpoint DELETE /a
           status: "divergencia",
           inspectedAt: "2026-11-02T21:59:23.138Z",
           createdAt: "2026-11-02T21:59:23.138Z"
+        },
+        {
+          id: "INSP-MB-1793369974058",
+          flatNumber: "509",
+          reservationId: 564,
+          reservationCode: "RES-509-0564",
+          chargeOrderId: "ORD-MB-DIV-1793369974058",
+          hasDiscrepancy: true,
+          discrepancyTotalAmount: 12,
+          status: "divergencia",
+          inspectedAt: "2026-10-30T14:19:34.058Z",
+          createdAt: "2026-10-30T14:19:34.058Z"
         }
       ],
       notifications: [
@@ -275,6 +365,45 @@ describe("Frigobar — Expurgo dos Pedidos de Teste (02/11) e Endpoint DELETE /a
 
     assert.strictEqual(ctx.totalLaunchedAmount, 0);
     assert.strictEqual(ctx.totalPaidAmount, 0);
+    assert.strictEqual((ctx.minibarOrders || []).length, 0);
+  });
+
+  it("2b. Expurga automaticamente pedidos de teste da reserva RES-509-0564 (ORD-MB-1793369576372-440 e ORD-MB-DIV-1793369974058) preservando pedidos reais", async () => {
+    const [repRes, setRes, hubRes, ctxRes] = await Promise.all([
+      fetch(`${BASE_URL}/api/minibar/anserve-reports?startDate=2026-01-01&endDate=2026-12-31`),
+      fetch(`${BASE_URL}/api/minibar/settlement?startDate=2026-01-01&endDate=2026-12-31`),
+      fetch(`${BASE_URL}/api/minibar/invoices/hub`),
+      fetch(`${BASE_URL}/api/minibar/reservation-context/RES-509-0564`)
+    ]);
+
+    const rep = await repRes.json();
+    const set = await setRes.json();
+    const hub = await hubRes.json();
+    const ctx = await ctxRes.json();
+
+    const orderIds = (rep.salesSummary?.orders || []).map(o => o.id);
+    assert.ok(!orderIds.includes("ORD-MB-1793369576372-440"), "ORD-MB-1793369576372-440 deve ter sido excluído de anserve-reports");
+    assert.ok(!orderIds.includes("ORD-MB-DIV-1793369974058"), "ORD-MB-DIV-1793369974058 deve ter sido excluído de anserve-reports");
+    assert.ok(orderIds.includes("ORD-MB-DIV-REAL-KEEP"), "Pedido real ORD-MB-DIV-REAL-KEEP deve permanecer intacto");
+
+    const inspIds = (rep.productivitySummary?.inspections || []).map(i => i.id);
+    assert.ok(!inspIds.includes("INSP-MB-1793369974058"), "Inspeção de teste INSP-MB-1793369974058 deve ter sido excluída");
+
+    const setOrderIds = (set.breakdowns?.orders || []).map(o => o.id);
+    assert.ok(!setOrderIds.includes("ORD-MB-1793369576372-440"), "ORD-MB-1793369576372-440 deve ter sido excluído de settlement");
+    assert.ok(!setOrderIds.includes("ORD-MB-DIV-1793369974058"), "ORD-MB-DIV-1793369974058 deve ter sido excluído de settlement");
+
+    const hubAllIds = [
+      ...(hub.invoices || []),
+      ...(hub.pendingInvoices || []),
+      ...(hub.issuedInvoices || [])
+    ].map(o => o.id);
+    assert.ok(!hubAllIds.includes("ORD-MB-1793369576372-440"), "ORD-MB-1793369576372-440 deve ter sido excluído do hub de notas");
+    assert.ok(!hubAllIds.includes("ORD-MB-DIV-1793369974058"), "ORD-MB-DIV-1793369974058 deve ter sido excluído do hub de notas");
+
+    assert.strictEqual(ctx.totalLaunchedAmount, 0);
+    assert.strictEqual(ctx.totalPaidAmount, 0);
+    assert.strictEqual(ctx.pendingBalance, 0);
     assert.strictEqual((ctx.minibarOrders || []).length, 0);
   });
 

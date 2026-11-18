@@ -129,6 +129,9 @@ export interface FlatStatusItem {
   scheduledCheckinTime?: string | null;
   isCheckedOut?: boolean;
   checkoutTime?: string;
+  isRoomTransferOut?: boolean;
+  transferredToFlatNumber?: string | null;
+  activeReservationCode?: string | null;
   previousCheckoutInspectedToday?: {
     reservationCode: string;
     guestName: string;
@@ -2435,6 +2438,19 @@ export default function AnserveRestockPage() {
                         ) : (
                           <Badge className="bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/30 text-[10px] font-bold">
                             ⏳ Pendente Hoje
+                          </Badge>
+                        )}
+                        {flat.isRoomTransferOut && (
+                          <Badge
+                            variant="outline"
+                            className="bg-gradient-to-r from-amber-500/20 to-indigo-500/20 text-indigo-900 dark:text-amber-200 border-amber-500/60 dark:border-indigo-400/60 text-[10px] font-black"
+                            title={
+                              flat.activeReservationCode
+                                ? `Saída por troca de quarto • Reserva ativa ${flat.activeReservationCode} segue no Flat ${flat.transferredToFlatNumber || ""}`
+                                : `Saída por troca de quarto para o Flat ${flat.transferredToFlatNumber || ""}`
+                            }
+                          >
+                            🔄 Troca de Quarto (mudou p/ Flat {flat.transferredToFlatNumber || "?"})
                           </Badge>
                         )}
                       </div>

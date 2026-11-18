@@ -149,6 +149,11 @@ export interface UnifiedReservationRow {
   packageCode?: string | null;
   packageIndex?: number | null;
   packageTotalFlats?: number | null;
+  roomMoveGroupId?: string | null;
+  transferredToFlatNumber?: string | null;
+  transferredFromFlatNumber?: string | null;
+  isRoomMoveHistoricalSegment?: boolean;
+  isRoomMoveActiveSegment?: boolean;
   requesterName?: string | null;
   requesterPhone?: string | null;
   hideFinancialForGuest?: boolean;

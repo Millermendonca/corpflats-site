@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import { 
   MessageCircle, MessageSquare, Phone, ExternalLink, Copy, Check, Coffee, DoorOpen, FileText,
-  Users, Calendar, Eye, Building2, X, Zap, SlidersHorizontal, RefreshCw, RotateCcw, CreditCard
+  Users, Calendar, Eye, Building2, X, Zap, SlidersHorizontal, RefreshCw, RotateCcw, CreditCard, ArrowLeftRight
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -20,6 +20,7 @@ interface ReservationHoverCardProps {
   isBeingDragged?: boolean
   onOpenDetails: (resItem: any) => void
   onUndoEarlyCheckout?: (resItem: any) => void | Promise<void>
+  onOpenRoomMoveSwap?: (resItem: any) => void
   channelCfg?: { label: string; bg: string; text: string; border: string }
   isMensalista?: boolean
   isOpenMobile?: boolean
@@ -76,6 +77,7 @@ export function ReservationHoverCard({
   isBeingDragged = false,
   onOpenDetails,
   onUndoEarlyCheckout,
+  onOpenRoomMoveSwap,
   channelCfg,
   isMensalista = false,
   isOpenMobile = false,
@@ -578,6 +580,22 @@ export function ReservationHoverCard({
               #{resCode}
             </span>
             <div className="flex items-center gap-1.5 flex-wrap justify-end">
+              {resItem.transferredToFlatNumber && (
+                <span
+                  className="text-[9.5px] font-black px-1.5 py-0.5 rounded border bg-amber-100 text-amber-900 border-amber-400 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-700 shadow-2xs"
+                  title={`Segmento histórico transferido para o Flat ${resItem.transferredToFlatNumber}`}
+                >
+                  🔀 → {resItem.transferredToFlatNumber}
+                </span>
+              )}
+              {!resItem.isRoomMoveHistoricalSegment && resItem.transferredFromFlatNumber && (
+                <span
+                  className="text-[9.5px] font-black px-1.5 py-0.5 rounded border bg-indigo-100 text-indigo-800 border-indigo-300 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-700 shadow-2xs"
+                  title={`Hóspede transferido do Flat ${resItem.transferredFromFlatNumber}`}
+                >
+                  🔀 ← {resItem.transferredFromFlatNumber}
+                </span>
+              )}
               {resItem.packageCode && (
                 <span
                   className="text-[9.5px] font-black px-1.5 py-0.5 rounded border bg-indigo-50 text-indigo-700 border-indigo-300 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-700 shadow-2xs"
@@ -1262,6 +1280,23 @@ export function ReservationHoverCard({
               <DoorOpen className="w-3 h-3 text-emerald-600" />
               <span>Saída</span>
             </a>
+
+            {onOpenRoomMoveSwap &&
+              !["cancelada", "cancelled", "expirada", "no_show"].includes(String(resItem.status || "").toLowerCase()) && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleClose()
+                    onOpenRoomMoveSwap(resItem)
+                  }}
+                  className="h-7 px-2.5 rounded-xl border border-indigo-300 dark:border-indigo-700 bg-indigo-50/90 hover:bg-indigo-100 dark:bg-indigo-950/50 text-indigo-800 dark:text-indigo-200 font-bold text-[11px] inline-flex items-center gap-1 transition-colors shrink-0 shadow-2xs cursor-pointer"
+                  title="Trocar de flat (com corte na data) ou inverter diretamente com outro hóspede"
+                >
+                  <ArrowLeftRight className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
+                  <span>🔄 Trocar / Inverter Flat</span>
+                </button>
+              )}
           </div>
         </div>
       </HoverCardContent>

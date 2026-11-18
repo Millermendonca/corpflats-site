@@ -75,11 +75,25 @@
 
 ---
 
+5. **Remediação de Paridade Twin-Server & Diagnóstico de Produção (Phase 5)**:
+   - **Paridade Twin-Server (Remediação de demo-server.mjs)**:
+     * O `worker_twin_remediation_1` espelhou `artifacts/api-server/demo-server.mjs` byte-a-byte em `scripts/demo-server.mjs`.
+     * `node scripts/check-twin-parity.mjs`: **40/40 arquivos de runtime com paridade SHA-256 idêntica (100% PASS, exit code 0)**.
+     * `node --test tests/minibar-welcome-kit-targeted.test.mjs`: **5/5 subtestes aprovados (100% PASS)**.
+     * Build do frontend: `npm run build` executou e passou em 32.97s (exit code 0).
+     * Commit e Push: `7fca013793cb3201132321c75794154bf8569386` sincronizado com `origin/main`, working tree limpo.
+   - **Diagnóstico de Carregamento de Imagens em Produção (`explorer_image_loading_1`)**:
+     * Causa Raiz: No momento do reporte do usuário (10:16 BRT), o Render ainda executava o build anterior (`1c93222`). Como o Vite limpa `dist/public` antes do build (`emptyOutDir: true`), as imagens `proposta_*.png` ainda não constavam no bundle anterior, gerando 404 temporário.
+     * Conclusão do Deploy: O Render concluiu o deploy do commit `7fca013` às 10:26:17 BRT (13:26:17 UTC).
+     * Verificação Empírica em Produção: Testado via `curl -I` contra `https://corpflats.com.br/images/frigobar/`: **100% das 21 fotos comerciais propostas e 19 legadas retornam HTTP 200 OK**.
+
+---
+
 ## 4. Conclusion
 
-Todos os 6 requisitos (R1, R2, R3, R4, R5, R6) e critérios de aceitação foram plenamente atendidos com código de produção genuíno, testes automatizados e implantação no repositório remoto.
+Todos os 6 requisitos (R1, R2, R3, R4, R5, R6) e a remediação da paridade twin-server foram 100% concluídos e validados. O deploy em produção no Render foi concluído e todas as fotos propostas estão ativas com HTTP 200 OK.
 
-**Veredito Geral do Gate: PASS.**
+**Veredito Geral: PASS (Pronto para Certificação Final pelo Victory Auditor).**
 
 ---
 
@@ -101,11 +115,12 @@ Para reproduzir e auditar as verificações realizadas:
    ```
    *Resultado esperado*: Todos os testes aprovados com código de saída 0.
 
-3. **Build de Produção**:
+3. **Verificação de Imagens em Produção**:
    ```powershell
-   cd artifacts/limpeza && npm run build
+   curl.exe -I -s "https://corpflats.com.br/images/frigobar/proposta_coca_cola_350ml.png"
+   curl.exe -I -s "https://corpflats.com.br/images/frigobar/proposta_toddynho_200ml.png"
    ```
-   *Resultado esperado*: Build Vite concluído com código 0.
+   *Resultado esperado*: HTTP/1.1 200 OK.
 
 4. **Sincronização Git**:
    ```powershell
