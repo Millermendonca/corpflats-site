@@ -995,7 +995,7 @@ Se você notar qualquer detalhe que precise de atenção, desejar solicitar trav
     description: "Enviado às 18:00 da véspera para hóspedes com café que ainda não efetuaram a montagem do pedido.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
-    recipientTarget: "both",
+    recipientTarget: "guest",
     includeCompanions: true,
     triggerTiming: "fixed_time_day_before",
     offsetValue: 0,
@@ -3265,16 +3265,13 @@ export const PURE_BILLING_TEMPLATE_IDS = new Set([
 export const REQUESTER_AND_GUEST_EVENTS = new Set([
   "payment_confirmed",
   "reservation_updated",
-  "reservation_cancelled",
-  "breakfast_reminder"
+  "reservation_cancelled"
 ]);
 
 export const REQUESTER_AND_GUEST_TEMPLATE_IDS = new Set([
   "tpl_payment_confirmed",
   "tpl_reservation_updated",
-  "tpl_reservation_cancelled",
-  "tpl_breakfast_reminder",
-  "qm_breakfast"
+  "tpl_reservation_cancelled"
 ]);
 
 // ── Eventos exclusivos de estadia, instruções de reserva/check-in, café, saída, frigobar, achados e avaliação (vão APENAS aos hóspedes quando Nome + WhatsApp do hóspede estão preenchidos) ──
@@ -3295,6 +3292,7 @@ export const GUEST_ONLY_STAY_AND_POST_EVENTS = new Set([
   "room_ready_regular",
   "checkin_cleaning_delay",
   "checkin_completed",
+  "breakfast_reminder",
   "checkout_reminder",
   "checkout_not_detected",
   "checkout_completed",
@@ -3328,6 +3326,8 @@ export const GUEST_ONLY_TEMPLATE_IDS = new Set([
   "tpl_room_ready_regular",
   "tpl_checkin_cleaning_delay",
   "tpl_checkin_completed",
+  "tpl_breakfast_reminder",
+  "qm_breakfast",
   "tpl_checkout_reminder",
   "tpl_checkout_not_detected",
   "tpl_checkout_completed",
@@ -5213,6 +5213,16 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
 export const buildTemplateActionButtons = renderTemplateButtons;
 
 // ── Disparo Oficial de Documento / PDF via Z-API (/send-document/{extension}) ─
+function isZapiNoWhatsAppAccountError(status, data) {
+  if (data && data.exists === false) return true;
+  const text = [data?.message, data?.error, data?.reason, data?.detail, data?.value]
+    .filter((v) => v !== undefined && v !== null)
+    .map((v) => (typeof v === "string" ? v : JSON.stringify(v)))
+    .join(" ");
+  if (!text) return false;
+  return /phone.*not.*exist|not.*exist.*whatsapp|number.*not.*whatsapp|not.*on.*whatsapp|no.*whatsapp|not_registered|unregistered|invalid.*whatsapp|recipient.*not.*whatsapp|jid.*not.*exist|account.*not.*exist|does\s+not\s+exist/i.test(text);
+}
+
 function resolveEffectiveZapiConfig(config, activeDb) {
   const candidates = [config, activeDb?.zapiConfig, activeDb?.settings?.zapiConfig];
   for (const cand of candidates) {
@@ -5427,6 +5437,7 @@ export async function sendZapiDocument(config, {
     console.warn(`[Z-API] Falha ao enviar documento (HTTP ${res.status}):`, data);
     return {
       success: false,
+      ...(isZapiNoWhatsAppAccountError(res.status, data) ? { noWhatsAppAccount: true } : {}),
       error: data.message || data.error || `Erro HTTP ${res.status} ao enviar documento via Z-API`,
       data
     };
@@ -6142,6 +6153,18 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
             data: linkData
           };
           recordBotSentMessage({ messageId: primaryResult.messageId, phone: targetPhone, text: finalMessage });
+        } else if (isZapiNoWhatsAppAccountError(linkRes.status, linkData)) {
+          console.warn(`[Z-API] /send-link recusado por conta WhatsApp inexistente (${targetPhone}):`, linkData);
+          primaryResult = {
+            success: false,
+            noWhatsAppAccount: true,
+            phone: targetPhone,
+            originalPhone: cleanPhone,
+            redirected: Boolean(policy.redirected),
+            channelId: policy.channelId,
+            error: linkData.message || linkData.error || "Número não possui conta ativa no WhatsApp.",
+            data: linkData
+          };
         } else {
           console.warn(`[Z-API] /send-link recusado (HTTP ${linkRes.status}), aplicando fallback para /send-text:`, linkData);
         }
@@ -6183,6 +6206,7 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
         } else {
           primaryResult = {
             success: false,
+            ...(isZapiNoWhatsAppAccountError(res.status, data) ? { noWhatsAppAccount: true, data } : {}),
             error: data.message || data.error || `Erro HTTP ${res.status} ao enviar texto via Z-API`
           };
         }
@@ -6286,7 +6310,11 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
       let imageFallbackUsed = false;
 
       // Caso a imagem de cabeçalho tenha sido recusada temporariamente, retenta os botões sem imagem antes de cair para texto
-      if (!(res.ok && !data.error && (data.zaapId || data.id || data.messageId || data.value)) && buttonActionsPayload.image) {
+      if (
+        !(res.ok && !data.error && (data.zaapId || data.id || data.messageId || data.value)) &&
+        buttonActionsPayload.image &&
+        !isZapiNoWhatsAppAccountError(res.status, data)
+      ) {
         console.warn(`[Z-API] /send-button-actions com imagem retornou HTTP ${res.status}, retentando botões sem imagem...`, data);
         const { image: _droppedImage, ...payloadWithoutImage } = buttonActionsPayload;
         res = await fetch(buttonActionsUrl, {
@@ -6313,6 +6341,18 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
           data
         };
         recordBotSentMessage({ messageId: primaryResult.messageId, phone: targetPhone, text: finalMessage });
+      } else if (isZapiNoWhatsAppAccountError(res.status, data)) {
+        console.warn(`[Z-API] Conta WhatsApp inexistente para ${targetPhone} (HTTP ${res.status}); abortando fallbacks:`, data);
+        primaryResult = {
+          success: false,
+          noWhatsAppAccount: true,
+          phone: targetPhone,
+          originalPhone: cleanPhone,
+          redirected: Boolean(policy.redirected),
+          channelId: policy.channelId,
+          error: data.message || data.error || "Número não possui conta ativa no WhatsApp.",
+          data
+        };
       } else {
         console.warn(`[Z-API] Falha ao enviar com botões (HTTP ${res.status}):`, data);
 
@@ -6366,6 +6406,17 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
                   data: linkData
                 };
                 recordBotSentMessage({ messageId: primaryResult.messageId, phone: targetPhone, text: finalMessage });
+              } else if (isZapiNoWhatsAppAccountError(linkRes.status, linkData)) {
+                primaryResult = {
+                  success: false,
+                  noWhatsAppAccount: true,
+                  phone: targetPhone,
+                  originalPhone: cleanPhone,
+                  redirected: Boolean(policy.redirected),
+                  channelId: policy.channelId,
+                  error: linkData.message || linkData.error || "Número não possui conta ativa no WhatsApp.",
+                  data: linkData
+                };
               }
             } catch {}
           }
@@ -6395,9 +6446,11 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
               };
               recordBotSentMessage({ messageId: primaryResult.messageId, phone: targetPhone, text: finalMessage });
             } else {
+              const noWpp = isZapiNoWhatsAppAccountError(textRes.status, textData) || isZapiNoWhatsAppAccountError(res.status, data);
               primaryResult = {
                 success: false,
-                error: data.message || data.error || `Erro HTTP ${res.status} na Z-API`
+                ...(noWpp ? { noWhatsAppAccount: true, data: textData } : {}),
+                error: textData.message || textData.error || data.message || data.error || `Erro HTTP ${res.status} na Z-API`
               };
             }
           }
@@ -6966,6 +7019,7 @@ export async function checkZapiPhoneExists(phone, config) {
     return { exists: true, phone: cleanPhone, checked: false, error: err.message };
   }
 }
+globalThis.__corpflatsCheckZapiPhoneExists = checkZapiPhoneExists;
 
 // ── Funções Auxiliares de Elegibilidade e Pedidos de Café da Manhã ─────────────
 export function getBrasiliaDateStrFromIso(isoOrDate) {
@@ -13739,7 +13793,7 @@ export function isInitialConfirmationInFlightOrSent(db, reservation) {
   });
 }
 
-function hasPdfAlreadyBeenSentOrInFlight(db, reservationCode, reservationId, phone) {
+export function hasPdfAlreadyBeenSentOrInFlight(db, reservationCode, reservationId, phone) {
   const normPhone = normalizePhoneForDedup(phone);
   if (!normPhone) return false;
   const rCode = String(reservationCode || "").trim().toUpperCase();
@@ -14995,8 +15049,11 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
       }
 
       // 3. Filtro de Café da Manhã: só avalia/agenda nos dias de estadia ativa (todayStr >= checkinDate && todayStr < checkoutDate),
-      // se tiver café contratado, dentro do limite até as 20:00 e se ainda não tiver pedido para amanhã
+      // se tiver café contratado, dentro do limite até as 20:00, se o hóspede tiver contato e ainda não tiver pedido para amanhã
       if (tpl.triggerEvent === "breakfast_reminder" || tpl.id === "tpl_breakfast_reminder") {
+        if (resv.guestPending && !resv.guestPhone && !resv.guestEmail) {
+          continue;
+        }
         if (!resv.checkinDate || !resv.checkoutDate || todayStr < resv.checkinDate || todayStr >= resv.checkoutDate) {
           continue;
         }

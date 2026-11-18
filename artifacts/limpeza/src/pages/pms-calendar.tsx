@@ -141,6 +141,20 @@ const MemoCrmGuestSelect = memo(function MemoCrmGuestSelect({
   )
 })
 
+function getPhoneVerifyKey(rawPhone?: string | null): string {
+  const queryPhone = formatPhoneForWhatsAppCheck(rawPhone || "")
+  if (!queryPhone) return ""
+  return cleanWhatsAppPhone(queryPhone)
+}
+
+export interface PhoneVerificationEntry {
+  phone: string;
+  checking: boolean;
+  checked: boolean;
+  exists: boolean;
+  canonicalPhone?: string;
+}
+
 const CrmGuestFieldsBlock = memo(function CrmGuestFieldsBlock({
   guestIndex,
   label,
@@ -156,6 +170,8 @@ const CrmGuestFieldsBlock = memo(function CrmGuestFieldsBlock({
   crmGuests,
   searchIndexedCrm,
   onVerifyPhone,
+  phoneVerificationMap,
+  onSaveToCrm,
 }: {
   guestIndex: 1 | 2 | 3
   label: string
@@ -171,12 +187,25 @@ const CrmGuestFieldsBlock = memo(function CrmGuestFieldsBlock({
   crmGuests: any[]
   searchIndexedCrm: (query: string, includeCompany: boolean, limit?: number) => any[]
   onVerifyPhone?: (phone: string) => void
+  phoneVerificationMap?: Record<string, PhoneVerificationEntry>
+  onSaveToCrm?: () => void
 }) {
   const [showSuggestions, setShowSuggestions] = useState(false)
   const matches = useMemo(
     () => (name.trim().length > 0 ? searchIndexedCrm(name, true, 8) : []),
     [name, searchIndexedCrm]
   )
+  const phoneVerKey = getPhoneVerifyKey(phone)
+  const phoneVer = phoneVerKey && phoneVerificationMap ? phoneVerificationMap[phoneVerKey] : undefined
+
+  const triggerVerifyIfComplete = (rawPhone?: string | null) => {
+    if (!onVerifyPhone || !rawPhone) return
+    const trimmed = String(rawPhone).trim()
+    const digitsLen = trimmed.replace(/\D/g, "").length
+    if (digitsLen >= 10 || (trimmed.startsWith("+") && digitsLen >= 8)) {
+      onVerifyPhone(trimmed)
+    }
+  }
 
   return (
     <div className="p-2.5 bg-background/90 border border-border rounded-xl space-y-2">
@@ -191,6 +220,15 @@ const CrmGuestFieldsBlock = memo(function CrmGuestFieldsBlock({
           )}
         </span>
         <div className="flex items-center gap-1.5 flex-wrap">
+          {name.trim() && (!guestId || guestId === "manual") && onSaveToCrm && (
+            <button
+              type="button"
+              onClick={onSaveToCrm}
+              className="text-[10px] text-primary hover:underline font-bold flex items-center gap-0.5 cursor-pointer"
+            >
+              <Plus className="w-3 h-3" /> Cadastrar no CRM agora
+            </button>
+          )}
           <div className="w-40 sm:w-48">
             <MemoCrmGuestSelect
               value={guestId}
@@ -200,7 +238,10 @@ const CrmGuestFieldsBlock = memo(function CrmGuestFieldsBlock({
                   return
                 }
                 const g = crmGuests.find((item) => String(item.id) === String(val))
-                if (g) onSelectCrmGuest(g)
+                if (g) {
+                  onSelectCrmGuest(g)
+                  triggerVerifyIfComplete(g.phone)
+                }
               }}
               guests={crmGuests}
               placeholder="Puxar do CRM..."
@@ -255,6 +296,7 @@ const CrmGuestFieldsBlock = memo(function CrmGuestFieldsBlock({
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => {
                         onSelectCrmGuest(g)
+                        triggerVerifyIfComplete(g.phone)
                         setShowSuggestions(false)
                       }}
                       className="w-full text-left p-2 hover:bg-primary/10 transition-colors flex items-start gap-2 group cursor-pointer"
@@ -306,23 +348,44 @@ const CrmGuestFieldsBlock = memo(function CrmGuestFieldsBlock({
         />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <Input
-          type="tel"
-          inputMode="tel"
-          value={phone}
-          onChange={(e) => onChangeField("phone", formatBrazilPhone(e.target.value))}
-          onBlur={() => {
-            if (guestIndex === 1 && onVerifyPhone) {
-              const digitsLen = phone.replace(/\D/g, "").length
-              if (digitsLen >= 10 || (phone.trim().startsWith("+") && digitsLen >= 8)) {
-                onVerifyPhone(phone)
-              }
-            }
-          }}
-          placeholder={`WhatsApp (${guestIndex}º Hóspede)`}
-          className="text-xs h-8"
-        />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-start">
+        <div className="space-y-1">
+          <div className="relative">
+            <Input
+              type="tel"
+              inputMode="tel"
+              value={phone}
+              onChange={(e) => onChangeField("phone", formatBrazilPhone(e.target.value))}
+              onBlur={() => triggerVerifyIfComplete(phone)}
+              placeholder={`WhatsApp (${guestIndex}º Hóspede)`}
+              className={cn(
+                "text-xs h-8 pr-7",
+                phoneVer?.checked && phoneVer.exists === false
+                  ? "border-amber-500 bg-amber-500/5 focus-visible:ring-amber-500"
+                  : phoneVer?.checked && phoneVer.exists === true
+                  ? "border-emerald-500/80 bg-emerald-500/5"
+                  : ""
+              )}
+            />
+            {phoneVer?.checking && (
+              <span className="absolute right-2 top-2 text-[10px] text-muted-foreground flex items-center gap-1">
+                <RefreshCw className="w-2.5 h-2.5 animate-spin text-muted-foreground" />
+              </span>
+            )}
+          </div>
+          {phoneVer && phoneVer.checked && phoneVer.exists === false && (
+            <div className="text-[10px] text-amber-700 dark:text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded flex items-center gap-1 animate-in fade-in leading-tight">
+              <span>⚠️</span>
+              <span>Número sem WhatsApp ativo (verifique digitação).</span>
+            </div>
+          )}
+          {phoneVer && phoneVer.checked && phoneVer.exists === true && (
+            <div className="text-[10px] text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded flex items-center gap-1 animate-in fade-in leading-tight">
+              <span>✓</span>
+              <span>WhatsApp verificado e ativo.</span>
+            </div>
+          )}
+        </div>
         <Input
           type="text"
           value={email}
@@ -471,9 +534,50 @@ const MemoBlockFlatSelect = memo(function MemoBlockFlatSelect({
   )
 })
 
+function formatCentsMaskValue(val: number | string | undefined | null, allowNegative = false): string {
+  if (val === "" || val === undefined || val === null) return "";
+  const num = Number(val);
+  if (isNaN(num) || num === 0) return "";
+  const isNeg = allowNegative && num < 0;
+  const cents = Math.round(Math.abs(num) * 100);
+  if (cents === 0) return "";
+  const formatted = (cents / 100).toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return isNeg ? `-${formatted}` : formatted;
+}
+
+function parseCentsMaskInput(raw: string, allowNegative = false): number {
+  const isNeg = allowNegative && raw.trim().startsWith("-");
+  const digits = raw.replace(/\D/g, "");
+  if (!digits) return 0;
+  const cents = parseInt(digits, 10);
+  if (isNaN(cents) || cents === 0) return 0;
+  const val = Number((cents / 100).toFixed(2));
+  return isNeg ? -val : val;
+}
+
+function keepCurrencyCursorAtEnd(e: React.SyntheticEvent<HTMLInputElement>) {
+  const target = e.currentTarget;
+  requestAnimationFrame(() => {
+    try {
+      if (target.selectionStart === target.selectionEnd) {
+        const len = target.value.length;
+        target.setSelectionRange(len, len);
+      }
+    } catch {}
+  });
+}
+
+function round2(v: number): number {
+  return Math.round((Number(v) || 0) * 100) / 100;
+}
+
 export interface DailyRateItem {
   date: string;
   rate: number;
+  baseRate?: number;
   channel: string;
   notes?: string;
 }
@@ -483,6 +587,7 @@ export interface ReservationChargeItem {
   type: "cleaning" | "pet" | "extra_bed" | "breakfast" | "garage" | "damage" | "discount" | "other";
   title: string;
   amount: number;
+  baseAmount?: number;
   notes?: string;
 }
 
@@ -495,7 +600,15 @@ export interface ReservationPaymentItem {
   notes?: string;
 }
 
-export interface MultiFlatExtraItem {
+export interface FlatGuestFormFields {
+  guestId: string;
+  name: string;
+  cpf: string;
+  phone: string;
+  email: string;
+}
+
+export interface FlatReservationFormItem {
   uid: string;
   flatId: string;
   sameDatesAsPrimary: boolean;
@@ -504,36 +617,39 @@ export interface MultiFlatExtraItem {
   checkinTime: string;
   checkoutTime: string;
   guestCount: "1" | "2" | "3";
+  requesterIsGuest1: boolean;
   informGuestsLater: boolean;
   guest2InformLater: boolean;
-  guestId: string;
-  guestName: string;
-  guestCpf: string;
-  guestPhone: string;
-  guestEmail: string;
-  guest2Id: string;
-  guest2Name: string;
-  guest2Cpf: string;
-  guest2Phone: string;
-  guest2Email: string;
-  guest3Id: string;
-  guest3Name: string;
-  guest3Cpf: string;
-  guest3Phone: string;
-  guest3Email: string;
+  guest3InformLater: boolean;
+  guest1: FlatGuestFormFields;
+  guest2: FlatGuestFormFields;
+  guest3: FlatGuestFormFields;
+  docPhotoUrl: string;
+  docFileName: string;
+  hasMinor: boolean;
+  isCamposResident: boolean;
   includeBreakfast: boolean;
+  prefersHighFloor: boolean;
   twinBeds: boolean;
   extraMattress: boolean;
+  isFlatLocked: boolean;
+  flatLockReason: string;
+  earlyCheckinAuthorized: boolean;
+  forceOverbooking: boolean;
+  specialRequests: string;
+  receptionNotes: string;
+  notes: string;
   vehiclePlate: string;
   vehicleBrand: string;
   vehicleModel: string;
   vehicleColor: string;
-  specialRequests: string;
-  notes: string;
   dailyRate: string;
   dailyRates: DailyRateItem[];
   charges: ReservationChargeItem[];
+  rateioTargetInput: string;
 }
+
+export type MultiFlatExtraItem = FlatReservationFormItem;
 
 export function buildReservationDailyRates(
   checkinStr: string,
@@ -568,6 +684,7 @@ export function buildReservationDailyRates(
         return {
           date: format(addDays(d1, i), "yyyy-MM-dd"),
           rate: !isNaN(rawRate) && rawRate >= 0 ? rawRate : defaultRate,
+          ...(exist.baseRate !== undefined ? { baseRate: exist.baseRate } : {}),
           channel: normalizeCalendarChannel(exist.channel || defaultChannel),
           notes: exist.notes
         };
@@ -583,6 +700,7 @@ export function buildReservationDailyRates(
         result.push({
           date: dateStr,
           rate: !isNaN(rawRate) && rawRate >= 0 ? rawRate : defaultRate,
+          ...(exist.baseRate !== undefined ? { baseRate: exist.baseRate } : {}),
           channel: normalizeCalendarChannel(exist.channel || defaultChannel),
           notes: exist.notes
         });
@@ -600,6 +718,1760 @@ export function buildReservationDailyRates(
     return [];
   }
 }
+
+export function createDefaultFlatReservationItem(
+  overrides: Partial<FlatReservationFormItem> = {},
+  defaultChannel = "whatsapp"
+): FlatReservationFormItem {
+  const uid = overrides.uid || `flat_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const cin = overrides.checkinDate || format(new Date(), "yyyy-MM-dd");
+  const cout = overrides.checkoutDate || format(addDays(new Date(), 1), "yyyy-MM-dd");
+  const normChan = normalizeCalendarChannel(defaultChannel);
+  const rateNum = Math.max(0, Number(String(overrides.dailyRate ?? "250").replace(",", ".")) || 250);
+  const dailyRates = Array.isArray(overrides.dailyRates)
+    ? overrides.dailyRates
+    : buildReservationDailyRates(cin, cout, rateNum, normChan);
+  const guestCount = overrides.guestCount ?? "1";
+  return {
+    uid,
+    flatId: overrides.flatId ?? "auto",
+    sameDatesAsPrimary: overrides.sameDatesAsPrimary ?? false,
+    checkinDate: cin,
+    checkoutDate: cout,
+    checkinTime: overrides.checkinTime ?? "14:00",
+    checkoutTime: overrides.checkoutTime ?? "11:00",
+    guestCount,
+    requesterIsGuest1: overrides.requesterIsGuest1 ?? false,
+    informGuestsLater: overrides.informGuestsLater ?? false,
+    guest2InformLater: overrides.guest2InformLater ?? false,
+    guest3InformLater: overrides.guest3InformLater ?? false,
+    guest1: {
+      guestId: "",
+      name: "",
+      cpf: "",
+      phone: "",
+      email: "",
+      ...(overrides.guest1 || {}),
+    },
+    guest2: {
+      guestId: "",
+      name: "",
+      cpf: "",
+      phone: "",
+      email: "",
+      ...(overrides.guest2 || {}),
+    },
+    guest3: {
+      guestId: "",
+      name: "",
+      cpf: "",
+      phone: "",
+      email: "",
+      ...(overrides.guest3 || {}),
+    },
+    docPhotoUrl: overrides.docPhotoUrl ?? "",
+    docFileName: overrides.docFileName ?? "",
+    hasMinor: overrides.hasMinor ?? false,
+    isCamposResident: overrides.isCamposResident ?? false,
+    includeBreakfast: overrides.includeBreakfast ?? false,
+    prefersHighFloor: overrides.prefersHighFloor ?? false,
+    twinBeds: overrides.twinBeds ?? false,
+    extraMattress: overrides.extraMattress ?? (guestCount === "3"),
+    isFlatLocked: overrides.isFlatLocked ?? false,
+    flatLockReason: overrides.flatLockReason ?? "",
+    earlyCheckinAuthorized: overrides.earlyCheckinAuthorized ?? false,
+    forceOverbooking: overrides.forceOverbooking ?? false,
+    specialRequests: overrides.specialRequests ?? "",
+    receptionNotes: overrides.receptionNotes ?? "",
+    notes: overrides.notes ?? "",
+    vehiclePlate: overrides.vehiclePlate ?? "",
+    vehicleBrand: overrides.vehicleBrand ?? "",
+    vehicleModel: overrides.vehicleModel ?? "",
+    vehicleColor: overrides.vehicleColor ?? "",
+    dailyRate: overrides.dailyRate ?? String(rateNum),
+    dailyRates,
+    charges: Array.isArray(overrides.charges) ? overrides.charges : [],
+    rateioTargetInput: overrides.rateioTargetInput ?? "",
+  };
+}
+
+function distributeIntegerCentsByWeights(targetCents: number, weights: number[]): number[] {
+  const count = weights.length;
+  if (count === 0) return [];
+  const positiveWeights = weights.map(w => Math.max(0, Math.round(w)));
+  const totalWeight = positiveWeights.reduce((s, v) => s + v, 0);
+  const out: number[] = [];
+  let acc = 0;
+  for (let i = 0; i < count; i++) {
+    if (i === count - 1) {
+      out.push(targetCents - acc);
+    } else {
+      const share = totalWeight > 0
+        ? Math.floor((targetCents * positiveWeights[i]) / totalWeight)
+        : Math.floor(targetCents / count);
+      out.push(share);
+      acc += share;
+    }
+  }
+  return out;
+}
+
+export function applyPackageRateioToFlats(
+  flats: FlatReservationFormItem[],
+  pkgExtraCharges: ReservationChargeItem[],
+  mode: "sum" | "fixed_total" | "discount_amount" | "discount_pct",
+  inputStr: string
+): { flats: FlatReservationFormItem[]; pkgExtraCharges: ReservationChargeItem[] } {
+  if (mode === "sum") {
+    const restoredFlats = flats.map(f => {
+      const nextRates = (f.dailyRates || []).map(d => {
+        const restRate = d.baseRate !== undefined ? round2(Number(d.baseRate) || 0) : round2(Number(d.rate) || 0);
+        const { baseRate: _ignored, ...rest } = d;
+        return { ...rest, rate: restRate };
+      });
+      const nextCharges = (f.charges || []).map(c => {
+        const restAmt = c.baseAmount !== undefined ? round2(Number(c.baseAmount) || 0) : round2(Number(c.amount) || 0);
+        const { baseAmount: _ignored, ...rest } = c;
+        return { ...rest, amount: restAmt };
+      });
+      const avg = nextRates.length > 0
+        ? round2(nextRates.reduce((s, r) => s + (Number(r.rate) || 0), 0) / nextRates.length)
+        : round2(Number(String(f.dailyRate || "0").replace(",", ".")) || 0);
+      return { ...f, dailyRates: nextRates, charges: nextCharges, dailyRate: String(avg) };
+    });
+    const restoredPkgCharges = (pkgExtraCharges || []).map(c => {
+      const restAmt = c.baseAmount !== undefined ? round2(Number(c.baseAmount) || 0) : round2(Number(c.amount) || 0);
+      const { baseAmount: _ignored, ...rest } = c;
+      return { ...rest, amount: restAmt };
+    });
+    return { flats: restoredFlats, pkgExtraCharges: restoredPkgCharges };
+  }
+
+  const withBaseFlats = flats.map(f => ({
+    ...f,
+    dailyRates: (f.dailyRates || []).map(d => ({
+      ...d,
+      baseRate: d.baseRate !== undefined ? Math.max(0, Number(d.baseRate) || 0) : Math.max(0, Number(d.rate) || 0),
+    })),
+    charges: (f.charges || []).map(c => ({
+      ...c,
+      baseAmount: c.baseAmount !== undefined ? Number(c.baseAmount) || 0 : Number(c.amount) || 0,
+    })),
+  }));
+  const withBasePkgCharges = (pkgExtraCharges || []).map(c => ({
+    ...c,
+    baseAmount: c.baseAmount !== undefined ? Number(c.baseAmount) || 0 : Number(c.amount) || 0,
+  }));
+
+  const flatBaseTotalsCents = withBaseFlats.map(f => {
+    const rCents = f.dailyRates.reduce((s, d) => s + Math.round((d.baseRate ?? d.rate ?? 0) * 100), 0);
+    const cCents = f.charges.reduce((s, c) => s + Math.round((c.baseAmount ?? c.amount ?? 0) * 100), 0);
+    return Math.max(0, rCents + cCents);
+  });
+  const pkgBaseChargesCents = withBasePkgCharges.reduce((s, c) => s + Math.round((c.baseAmount ?? c.amount ?? 0) * 100), 0);
+  const rawGrossCents = Math.max(0, flatBaseTotalsCents.reduce((s, v) => s + v, 0) + pkgBaseChargesCents);
+
+  const trimmedInput = String(inputStr || "").trim();
+  const parsedInput = Math.max(0, Number(trimmedInput.replace(",", ".")) || 0);
+
+  if (mode === "fixed_total" && (!trimmedInput || parsedInput <= 0)) {
+    // Enquanto usuário ainda não digitou um valor fixo válido, mantém valores base preservando snapshot
+    const previewFlats = withBaseFlats.map(f => {
+      const nextRates = f.dailyRates.map(d => ({ ...d, rate: round2(d.baseRate ?? d.rate ?? 0) }));
+      const nextCharges = f.charges.map(c => ({ ...c, amount: round2(c.baseAmount ?? c.amount ?? 0) }));
+      const avg = nextRates.length > 0
+        ? round2(nextRates.reduce((s, r) => s + r.rate, 0) / nextRates.length)
+        : round2(Number(String(f.dailyRate || "0").replace(",", ".")) || 0);
+      return { ...f, dailyRates: nextRates, charges: nextCharges, dailyRate: String(avg) };
+    });
+    const previewPkgCharges = withBasePkgCharges.map(c => ({ ...c, amount: round2(c.baseAmount ?? c.amount ?? 0) }));
+    return { flats: previewFlats, pkgExtraCharges: previewPkgCharges };
+  }
+
+  let targetTotalCents = rawGrossCents;
+  if (mode === "fixed_total") {
+    targetTotalCents = Math.max(0, Math.round(parsedInput * 100));
+  } else if (mode === "discount_amount") {
+    targetTotalCents = Math.max(0, rawGrossCents - Math.round(parsedInput * 100));
+  } else if (mode === "discount_pct") {
+    const pct = Math.max(0, Math.min(100, parsedInput));
+    targetTotalCents = Math.max(0, Math.round((rawGrossCents * (100 - pct)) / 100));
+  }
+
+  let nextPkgCharges = withBasePkgCharges.map(c => ({ ...c, amount: round2(c.baseAmount ?? c.amount ?? 0) }));
+  let targetFlatsSumCents = targetTotalCents - pkgBaseChargesCents;
+
+  if (targetFlatsSumCents < 0) {
+    // Se taxas do pacote excederem o valor total fechado, escala taxas positivas do pacote proporcionalmente
+    const negPkgCents = withBasePkgCharges
+      .filter(c => (c.baseAmount ?? 0) < 0)
+      .reduce((s, c) => s + Math.round((c.baseAmount ?? 0) * 100), 0);
+    const posCharges = withBasePkgCharges.filter(c => (c.baseAmount ?? 0) > 0);
+    const posTargetCents = Math.max(0, targetTotalCents - negPkgCents);
+    const allocatedPos = distributeIntegerCentsByWeights(
+      posTargetCents,
+      posCharges.map(c => Math.round((c.baseAmount ?? 0) * 100))
+    );
+    let posIdx = 0;
+    nextPkgCharges = withBasePkgCharges.map(c => {
+      if ((c.baseAmount ?? 0) > 0) {
+        const amt = round2((allocatedPos[posIdx++] || 0) / 100);
+        return { ...c, amount: amt };
+      }
+      return { ...c, amount: round2(c.baseAmount ?? 0) };
+    });
+    targetFlatsSumCents = 0;
+  }
+
+  const flatTargetsCents = distributeIntegerCentsByWeights(targetFlatsSumCents, flatBaseTotalsCents);
+
+  const nextFlats = withBaseFlats.map((f, fIdx) => {
+    const flatTarget = Math.max(0, flatTargetsCents[fIdx] ?? 0);
+    const flatChargesCents = f.charges.reduce((s, c) => s + Math.round((c.baseAmount ?? c.amount ?? 0) * 100), 0);
+    let nextCharges = f.charges.map(c => ({ ...c, amount: round2(c.baseAmount ?? c.amount ?? 0) }));
+    let nightsTargetCents = flatTarget - flatChargesCents;
+
+    if (nightsTargetCents < 0) {
+      const negFlatCents = f.charges
+        .filter(c => (c.baseAmount ?? 0) < 0)
+        .reduce((s, c) => s + Math.round((c.baseAmount ?? 0) * 100), 0);
+      const posFlatCharges = f.charges.filter(c => (c.baseAmount ?? 0) > 0);
+      const allocatedFlatPos = distributeIntegerCentsByWeights(
+        Math.max(0, flatTarget - negFlatCents),
+        posFlatCharges.map(c => Math.round((c.baseAmount ?? 0) * 100))
+      );
+      let pIdx = 0;
+      nextCharges = f.charges.map(c => {
+        if ((c.baseAmount ?? 0) > 0) {
+          return { ...c, amount: round2((allocatedFlatPos[pIdx++] || 0) / 100) };
+        }
+        return { ...c, amount: round2(c.baseAmount ?? 0) };
+      });
+      nightsTargetCents = 0;
+    }
+
+    const nightWeights = f.dailyRates.map(d => Math.round((d.baseRate ?? d.rate ?? 0) * 100));
+    const allocatedNights = distributeIntegerCentsByWeights(nightsTargetCents, nightWeights);
+    const nextRates = f.dailyRates.map((d, nIdx) => ({
+      ...d,
+      rate: round2((allocatedNights[nIdx] ?? 0) / 100),
+    }));
+    const avg = nextRates.length > 0
+      ? round2(nextRates.reduce((s, r) => s + r.rate, 0) / nextRates.length)
+      : 0;
+
+    return {
+      ...f,
+      dailyRates: nextRates,
+      charges: nextCharges,
+      dailyRate: String(avg),
+    };
+  });
+
+  return { flats: nextFlats, pkgExtraCharges: nextPkgCharges };
+}
+
+interface FlatReservationCardProps {
+  flat: FlatReservationFormItem;
+  index: number;
+  totalFlats: number;
+  isEditMode: boolean;
+  selectedRes: any;
+  flatsList: any[];
+  reservationsList: any[];
+  blocksList: any[];
+  otherFlatsInPackage: { uid: string; flatId: string; checkinDate: string; checkoutDate: string }[];
+  crmGuests: any[];
+  searchIndexedCrm: (query: string, includeCompany: boolean, limit?: number) => any[];
+  fairShareResult: any;
+  loadingFairShare: boolean;
+  defaultChannel: string;
+  defaultCheckinTime: string;
+  defaultCheckoutTime: string;
+  primaryCheckinDate: string;
+  primaryCheckoutDate: string;
+  requesterType: "guest" | "other_person" | "company" | "agency_b2b";
+  requesterHasData: boolean;
+  phoneVerificationMap: Record<string, PhoneVerificationEntry>;
+  uploadingDoc: boolean;
+  isRangePickerOpen: boolean;
+  rangePickerContent: React.ReactNode;
+  editOperationalSlot?: React.ReactNode;
+  onPatchFlat: (uid: string, patch: Partial<FlatReservationFormItem>, opts?: { manualFlatSelect?: boolean; syncPrimaryDates?: boolean }) => void;
+  onRemoveFlat: (uid: string) => void;
+  onOpenRangePicker: (uid: string, focusDate?: string) => void;
+  onCloseRangePicker: () => void;
+  onDatesChangeForFlat: (uid: string, checkinDate: string, checkoutDate: string) => void;
+  onSelectCrmGuestForFlat: (uid: string, guestIndex: 1 | 2 | 3, guest: any) => void;
+  onSaveGuestToCrmForFlat: (uid: string, guestIndex: 1 | 2 | 3) => void;
+  onToggleRequesterIsGuest1: (uid: string, checked: boolean) => void;
+  onVerifyPhone: (phone: string) => void;
+  onDocFileChange: (uid: string, e: React.ChangeEvent<HTMLInputElement>) => void;
+  onSendCompanionInstructions: (uid: string, guestNumber: 2 | 3) => void;
+  onCopyIdentifyLink: () => void;
+  onDistributeNightsForFlat: (uid: string, targetTotal: number) => void;
+  onAddExtraNightForFlat: (uid: string) => void;
+  onDeleteNightForFlat: (uid: string, nightIndex: number) => void;
+  onEqualizeNightsForFlat: (uid: string) => void;
+  onUpdateNightForFlat: (uid: string, nightIndex: number, patch: Partial<DailyRateItem>) => void;
+  onAddChargeForFlat: (uid: string, type: ReservationChargeItem["type"], title: string, amount: number) => void;
+  onUpdateChargeForFlat: (uid: string, chargeId: string, field: "title" | "amount" | "type", val: any) => void;
+  onRemoveChargeForFlat: (uid: string, chargeId: string) => void;
+}
+
+const FlatReservationCard = memo(function FlatReservationCard({
+  flat,
+  index,
+  totalFlats,
+  isEditMode,
+  selectedRes,
+  flatsList,
+  reservationsList,
+  blocksList,
+  otherFlatsInPackage,
+  crmGuests,
+  searchIndexedCrm,
+  fairShareResult,
+  loadingFairShare,
+  defaultChannel,
+  defaultCheckinTime,
+  defaultCheckoutTime,
+  primaryCheckinDate,
+  primaryCheckoutDate,
+  requesterType,
+  requesterHasData,
+  phoneVerificationMap,
+  uploadingDoc,
+  isRangePickerOpen,
+  rangePickerContent,
+  editOperationalSlot,
+  onPatchFlat,
+  onRemoveFlat,
+  onOpenRangePicker,
+  onCloseRangePicker,
+  onDatesChangeForFlat,
+  onSelectCrmGuestForFlat,
+  onSaveGuestToCrmForFlat,
+  onToggleRequesterIsGuest1,
+  onVerifyPhone,
+  onDocFileChange,
+  onSendCompanionInstructions,
+  onCopyIdentifyLink,
+  onDistributeNightsForFlat,
+  onAddExtraNightForFlat,
+  onDeleteNightForFlat,
+  onEqualizeNightsForFlat,
+  onUpdateNightForFlat,
+  onAddChargeForFlat,
+  onUpdateChargeForFlat,
+  onRemoveChargeForFlat,
+}: FlatReservationCardProps) {
+  const docInputRef = useRef<HTMLInputElement>(null);
+  const [pdfViewerOpen, setPdfViewerOpen] = useState(false);
+
+  const flatOrdinal = index + 1;
+  const effectiveCin = index > 0 && flat.sameDatesAsPrimary ? primaryCheckinDate : flat.checkinDate;
+  const effectiveCout = index > 0 && flat.sameDatesAsPrimary ? primaryCheckoutDate : flat.checkoutDate;
+  const todayIso = format(new Date(), "yyyy-MM-dd");
+  const isFutureCheckin = effectiveCin > todayIso;
+
+  const selectedFlatObj = flatsList.find(f => String(f.id) === String(flat.flatId));
+  const flatDisplayName = flat.flatId === "auto"
+    ? "Automático"
+    : selectedFlatObj?.number
+      ? `Apt ${selectedFlatObj.number}`
+      : flat.flatId
+        ? `Apt ${flat.flatId}`
+        : "Selecionar Flat";
+
+  const flatNightsSum = round2((flat.dailyRates || []).reduce((s, d) => s + (Number(d.rate) || 0), 0));
+  const flatChargesSum = round2((flat.charges || []).reduce((s, c) => s + (Number(c.amount) || 0), 0));
+  const flatSubtotal = round2(flatNightsSum + flatChargesSum);
+
+  const activeServiceConflict = useMemo(() => {
+    if (!flat.flatId || flat.flatId === "auto" || !effectiveCin || !effectiveCout) return null;
+    return (blocksList || []).find((b: any) => {
+      const isService = Boolean(b.isServiceBlock || b.reason === "service_order");
+      if (!isService) return false;
+      const sameFlat = Number(b.flatId) === Number(flat.flatId) || String(b.flatNumber) === String(flat.flatId);
+      if (!sameFlat) return false;
+      return b.startDate <= effectiveCout && b.endDate >= effectiveCin;
+    }) || null;
+  }, [blocksList, flat.flatId, effectiveCin, effectiveCout]);
+
+  const fairShareStatForSelected = useMemo(() => {
+    if (!flat.flatId || flat.flatId === "auto") return null;
+    return fairShareResult?.allStats?.find(
+      (s: any) => Number(s.flat?.id) === Number(flat.flatId) || (selectedFlatObj && String(s.flat?.number) === String(selectedFlatObj.number))
+    ) || null;
+  }, [fairShareResult, flat.flatId, selectedFlatObj]);
+
+  const localResConflictForSelected = useMemo(() => {
+    if (!flat.flatId || flat.flatId === "auto" || !effectiveCin || !effectiveCout) return null;
+    return (reservationsList || []).find((r: any) => {
+      if (isEditMode && selectedRes && String(r.id) === String(selectedRes.id)) return false;
+      if (Number(r.flatId) !== Number(flat.flatId) && (!selectedFlatObj || String(r.flatNumber) !== String(selectedFlatObj.number))) return false;
+      const st = String(r.status || "").toLowerCase();
+      if (["cancelada", "cancelled", "no_show", "expirada"].includes(st)) return false;
+      if ((r.checkoutDone || r.earlyCheckout || ["completed", "checked_out", "finalizada", "concluida", "checkout"].includes(st)) && r.checkoutDate <= effectiveCin) return false;
+      return r.checkinDate < effectiveCout && r.checkoutDate > effectiveCin;
+    }) || null;
+  }, [reservationsList, isEditMode, selectedRes, flat.flatId, selectedFlatObj, effectiveCin, effectiveCout]);
+
+  const isSelectedAvailable = fairShareStatForSelected
+    ? Boolean(fairShareStatForSelected.isAvailable)
+    : !localResConflictForSelected;
+
+  const conflictListForSelected = useMemo(() => {
+    if (fairShareStatForSelected?.conflicts) {
+      return (fairShareStatForSelected.conflicts || []).filter((c: any) => !isEditMode || !selectedRes || String(c.id) !== String(selectedRes.id));
+    }
+    return localResConflictForSelected ? [localResConflictForSelected] : [];
+  }, [fairShareStatForSelected, localResConflictForSelected, isEditMode, selectedRes]);
+
+  const isDirtySelected = !isFutureCheckin && isSelectedAvailable && Boolean(
+    fairShareStatForSelected?.isDirty ||
+    fairShareStatForSelected?.cleaningStatus === "dirty" ||
+    (!fairShareStatForSelected && (selectedFlatObj as any)?.cleaningStatus === "dirty")
+  );
+  const hasSameDaySelected = Boolean(fairShareStatForSelected?.hasCheckoutOnCheckinDay);
+
+  const nextCleanStat = useMemo(() => {
+    return (fairShareResult?.allStats || [])
+      .filter((s: any) =>
+        s?.isAvailable &&
+        String(s.flat?.id) !== String(flat.flatId) &&
+        !s.isDirty &&
+        s.cleaningStatus !== "dirty" &&
+        !s.hasCheckoutOnCheckinDay
+      )
+      .sort((a: any, b: any) => {
+        if ((a.monthOccupiedDays || 0) !== (b.monthOccupiedDays || 0)) {
+          return (a.monthOccupiedDays || 0) - (b.monthOccupiedDays || 0);
+        }
+        return (b.daysSinceLastCheckout || 0) - (a.daysSinceLastCheckout || 0);
+      })[0] || null;
+  }, [fairShareResult, flat.flatId]);
+
+  const samePkgFlatOverlap = useMemo(() => {
+    if (!flat.flatId || flat.flatId === "auto") return false;
+    return otherFlatsInPackage.some(
+      other =>
+        other.uid !== flat.uid &&
+        String(other.flatId) === String(flat.flatId) &&
+        effectiveCin < other.checkoutDate &&
+        effectiveCout > other.checkinDate
+    );
+  }, [otherFlatsInPackage, flat.uid, flat.flatId, effectiveCin, effectiveCout]);
+
+  const cardHighlightClass = totalFlats > 1
+    ? "border-2 border-indigo-200 dark:border-indigo-800/80 bg-indigo-50/25 dark:bg-indigo-950/15"
+    : "border border-border/80 bg-card/70";
+
+  return (
+    <div className={cn("p-3.5 sm:p-4 rounded-2xl space-y-3.5 shadow-2xs", cardHighlightClass)}>
+      {/* 3A: Cabeçalho do Flat */}
+      <div className="flex items-center justify-between gap-2 flex-wrap border-b border-border/60 pb-2.5">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge className={totalFlats > 1 ? "bg-indigo-600 text-white font-black text-[11px]" : "bg-primary text-primary-foreground font-black text-[11px]"}>
+            {totalFlats > 1 ? `🏢 Flat ${flatOrdinal}${index === 0 ? " (Principal)" : ""}` : "🏢 Hospedagem & Acomodação"}
+          </Badge>
+          <span className="text-xs font-bold text-foreground">
+            {flatDisplayName} • {flat.dailyRates.length} {flat.dailyRates.length === 1 ? "diária" : "diárias"} • Subtotal{" "}
+            <span className="text-indigo-700 dark:text-indigo-300 font-black">
+              R$ {flatSubtotal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </span>
+          {requesterType !== "guest" && requesterHasData && !flat.informGuestsLater && !flat.guest1.name.trim() && (
+            <Badge variant="outline" className="text-[9.5px] bg-amber-500/10 text-amber-800 dark:text-amber-300 border-amber-400/50">
+              Hóspede opcional agora
+            </Badge>
+          )}
+        </div>
+
+        {!isEditMode && totalFlats > 1 && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => onRemoveFlat(flat.uid)}
+            className="h-7 px-2 text-xs text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-bold gap-1 cursor-pointer"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Remover Flat {flatOrdinal}</span>
+          </Button>
+        )}
+      </div>
+
+      {/* Alertas Operacionais & Travas deste Flat */}
+      {activeServiceConflict && (
+        <div className="p-3 bg-amber-500/15 dark:bg-amber-950/40 border-2 border-amber-500/70 rounded-xl flex items-start gap-2.5 text-xs text-amber-950 dark:text-amber-200">
+          <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+          <div className="space-y-0.5">
+            <div className="font-black text-amber-900 dark:text-amber-300">Aviso de Serviço Externo ({flatDisplayName})</div>
+            <p className="text-[11px] leading-relaxed font-medium">
+              Serviço agendado/em andamento: <strong>{activeServiceConflict.serviceTitle || activeServiceConflict.title || "Serviço Externo"}</strong>
+              {activeServiceConflict.workerName ? ` (Prestador: ${activeServiceConflict.workerName})` : ""}.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {isEditMode && index === 0 && (selectedRes?.isFlatLocked || selectedRes?.flatLocked) && (
+        String(flat.flatId) !== String(selectedRes.flatId) ? (
+          <div className="p-3 bg-amber-500/15 border-2 border-amber-500/50 rounded-xl text-amber-950 dark:text-amber-200 text-xs flex items-start gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              <p className="font-bold text-[12px]">Aviso: Alterando Quarto Preferencial / Bloqueado!</p>
+              <p className="text-[11px] leading-tight">
+                Esta reserva possui trava de quarto preferencial{selectedRes.flatLockReason ? ` (${selectedRes.flatLockReason})` : ""}. Alterações ficam registradas em auditoria.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-900 dark:text-amber-200 text-xs flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+              <span className="font-semibold text-[11.5px]">
+                Quarto Preferencial Ativo{selectedRes.flatLockReason ? `: "${selectedRes.flatLockReason}"` : ""}
+              </span>
+            </div>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-400/30 uppercase tracking-wider">Não Trocar</span>
+          </div>
+        )
+      )}
+
+      {/* 3B: Apartamento & Período */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-start">
+        <div className="space-y-1.5 min-w-0">
+          <div className="flex items-center justify-between">
+            <Label className="text-xs font-bold flex items-center gap-1">Apartamento {totalFlats > 1 ? `(Flat ${flatOrdinal})` : ""}</Label>
+            {!isEditMode && index === 0 && fairShareResult?.bestFlatId && String(flat.flatId) === String(fairShareResult.bestFlatId) && (
+              <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold flex items-center gap-1">
+                ✨ Sugerido da vez
+              </span>
+            )}
+          </div>
+          <Select
+            value={flat.flatId || (totalFlats > 1 ? "auto" : "")}
+            onValueChange={(val) => onPatchFlat(flat.uid, { flatId: val, forceOverbooking: false }, { manualFlatSelect: true })}
+          >
+            <SelectTrigger className="text-xs font-bold h-9 w-full min-w-0 bg-background">
+              <SelectValue placeholder={loadingFairShare ? "✨ Buscando quarto sugerido..." : "Selecione o Flat"}>
+                {(() => {
+                  if (!flat.flatId) {
+                    return loadingFairShare ? "✨ Selecionando quarto sugerido..." : "Selecione o Flat";
+                  }
+                  if (flat.flatId === "auto") {
+                    return "⚡ Automático (Alocar livre automaticamente)";
+                  }
+                  const cleanSt = isFutureCheckin ? "clean" : (fairShareStatForSelected?.cleaningStatus || (selectedFlatObj as any)?.cleaningStatus || "clean");
+                  const isDirty = !isFutureCheckin && (cleanSt === "dirty" || Boolean(fairShareStatForSelected?.isDirty));
+                  const isCleaningNow = !isFutureCheckin && (cleanSt === "cleaning_now" || Boolean(fairShareStatForSelected?.isCleaningNow));
+                  const isBest = !isEditMode && index === 0 && String(flat.flatId) === String(fairShareResult?.bestFlatId);
+                  let statusShort = "🟢 Vago & Limpo";
+                  if (samePkgFlatOverlap) {
+                    statusShort = "⚠️ Duplicado no pacote";
+                  } else if (!isSelectedAvailable) {
+                    statusShort = conflictListForSelected.length > 0 ? "⚠️ Ocupado" : "🔒 Bloqueado";
+                  } else if (hasSameDaySelected) {
+                    statusShort = "🔄 Saída no Dia";
+                  } else if (isDirty) {
+                    statusShort = "🧹 Vago & Sujo";
+                  } else if (isCleaningNow) {
+                    statusShort = "🧽 Em Limpeza";
+                  }
+                  return `Apt ${selectedFlatObj?.number || flat.flatId} • ${statusShort}${isBest ? " ✨" : ""}`;
+                })()}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent className="max-h-64">
+              {totalFlats >= 2 && (
+                <SelectItem value="auto">⚡ Automático (Alocar livre automaticamente)</SelectItem>
+              )}
+              {flatsList.map((f: any) => {
+                const flatStat = fairShareResult?.allStats?.find(
+                  (s: any) => Number(s.flat?.id) === Number(f.id) || String(s.flat?.number) === String(f.number)
+                );
+                const usedInOther = otherFlatsInPackage.some(
+                  other =>
+                    other.uid !== flat.uid &&
+                    String(other.flatId) === String(f.id) &&
+                    effectiveCin < other.checkoutDate &&
+                    effectiveCout > other.checkinDate
+                );
+                const localResConflict = (reservationsList || []).find((r: any) => {
+                  if (isEditMode && selectedRes && String(r.id) === String(selectedRes.id)) return false;
+                  if (Number(r.flatId) !== Number(f.id) && String(r.flatNumber) !== String(f.number)) return false;
+                  const st = String(r.status || "").toLowerCase();
+                  if (["cancelada", "cancelled", "no_show", "expirada"].includes(st)) return false;
+                  if ((r.checkoutDone || r.earlyCheckout || ["completed", "checked_out", "finalizada", "concluida", "checkout"].includes(st)) && r.checkoutDate <= effectiveCin) return false;
+                  return r.checkinDate < effectiveCout && r.checkoutDate > effectiveCin;
+                });
+                const localBlockConflict = (blocksList || []).find((b: any) => {
+                  if (Number(b.flatId) !== Number(f.id) && String(b.flatNumber) !== String(f.number)) return false;
+                  return b.startDate < effectiveCout && b.endDate >= effectiveCin;
+                });
+                const localSameDayCheckout = (reservationsList || []).some((r: any) => {
+                  if (isEditMode && selectedRes && String(r.id) === String(selectedRes.id)) return false;
+                  if (Number(r.flatId) !== Number(f.id) && String(r.flatNumber) !== String(f.number)) return false;
+                  if (r.checkoutDate !== effectiveCin) return false;
+                  const st = String(r.status || "").toLowerCase();
+                  if (["cancelada", "cancelled", "no_show", "expirada", "completed", "checked_out", "finalizada", "concluida", "checkout"].includes(st)) return false;
+                  if (r.checkoutDone || r.earlyCheckout || r.actualCheckoutAt) return false;
+                  return true;
+                });
+                const useStat = index === 0 && !flat.sameDatesAsPrimary && flatStat;
+                const isBest = !isEditMode && index === 0 && Number(fairShareResult?.bestFlatId) === Number(f.id);
+                const isAvail = useStat ? Boolean(flatStat.isAvailable) : (!localResConflict && !localBlockConflict);
+                const conflictList = (useStat ? flatStat?.conflicts || [] : []).filter((c: any) => !isEditMode || !selectedRes || String(c.id) !== String(selectedRes.id));
+                const conflictName = conflictList[0]?.guestName || localResConflict?.guestName;
+                const blockItem = (useStat ? flatStat?.blocks?.[0] : null) || localBlockConflict;
+                const isServiceOrMaintBlock = Boolean(blockItem?.isServiceBlock || blockItem?.reason === "service_order" || (useStat && flatStat?.hasServiceOrderConflict));
+                const isBlockedOnly = !isAvail && !conflictName && Boolean(blockItem || (useStat && (flatStat?.hasServiceOrderConflict || flatStat?.isFlatBlockedStatus)));
+                const hasSameDayTurnover = useStat ? Boolean(flatStat.hasCheckoutOnCheckinDay) : localSameDayCheckout;
+                const cleaningStatus = isFutureCheckin ? "clean" : ((useStat ? flatStat?.cleaningStatus : null) || (f as any).cleaningStatus || "clean");
+                const isDirty = !isFutureCheckin && (cleaningStatus === "dirty" || Boolean(useStat && flatStat?.isDirty));
+                const isCleaningNow = !isFutureCheckin && (cleaningStatus === "cleaning_now" || Boolean(useStat && flatStat?.isCleaningNow));
+                const daysCount = flatStat?.monthOccupiedDays || 0;
+
+                let stateBadgeText = `🟢 Vago & Limpo (${daysCount}d)`;
+                let stateBadgeClass = "text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20";
+                let bestSuffix = "Vago & Limpo";
+                if (hasSameDayTurnover) {
+                  stateBadgeText = `🔄 Saída no Dia (${daysCount}d)`;
+                  stateBadgeClass = "text-amber-700 dark:text-amber-300 bg-amber-500/15 border border-amber-500/30";
+                  bestSuffix = "Saída no Dia";
+                } else if (isDirty) {
+                  stateBadgeText = `🧹 Vago & Sujo (${daysCount}d)`;
+                  stateBadgeClass = "text-orange-700 dark:text-orange-300 bg-orange-500/15 border border-orange-500/30";
+                  bestSuffix = "Vago & Sujo";
+                } else if (isCleaningNow) {
+                  stateBadgeText = `🧽 Em Limpeza (${daysCount}d)`;
+                  stateBadgeClass = "text-sky-700 dark:text-sky-300 bg-sky-500/15 border border-sky-500/30";
+                  bestSuffix = "Em Limpeza";
+                }
+
+                return (
+                  <SelectItem key={f.id} value={String(f.id)}>
+                    <div className="flex items-center justify-between gap-2 w-full py-0.5">
+                      <span className="font-bold">Apt {f.number}</span>
+                      {usedInOther ? (
+                        <span className="text-[9px] bg-amber-500/20 text-amber-800 dark:text-amber-200 font-bold px-1.5 py-0.5 rounded">
+                          ⚠️ Já escolhido neste pacote
+                        </span>
+                      ) : isBest && isAvail ? (
+                        <span className="text-[9px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded">
+                          ✨ Quarto da Vez ({bestSuffix} • {daysCount}d)
+                        </span>
+                      ) : !isAvail ? (
+                        <span className="text-[9px] bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold px-1.5 py-0.5 rounded">
+                          {isBlockedOnly ? `🔒 Bloqueado (${isServiceOrMaintBlock ? "OS" : "Manutenção"})` : `⚠️ Ocupado ${conflictName ? `(${conflictName})` : ""}`}
+                        </span>
+                      ) : (
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${stateBadgeClass}`}>{stateBadgeText}</span>
+                      )}
+                    </div>
+                  </SelectItem>
+                );
+              })}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Bloqueio de Flat / Quarto Preferencial */}
+        <div className="p-2.5 bg-slate-50/80 dark:bg-slate-900/50 border border-border/70 rounded-xl space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <Lock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+              <div className="min-w-0">
+                <span className="text-xs font-bold block leading-tight">Bloquear Flat (Não Trocar)</span>
+                <span className="text-[10px] text-muted-foreground block leading-tight">Impede Sofia AI de remanejar este flat</span>
+              </div>
+            </div>
+            <Switch
+              checked={flat.isFlatLocked}
+              onCheckedChange={(checked) => onPatchFlat(flat.uid, { isFlatLocked: checked })}
+            />
+          </div>
+          {flat.isFlatLocked && (
+            <Input
+              value={flat.flatLockReason}
+              onChange={(e) => onPatchFlat(flat.uid, { flatLockReason: e.target.value })}
+              placeholder="Motivo do quarto fixo (opcional)..."
+              className="text-xs h-7 bg-background"
+            />
+          )}
+        </div>
+      </div>
+
+      {/* Banner Sugestão da Vez (Flat 1 na criação) */}
+      {!isEditMode && index === 0 && fairShareResult?.bestFlatNumber && (() => {
+        const bestStat = fairShareResult?.allStats?.find(
+          (s: any) => Number(s.flat?.id) === Number(fairShareResult.bestFlatId) || String(s.flat?.number) === String(fairShareResult.bestFlatNumber)
+        );
+        const bestStatusLabel = bestStat?.hasCheckoutOnCheckinDay
+          ? "🔄 Saída no Dia"
+          : !isFutureCheckin && (bestStat?.isDirty || bestStat?.cleaningStatus === "dirty")
+            ? "🧹 Vago & Sujo"
+            : !isFutureCheckin && (bestStat?.isCleaningNow || bestStat?.cleaningStatus === "cleaning_now")
+              ? "🧽 Em Limpeza"
+              : "🟢 Vago & Limpo";
+        return (
+          <div className="text-[11px] text-amber-800 dark:text-amber-200 font-medium flex items-center justify-between bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-lg">
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              <span>
+                Sugestão da vez: <strong className="font-bold">Apt {fairShareResult.bestFlatNumber}</strong>{" "}
+                <span className="text-[10px] opacity-90">({bestStatusLabel})</span>
+                {String(flat.flatId) === String(fairShareResult.bestFlatId) && (
+                  <span className="ml-1.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">✓ Selecionado</span>
+                )}
+              </span>
+            </div>
+            {String(flat.flatId) !== String(fairShareResult.bestFlatId) && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => onPatchFlat(flat.uid, { flatId: String(fairShareResult.bestFlatId), forceOverbooking: false })}
+                className="h-6 text-[10px] font-bold text-amber-800 dark:text-amber-200 hover:bg-amber-500/20 px-2 border border-amber-500/30 rounded"
+              >
+                Usar Apt {fairShareResult.bestFlatNumber}
+              </Button>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Alerta Vago & Sujo / Saída no Dia */}
+      {(isDirtySelected || hasSameDaySelected) && flat.flatId !== "auto" && (
+        <div className="p-2.5 bg-orange-50 dark:bg-orange-950/40 border border-orange-300 dark:border-orange-700/60 rounded-xl flex items-center justify-between gap-2 text-xs">
+          <div className="flex items-start gap-2 text-orange-900 dark:text-orange-200">
+            <AlertCircle className="w-4 h-4 text-orange-600 dark:text-orange-400 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold block">
+                {hasSameDaySelected
+                  ? `🔄 Apt ${selectedFlatObj?.number || flat.flatId} possui saída prevista no dia.`
+                  : `🧹 Apt ${selectedFlatObj?.number || flat.flatId} consta como VAGO & SUJO na Governança.`}
+              </span>
+              <span className="text-[10.5px] opacity-90 block">
+                Mantenha para equilíbrio de ocupação ou selecione outro apartamento já limpo.
+              </span>
+            </div>
+          </div>
+          {nextCleanStat?.flat?.id && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onPatchFlat(flat.uid, { flatId: String(nextCleanStat.flat.id), forceOverbooking: false }, { manualFlatSelect: true })}
+              className="h-7 text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white border-0 shrink-0 px-2.5"
+            >
+              Usar próximo limpo (Apt {nextCleanStat.flat.number})
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* Alerta de Conflito & Trava Anti-Overbooking deste Flat */}
+      {(samePkgFlatOverlap || (!isSelectedAvailable && (conflictListForSelected.length > 0 || (fairShareStatForSelected?.blocks?.length || 0) > 0))) && (
+        <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-700/60 rounded-2xl space-y-2 text-xs">
+          <div className="flex items-start gap-2 text-rose-800 dark:text-rose-200">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold block">
+                {samePkgFlatOverlap
+                  ? `🚨 Apt ${selectedFlatObj?.number || flat.flatId} já foi escolhido em outro flat deste mesmo pacote!`
+                  : `🚨 Conflito de Ocupação: Apt ${selectedFlatObj?.number || flat.flatId} possui reserva/bloqueio neste período!`}
+              </span>
+              {conflictListForSelected[0] && (
+                <span className="text-[11px] text-rose-700 dark:text-rose-300/90 block">
+                  Conflito: <strong>{conflictListForSelected[0]?.guestName || "Outro Hóspede"}</strong> ({conflictListForSelected[0]?.checkinDate} a {conflictListForSelected[0]?.checkoutDate})
+                </span>
+              )}
+            </div>
+          </div>
+          {!samePkgFlatOverlap && (
+            <div className="pt-1.5 border-t border-rose-200 dark:border-rose-800/60 flex items-center justify-between gap-2">
+              <div className="text-[11px] text-slate-700 dark:text-slate-300 font-medium">
+                Forçar encaixe mesmo com conflito (Overbooking — notifica Gestão)
+              </div>
+              <Switch
+                checked={flat.forceOverbooking}
+                onCheckedChange={(checked) => onPatchFlat(flat.uid, { forceOverbooking: checked })}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Datas, Horários & Range Picker do Flat */}
+      <div className="space-y-2">
+        {index > 0 && (
+          <div className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-background/80 border border-border/70">
+            <span className="text-[11px] font-bold text-foreground flex items-center gap-1.5">
+              <CalendarDays className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Período do Flat {flatOrdinal}</span>
+            </span>
+            <label className="flex items-center gap-1.5 text-[11px] font-semibold text-indigo-700 dark:text-indigo-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={flat.sameDatesAsPrimary}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  const nextCin = checked ? primaryCheckinDate : flat.checkinDate;
+                  const nextCout = checked ? primaryCheckoutDate : flat.checkoutDate;
+                  onPatchFlat(flat.uid, { sameDatesAsPrimary: checked }, { syncPrimaryDates: checked });
+                  if (checked) {
+                    onDatesChangeForFlat(flat.uid, nextCin, nextCout);
+                  }
+                }}
+                className="rounded border-indigo-400"
+              />
+              <span>Mesmas datas do Flat 1 ({primaryCheckinDate.split("-").reverse().join("/")} → {primaryCheckoutDate.split("-").reverse().join("/")})</span>
+            </label>
+          </div>
+        )}
+
+        <Popover
+          open={isRangePickerOpen}
+          onOpenChange={(open) => {
+            if (!open) onCloseRangePicker();
+          }}
+        >
+          <PopoverAnchor asChild>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-start">
+              {/* Entrada */}
+              <div className="space-y-1.5 p-2.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-border/70 min-w-0">
+                <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <LogIn className="w-3.5 h-3.5 text-emerald-600" />
+                    Entrada (Check-in)
+                  </span>
+                  <span className="text-[10px] text-muted-foreground font-normal">Padrão: {defaultCheckinTime}</span>
+                </Label>
+                <div className="grid grid-cols-5 gap-2 items-center">
+                  <div className="col-span-3 min-w-0">
+                    <Label className="text-[10px] text-muted-foreground block mb-0.5">Data</Label>
+                    <div className="relative flex items-center">
+                      <Input
+                        type="date"
+                        disabled={index > 0 && flat.sameDatesAsPrimary}
+                        value={effectiveCin}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const dCin = safeParseDate(val);
+                          let dCout = safeParseDate(effectiveCout);
+                          let targetCout = effectiveCout;
+                          if (dCin && (!dCout || dCout <= dCin)) {
+                            targetCout = format(addDays(dCin, 1), "yyyy-MM-dd");
+                          }
+                          onDatesChangeForFlat(flat.uid, val, targetCout);
+                        }}
+                        min="2020-01-01"
+                        max="2099-12-31"
+                        required
+                        className="text-xs h-9 w-full min-w-0 pr-8 pl-2 [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:pointer-events-none [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-0 [&::-webkit-calendar-picker-indicator]:w-7"
+                      />
+                      {!(index > 0 && flat.sameDatesAsPrimary) && (
+                        <button
+                          type="button"
+                          onClick={() => onOpenRangePicker(flat.uid, effectiveCin)}
+                          className="absolute right-1.5 z-10 p-1 text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 transition-colors cursor-pointer rounded"
+                          title="Abrir calendário de período (Range Picker)"
+                        >
+                          <CalendarIcon className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="col-span-2 min-w-0">
+                    <Label className="text-[10px] text-muted-foreground block mb-0.5">Horário</Label>
+                    <Input
+                      type="time"
+                      value={flat.checkinTime}
+                      onChange={(e) => onPatchFlat(flat.uid, { checkinTime: e.target.value })}
+                      required
+                      className="text-xs h-9 font-medium w-full min-w-0 px-2"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Saída */}
+              <div className="space-y-1.5 p-2.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-border/70 min-w-0">
+                <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <LogOut className="w-3.5 h-3.5 text-rose-600" />
+                    Saída (Check-out)
+                  </span>
+                  <span className="text-[10px] text-muted-foreground font-normal">Padrão: {defaultCheckoutTime}</span>
+                </Label>
+                <div className="grid grid-cols-5 gap-2 items-center">
+                  <div className="col-span-3 min-w-0">
+                    <Label className="text-[10px] text-muted-foreground block mb-0.5">Data</Label>
+                    <div className="relative flex items-center">
+                      <Input
+                        type="date"
+                        disabled={index > 0 && flat.sameDatesAsPrimary}
+                        value={effectiveCout}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (effectiveCin && val && val <= effectiveCin) {
+                            onPatchFlat(flat.uid, { checkoutDate: val });
+                          } else {
+                            onDatesChangeForFlat(flat.uid, effectiveCin, val);
+                          }
+                        }}
+                        min="2020-01-01"
+                        max="2099-12-31"
+                        required
+                        className="text-xs h-9 w-full min-w-0 pr-8 pl-2 [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:pointer-events-none [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-0 [&::-webkit-calendar-picker-indicator]:w-7"
+                      />
+                      {!(index > 0 && flat.sameDatesAsPrimary) && (
+                        <button
+                          type="button"
+                          onClick={() => onOpenRangePicker(flat.uid, effectiveCin || effectiveCout)}
+                          className="absolute right-1.5 z-10 p-1 text-rose-600 hover:text-rose-700 dark:text-rose-400 transition-colors cursor-pointer rounded"
+                          title="Abrir calendário de período (Range Picker)"
+                        >
+                          <CalendarIcon className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="col-span-2 min-w-0">
+                    <Label className="text-[10px] text-muted-foreground block mb-0.5">Horário</Label>
+                    <Input
+                      type="time"
+                      value={flat.checkoutTime}
+                      onChange={(e) => onPatchFlat(flat.uid, { checkoutTime: e.target.value })}
+                      required
+                      className="text-xs h-9 font-medium w-full min-w-0 px-2"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {effectiveCin && effectiveCout && effectiveCout <= effectiveCin && (
+                <div className="col-span-1 sm:col-span-2 text-[11px] text-rose-600 dark:text-rose-400 bg-rose-500/10 border border-rose-500/30 px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 font-semibold">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>A data de saída (check-out) deve ser posterior à data de entrada (check-in).</span>
+                </div>
+              )}
+            </div>
+          </PopoverAnchor>
+          <PopoverContent
+            align="center"
+            side="bottom"
+            sideOffset={8}
+            className="z-[70] w-[310px] sm:w-[330px] max-w-[calc(100vw-2rem)] p-3 bg-popover border border-border shadow-2xl rounded-2xl animate-in fade-in-0 zoom-in-95"
+          >
+            {isRangePickerOpen ? rangePickerContent : null}
+          </PopoverContent>
+        </Popover>
+      </div>
+
+      {/* Early Check-in & Preferência Andar Alto */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div className="p-2.5 bg-indigo-50/80 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60 rounded-xl flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+            <div className="min-w-0">
+              <span className="text-xs font-bold block">Autorizar Early Check-in</span>
+              <span className="text-[10px] text-muted-foreground block truncate">Libera portaria antes das 13:00</span>
+            </div>
+          </div>
+          <Switch
+            checked={flat.earlyCheckinAuthorized}
+            onCheckedChange={(checked) => onPatchFlat(flat.uid, { earlyCheckinAuthorized: checked })}
+          />
+        </div>
+
+        <div className="p-2.5 bg-slate-50/80 dark:bg-slate-900/50 border border-border/70 rounded-xl flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <Building2 className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+            <div className="min-w-0">
+              <span className="text-xs font-bold block">Preferência Andar Alto</span>
+              <span className="text-[10px] text-muted-foreground block truncate">Prioriza andares superiores se disponível</span>
+            </div>
+          </div>
+          <Switch
+            checked={flat.prefersHighFloor}
+            onCheckedChange={(checked) => onPatchFlat(flat.uid, { prefersHighFloor: checked })}
+          />
+        </div>
+      </div>
+
+      {/* 3C: Quantidade de Hóspedes + Toggles + Blocos CRM (Hóspede 1, 2 e 3) + Documento */}
+      <div className="p-3 bg-indigo-50/60 dark:bg-indigo-950/25 border border-indigo-200 dark:border-indigo-800/60 rounded-xl space-y-2.5">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <span className="text-xs font-bold flex items-center gap-1.5">
+            <Users className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+            <span>Hóspedes no Flat {totalFlats > 1 ? flatOrdinal : ""}</span>
+          </span>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={onCopyIdentifyLink}
+              className="h-6 px-2 text-[10px] font-bold border-teal-400/70 text-teal-700 dark:text-teal-300 gap-1"
+              title="Copia o link /identificar-reserva"
+            >
+              <Copy className="w-2.5 h-2.5" /> Link Identificar Reserva
+            </Button>
+            <Badge variant="outline" className="text-[10px] bg-indigo-100 dark:bg-indigo-900/60 text-indigo-900 dark:text-indigo-200">
+              Máx: 3 Pessoas
+            </Badge>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2">
+          {(["1", "2", "3"] as const).map((occ) => (
+            <button
+              key={occ}
+              type="button"
+              onClick={() =>
+                onPatchFlat(flat.uid, {
+                  guestCount: occ,
+                  extraMattress: occ === "3" ? true : flat.extraMattress,
+                  ...(Number(occ) >= 2 && !flat.guest2.name.trim() ? {} : {}),
+                })
+              }
+              className={cn(
+                "py-2 px-2 sm:px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer",
+                flat.guestCount === occ
+                  ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                  : "bg-background border-border text-muted-foreground hover:border-indigo-400"
+              )}
+            >
+              <span>{occ} {occ === "1" ? "Hóspede" : "Hóspedes"}</span>
+              {occ === "3" && <span className="text-[9.5px] opacity-85 hidden sm:inline">(+Colchão)</span>}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-indigo-200/70 dark:border-indigo-800/50 text-[11px]">
+          <div className="flex flex-wrap items-center gap-3">
+            {requesterType !== "guest" && (
+              <label className="flex items-center gap-1.5 font-semibold text-indigo-900 dark:text-indigo-200 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={flat.requesterIsGuest1}
+                  onChange={(e) => onToggleRequesterIsGuest1(flat.uid, e.target.checked)}
+                  className="rounded border-indigo-400"
+                />
+                <span>Solicitante também é o Hóspede 1</span>
+              </label>
+            )}
+            <label className="flex items-center gap-1.5 font-semibold text-amber-800 dark:text-amber-300 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={flat.informGuestsLater}
+                onChange={(e) => onPatchFlat(flat.uid, { informGuestsLater: e.target.checked })}
+                className="rounded border-amber-400"
+              />
+              <span>Informar hóspedes depois (via link / credenciamento)</span>
+            </label>
+          </div>
+        </div>
+
+        {!flat.informGuestsLater && (
+          <div className="space-y-2.5 pt-1">
+            {/* Hóspede 1 */}
+            <CrmGuestFieldsBlock
+              guestIndex={1}
+              label={totalFlats > 1 ? `Hóspede 1 (Titular do Flat ${flatOrdinal})` : "Hóspede 1 (Titular)"}
+              optional={requesterType !== "guest"}
+              guestId={flat.guest1.guestId}
+              name={flat.guest1.name}
+              cpf={flat.guest1.cpf}
+              phone={flat.guest1.phone}
+              email={flat.guest1.email}
+              crmGuests={crmGuests}
+              searchIndexedCrm={searchIndexedCrm}
+              phoneVerificationMap={phoneVerificationMap}
+              onVerifyPhone={onVerifyPhone}
+              onSaveToCrm={() => onSaveGuestToCrmForFlat(flat.uid, 1)}
+              onChangeField={(field, val) => {
+                onPatchFlat(flat.uid, {
+                  requesterIsGuest1: false,
+                  guest1: { ...flat.guest1, [field]: val },
+                });
+              }}
+              onSelectCrmGuest={(g) => onSelectCrmGuestForFlat(flat.uid, 1, g)}
+              onMarkManual={(clearFields) => {
+                onPatchFlat(flat.uid, {
+                  requesterIsGuest1: false,
+                  guest1: clearFields
+                    ? { guestId: "manual", name: "", cpf: "", phone: "", email: "" }
+                    : { ...flat.guest1, guestId: "manual" },
+                });
+              }}
+            />
+
+            {/* Hóspede 2 */}
+            {Number(flat.guestCount) >= 2 && (
+              <div className="p-2.5 bg-background/70 border border-border rounded-xl space-y-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-[11px] font-bold text-foreground">2º Hóspede (Acompanhante)</span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <label className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={flat.guest2InformLater}
+                        onChange={(e) => onPatchFlat(flat.uid, { guest2InformLater: e.target.checked })}
+                        className="rounded border-amber-400"
+                      />
+                      <span>Informar depois</span>
+                    </label>
+                    {isEditMode && selectedRes && !flat.guest2InformLater && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onSendCompanionInstructions(flat.uid, 2)}
+                        className="h-6 text-[10px] px-2 font-bold border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10 gap-1"
+                      >
+                        <MessageCircle className="w-3 h-3" /> Enviar Guia WhatsApp
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                {!flat.guest2InformLater && (
+                  <CrmGuestFieldsBlock
+                    guestIndex={2}
+                    label={totalFlats > 1 ? `Hóspede 2 (Flat ${flatOrdinal})` : "Hóspede 2 (Acompanhante)"}
+                    optional
+                    guestId={flat.guest2.guestId}
+                    name={flat.guest2.name}
+                    cpf={flat.guest2.cpf}
+                    phone={flat.guest2.phone}
+                    email={flat.guest2.email}
+                    crmGuests={crmGuests}
+                    searchIndexedCrm={searchIndexedCrm}
+                    phoneVerificationMap={phoneVerificationMap}
+                    onVerifyPhone={onVerifyPhone}
+                    onSaveToCrm={() => onSaveGuestToCrmForFlat(flat.uid, 2)}
+                    onChangeField={(field, val) => {
+                      onPatchFlat(flat.uid, { guest2: { ...flat.guest2, [field]: val } });
+                    }}
+                    onSelectCrmGuest={(g) => onSelectCrmGuestForFlat(flat.uid, 2, g)}
+                    onMarkManual={(clearFields) => {
+                      onPatchFlat(flat.uid, {
+                        guest2: clearFields
+                          ? { guestId: "manual", name: "", cpf: "", phone: "", email: "" }
+                          : { ...flat.guest2, guestId: "manual" },
+                      });
+                    }}
+                  />
+                )}
+              </div>
+            )}
+
+            {/* Hóspede 3 */}
+            {Number(flat.guestCount) >= 3 && (
+              <div className="p-2.5 bg-background/70 border border-border rounded-xl space-y-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-[11px] font-bold text-foreground">3º Hóspede (Acompanhante + Colchão)</span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <label className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={flat.guest3InformLater}
+                        onChange={(e) => onPatchFlat(flat.uid, { guest3InformLater: e.target.checked })}
+                        className="rounded border-amber-400"
+                      />
+                      <span>Informar depois</span>
+                    </label>
+                    {isEditMode && selectedRes && !flat.guest3InformLater && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onSendCompanionInstructions(flat.uid, 3)}
+                        className="h-6 text-[10px] px-2 font-bold border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10 gap-1"
+                      >
+                        <MessageCircle className="w-3 h-3" /> Enviar Guia WhatsApp
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                {!flat.guest3InformLater && (
+                  <CrmGuestFieldsBlock
+                    guestIndex={3}
+                    label={totalFlats > 1 ? `Hóspede 3 (Flat ${flatOrdinal})` : "Hóspede 3 (Acompanhante)"}
+                    optional
+                    guestId={flat.guest3.guestId}
+                    name={flat.guest3.name}
+                    cpf={flat.guest3.cpf}
+                    phone={flat.guest3.phone}
+                    email={flat.guest3.email}
+                    crmGuests={crmGuests}
+                    searchIndexedCrm={searchIndexedCrm}
+                    phoneVerificationMap={phoneVerificationMap}
+                    onVerifyPhone={onVerifyPhone}
+                    onSaveToCrm={() => onSaveGuestToCrmForFlat(flat.uid, 3)}
+                    onChangeField={(field, val) => {
+                      onPatchFlat(flat.uid, { guest3: { ...flat.guest3, [field]: val } });
+                    }}
+                    onSelectCrmGuest={(g) => onSelectCrmGuestForFlat(flat.uid, 3, g)}
+                    onMarkManual={(clearFields) => {
+                      onPatchFlat(flat.uid, {
+                        guest3: clearFields
+                          ? { guestId: "manual", name: "", cpf: "", phone: "", email: "" }
+                          : { ...flat.guest3, guestId: "manual" },
+                      });
+                    }}
+                  />
+                )}
+              </div>
+            )}
+
+            {/* Documento com Foto + Menor de Idade + Morador de Campos/RJ */}
+            <div className="p-2.5 bg-background/80 border border-border/80 rounded-xl space-y-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <Label className="text-[11px] font-bold text-foreground flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-primary" />
+                  <span>Documento com Foto (RG, CNH, Passaporte — Foto ou PDF)</span>
+                </Label>
+                <div className="flex items-center gap-1.5">
+                  {flat.hasMinor && (
+                    <Badge className="text-[10px] bg-rose-600 text-white font-black">👶 Menor de Idade</Badge>
+                  )}
+                  {flat.isCamposResident && (
+                    <Badge className="text-[10px] bg-purple-700 text-white font-black">📍 Campos/RJ</Badge>
+                  )}
+                </div>
+              </div>
+
+              <input
+                ref={docInputRef}
+                type="file"
+                accept="image/*,application/pdf"
+                onChange={(e) => {
+                  onDocFileChange(flat.uid, e);
+                  e.target.value = "";
+                }}
+                className="hidden"
+              />
+
+              {!flat.docPhotoUrl ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={uploadingDoc}
+                  onClick={() => docInputRef.current?.click()}
+                  className="w-full text-xs h-8 rounded-xl font-bold flex items-center justify-center gap-1.5 border-dashed border-primary/40 hover:bg-primary/5"
+                >
+                  <Camera className="w-3.5 h-3.5 text-primary" />
+                  <span>{uploadingDoc ? "Processando e Analisando..." : "Anexar Foto ou PDF do Documento"}</span>
+                </Button>
+              ) : (
+                <div className="flex items-center justify-between p-2 bg-background border border-border rounded-xl text-xs">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {flat.docPhotoUrl.startsWith("data:application/pdf") || flat.docPhotoUrl.toLowerCase().endsWith(".pdf") ? (
+                      <div className="w-8 h-8 rounded bg-rose-500/10 border border-rose-500/30 flex items-center justify-center shrink-0">
+                        <FileText className="w-4 h-4 text-rose-600" />
+                      </div>
+                    ) : (
+                      <img src={flat.docPhotoUrl} alt="Documento Hóspede" className="w-8 h-8 object-cover rounded border border-border shrink-0" />
+                    )}
+                    <div className="min-w-0 flex flex-col">
+                      <span className="truncate text-[11px] font-bold text-foreground">
+                        {flat.docFileName || (flat.docPhotoUrl.includes(".pdf") ? "documento_oficial.pdf" : "documento_oficial.jpg")}
+                      </span>
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-0.5">
+                        <CheckCircle2 className="w-3 h-3 inline" /> Anexado
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        if (flat.docPhotoUrl.startsWith("data:application/pdf") || flat.docPhotoUrl.toLowerCase().includes(".pdf") || flat.docFileName.toLowerCase().endsWith(".pdf")) {
+                          setPdfViewerOpen(true);
+                        } else {
+                          window.open(flat.docPhotoUrl, "_blank");
+                        }
+                      }}
+                      className="text-[10px] h-6 px-1.5"
+                    >
+                      <ExternalLink className="w-3 h-3 mr-0.5" /> Ver
+                    </Button>
+                    {pdfViewerOpen && (
+                      <PdfViewerDialog
+                        open={pdfViewerOpen}
+                        onOpenChange={setPdfViewerOpen}
+                        url={flat.docPhotoUrl}
+                        title={flat.docFileName || "Documento do Hóspede"}
+                      />
+                    )}
+                    <Button type="button" size="sm" variant="ghost" onClick={() => docInputRef.current?.click()} className="text-[10px] h-6 px-1.5">
+                      Trocar
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => onPatchFlat(flat.uid, { docPhotoUrl: "", docFileName: "" })}
+                      className="text-[10px] h-6 px-1 text-rose-500 hover:text-rose-600"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between gap-2 flex-wrap pt-1 border-t border-border/50 text-[11px]">
+                <label className="flex items-center gap-1.5 cursor-pointer font-medium text-muted-foreground select-none">
+                  <input
+                    type="checkbox"
+                    checked={flat.hasMinor}
+                    onChange={(e) => onPatchFlat(flat.uid, { hasMinor: e.target.checked })}
+                    className="rounded border-border text-rose-600 w-3.5 h-3.5"
+                  />
+                  <span>👶 Menor de Idade (ECA Art. 82)</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer font-medium text-muted-foreground select-none">
+                  <input
+                    type="checkbox"
+                    checked={flat.isCamposResident}
+                    onChange={(e) => onPatchFlat(flat.uid, { isCamposResident: e.target.checked })}
+                    className="rounded border-border text-purple-600 w-3.5 h-3.5"
+                  />
+                  <span>📍 Morador de Campos/RJ (Radar)</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 3D: Café da Manhã + Camas & Governança + Notas Independentes */}
+      <div className="space-y-2.5">
+        <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Coffee className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+              <div>
+                <span className="text-xs font-bold block">Café da Manhã Incluso na Diária</span>
+                <span className="text-[10.5px] text-muted-foreground block">Habilita cardápio e agendamento de café para este flat</span>
+              </div>
+            </div>
+            <Switch
+              checked={flat.includeBreakfast}
+              onCheckedChange={(checked) => onPatchFlat(flat.uid, { includeBreakfast: checked })}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 pt-2 border-t border-amber-500/20">
+            <button
+              type="button"
+              onClick={() => onPatchFlat(flat.uid, { twinBeds: !flat.twinBeds })}
+              className={cn(
+                "p-2 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between cursor-pointer",
+                flat.twinBeds
+                  ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                  : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-indigo-400"
+              )}
+            >
+              <span>🛏️ {flat.twinBeds ? "2 Camas Solteiro" : "1 Cama Casal"}</span>
+              {flat.twinBeds ? <CheckCircle2 className="w-3.5 h-3.5" /> : <span className="text-[10px] text-muted-foreground font-semibold">Padrão</span>}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onPatchFlat(flat.uid, { extraMattress: !flat.extraMattress })}
+              className={cn(
+                "p-2 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between cursor-pointer",
+                flat.extraMattress
+                  ? "bg-purple-600 text-white border-purple-600 shadow-xs"
+                  : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-purple-400"
+              )}
+            >
+              <span>➕ Colchão Extra</span>
+              {flat.extraMattress && <CheckCircle2 className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+              Nota / Recado para a Camareira {totalFlats > 1 ? `(Flat ${flatOrdinal})` : "(Card de Limpeza no Check-in)"}
+            </Label>
+            <Input
+              value={flat.specialRequests}
+              onChange={(e) => onPatchFlat(flat.uid, { specialRequests: e.target.value })}
+              placeholder="Ex: Montar berço, kit bebê, toalhas extras, atenção especial ao ar-condicionado..."
+              className="text-xs bg-background"
+            />
+          </div>
+        </div>
+
+        {/* Notas Independentes de Portaria & Observações Gerais */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <div className="space-y-1">
+            <Label className="text-xs font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+              <KeyRound className="w-3.5 h-3.5" />
+              <span>Aviso Especial Portaria & Recepção {totalFlats > 1 ? `(Flat ${flatOrdinal})` : ""}</span>
+            </Label>
+            <Input
+              value={flat.receptionNotes}
+              onChange={(e) => onPatchFlat(flat.uid, { receptionNotes: e.target.value })}
+              placeholder="Ex: Entregar chave extra, vaga G2-14 liberada..."
+              className="text-xs border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-amber-950/30"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs font-semibold flex items-center gap-1.5">
+              <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+              <span>Observações Gerais {totalFlats > 1 ? `(Flat ${flatOrdinal})` : "da Reserva"}</span>
+            </Label>
+            <Textarea
+              value={flat.notes}
+              onChange={(e) => onPatchFlat(flat.uid, { notes: e.target.value })}
+              placeholder="Ex: Cama de casal, chegada de madrugada, berço..."
+              className="text-xs h-10 min-h-[36px] resize-none bg-background"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Slot Operacional em Modo Edição (Café, Frigobar, Check-out Antecipado, Mensagens Rápidas) */}
+      {isEditMode && index === 0 && editOperationalSlot}
+
+      {/* 3E: Veículo & Garagem (4 Campos em TODOS os flats 1..N) */}
+      <div className="p-3 bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/60 rounded-xl space-y-2.5">
+        <div className="flex items-center justify-between flex-wrap gap-1.5">
+          <span className="text-xs font-bold flex items-center gap-1.5">
+            <Car className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+            <span>Veículo & Garagem {totalFlats > 1 ? `(Flat ${flatOrdinal})` : "(Disparo Automático)"}</span>
+          </span>
+          <Badge variant="outline" className="text-[10px] bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 border-blue-300">
+            Notifica PFB Estacionamento
+          </Badge>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="space-y-1">
+            <Label className="text-[11px] font-semibold">Placa</Label>
+            <Input
+              value={flat.vehiclePlate}
+              onChange={(e) => onPatchFlat(flat.uid, { vehiclePlate: e.target.value.toUpperCase() })}
+              placeholder="ABC-1234"
+              className="text-xs font-mono uppercase bg-white dark:bg-slate-900 h-8"
+              maxLength={8}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[11px] font-semibold">Marca</Label>
+            <Input
+              value={flat.vehicleBrand}
+              onChange={(e) => onPatchFlat(flat.uid, { vehicleBrand: e.target.value })}
+              placeholder="Ex: Toyota"
+              className="text-xs bg-white dark:bg-slate-900 h-8"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[11px] font-semibold">Modelo</Label>
+            <Input
+              value={flat.vehicleModel}
+              onChange={(e) => onPatchFlat(flat.uid, { vehicleModel: e.target.value })}
+              placeholder="Ex: Corolla"
+              className="text-xs bg-white dark:bg-slate-900 h-8"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[11px] font-semibold">Cor</Label>
+            <Input
+              value={flat.vehicleColor}
+              onChange={(e) => onPatchFlat(flat.uid, { vehicleColor: e.target.value })}
+              placeholder="Ex: Prata"
+              className="text-xs bg-white dark:bg-slate-900 h-8"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* 3F: Rateio Local + Diárias Editáveis + Taxas Locais deste Flat */}
+      <div className="p-3 bg-slate-50/90 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl space-y-2.5">
+        {/* Rateio Local deste Flat */}
+        <div className="p-2.5 bg-primary/5 dark:bg-primary/10 border border-primary/20 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-7 h-7 rounded-lg bg-primary/15 text-primary flex items-center justify-center shrink-0">
+              <Wand2 className="w-4 h-4" />
+            </div>
+            <div>
+              <span className="text-xs font-bold block">
+                {totalFlats > 1 ? `Ratear Valor nas Diárias do Flat ${flatOrdinal}` : "Ratear Valor Total nas Diárias"}
+              </span>
+              <span className="text-[10.5px] text-muted-foreground block">
+                Divide o valor negociado entre as diárias deste flat
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 w-full sm:w-auto shrink-0">
+            <div className="relative flex-1 sm:w-32">
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-muted-foreground">R$</span>
+              <Input
+                type="text"
+                inputMode="numeric"
+                placeholder="0,00"
+                value={formatCentsMaskValue(flat.rateioTargetInput)}
+                onFocus={keepCurrencyCursorAtEnd}
+                onClick={keepCurrencyCursorAtEnd}
+                onChange={(e) => {
+                  const val = parseCentsMaskInput(e.target.value);
+                  onPatchFlat(flat.uid, { rateioTargetInput: val > 0 ? String(val) : "" });
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    const val = Number(flat.rateioTargetInput);
+                    if (val > 0) onDistributeNightsForFlat(flat.uid, val);
+                  }
+                }}
+                className="h-7 pl-7 pr-2 text-xs font-bold text-right bg-background text-foreground"
+              />
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                const val = Number(flat.rateioTargetInput);
+                if (val > 0) onDistributeNightsForFlat(flat.uid, val);
+              }}
+              className="h-7 px-2.5 text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground flex items-center gap-1 shrink-0 cursor-pointer"
+            >
+              <Wand2 className="w-3.5 h-3.5" />
+              <span>Ratear Diárias</span>
+            </Button>
+          </div>
+        </div>
+
+        {/* Lista de Diárias do Flat */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <CalendarDays className="w-3.5 h-3.5 text-primary shrink-0" />
+              <span className="text-xs font-bold">
+                Diárias {totalFlats > 1 ? `do Flat ${flatOrdinal} (${flatDisplayName})` : "da Hospedagem"} ({flat.dailyRates.length})
+              </span>
+              <span className="text-[11px] font-bold text-primary">
+                • R$ {flatNightsSum.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => onAddExtraNightForFlat(flat.uid)}
+                className="h-7 px-2 text-xs font-bold text-primary border-primary/30 hover:bg-primary/10 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5 mr-1" /> Diária Extra
+              </Button>
+              {flat.dailyRates.length > 1 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onEqualizeNightsForFlat(flat.uid)}
+                  className="h-7 px-2 text-[10.5px] text-muted-foreground hover:text-foreground cursor-pointer"
+                >
+                  Igualar Valores
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            {flat.dailyRates.map((d, nIdx) => {
+              let formattedDate = d.date;
+              try {
+                formattedDate = format(parseISO(d.date), "dd/MM/yyyy (EEE)", { locale: ptBR });
+              } catch {}
+              return (
+                <div
+                  key={`${flat.uid}_${d.date || nIdx}`}
+                  className="p-2 bg-background border border-border rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                >
+                  <div className="flex items-center justify-between sm:justify-start gap-1.5 shrink-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
+                        #{nIdx + 1}
+                      </span>
+                      <span className="font-semibold text-xs whitespace-nowrap">{formattedDate}</span>
+                    </div>
+                    {flat.dailyRates.length > 1 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onDeleteNightForFlat(flat.uid, nIdx)}
+                        className="h-6 w-6 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer sm:hidden"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 w-full sm:w-auto sm:flex-1 sm:justify-end">
+                    <div className="flex-1 sm:flex-initial sm:w-44 min-w-0">
+                      <Select
+                        value={d.channel || defaultChannel || "whatsapp"}
+                        onValueChange={(val) => onUpdateNightForFlat(flat.uid, nIdx, { channel: val })}
+                      >
+                        <SelectTrigger className="h-8 sm:h-7 text-xs font-medium w-full">
+                          <SelectValue placeholder="Canal" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="whatsapp">🟢 WhatsApp / Direta</SelectItem>
+                          <SelectItem value="booking">🔵 Booking.com</SelectItem>
+                          <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
+                          <SelectItem value="b2b">🟣 B2B Reservas / Agência</SelectItem>
+                          <SelectItem value="site">🟠 Site Próprio</SelectItem>
+                          <SelectItem value="balcao">🏨 Balcão</SelectItem>
+                          <SelectItem value="empresa">🏢 Empresa (PJ)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="w-28 relative shrink-0">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground pointer-events-none">R$</span>
+                      <Input
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="0,00"
+                        value={formatCentsMaskValue(d.rate)}
+                        onFocus={keepCurrencyCursorAtEnd}
+                        onClick={keepCurrencyCursorAtEnd}
+                        onChange={(e) => {
+                          const val = parseCentsMaskInput(e.target.value);
+                          onUpdateNightForFlat(flat.uid, nIdx, { rate: val });
+                        }}
+                        className="h-8 sm:h-7 pl-7 pr-2 text-xs font-bold text-right w-full"
+                      />
+                    </div>
+
+                    {flat.dailyRates.length > 1 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onDeleteNightForFlat(flat.uid, nIdx)}
+                        className="hidden sm:inline-flex h-7 w-7 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
+                        title="Excluir diária"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Taxas, Adicionais & Descontos Locais deste Flat */}
+        <div className="space-y-1.5 pt-2 border-t border-border/60">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <span className="text-xs font-bold flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+              <span>Taxas & Adicionais {totalFlats > 1 ? `do Flat ${flatOrdinal}` : ""} ({flat.charges.length})</span>
+            </span>
+            <div className="flex items-center gap-1 flex-wrap">
+              <Button type="button" variant="outline" size="sm" onClick={() => onAddChargeForFlat(flat.uid, "cleaning", "Taxa de Limpeza", 50)} className="h-6 px-1.5 text-[10px] font-semibold cursor-pointer">🧹 + Limpeza</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => onAddChargeForFlat(flat.uid, "pet", "Taxa Pet", 50)} className="h-6 px-1.5 text-[10px] font-semibold cursor-pointer">🐾 + Pet</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => onAddChargeForFlat(flat.uid, "extra_bed", "Cama Extra", 70)} className="h-6 px-1.5 text-[10px] font-semibold cursor-pointer">🛏️ + Cama Extra</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => onAddChargeForFlat(flat.uid, "breakfast", "Café da Manhã Avulso", 35)} className="h-6 px-1.5 text-[10px] font-semibold cursor-pointer">☕ + Café</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => onAddChargeForFlat(flat.uid, "garage", "Garagem Adicional", 30)} className="h-6 px-1.5 text-[10px] font-semibold cursor-pointer">🚗 + Garagem</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => onAddChargeForFlat(flat.uid, "discount", "Desconto Negociado", -50)} className="h-6 px-1.5 text-[10px] font-semibold text-rose-600 border-rose-200 cursor-pointer">🏷️ - Desconto</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => onAddChargeForFlat(flat.uid, "other", "Adicional", 50)} className="h-6 px-1.5 text-[10px] font-semibold text-primary border-primary/30 cursor-pointer">+ Outro</Button>
+            </div>
+          </div>
+
+          {flat.charges.length > 0 && (
+            <div className="space-y-1.5">
+              {flat.charges.map((charge, cIdx) => (
+                <div key={`${flat.uid}_${charge.id || cIdx}`} className="p-2 bg-background border border-border rounded-xl grid grid-cols-12 gap-2 items-center text-xs">
+                  <div className="col-span-6 sm:col-span-4 min-w-0">
+                    <Select value={charge.type} onValueChange={(val: any) => onUpdateChargeForFlat(flat.uid, charge.id, "type", val)}>
+                      <SelectTrigger className="h-8 sm:h-7 text-xs font-medium w-full"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="cleaning">🧹 Limpeza</SelectItem>
+                        <SelectItem value="pet">🐾 Pet</SelectItem>
+                        <SelectItem value="extra_bed">🛏️ Cama Extra</SelectItem>
+                        <SelectItem value="breakfast">☕ Café Extra</SelectItem>
+                        <SelectItem value="garage">🚗 Garagem</SelectItem>
+                        <SelectItem value="damage">🛠️ Consumo / Dano</SelectItem>
+                        <SelectItem value="discount">🏷️ Desconto</SelectItem>
+                        <SelectItem value="other">📦 Outro</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="col-span-6 sm:col-span-4 min-w-0">
+                    <Input
+                      type="text"
+                      placeholder="Descrição do item..."
+                      value={charge.title}
+                      onChange={(e) => onUpdateChargeForFlat(flat.uid, charge.id, "title", e.target.value)}
+                      className="h-8 sm:h-7 text-xs font-medium w-full"
+                    />
+                  </div>
+                  <div className="col-span-12 sm:col-span-4 flex items-center gap-1.5 min-w-0">
+                    <div className="relative flex-1 min-w-0">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground pointer-events-none">R$</span>
+                      <Input
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="0,00"
+                        value={formatCentsMaskValue(charge.amount, true)}
+                        onFocus={keepCurrencyCursorAtEnd}
+                        onClick={keepCurrencyCursorAtEnd}
+                        onChange={(e) => {
+                          const rawVal = parseCentsMaskInput(e.target.value, true);
+                          const finalVal = charge.type === "discount" ? -Math.abs(rawVal) : rawVal;
+                          onUpdateChargeForFlat(flat.uid, charge.id, "amount", finalVal);
+                        }}
+                        className={cn("h-8 sm:h-7 pl-7 pr-2 text-xs font-bold text-right w-full", charge.amount < 0 ? "text-rose-600 font-black" : "")}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onRemoveChargeForFlat(flat.uid, charge.id)}
+                      className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end text-[11px] font-bold text-muted-foreground pt-1 gap-2">
+            <span>Diárias: R$ {flatNightsSum.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+            <span>+</span>
+            <span>Taxas: R$ {flatChargesSum.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+            <span>=</span>
+            <span className="text-foreground font-black">
+              Subtotal {totalFlats > 1 ? `Flat ${flatOrdinal}` : "do Flat"}: R$ {flatSubtotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
 
 export function areGuestNamesCompatibleUI(nameA?: string | null, nameB?: string | null): boolean {
   const isSystemName = (str?: string | null) => {
@@ -752,51 +2624,102 @@ export default function PmsCalendar(props?: {
     setQuickMsgTargetKey("guest")
   }, [selectedRes?.id, selectedRes?.code])
 
-  // Form fields
-  const [formFlatId, setFormFlatId] = useState("")
-  const isFlatManuallyChangedRef = useRef(false)
-  const [formIsFlatLocked, setFormIsFlatLocked] = useState(false)
-  const [formFlatLockReason, setFormFlatLockReason] = useState("")
-  const [formGuestName, setFormGuestName] = useState("")
-  const [formGuestPhone, setFormGuestPhone] = useState("")
-  const [phoneVerification, setPhoneVerification] = useState<{
-    phone: string;
-    checking: boolean;
-    exists?: boolean;
-    checked?: boolean;
-    canonicalPhone?: string;
-  } | null>(null);
+  // Form fields — Modelo Unificado formFlats (Flat 1..N)
+  const [formFlats, setFormFlats] = useState<FlatReservationFormItem[]>(() => [
+    createDefaultFlatReservationItem({
+      uid: "flat_primary",
+      flatId: "",
+      checkinDate: format(new Date(), "yyyy-MM-dd"),
+      checkoutDate: format(addDays(new Date(), 1), "yyyy-MM-dd"),
+      checkinTime: "14:00",
+      checkoutTime: "12:00",
+    }),
+  ]);
+  const primaryFlat = formFlats[0] || createDefaultFlatReservationItem({ uid: "flat_primary", flatId: "" });
+  const isFlatManuallyChangedRef = useRef(false);
+  const nfHideManuallySetRef = useRef(false);
 
-  const verifyGuestPhoneWhatsApp = async (phoneToVerify: string) => {
+  // Aliases reativos do Flat 1 (derivados da fonte única formFlats[0])
+  const formFlatId = primaryFlat.flatId;
+  const formIsFlatLocked = primaryFlat.isFlatLocked;
+  const formFlatLockReason = primaryFlat.flatLockReason;
+  const formGuestName = primaryFlat.guest1.name;
+  const formGuestPhone = primaryFlat.guest1.phone;
+  const formGuestEmail = primaryFlat.guest1.email;
+  const formGuestId = primaryFlat.guest1.guestId;
+  const formGuest1Cpf = primaryFlat.guest1.cpf;
+  const formGuest2Id = primaryFlat.guest2.guestId;
+  const formGuest2Name = primaryFlat.guest2.name;
+  const formGuest2Cpf = primaryFlat.guest2.cpf;
+  const formGuest2Phone = primaryFlat.guest2.phone;
+  const formGuest2Email = primaryFlat.guest2.email;
+  const formGuest3Id = primaryFlat.guest3.guestId;
+  const formGuest3Name = primaryFlat.guest3.name;
+  const formGuest3Cpf = primaryFlat.guest3.cpf;
+  const formGuest3Phone = primaryFlat.guest3.phone;
+  const formGuest3Email = primaryFlat.guest3.email;
+  const formGuestCount = primaryFlat.guestCount;
+  const formCheckin = primaryFlat.checkinDate;
+  const formCheckout = primaryFlat.checkoutDate;
+  const formCheckinTime = primaryFlat.checkinTime;
+  const formCheckoutTime = primaryFlat.checkoutTime;
+  const formDailyRate = primaryFlat.dailyRate;
+  const formDailyRates = primaryFlat.dailyRates;
+  const formCharges = primaryFlat.charges;
+  const formNotes = primaryFlat.notes;
+  const formEarlyCheckin = primaryFlat.earlyCheckinAuthorized;
+  const formReceptionNotes = primaryFlat.receptionNotes;
+  const formVehiclePlate = primaryFlat.vehiclePlate;
+  const formVehicleModel = primaryFlat.vehicleModel;
+  const formVehicleBrand = primaryFlat.vehicleBrand;
+  const formVehicleColor = primaryFlat.vehicleColor;
+  const formPrefersHighFloor = primaryFlat.prefersHighFloor;
+  const formTwinBeds = primaryFlat.twinBeds;
+  const formExtraMattress = primaryFlat.extraMattress;
+  const formIncludeBreakfast = primaryFlat.includeBreakfast;
+  const formSpecialRequests = primaryFlat.specialRequests;
+  const formDocPhotoUrl = primaryFlat.docPhotoUrl;
+  const formDocFileName = primaryFlat.docFileName;
+  const formHasMinor = primaryFlat.hasMinor;
+  const formIsCamposResident = primaryFlat.isCamposResident;
+  const formForceReplace = primaryFlat.forceOverbooking;
+
+  const [phoneVerificationMap, setPhoneVerificationMap] = useState<Record<string, PhoneVerificationEntry>>({});
+  const phoneVerifyCacheRef = useRef<Record<string, PhoneVerificationEntry>>({});
+
+  const verifyGuestPhoneWhatsApp = async (phoneToVerify: string): Promise<PhoneVerificationEntry | null> => {
     const queryPhone = formatPhoneForWhatsAppCheck(phoneToVerify);
-    if (!queryPhone) {
-      setPhoneVerification(null);
-      return null;
-    }
+    if (!queryPhone) return null;
     const cacheKey = cleanWhatsAppPhone(queryPhone);
-    if (phoneVerification && phoneVerification.phone === cacheKey && !phoneVerification.checking) {
-      return phoneVerification;
+    if (!cacheKey) return null;
+    const cached = phoneVerifyCacheRef.current[cacheKey];
+    if (cached && cached.checked && !cached.checking) {
+      return cached;
     }
-    setPhoneVerification({ phone: cacheKey, checking: true });
+    const checkingEntry: PhoneVerificationEntry = { phone: cacheKey, checking: true, checked: false, exists: true };
+    phoneVerifyCacheRef.current[cacheKey] = checkingEntry;
+    setPhoneVerificationMap(prev => ({ ...prev, [cacheKey]: checkingEntry }));
     try {
       const res = await fetch(`/api/whatsapp/phone-exists/${encodeURIComponent(queryPhone)}`);
       if (res.ok) {
         const data = await res.json();
-        const verResult = {
+        const verResult: PhoneVerificationEntry = {
           phone: cacheKey,
           checking: false,
           exists: data.exists !== false,
           checked: Boolean(data.checked),
           canonicalPhone: data.phone
         };
-        setPhoneVerification(verResult);
+        phoneVerifyCacheRef.current[cacheKey] = verResult;
+        setPhoneVerificationMap(prev => ({ ...prev, [cacheKey]: verResult }));
         return verResult;
       }
     } catch (e: any) {
       console.warn("Erro ao validar telefone:", e);
     }
-    const fallbackResult = { phone: cacheKey, checking: false, exists: true, checked: false };
-    setPhoneVerification(fallbackResult);
+    const fallbackResult: PhoneVerificationEntry = { phone: cacheKey, checking: false, exists: true, checked: false };
+    phoneVerifyCacheRef.current[cacheKey] = fallbackResult;
+    setPhoneVerificationMap(prev => ({ ...prev, [cacheKey]: fallbackResult }));
     return fallbackResult;
   };
 
@@ -881,17 +2804,12 @@ export default function PmsCalendar(props?: {
     return false;
   };
 
-  const [formGuestEmail, setFormGuestEmail] = useState("")
-  const [formCheckin, setFormCheckin] = useState(format(new Date(), "yyyy-MM-dd"))
-  const [formCheckout, setFormCheckout] = useState(format(addDays(new Date(), 1), "yyyy-MM-dd"))
-  const [formCheckinTime, setFormCheckinTime] = useState("14:00")
-  const [formCheckoutTime, setFormCheckoutTime] = useState("12:00")
   const [defaultCheckinTime, setDefaultCheckinTime] = useState("14:00")
   const [defaultCheckoutTime, setDefaultCheckoutTime] = useState("12:00")
   const [formChannel, setFormChannel] = useState("whatsapp")
 
-  // Range Picker Popover State (Check-in e Check-out unificados)
-  const [rangePickerOpen, setRangePickerOpen] = useState(false)
+  // Range Picker Popover State (Check-in e Check-out unificados por Flat)
+  const [rangePickerFlatUid, setRangePickerFlatUid] = useState<string | null>(null)
   const [pickerRangeStart, setPickerRangeStart] = useState<string | null>(null)
   const [pickerHoverDate, setPickerHoverDate] = useState<string | null>(null)
   const [pickerMonth, setPickerMonth] = useState<Date>(() => new Date())
@@ -914,10 +2832,6 @@ export default function PmsCalendar(props?: {
     }
   }
 
-  const [formDailyRate, setFormDailyRate] = useState("250")
-  const [formDailyRates, setFormDailyRates] = useState<DailyRateItem[]>([])
-  const [formCharges, setFormCharges] = useState<ReservationChargeItem[]>([])
-  const [packageTotalInput, setPackageTotalInput] = useState("")
   const [formPayments, setFormPayments] = useState<ReservationPaymentItem[]>([])
   const [formTotalAmount, setFormTotalAmount] = useState("")
   const [formPaidAmount, setFormPaidAmount] = useState("0")
@@ -1167,34 +3081,16 @@ export default function PmsCalendar(props?: {
       reminderFormattedTime
     }
   }
-  const [formNotes, setFormNotes] = useState("")
-  const [formEarlyCheckin, setFormEarlyCheckin] = useState(false)
-  const [formReceptionNotes, setFormReceptionNotes] = useState("")
-  const [formVehiclePlate, setFormVehiclePlate] = useState("")
-  const [formVehicleModel, setFormVehicleModel] = useState("")
-  const [formVehicleBrand, setFormVehicleBrand] = useState("")
-  const [formVehicleColor, setFormVehicleColor] = useState("")
   const [formAutoInvoice, setFormAutoInvoice] = useState(false)
-  const [formPrefersHighFloor, setFormPrefersHighFloor] = useState(false)
-  const [formTwinBeds, setFormTwinBeds] = useState(false)
-  const [formExtraMattress, setFormExtraMattress] = useState(false)
-  const [formIncludeBreakfast, setFormIncludeBreakfast] = useState(false)
-  const [formSpecialRequests, setFormSpecialRequests] = useState("")
 
-  // Documento Oficial e Alertas Operacionais
-  const [formDocPhotoUrl, setFormDocPhotoUrl] = useState("")
-  const [docPdfViewerOpen, setDocPdfViewerOpen] = useState(false)
-  const [formDocFileName, setFormDocFileName] = useState("")
-  const [uploadingDoc, setUploadingDoc] = useState(false)
-  const [formHasMinor, setFormHasMinor] = useState(false)
-  const [formIsCamposResident, setFormIsCamposResident] = useState(false)
-  const pmsDocInputRef = useRef<HTMLInputElement>(null)
+  // Documento Oficial e Alertas Operacionais por Flat
+  const [uploadingDocFlatUid, setUploadingDocFlatUid] = useState<string | null>(null)
 
-  const handleDocSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleDocSelectForFlat = async (flatUid: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
-    setUploadingDoc(true)
+    setUploadingDocFlatUid(flatUid)
     try {
       const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
       let base64String = ""
@@ -1215,23 +3111,39 @@ export default function PmsCalendar(props?: {
         base64String = compressed.base64
       }
 
-      setFormDocPhotoUrl(base64String)
-      setFormDocFileName(file.name)
+      setFormFlats(prev =>
+        prev.map(f => (f.uid === flatUid ? { ...f, docPhotoUrl: base64String, docFileName: file.name } : f))
+      )
 
+      const targetFlat = formFlats.find(f => f.uid === flatUid)
       try {
         const aiRes = await fetch("/api/ai/inspect-document", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             documentFile: base64String,
-            declaredName: formGuestName,
-            declaredCpf: formGuest1Cpf
+            declaredName: targetFlat?.guest1.name || "",
+            declaredCpf: targetFlat?.guest1.cpf || ""
           })
         })
         if (aiRes.ok) {
           const aiData = await aiRes.json()
+          setFormFlats(prev =>
+            prev.map(f => {
+              if (f.uid !== flatUid) return f
+              return {
+                ...f,
+                hasMinor: aiData.isMinor ? true : f.hasMinor,
+                isCamposResident:
+                  aiData.isCamposResident === true
+                    ? true
+                    : aiData.isCamposResident === false
+                      ? false
+                      : f.isCamposResident,
+              }
+            })
+          )
           if (aiData.isMinor) {
-            setFormHasMinor(true)
             toast({
               title: "👶 Alerta: Menor de Idade",
               description: `A IA detectou idade ${aiData.calculatedAge ? `${aiData.calculatedAge} anos` : (aiData.extractedAge || "menor de 18 anos")}. Exija autorização em cartório conforme ECA Art. 82.`,
@@ -1239,13 +3151,10 @@ export default function PmsCalendar(props?: {
             })
           }
           if (aiData.isCamposResident) {
-            setFormIsCamposResident(true)
             toast({
               title: "📍 Alerta: Morador de Campos/RJ",
               description: "Hóspede de Campos dos Goytacazes/RJ incluído no radar operacional da recepção."
             })
-          } else if (aiData.isCamposResident === false) {
-            setFormIsCamposResident(false)
           }
         }
       } catch (aiErr) {
@@ -1263,7 +3172,7 @@ export default function PmsCalendar(props?: {
         variant: "destructive"
       })
     } finally {
-      setUploadingDoc(false)
+      setUploadingDocFlatUid(prev => (prev === flatUid ? null : prev))
     }
   }
 
@@ -1645,7 +3554,9 @@ export default function PmsCalendar(props?: {
       fetchFairShare(formCheckin, formCheckout, selectedRes?.id).then((result) => {
         // Auto-select Flat da Vez on new reservation (and when dates change) unless user manually picked a flat
         if (!selectedRes && result?.bestFlatId && !isFlatManuallyChangedRef.current) {
-          setFormFlatId(String(result.bestFlatId))
+          setFormFlats(prev =>
+            prev.map((f, idx) => (idx === 0 ? { ...f, flatId: String(result.bestFlatId), forceOverbooking: false } : f))
+          )
         }
       })
     }
@@ -1715,12 +3626,11 @@ export default function PmsCalendar(props?: {
   // Fair-Share & Conflito State
   const [fairShareResult, setFairShareResult] = useState<any | null>(null)
   const [loadingFairShare, setLoadingFairShare] = useState(false)
-  const [formForceReplace, setFormForceReplace] = useState(false)
   const [formIsMonthlyGuest, setFormIsMonthlyGuest] = useState(false)
 
   // Active Service Order Block Conflict in Reservation Modal
   const activeServiceBlockConflict = useMemo(() => {
-    if (!formFlatId || !formCheckin || !formCheckout) return null;
+    if (!formFlatId || formFlatId === "auto" || !formCheckin || !formCheckout) return null;
     return (data.blocks || []).find(b => {
       const isService = Boolean(b.isServiceBlock || b.reason === "service_order");
       if (!isService) return false;
@@ -1732,7 +3642,6 @@ export default function PmsCalendar(props?: {
 
 
   // Multi-Guest & Corporate Requester State
-  const [formGuestCount, setFormGuestCount] = useState<"1" | "2" | "3">("1")
   const [formRequesterType, setFormRequesterType] = useState<"guest" | "other_person" | "company" | "agency_b2b">("guest")
   const [formRequesterName, setFormRequesterName] = useState("")
   const [formRequesterPhone, setFormRequesterPhone] = useState("")
@@ -1744,7 +3653,6 @@ export default function PmsCalendar(props?: {
   const [companies, setCompanies] = useState<any[]>([])
   const [agencies, setAgencies] = useState<any[]>([])
   const [crmGuests, setCrmGuests] = useState<any[]>([])
-  const [formGuestId, setFormGuestId] = useState("")
   const [guestSearchFilter, setGuestSearchFilter] = useState("")
   const [showGuestSuggestions, setShowGuestSuggestions] = useState(false)
   const guestSuggestionsRef = useRef<HTMLDivElement>(null)
@@ -1841,24 +3749,13 @@ export default function PmsCalendar(props?: {
   const [savingNewCompany, setSavingNewCompany] = useState(false)
   const [loadingNewCompanyCnpj, setLoadingNewCompanyCnpj] = useState(false)
 
-  // Guests individual fields
-  const [formGuest1Cpf, setFormGuest1Cpf] = useState("")
-  const [formGuest2Id, setFormGuest2Id] = useState("")
+  // Auxiliary CRM suggestion filter states (kept for legacy compatibility until full cleanup)
   const [guest2SearchFilter, setGuest2SearchFilter] = useState("")
   const [showGuest2Suggestions, setShowGuest2Suggestions] = useState(false)
   const guest2SuggestionsRef = useRef<HTMLDivElement>(null)
-  const [formGuest2Name, setFormGuest2Name] = useState("")
-  const [formGuest2Cpf, setFormGuest2Cpf] = useState("")
-  const [formGuest2Phone, setFormGuest2Phone] = useState("")
-  const [formGuest2Email, setFormGuest2Email] = useState("")
-  const [formGuest3Id, setFormGuest3Id] = useState("")
   const [guest3SearchFilter, setGuest3SearchFilter] = useState("")
   const [showGuest3Suggestions, setShowGuest3Suggestions] = useState(false)
   const guest3SuggestionsRef = useRef<HTMLDivElement>(null)
-  const [formGuest3Name, setFormGuest3Name] = useState("")
-  const [formGuest3Cpf, setFormGuest3Cpf] = useState("")
-  const [formGuest3Phone, setFormGuest3Phone] = useState("")
-  const [formGuest3Email, setFormGuest3Email] = useState("")
 
   // Block Modal
   const [blockModalOpen, setBlockModalOpen] = useState(false)
@@ -3983,23 +5880,19 @@ export default function PmsCalendar(props?: {
     setFormCompanyCnpj("")
     setInlineCompanyData(null)
     setInlineCnpjExpanded(false)
-    setExtraPackageFlats([])
     setPkgExtraCharges([])
     setPackagePricingMode("sum")
     setPackagePricingInput("")
     setPackageEmitBoletoNow(false)
     setPkgChargeTarget("package")
     isFlatManuallyChangedRef.current = true
-    setFormFlatId(String(defaultFlatId))
+    nfHideManuallySetRef.current = false
     const cin = format(d1, "yyyy-MM-dd")
-    const cout = isSameDay(d1, d2) 
-      ? format(addDays(d1, 1), "yyyy-MM-dd") 
+    const cout = isSameDay(d1, d2)
+      ? format(addDays(d1, 1), "yyyy-MM-dd")
       : format(d2, "yyyy-MM-dd")
-    setFormCheckin(cin)
-    setFormCheckout(cout)
-    setFormCheckinTime(defaultCheckinTime || "14:00")
-    setFormCheckoutTime(defaultCheckoutTime || "12:00")
-    setFormGuestCount("1")
+    const cTime = defaultCheckinTime || "14:00"
+    const oTime = defaultCheckoutTime || "12:00"
     setFormRequesterType(initialChannel === "b2b" ? "agency_b2b" : "guest")
     setFormRequesterName("")
     setFormRequesterPhone("")
@@ -4037,37 +5930,19 @@ export default function PmsCalendar(props?: {
     setShowVoucherParser(false)
     setVoucherTextToParse("")
     setNewAgencyInlineOpen(false)
-    setFormGuestId("")
     setGuestSearchFilter("")
-    setFormGuestName("")
-    setFormGuest1Cpf("")
-    setFormGuestPhone("")
-    setFormGuestEmail("")
-    setFormGuest2Id("")
     setGuest2SearchFilter("")
     setShowGuest2Suggestions(false)
-    setFormGuest2Name("")
-    setFormGuest2Cpf("")
-    setFormGuest2Phone("")
-    setFormGuest2Email("")
-    setFormGuest3Id("")
     setGuest3SearchFilter("")
     setShowGuest3Suggestions(false)
-    setFormGuest3Name("")
-    setFormGuest3Cpf("")
-    setFormGuest3Phone("")
-    setFormGuest3Email("")
     const isBooking = initialChannel === "booking"
     const isAirbnb = initialChannel === "airbnb"
     const isB2b = initialChannel === "b2b"
     const isOtaChannel = isBooking || isAirbnb
     setFormChannel(initialChannel)
     setFormPaymentMethod(isBooking ? "booking" : (isAirbnb ? "airbnb" : (isB2b ? "vcn_b2b" : "pix")))
-    const rangeNights = Math.max(1, differenceInDays(parseISO(cout), parseISO(cin))) || 1
     const baseDailyRate = 250
-    setFormDailyRate(String(baseDailyRate))
     const initialRates = buildReservationDailyRates(cin, cout, baseDailyRate, initialChannel)
-    setFormDailyRates(initialRates)
     const initialCharges: ReservationChargeItem[] = isOtaChannel
       ? [{
           id: `charge_${Date.now()}_clean`,
@@ -4077,17 +5952,32 @@ export default function PmsCalendar(props?: {
           notes: ""
         }]
       : []
-    setFormCharges(initialCharges)
     const subNights = initialRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
     const subCharges = initialCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
     const initialTotal = subNights + subCharges
+    setFormFlats([
+      createDefaultFlatReservationItem({
+        uid: "flat_primary",
+        flatId: String(defaultFlatId),
+        sameDatesAsPrimary: false,
+        checkinDate: cin,
+        checkoutDate: cout,
+        checkinTime: cTime,
+        checkoutTime: oTime,
+        guestCount: "1",
+        dailyRate: String(baseDailyRate),
+        dailyRates: initialRates,
+        charges: initialCharges,
+        rateioTargetInput: String(initialTotal),
+      }, initialChannel)
+    ])
     setFormTotalAmount(String(initialTotal))
     if (isB2b) {
       setFormPaidAmount("0")
       setFormPayments([])
       setFormPaymentStatus("pendente")
     } else {
-      setFormPaidAmount(String(initialTotal)) // Pré-preenchido com o mesmo total composto!
+      setFormPaidAmount(String(initialTotal))
       setFormPayments([
         {
           id: `pay_${Date.now()}`,
@@ -4110,31 +6000,11 @@ export default function PmsCalendar(props?: {
     setFormHoldCustomValue("45")
     setFormHoldCustomUnit("minutes")
     setFormHoldCustomDateTime(format(addDays(new Date(), 1), "yyyy-MM-dd'T'12:00"))
-    setPackageTotalInput(String(initialTotal))
     setShowGuestSuggestions(false)
-    setFormNotes("")
-    setFormEarlyCheckin(false)
-    setFormReceptionNotes("")
-    setFormVehiclePlate("")
-    setFormVehicleModel("")
-    setFormVehicleBrand("")
-    setFormVehicleColor("")
     setFormAutoInvoice(false)
-    setFormPrefersHighFloor(false)
-    setFormTwinBeds(false)
-    setFormExtraMattress(false)
-    setFormIncludeBreakfast(false)
-    setFormSpecialRequests("")
     setFormIsMonthlyGuest(false)
-    setFormDocPhotoUrl("")
-    setFormDocFileName("")
-    setFormHasMinor(false)
-    setFormIsCamposResident(false)
-    setFormIsFlatLocked(false)
-    setFormFlatLockReason("")
-    setFormForceReplace(false)
     setMobileRangeStart(null)
-    setRangePickerOpen(false)
+    setRangePickerFlatUid(null)
     setPickerRangeStart(null)
     setPickerHoverDate(null)
     setPickerMonth(d1)
@@ -4224,8 +6094,7 @@ export default function PmsCalendar(props?: {
   const [pkgEditRefundAmount, setPkgEditRefundAmount] = useState("")
   const [pkgActionLoading, setPkgActionLoading] = useState(false)
 
-  // ── Estados Unificados Multi-Flat & Empresa/CNPJ Inline (dentro do formulário completo original) ──
-  const [extraPackageFlats, setExtraPackageFlats] = useState<MultiFlatExtraItem[]>([])
+  // ── Estados Unificados Multi-Flat & Empresa/CNPJ Inline (derivados de formFlats) ──
   const [pkgExtraCharges, setPkgExtraCharges] = useState<ReservationChargeItem[]>([])
   const [packagePricingMode, setPackagePricingMode] = useState<"sum" | "discount_amount" | "discount_pct" | "fixed_total">("sum")
   const [packagePricingInput, setPackagePricingInput] = useState("")
@@ -4235,14 +6104,13 @@ export default function PmsCalendar(props?: {
   const [inlineCompanyData, setInlineCompanyData] = useState<Record<string, any> | null>(null)
   const [loadingInlineCnpj, setLoadingInlineCnpj] = useState(false)
   const [inlineCnpjExpanded, setInlineCnpjExpanded] = useState(false)
-  const isMultiFlat = !selectedRes && extraPackageFlats.length > 0
+  const isMultiFlat = !selectedRes && formFlats.length > 1
 
   const handleOpenNewRes = (defaultFlatId?: number, defaultDate?: Date, initialChannel: string = "whatsapp") => {
     setMobileRangeStart(null)
     setSelectedRes(null)
     setPkgEditNfseOpen(false)
     setPkgEditCancelOpen(false)
-    setExtraPackageFlats([])
     setPkgExtraCharges([])
     setPackagePricingMode("sum")
     setPackagePricingInput("")
@@ -4251,14 +6119,13 @@ export default function PmsCalendar(props?: {
     setFormCompanyCnpj("")
     setInlineCompanyData(null)
     setInlineCnpjExpanded(false)
+    nfHideManuallySetRef.current = false
     const cin = defaultDate ? format(defaultDate, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd")
     const cout = defaultDate ? format(addDays(defaultDate, 1), "yyyy-MM-dd") : format(addDays(new Date(), 1), "yyyy-MM-dd")
-    setFormCheckin(cin)
-    setFormCheckout(cout)
-
+    let resolvedFlatId = ""
     if (defaultFlatId) {
       isFlatManuallyChangedRef.current = true
-      setFormFlatId(String(defaultFlatId))
+      resolvedFlatId = String(defaultFlatId)
     } else {
       isFlatManuallyChangedRef.current = false
       const isResultForTargetDates = fairShareResult && fairShareResult._checkin === cin && fairShareResult._checkout === cout
@@ -4266,9 +6133,9 @@ export default function PmsCalendar(props?: {
         ? fairShareResult?.allStats?.find((s: any) => Number(s.flat?.id) === Number(fairShareResult?.bestFlatId))
         : null
       if (suggestedStat?.isAvailable && fairShareResult?.bestFlatId) {
-        setFormFlatId(String(fairShareResult.bestFlatId))
+        resolvedFlatId = String(fairShareResult.bestFlatId)
       } else if (fairShareResult?.bestFlatId) {
-        setFormFlatId(String(fairShareResult.bestFlatId))
+        resolvedFlatId = String(fairShareResult.bestFlatId)
       } else {
         const availFlat = data.flats.find((fl: any) => {
           const hasResConf = (data.reservations || []).some((r: any) => {
@@ -4285,12 +6152,11 @@ export default function PmsCalendar(props?: {
           return !hasResConf && !hasBlkConf
         })
         const fallbackFlatId = availFlat?.id || data.flats[0]?.id || ""
-        setFormFlatId(fallbackFlatId ? String(fallbackFlatId) : "")
+        resolvedFlatId = fallbackFlatId ? String(fallbackFlatId) : ""
       }
     }
-    setFormCheckinTime(defaultCheckinTime || "14:00")
-    setFormCheckoutTime(defaultCheckoutTime || "12:00")
-    setFormGuestCount("1")
+    const cTime = defaultCheckinTime || "14:00"
+    const oTime = defaultCheckoutTime || "12:00"
     setFormRequesterType(initialChannel === "b2b" ? "agency_b2b" : "guest")
     setFormRequesterName("")
     setFormRequesterPhone("")
@@ -4328,37 +6194,19 @@ export default function PmsCalendar(props?: {
     setShowVoucherParser(false)
     setVoucherTextToParse("")
     setNewAgencyInlineOpen(false)
-    setFormGuestId("")
     setGuestSearchFilter("")
-    setFormGuestName("")
-    setFormGuest1Cpf("")
-    setFormGuestPhone("")
-    setFormGuestEmail("")
-    setFormGuest2Id("")
     setGuest2SearchFilter("")
     setShowGuest2Suggestions(false)
-    setFormGuest2Name("")
-    setFormGuest2Cpf("")
-    setFormGuest2Phone("")
-    setFormGuest2Email("")
-    setFormGuest3Id("")
     setGuest3SearchFilter("")
     setShowGuest3Suggestions(false)
-    setFormGuest3Name("")
-    setFormGuest3Cpf("")
-    setFormGuest3Phone("")
-    setFormGuest3Email("")
     const isBooking = initialChannel === "booking"
     const isAirbnb = initialChannel === "airbnb"
     const isB2b = initialChannel === "b2b"
     const isOtaChannel = isBooking || isAirbnb
     setFormChannel(initialChannel)
     setFormPaymentMethod(isBooking ? "booking" : (isAirbnb ? "airbnb" : (isB2b ? "vcn_b2b" : "pix")))
-    const initialNights = 1
     const baseDailyRate = 250
-    setFormDailyRate(String(baseDailyRate))
     const initialRates = buildReservationDailyRates(cin, cout, baseDailyRate, initialChannel)
-    setFormDailyRates(initialRates)
     const initialCharges: ReservationChargeItem[] = isOtaChannel
       ? [{
           id: `charge_${Date.now()}_clean`,
@@ -4368,17 +6216,32 @@ export default function PmsCalendar(props?: {
           notes: ""
         }]
       : []
-    setFormCharges(initialCharges)
     const subNights = initialRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
     const subCharges = initialCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
     const initialTotal = subNights + subCharges
+    setFormFlats([
+      createDefaultFlatReservationItem({
+        uid: "flat_primary",
+        flatId: resolvedFlatId,
+        sameDatesAsPrimary: false,
+        checkinDate: cin,
+        checkoutDate: cout,
+        checkinTime: cTime,
+        checkoutTime: oTime,
+        guestCount: "1",
+        dailyRate: String(baseDailyRate),
+        dailyRates: initialRates,
+        charges: initialCharges,
+        rateioTargetInput: String(initialTotal),
+      }, initialChannel)
+    ])
     setFormTotalAmount(String(initialTotal))
     if (isB2b) {
       setFormPaidAmount("0")
       setFormPayments([])
       setFormPaymentStatus("pendente")
     } else {
-      setFormPaidAmount(String(initialTotal)) // Pré-preenchido com o mesmo total composto!
+      setFormPaidAmount(String(initialTotal))
       setFormPayments([
         {
           id: `pay_${Date.now()}`,
@@ -4401,29 +6264,9 @@ export default function PmsCalendar(props?: {
     setFormHoldCustomValue("45")
     setFormHoldCustomUnit("minutes")
     setFormHoldCustomDateTime(format(addDays(new Date(), 1), "yyyy-MM-dd'T'12:00"))
-    setPackageTotalInput(String(initialTotal))
     setShowGuestSuggestions(false)
-    setFormNotes("")
-    setFormEarlyCheckin(false)
-    setFormReceptionNotes("")
-    setFormVehiclePlate("")
-    setFormVehicleModel("")
-    setFormVehicleBrand("")
-    setFormVehicleColor("")
     setFormAutoInvoice(false)
-    setFormPrefersHighFloor(false)
-    setFormTwinBeds(false)
-    setFormExtraMattress(false)
-    setFormIncludeBreakfast(false)
-    setFormSpecialRequests("")
     setFormIsMonthlyGuest(false)
-    setFormDocPhotoUrl("")
-    setFormDocFileName("")
-    setFormHasMinor(false)
-    setFormIsCamposResident(false)
-    setFormIsFlatLocked(false)
-    setFormFlatLockReason("")
-    setFormForceReplace(false)
     setFormIsFaturadoBoleto(false)
     setFormBoletoTermDays(15)
     setFormBoletoCustomDueDate("")
@@ -4447,10 +6290,9 @@ export default function PmsCalendar(props?: {
     setFormRecFinResp(true)
     setFormRecSendEmail(true)
     setFormRecSendWhatsapp(true)
-    setPhoneVerification(null)
     setAuditLogs([])
     setCommunications([])
-    setRangePickerOpen(false)
+    setRangePickerFlatUid(null)
     setPickerRangeStart(null)
     setPickerHoverDate(null)
     setPickerMonth(defaultDate || new Date())
@@ -4500,7 +6342,11 @@ export default function PmsCalendar(props?: {
         return !hasResConf && !hasBlkConf
       })
       const fallbackFlatId = fairShareResult?.bestFlatId || availFlat?.id || data.flats[0]?.id || ""
-      if (fallbackFlatId) setFormFlatId(String(fallbackFlatId))
+      if (fallbackFlatId) {
+        setFormFlats(prev =>
+          prev.map((f, idx) => (idx === 0 && !f.flatId ? { ...f, flatId: String(fallbackFlatId) } : f))
+        )
+      }
     }
   }, [resModalOpen, selectedRes, formFlatId, data.flats, data.reservations, data.blocks, fairShareResult, formCheckin, formCheckout])
 
@@ -4517,15 +6363,12 @@ export default function PmsCalendar(props?: {
     setPkgEditNfseDoc(resItem.companyCnpj || resItem.requesterInfo?.cpf || resItem.guestDocument || resItem.guestCpf || "")
     setPkgEditNfseName(fallbackSolName)
     setPkgEditRefundAmount(String(Number(resItem.paidAmount || resItem.totalAmount || 0).toFixed(2)))
-    setPhoneVerification(null)
-    setFormForceReplace(false)
     isFlatManuallyChangedRef.current = true
-    setFormFlatId(String(resItem.flatId))
-    setFormCheckin(resItem.checkinDate)
-    setFormCheckout(resItem.checkoutDate)
-    setFormCheckinTime(resItem.checkinTime || defaultCheckinTime || "14:00")
-    setFormCheckoutTime(resItem.checkoutTime || defaultCheckoutTime || "12:00")
-    setFormGuestCount(String(resItem.guestCount || resItem.adults || (resItem.guests?.length || 1)) as any)
+    const loadedCin = resItem.checkinDate
+    const loadedCout = resItem.checkoutDate
+    const loadedCinTime = resItem.checkinTime || defaultCheckinTime || "14:00"
+    const loadedCoutTime = resItem.checkoutTime || defaultCheckoutTime || "12:00"
+    const loadedGuestCount = String(resItem.guestCount || resItem.adults || (resItem.guests?.length || 1)) as "1" | "2" | "3"
     const isB2bRes = resItem.channel === "b2b" || Boolean(resItem.agencyId || resItem.agencyName || resItem.b2bReservationNumber || resItem.requesterType === "agency_b2b" || resItem.requesterType === "agency")
     const resolvedReqType = isB2bRes
       ? "agency_b2b"
@@ -4553,7 +6396,6 @@ export default function PmsCalendar(props?: {
     setFormCompanyCnpj(resItem.companyCnpj || matchedCompany?.cnpj || "")
     setInlineCompanyData(null)
     setInlineCnpjExpanded(false)
-    setExtraPackageFlats([])
     setPkgExtraCharges([])
     setPackagePricingMode("sum")
     setPackagePricingInput("")
@@ -4608,7 +6450,13 @@ export default function PmsCalendar(props?: {
             : (resItem.requesterType === "company" && resItem.companyId ? "company" : "guest"))
     )
     setFormNfDeliveryEmails(formatEmailList(resItem.nfDeliveryEmails))
-    setFormNfHideFromGuest(resItem.nfHideFromGuest !== undefined ? Boolean(resItem.nfHideFromGuest) : isB2bRes)
+    const hasExplicitHide = resItem.nfHideFromGuest !== undefined || resItem.hideFinancialForGuest !== undefined
+    nfHideManuallySetRef.current = hasExplicitHide
+    setFormNfHideFromGuest(
+      resItem.nfHideFromGuest !== undefined
+        ? Boolean(resItem.nfHideFromGuest)
+        : (resItem.hideFinancialForGuest !== undefined ? Boolean(resItem.hideFinancialForGuest) : isB2bRes)
+    )
     setFormInvoicingInstructions(resItem.invoicingInstructions || "")
     setFormVoucherUrl(resItem.voucherUrl || resItem.b2bVoucherUrl || "")
     setShowVoucherParser(false)
@@ -4626,37 +6474,43 @@ export default function PmsCalendar(props?: {
     const rawLoadedG1Id = resItem.guestId || g1?.guestId
     const linkedG1Crm = rawLoadedG1Id ? crmGuests.find(cg => String(cg.id) === String(rawLoadedG1Id)) : null
     const isLinkedG1Compatible = !linkedG1Crm || areGuestNamesCompatibleUI(rawLoadedG1Name, linkedG1Crm.name || linkedG1Crm.fullName)
-    setFormGuestId(rawLoadedG1Id && isLinkedG1Compatible ? String(rawLoadedG1Id) : "")
-    setFormGuestName(isPendingLoadedG1 ? "" : rawLoadedG1Name)
-    setFormGuest1Cpf(g1?.cpf || resItem.guestDocument || "")
-    setFormGuestPhone(g1?.phone || resItem.guestPhone || "")
-    setFormGuestEmail(g1?.email || resItem.guestEmail || "")
+    const loadedG1: FlatGuestFormFields = {
+      guestId: rawLoadedG1Id && isLinkedG1Compatible ? String(rawLoadedG1Id) : "",
+      name: isPendingLoadedG1 ? "" : rawLoadedG1Name,
+      cpf: g1?.cpf || resItem.guestDocument || "",
+      phone: g1?.phone || resItem.guestPhone || "",
+      email: g1?.email || resItem.guestEmail || "",
+    }
 
     const g2 = resItem.guests?.[1]
     const g2Name = g2?.name && !g2.name.startsWith("Hóspede") ? g2.name : ""
     const matchedG2 = g2?.guestId
       ? crmGuests.find(cg => String(cg.id) === String(g2.guestId))
       : (g2Name ? crmGuests.find(cg => (g2?.cpf && (cg.documentNumber || cg.document) === g2.cpf) || (cg.name || cg.fullName || "").toLowerCase() === g2Name.toLowerCase()) : null)
-    setFormGuest2Id(matchedG2 ? String(matchedG2.id) : (g2?.guestId ? String(g2.guestId) : (g2Name ? "manual" : "")))
+    const loadedG2: FlatGuestFormFields = {
+      guestId: matchedG2 ? String(matchedG2.id) : (g2?.guestId ? String(g2.guestId) : (g2Name ? "manual" : "")),
+      name: g2Name,
+      cpf: g2?.cpf || "",
+      phone: g2?.phone || "",
+      email: g2?.email || "",
+    }
     setGuest2SearchFilter("")
     setShowGuest2Suggestions(false)
-    setFormGuest2Name(g2Name)
-    setFormGuest2Cpf(g2?.cpf || "")
-    setFormGuest2Phone(g2?.phone || "")
-    setFormGuest2Email(g2?.email || "")
 
     const g3 = resItem.guests?.[2]
     const g3Name = g3?.name && !g3.name.startsWith("Hóspede") ? g3.name : ""
     const matchedG3 = g3?.guestId
       ? crmGuests.find(cg => String(cg.id) === String(g3.guestId))
       : (g3Name ? crmGuests.find(cg => (g3?.cpf && (cg.documentNumber || cg.document) === g3.cpf) || (cg.name || cg.fullName || "").toLowerCase() === g3Name.toLowerCase()) : null)
-    setFormGuest3Id(matchedG3 ? String(matchedG3.id) : (g3?.guestId ? String(g3.guestId) : (g3Name ? "manual" : "")))
+    const loadedG3: FlatGuestFormFields = {
+      guestId: matchedG3 ? String(matchedG3.id) : (g3?.guestId ? String(g3.guestId) : (g3Name ? "manual" : "")),
+      name: g3Name,
+      cpf: g3?.cpf || "",
+      phone: g3?.phone || "",
+      email: g3?.email || "",
+    }
     setGuest3SearchFilter("")
     setShowGuest3Suggestions(false)
-    setFormGuest3Name(g3Name)
-    setFormGuest3Cpf(g3?.cpf || "")
-    setFormGuest3Phone(g3?.phone || "")
-    setFormGuest3Email(g3?.email || "")
 
     const chan = normalizeCalendarChannel(resItem.channel)
     const isOtaRes = (chan === "booking" || chan === "airbnb")
@@ -4679,8 +6533,6 @@ export default function PmsCalendar(props?: {
       )
     )
     const isGatewayPaid = Boolean(resItem.pixEndToEndId || resItem.mpPaymentId || (!isFatResEarly && resItem.paidAt));
-    // Regra: Pré-Reserva (canal direto) sem comprovação real de PIX/cartão nunca é considerada paga,
-    // e Reserva de Boleto Faturado sem boleto liquidado/comprovante real permanece Pendente (a faturar)
     const isUnpaidPreReserva = (resItem.status === "pre_reserva" && !isOtaRes && !isGatewayPaid) ||
       (isFatResEarly && !isGatewayPaid && !hasNonSyntheticFaturadoPay);
     const hasOtaPartialExtension = isOtaRes && (
@@ -4690,10 +6542,10 @@ export default function PmsCalendar(props?: {
     );
     const hasPendingBalance = hasOtaPartialExtension || (!isOtaRes && Number(resItem.totalAmount) > 0 && Number(resItem.paidAmount || 0) < Number(resItem.totalAmount) && resItem.paymentStatus !== "pago_total" && resItem.paymentStatus !== "pago");
     const isResCurrentlyPaid = !isUnpaidPreReserva && !hasPendingBalance && (
-      isOtaRes || 
-      isGatewayPaid || 
-      resItem.paymentStatus === "pago_total" || 
-      resItem.paymentStatus === "pago" || 
+      isOtaRes ||
+      isGatewayPaid ||
+      resItem.paymentStatus === "pago_total" ||
+      resItem.paymentStatus === "pago" ||
       (Number(resItem.paidAmount) >= Number(resItem.totalAmount) && Number(resItem.totalAmount) > 0));
     const nights = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1;
 
@@ -4714,7 +6566,6 @@ export default function PmsCalendar(props?: {
     }
     setFormPaymentMethod(resolvedMethod);
 
-    // Carregando e reconciliando taxas e cobranças adicionais (charges + cleaningFee/petFee/extraBedFee/twinFee)
     const loadedCharges: ReservationChargeItem[] = Array.isArray(resItem.charges) ? resItem.charges.map((c: any) => ({
       id: c.id || `charge_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       type: c.type || "other",
@@ -4769,7 +6620,6 @@ export default function PmsCalendar(props?: {
     const baseDailyRate = avgFromExistingRates > 0
       ? avgFromExistingRates
       : (Number(resItem.dailyRate || 0) || (nights > 0 && Number(resItem.totalAmount) > 0 ? Math.round(Math.max(0, Number(resItem.totalAmount) - initialChargesSum) / nights) : 250));
-    setFormDailyRate(String(baseDailyRate));
     const loadedDailyRates = buildReservationDailyRates(
       resItem.checkinDate,
       resItem.checkoutDate,
@@ -4777,11 +6627,8 @@ export default function PmsCalendar(props?: {
       chan,
       Array.isArray(resItem.dailyRates) ? resItem.dailyRates : []
     );
-    setFormDailyRates(loadedDailyRates);
     const calcFromRates = loadedDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
 
-    // Se a reserva possuía totalAmount maior que a soma das diárias sem item em charges (ex: taxa de limpeza embutida na criação),
-    // preserva a diferença como Taxa de Limpeza para não ser perdida ao editar datas/diárias
     if (loadedCharges.length === 0 && calcFromRates > 0 && Number(resItem.totalAmount) > calcFromRates + 0.05 && !resItem.earlyCheckout) {
       const diffFee = Math.round((Number(resItem.totalAmount) - calcFromRates) * 100) / 100;
       loadedCharges.push({
@@ -4798,20 +6645,17 @@ export default function PmsCalendar(props?: {
       ? Math.round((calcFromRates + finalChargesSum) * 100) / 100
       : 0;
     const rawResTotal = Number(resItem.totalAmount) || 0;
-    // Se houver taxas (ex: taxa de limpeza) e o total salvo estava apenas com a soma das diárias, corrige para o total composto
     const totCalculated = (!resItem.earlyCheckout && finalChargesSum > 0 && calcFromRates > 0 && Math.abs(rawResTotal - calcFromRates) < 0.05)
       ? compositeFromRatesAndCharges
       : (rawResTotal > 0 ? rawResTotal : (compositeFromRatesAndCharges > 0 ? compositeFromRatesAndCharges : (baseDailyRate * nights + finalChargesSum)));
     setFormTotalAmount(totCalculated > 0 ? String(totCalculated) : "");
 
-    // 2. Real Paid Amount: se quitada ou comprovante existe, garante o valor total
     const rawPaid = isUnpaidPreReserva ? 0 : (Number(resItem.paidAmount) || 0);
     const effectivePaid = isResCurrentlyPaid
       ? (rawPaid > 0 ? rawPaid : totCalculated)
       : rawPaid;
     setFormPaidAmount(String(effectivePaid));
 
-    // 3. Pagamentos individuais carregados e reconciliados
     let loadedPayments: ReservationPaymentItem[] = [];
     if (!isUnpaidPreReserva && Array.isArray(resItem.payments) && resItem.payments.length > 0) {
       loadedPayments = resItem.payments.map((p: any, idx: number) => ({
@@ -4844,8 +6688,6 @@ export default function PmsCalendar(props?: {
       }
     }
     setFormPayments(loadedPayments);
-    setFormCharges(loadedCharges);
-    setPackageTotalInput(totCalculated > 0 ? String(totCalculated) : "");
 
     setFormPaymentStatus(isResCurrentlyPaid ? "pago_total" : (isUnpaidPreReserva ? "pendente" : (resItem.paymentStatus || "pendente")))
     const isExpiredRes = resItem.status === "expirada"
@@ -4887,7 +6729,6 @@ export default function PmsCalendar(props?: {
     } else {
       setFormHoldCustomDateTime(format(addDays(new Date(), 1), "yyyy-MM-dd'T'12:00"))
     }
-    setFormNotes(resItem.notes || "")
     const resCleanDoc = String(resItem.guestDocument || "").replace(/\D/g, "")
     const resCleanPhone = String(resItem.guestPhone || "").replace(/\D/g, "")
     const matchedGuest = crmGuests.find(g => {
@@ -4902,27 +6743,54 @@ export default function PmsCalendar(props?: {
         (g.fullName && resItem.guestName && g.fullName.toLowerCase().trim() === resItem.guestName.toLowerCase().trim())
     })
 
-    setFormEarlyCheckin(Boolean(resItem.earlyCheckinAuthorized))
-    setFormReceptionNotes(resItem.receptionNotes || "")
-    setFormVehiclePlate(resItem.vehicle?.plate || "")
-    setFormVehicleModel(resItem.vehicle?.model || "")
-    setFormVehicleBrand(resItem.vehicle?.brand || "")
-    setFormVehicleColor(resItem.vehicle?.color || "")
     setFormAutoInvoice(Boolean(resItem.autoEmitInvoice || matchedGuest?.autoEmitInvoice))
-    setFormPrefersHighFloor(Boolean(resItem.prefersHighFloor))
-    setFormTwinBeds(Boolean(resItem.twinBeds))
-    setFormExtraMattress(Boolean(resItem.extraMattress))
-    setFormIncludeBreakfast(Boolean(resItem.includeBreakfast || resItem.hasBreakfast))
-    setFormSpecialRequests(resItem.specialRequests || resItem.notes || "")
     setFormIsMonthlyGuest(Boolean(resItem.isMonthlyGuest || resItem.clientType === "mensalista" || matchedGuest?.isMonthlyGuest || matchedGuest?.clientType === "mensalista"))
     const docUrl = resItem.docPhotoUrl || resItem.documentPhotoUrl || resItem.docPhotoPath || matchedGuest?.docPhotoUrl || ""
-    setFormDocPhotoUrl(docUrl)
-    setFormDocFileName(docUrl ? "documento_anexado" : "")
-    setFormHasMinor(Boolean(resItem.hasMinor))
     const isCamposRes = isResCamposResident(resItem, matchedGuest)
-    setFormIsCamposResident(isCamposRes)
-    setFormIsFlatLocked(Boolean(resItem.isFlatLocked || resItem.flatLocked))
-    setFormFlatLockReason(resItem.flatLockReason || "")
+
+    setFormFlats([
+      createDefaultFlatReservationItem({
+        uid: `edit_${resItem.id || "flat_primary"}`,
+        flatId: String(resItem.flatId),
+        sameDatesAsPrimary: false,
+        checkinDate: loadedCin,
+        checkoutDate: loadedCout,
+        checkinTime: loadedCinTime,
+        checkoutTime: loadedCoutTime,
+        guestCount: (["1", "2", "3"].includes(loadedGuestCount) ? loadedGuestCount : "1") as "1" | "2" | "3",
+        requesterIsGuest1: Boolean(resItem.requesterIsGuest1),
+        informGuestsLater: Boolean(resItem.informGuestsLater),
+        guest2InformLater: Boolean(resItem.guest2InformLater),
+        guest3InformLater: Boolean(resItem.guest3InformLater),
+        guest1: loadedG1,
+        guest2: loadedG2,
+        guest3: loadedG3,
+        docPhotoUrl: docUrl,
+        docFileName: docUrl ? "documento_anexado" : "",
+        hasMinor: Boolean(resItem.hasMinor),
+        isCamposResident: isCamposRes,
+        includeBreakfast: Boolean(resItem.includeBreakfast || resItem.hasBreakfast),
+        prefersHighFloor: Boolean(resItem.prefersHighFloor),
+        twinBeds: Boolean(resItem.twinBeds),
+        extraMattress: Boolean(resItem.extraMattress),
+        isFlatLocked: Boolean(resItem.isFlatLocked || resItem.flatLocked),
+        flatLockReason: resItem.flatLockReason || "",
+        earlyCheckinAuthorized: Boolean(resItem.earlyCheckinAuthorized),
+        forceOverbooking: false,
+        specialRequests: resItem.specialRequests || "",
+        receptionNotes: resItem.receptionNotes || "",
+        notes: resItem.notes || "",
+        vehiclePlate: resItem.vehicle?.plate || "",
+        vehicleBrand: resItem.vehicle?.brand || "",
+        vehicleModel: resItem.vehicle?.model || "",
+        vehicleColor: resItem.vehicle?.color || "",
+        dailyRate: String(baseDailyRate),
+        dailyRates: loadedDailyRates,
+        charges: loadedCharges,
+        rateioTargetInput: totCalculated > 0 ? String(totCalculated) : "",
+      }, chan)
+    ])
+
     const crmEntity = matchedAgency || matchedCompany || matchedGuest || {}
     const isFatRes = Boolean(
       resItem.isFaturadoBoleto ||
@@ -4977,7 +6845,7 @@ export default function PmsCalendar(props?: {
     setManualRecipient(resItem.guestEmail || pEmail)
     setManualSubject(`[CorpFlats] Flat ${resItem.flatNumber} - ${resItem.guestName}`)
     setManualBody("")
-    setRangePickerOpen(false)
+    setRangePickerFlatUid(null)
     setPickerRangeStart(null)
     setPickerHoverDate(null)
     setPickerMonth(safeParseDate(resItem.checkinDate) || new Date())
@@ -5100,9 +6968,13 @@ export default function PmsCalendar(props?: {
         "whatsapp",
         mergedSeeds
       )
-      setFormCheckin(targetCin)
-      setFormCheckout(targetCout)
-      setFormDailyRates(rebuiltRates)
+      setFormFlats(prev =>
+        prev.map((f, idx) =>
+          idx === 0
+            ? { ...f, checkinDate: targetCin, checkoutDate: targetCout, dailyRates: rebuiltRates }
+            : f
+        )
+      )
       setFormStatus("confirmada")
       syncCompositeTotalAndPaid(rebuiltRates, liveParent.charges || [], liveParent.channel || "whatsapp")
       setIsReactivatingRes(false)
@@ -5160,7 +7032,7 @@ export default function PmsCalendar(props?: {
     if (!origAvailable) {
       const altFlat = data.flats.find((f: any) => isFlatFree(f))
       if (altFlat) {
-        setFormFlatId(String(altFlat.id))
+        setFormFlats(prev => prev.map((f, idx) => (idx === 0 ? { ...f, flatId: String(altFlat.id) } : f)))
         setReactivationFlatSwitchedInfo(`O Flat original (${origFlatNum || origFlatId}) já foi ocupado neste período. Sugerimos automaticamente o Flat ${altFlat.number} que está livre!`)
       } else {
         setReactivationFlatSwitchedInfo(`Atenção: O Flat ${origFlatNum || origFlatId} possui outra ocupação neste período e não há outros flats livres na mesma data.`)
@@ -5274,41 +7146,65 @@ export default function PmsCalendar(props?: {
     }
   }, [modalOnly, loading, data.reservations, data.expiredPreReservations])
 
-  const handleSelectGuest = (val: string) => {
-    const prevGuestId = formGuestId
-    setFormGuestId(val)
-    if (!val || val === "manual") {
-      if (prevGuestId && prevGuestId !== "manual") {
-        setFormGuestName("")
-        setFormGuest1Cpf("")
-        setFormGuestPhone("")
-        setFormGuestEmail("")
-        setFormDocPhotoUrl("")
-        setFormDocFileName("")
-        setFormIsCamposResident(false)
-      }
-      return
-    }
-    const g = crmGuests.find(guest => String(guest.id) === val)
-    if (g) {
-      const isSameGuest =
+  const handleSelectCrmGuestForFlat = (flatUid: string, guestIndex: 1 | 2 | 3, g: any) => {
+    if (!g) return
+    const targetIdx = formFlats.findIndex(f => f.uid === flatUid)
+    const targetFlat = targetIdx >= 0 ? formFlats[targetIdx] : formFlats[0]
+    const prevFields =
+      guestIndex === 1 ? targetFlat?.guest1 : (guestIndex === 2 ? targetFlat?.guest2 : targetFlat?.guest3)
+    const prevGuestId = prevFields?.guestId || ""
+    const isSameGuest =
+      guestIndex === 1 &&
+      (
         String(prevGuestId) === String(g.id) ||
-        (selectedRes?.guestId && String(selectedRes.guestId) === String(g.id) && areGuestNamesCompatibleUI(selectedRes?.guestName, g.name || g.fullName)) ||
-        (selectedRes?.guestName && (g.name || g.fullName || "").trim().toLowerCase() === selectedRes.guestName.trim().toLowerCase())
-      const crmCpf = (g.documentNumber || g.document || "").trim()
-      const crmPhone = (g.phone || "").trim()
-      const crmEmail = (g.email || "").trim()
-      setFormGuestName(g.name || g.fullName || "")
-      setFormGuest1Cpf(prev => isSameGuest ? (prev.trim() || crmCpf) : crmCpf)
-      setFormGuestPhone(prev => isSameGuest ? (prev.trim() || crmPhone) : crmPhone)
-      setFormGuestEmail(prev => isSameGuest ? (prev.trim() || crmEmail) : crmEmail)
+        (targetIdx === 0 && selectedRes?.guestId && String(selectedRes.guestId) === String(g.id) && areGuestNamesCompatibleUI(selectedRes?.guestName, g.name || g.fullName)) ||
+        (targetIdx === 0 && selectedRes?.guestName && (g.name || g.fullName || "").trim().toLowerCase() === selectedRes.guestName.trim().toLowerCase())
+      )
+    const crmCpf = (g.documentNumber || g.document || g.cpf || "").trim()
+    const crmPhone = (g.phone || "").trim()
+    const crmEmail = (g.email || "").trim()
+    const nextGuestObj: FlatGuestFormFields = {
+      guestId: String(g.id),
+      name: g.name || g.fullName || "",
+      cpf: isSameGuest ? ((prevFields?.cpf || "").trim() || crmCpf) : crmCpf,
+      phone: isSameGuest ? ((prevFields?.phone || "").trim() || crmPhone) : crmPhone,
+      email: isSameGuest ? ((prevFields?.email || "").trim() || crmEmail) : crmEmail,
+    }
 
-      if (g.floorPreference === "alto" || g.prefersHighFloor) {
-        setFormPrefersHighFloor(true)
-      }
-      if (g.bedType === "2 Solteiro" || g.twinBeds) {
-        setFormTwinBeds(true)
-      }
+    setFormFlats(prev =>
+      prev.map((f, idx) => {
+        if (f.uid !== flatUid) return f
+        const nextF: FlatReservationFormItem = { ...f }
+        if (guestIndex === 1) {
+          nextF.guest1 = nextGuestObj
+          nextF.informGuestsLater = false
+          nextF.requesterIsGuest1 = false
+          if (g.floorPreference === "alto" || g.prefersHighFloor) nextF.prefersHighFloor = true
+          if (g.bedType === "2 Solteiro" || g.twinBeds) nextF.twinBeds = true
+          if (g.docPhotoUrl && (!f.docPhotoUrl || !isSameGuest)) {
+            nextF.docPhotoUrl = g.docPhotoUrl
+            nextF.docFileName = "documento_crm"
+          } else if (!isSameGuest && !g.docPhotoUrl) {
+            nextF.docPhotoUrl = ""
+            nextF.docFileName = ""
+          }
+          nextF.isCamposResident = isResCamposResident({ isCamposResident: g.isCamposResident }, g)
+        } else if (guestIndex === 2) {
+          nextF.guest2 = nextGuestObj
+          nextF.guest2InformLater = false
+        } else {
+          nextF.guest3 = nextGuestObj
+          nextF.guest3InformLater = false
+        }
+        return nextF
+      })
+    )
+
+    if (crmPhone) {
+      verifyGuestPhoneWhatsApp(crmPhone)
+    }
+
+    if (targetIdx === 0 && guestIndex === 1) {
       if (g.isMonthlyGuest || g.clientType === "mensalista") {
         setFormIsMonthlyGuest(true)
       } else if (!isSameGuest) {
@@ -5354,18 +7250,99 @@ export default function PmsCalendar(props?: {
         setFormRecSendEmail(g.defaultBillingRecipients.sendEmail !== false)
         setFormRecSendWhatsapp(g.defaultBillingRecipients.sendWhatsapp !== false)
       }
-      if (g.docPhotoUrl && (!formDocPhotoUrl || !isSameGuest)) {
-        setFormDocPhotoUrl(g.docPhotoUrl)
-        setFormDocFileName("documento_crm")
-      } else if (!isSameGuest && !g.docPhotoUrl) {
-        setFormDocPhotoUrl("")
-        setFormDocFileName("")
-      }
-      setFormIsCamposResident(isResCamposResident({ isCamposResident: g.isCamposResident }, g))
+    }
+
+    toast({
+      title: `Hóspede ${guestIndex}${formFlats.length > 1 ? ` (Flat ${targetIdx + 1})` : ""} carregado`,
+      description: g.name || g.fullName || ""
+    })
+  }
+
+  const handleSaveGuestToCrmForFlat = async (flatUid: string, guestIndex: 1 | 2 | 3) => {
+    const f = formFlats.find(item => item.uid === flatUid)
+    if (!f) return
+    const gFields = guestIndex === 1 ? f.guest1 : (guestIndex === 2 ? f.guest2 : f.guest3)
+    const nameToSave = gFields.name.trim()
+    if (!nameToSave) {
       toast({
-        title: "Hóspede Selecionado do CRM",
-        description: `${g.name || g.fullName} carregado com sucesso.`
+        title: "Nome Obrigatório",
+        description: `Preencha o nome do ${guestIndex}º hóspede para cadastrá-lo no CRM.`,
+        variant: "destructive"
       })
+      return
+    }
+    try {
+      const res = await fetch("/api/pms/guests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          name: nameToSave,
+          fullName: nameToSave,
+          phone: gFields.phone.trim(),
+          email: gFields.email.trim(),
+          document: gFields.cpf.trim(),
+          documentNumber: gFields.cpf.trim(),
+          notes: guestIndex === 1 ? "Cadastrado via modal de reserva" : `Cadastrado como ${guestIndex}º hóspede (acompanhante) via CRM`
+        })
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || "Erro ao cadastrar hóspede no CRM.")
+      }
+      const newGuest = await res.json()
+      setCrmGuests(prev => [newGuest, ...prev.filter(g => g.id !== newGuest.id)])
+      setFormFlats(prev =>
+        prev.map(item => {
+          if (item.uid !== flatUid) return item
+          if (guestIndex === 1) return { ...item, guest1: { ...item.guest1, guestId: String(newGuest.id) } }
+          if (guestIndex === 2) return { ...item, guest2: { ...item.guest2, guestId: String(newGuest.id) } }
+          return { ...item, guest3: { ...item.guest3, guestId: String(newGuest.id) } }
+        })
+      )
+      toast({
+        title: "Hóspede Cadastrado no CRM!",
+        description: `${newGuest.name || newGuest.fullName} foi registrado com sucesso.`
+      })
+    } catch (e: any) {
+      toast({
+        title: "Erro ao Cadastrar",
+        description: e.message || "Não foi possível cadastrar o hóspede no CRM.",
+        variant: "destructive"
+      })
+    }
+  }
+
+  const syncRequesterFieldToGuest1Flats = (patch: Partial<FlatGuestFormFields>) => {
+    setFormFlats(prev =>
+      prev.map(f => (f.requesterIsGuest1 ? { ...f, guest1: { ...f.guest1, ...patch } } : f))
+    )
+  }
+
+  const handleToggleRequesterIsGuest1 = (flatUid: string, checked: boolean) => {
+    const cleanReqPhone = formRequesterPhone.trim()
+    setFormFlats(prev =>
+      prev.map(f => {
+        if (f.uid !== flatUid) return f
+        if (checked) {
+          return {
+            ...f,
+            requesterIsGuest1: true,
+            informGuestsLater: false,
+            guest1: {
+              guestId: formRequesterId && formRequesterId !== "manual" ? formRequesterId : f.guest1.guestId,
+              name: formRequesterName.trim() || f.guest1.name,
+              cpf: formRequesterCpf.trim() || f.guest1.cpf,
+              phone: cleanReqPhone || f.guest1.phone,
+              email: formRequesterEmail.trim() || f.guest1.email,
+            },
+          }
+        }
+        return { ...f, requesterIsGuest1: false }
+      })
+    )
+    if (checked && cleanReqPhone) {
+      verifyGuestPhoneWhatsApp(cleanReqPhone)
     }
   }
 
@@ -5404,28 +7381,6 @@ export default function PmsCalendar(props?: {
     [indexedCrmGuests]
   )
 
-  const filteredGuests = useMemo(() => {
-    if (!guestSearchFilter.trim()) return crmGuests
-    return searchIndexedCrm(guestSearchFilter, false)
-  }, [crmGuests, guestSearchFilter, searchIndexedCrm])
-
-  // Live real-time filtered matches as the user types guest name
-  const liveGuestMatches = useMemo(
-    () => searchIndexedCrm(formGuestName, true, 8),
-    [formGuestName, searchIndexedCrm]
-  )
-
-  // Close live guest suggestions when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (guestSuggestionsRef.current && !guestSuggestionsRef.current.contains(event.target as Node)) {
-        setShowGuestSuggestions(false)
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside)
-    return () => document.removeEventListener("mousedown", handleClickOutside)
-  }, [])
-
   // Handlers e Memos para Solicitante Terceiro (CRM)
   const handleSelectRequester = (val: string) => {
     setFormRequesterId(val)
@@ -5434,13 +7389,25 @@ export default function PmsCalendar(props?: {
     }
     const g = crmGuests.find(guest => String(guest.id) === val)
     if (g) {
-      setFormRequesterName(g.name || g.fullName || "")
-      setFormRequesterCpf(g.documentNumber || g.document || "")
-      setFormRequesterPhone(g.phone || "")
-      setFormRequesterEmail(g.email || "")
+      const nextName = g.name || g.fullName || ""
+      const nextCpf = g.documentNumber || g.document || ""
+      const nextPhone = g.phone || ""
+      const nextEmail = g.email || ""
+      setFormRequesterName(nextName)
+      setFormRequesterCpf(nextCpf)
+      setFormRequesterPhone(nextPhone)
+      setFormRequesterEmail(nextEmail)
+      syncRequesterFieldToGuest1Flats({
+        guestId: String(g.id),
+        name: nextName,
+        cpf: nextCpf,
+        phone: nextPhone,
+        email: nextEmail,
+      })
+      if (nextPhone) verifyGuestPhoneWhatsApp(nextPhone)
       toast({
         title: "Solicitante Selecionado do CRM",
-        description: `${g.name || g.fullName} carregado com sucesso.`
+        description: `${nextName} carregado com sucesso.`
       })
     }
   }
@@ -5511,137 +7478,14 @@ export default function PmsCalendar(props?: {
     }
   }
 
-  // Handlers e Memos para Hóspede 2 e Hóspede 3 (CRM)
-  const handleSelectGuest2 = (val: string) => {
-    setFormGuest2Id(val)
-    if (!val || val === "manual") {
-      return
-    }
-    const g = crmGuests.find(guest => String(guest.id) === val)
-    if (g) {
-      setFormGuest2Name(g.name || g.fullName || "")
-      setFormGuest2Cpf(g.documentNumber || g.document || "")
-      setFormGuest2Phone(g.phone || "")
-      setFormGuest2Email(g.email || "")
-      toast({
-        title: "2º Hóspede Selecionado do CRM",
-        description: `${g.name || g.fullName} carregado com sucesso.`
-      })
-    }
-  }
-
-  const handleSelectGuest3 = (val: string) => {
-    setFormGuest3Id(val)
-    if (!val || val === "manual") {
-      return
-    }
-    const g = crmGuests.find(guest => String(guest.id) === val)
-    if (g) {
-      setFormGuest3Name(g.name || g.fullName || "")
-      setFormGuest3Cpf(g.documentNumber || g.document || "")
-      setFormGuest3Phone(g.phone || "")
-      setFormGuest3Email(g.email || "")
-      toast({
-        title: "3º Hóspede Selecionado do CRM",
-        description: `${g.name || g.fullName} carregado com sucesso.`
-      })
-    }
-  }
-
-  const filteredGuests2 = useMemo(
-    () => searchIndexedCrm(guest2SearchFilter, false),
-    [guest2SearchFilter, searchIndexedCrm]
-  )
-
-  const filteredGuests3 = useMemo(
-    () => searchIndexedCrm(guest3SearchFilter, false),
-    [guest3SearchFilter, searchIndexedCrm]
-  )
-
-  const liveGuest2Matches = useMemo(
-    () => searchIndexedCrm(formGuest2Name, true, 8),
-    [formGuest2Name, searchIndexedCrm]
-  )
-
-  const liveGuest3Matches = useMemo(
-    () => searchIndexedCrm(formGuest3Name, true, 8),
-    [formGuest3Name, searchIndexedCrm]
-  )
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (guest2SuggestionsRef.current && !guest2SuggestionsRef.current.contains(event.target as Node)) {
-        setShowGuest2Suggestions(false)
-      }
-      if (guest3SuggestionsRef.current && !guest3SuggestionsRef.current.contains(event.target as Node)) {
-        setShowGuest3Suggestions(false)
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside)
-    return () => document.removeEventListener("mousedown", handleClickOutside)
-  }, [])
-
-  const handleSaveAdditionalGuestToCrm = async (guestNumber: 2 | 3) => {
-    const isG2 = guestNumber === 2
-    const nameToSave = (isG2 ? formGuest2Name : formGuest3Name).trim()
-    const phoneToSave = (isG2 ? formGuest2Phone : formGuest3Phone).trim()
-    const emailToSave = (isG2 ? formGuest2Email : formGuest3Email).trim()
-    const cpfToSave = (isG2 ? formGuest2Cpf : formGuest3Cpf).trim()
-
-    if (!nameToSave) {
-      toast({
-        title: "Nome Obrigatório",
-        description: `Preencha o nome do ${guestNumber}º hóspede para cadastrá-lo no CRM.`,
-        variant: "destructive"
-      })
-      return
-    }
-    try {
-      const res = await fetch("/api/pms/guests", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          name: nameToSave,
-          fullName: nameToSave,
-          phone: phoneToSave,
-          email: emailToSave,
-          document: cpfToSave,
-          documentNumber: cpfToSave,
-          notes: `Cadastrado como ${guestNumber}º hóspede (acompanhante) via CRM`
-        })
-      })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err.error || "Erro ao cadastrar hóspede no CRM.")
-      }
-      const newGuest = await res.json()
-      setCrmGuests(prev => [newGuest, ...prev.filter(g => g.id !== newGuest.id)])
-      if (isG2) {
-        setFormGuest2Id(String(newGuest.id))
-      } else {
-        setFormGuest3Id(String(newGuest.id))
-      }
-      toast({
-        title: "Hóspede Cadastrado no CRM!",
-        description: `${newGuest.name || newGuest.fullName} foi registrado com sucesso.`
-      })
-    } catch (e: any) {
-      toast({
-        title: "Erro ao Cadastrar",
-        description: e.message || "Não foi possível cadastrar o hóspede no CRM.",
-        variant: "destructive"
-      })
-    }
-  }
-
-  const handleSendCompanionInstructions = async (guestNumber: 2 | 3) => {
+  const handleSendCompanionInstructions = async (flatUid: string, guestNumber: 2 | 3) => {
     if (!selectedRes) return
-    const isG2 = guestNumber === 2
-    const rawName = (isG2 ? formGuest2Name : formGuest3Name).trim() || selectedRes?.guests?.[guestNumber - 1]?.name || `Hóspede ${guestNumber}`
-    const rawPhone = (isG2 ? formGuest2Phone : formGuest3Phone).trim() || selectedRes?.guests?.[guestNumber - 1]?.phone || ""
-    const rawEmail = (isG2 ? formGuest2Email : formGuest3Email).trim() || selectedRes?.guests?.[guestNumber - 1]?.email || ""
-    const rawCpf = (isG2 ? formGuest2Cpf : formGuest3Cpf).trim() || selectedRes?.guests?.[guestNumber - 1]?.cpf || ""
+    const targetFlat = formFlats.find(f => f.uid === flatUid) || primaryFlat
+    const gFields = guestNumber === 2 ? targetFlat.guest2 : targetFlat.guest3
+    const rawName = gFields.name.trim() || selectedRes?.guests?.[guestNumber - 1]?.name || `Hóspede ${guestNumber}`
+    const rawPhone = gFields.phone.trim() || selectedRes?.guests?.[guestNumber - 1]?.phone || ""
+    const rawEmail = gFields.email.trim() || selectedRes?.guests?.[guestNumber - 1]?.email || ""
+    const rawCpf = gFields.cpf.trim() || selectedRes?.guests?.[guestNumber - 1]?.cpf || ""
     const digits = rawPhone.replace(/\D/g, "")
 
     if (digits.length < 10) {
@@ -5934,20 +7778,22 @@ export default function PmsCalendar(props?: {
       const firstAgent = Array.isArray(ag.agents) && ag.agents[0] ? ag.agents[0] : null
       const safeFirstAgentEmail = firstAgent?.email && !isBillingEmailLocal(firstAgent.email) ? firstAgent.email : ""
       const safeAgOpEmail = ag.email && !isBillingEmailLocal(ag.email) ? ag.email : ""
+      const resolvedPhone = firstAgent?.phone || ag.phone || ""
       if (firstAgent) {
         if (!formAgencyAgentName) setFormAgencyAgentName(firstAgent.name || "")
         if (!formAgencyAgentEmail && (safeFirstAgentEmail || safeAgOpEmail)) {
           setFormAgencyAgentEmail(safeFirstAgentEmail || safeAgOpEmail)
         }
-        if (!formAgencyAgentPhone) setFormAgencyAgentPhone(firstAgent.phone || ag.phone || "")
+        if (!formAgencyAgentPhone) setFormAgencyAgentPhone(resolvedPhone)
       } else {
         if (!formAgencyAgentEmail && safeAgOpEmail) setFormAgencyAgentEmail(safeAgOpEmail)
         if (!formAgencyAgentPhone && ag.phone) setFormAgencyAgentPhone(ag.phone)
       }
+      if (resolvedPhone) verifyGuestPhoneWhatsApp(resolvedPhone)
       if (!formNfDeliveryEmails.trim() && ag.financialEmail) {
         setFormNfDeliveryEmails(ag.financialEmail)
       }
-      setFormNfHideFromGuest(true)
+      if (!nfHideManuallySetRef.current) setFormNfHideFromGuest(true)
     }
   }
 
@@ -6038,9 +7884,8 @@ export default function PmsCalendar(props?: {
       if (p.b2bReservationNumber) setFormB2bReservationNumber(p.b2bReservationNumber)
       if (p.b2bLocatorRloc) setFormB2bLocatorRloc(p.b2bLocatorRloc)
       if (p.b2bOriginType) setFormB2bOriginType(p.b2bOriginType === "OTA_WS" ? "OTA_WS" : "BOOKING_WS")
-      if (p.checkinDate) setFormCheckin(p.checkinDate)
-      if (p.checkoutDate) setFormCheckout(p.checkoutDate)
-      if (p.guestName) setFormGuestName(p.guestName)
+      const nextCin = p.checkinDate || formCheckin
+      const nextCout = p.checkoutDate || formCheckout
       if (p.agencyName) {
         setFormAgencyName(p.agencyName)
         if (json.agencyId) {
@@ -6060,7 +7905,10 @@ export default function PmsCalendar(props?: {
       if (p.agencyPosUnit) setFormAgencyPosUnit(p.agencyPosUnit)
       if (p.agencyAgentName) setFormAgencyAgentName(p.agencyAgentName)
       setFormAgencyAgentEmail(p.agencyAgentEmail || "")
-      if (p.agencyAgentPhone) setFormAgencyAgentPhone(p.agencyAgentPhone)
+      if (p.agencyAgentPhone) {
+        setFormAgencyAgentPhone(p.agencyAgentPhone)
+        verifyGuestPhoneWhatsApp(p.agencyAgentPhone)
+      }
       if (p.companyName) {
         setFormCompanyName(p.companyName)
         if (json.companyId) {
@@ -6077,7 +7925,6 @@ export default function PmsCalendar(props?: {
         }
       }
       if (p.costCenter) setFormCostCenter(p.costCenter)
-      if (p.hasBreakfast !== undefined) setFormIncludeBreakfast(Boolean(p.hasBreakfast))
       if (p.b2bRatePolicy) setFormB2bRatePolicy(p.b2bRatePolicy === "NET" ? "NET" : "COMISSIONADA")
       if (p.b2bCommissionPct !== undefined) setFormB2bCommissionPct(String(p.b2bCommissionPct))
       if (p.b2bPaymentType) setFormB2bPaymentType(p.b2bPaymentType === "FATURADO" ? "FATURADO" : "VIRTUAL_CARD")
@@ -6091,16 +7938,39 @@ export default function PmsCalendar(props?: {
       if (p.invoiceRecipientType) setFormInvoiceRecipientType(p.invoiceRecipientType)
       setFormNfDeliveryEmails(formatEmailList(p.nfDeliveryEmails))
       setFormNfHideFromGuest(Boolean(p.nfHideFromGuest))
+      nfHideManuallySetRef.current = true
+      const builtRates = (p.dailyRate || p.totalAmount)
+        ? buildReservationDailyRates(nextCin, nextCout, Number(p.dailyRate) || Number(p.totalAmount) || 250, "b2b")
+        : buildReservationDailyRates(nextCin, nextCout, Number(formDailyRate) || 250, "b2b", formDailyRates)
+      const parsedRateAvg = builtRates.length > 0
+        ? round2(builtRates.reduce((s, d) => s + Number(d.rate || 0), 0) / builtRates.length)
+        : (Number(p.dailyRate) || Number(formDailyRate) || 250)
+      const tot = Number(p.totalAmount) || builtRates.reduce((s, d) => s + Number(d.rate || 0), 0)
+      setFormFlats(prev =>
+        prev.map((f, idx) =>
+          idx === 0
+            ? {
+                ...f,
+                checkinDate: nextCin,
+                checkoutDate: nextCout,
+                guest1: p.guestName ? { ...f.guest1, name: p.guestName } : f.guest1,
+                includeBreakfast: p.hasBreakfast !== undefined ? Boolean(p.hasBreakfast) : f.includeBreakfast,
+                dailyRate: String(parsedRateAvg),
+                dailyRates: builtRates,
+                rateioTargetInput: tot > 0 ? String(tot) : f.rateioTargetInput,
+              }
+            : (f.sameDatesAsPrimary
+                ? {
+                    ...f,
+                    checkinDate: nextCin,
+                    checkoutDate: nextCout,
+                    dailyRates: buildReservationDailyRates(nextCin, nextCout, Number(f.dailyRate) || 250, "b2b", f.dailyRates),
+                  }
+                : f)
+        )
+      )
       if (p.dailyRate || p.totalAmount) {
-        const cin = p.checkinDate || formCheckin
-        const cout = p.checkoutDate || formCheckout
-        const rate = Number(p.dailyRate) || Number(p.totalAmount) || 250
-        setFormDailyRate(String(rate))
-        const builtRates = buildReservationDailyRates(cin, cout, rate, "b2b")
-        setFormDailyRates(builtRates)
-        const tot = Number(p.totalAmount) || builtRates.reduce((s, d) => s + Number(d.rate || 0), 0)
         setFormTotalAmount(String(tot))
-        setPackageTotalInput(String(tot))
       }
       setVoucherFilePayload(null)
       setShowVoucherParser(false)
@@ -6148,109 +8018,85 @@ export default function PmsCalendar(props?: {
     }
   }
 
-  const formatCentsMaskValue = (val: number | string | undefined | null, allowNegative = false): string => {
-    if (val === "" || val === undefined || val === null) return "";
-    const num = Number(val);
-    if (isNaN(num) || num === 0) return "";
-    const isNeg = allowNegative && num < 0;
-    const cents = Math.round(Math.abs(num) * 100);
-    if (cents === 0) return "";
-    const formatted = (cents / 100).toLocaleString("pt-BR", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
-    return isNeg ? `-${formatted}` : formatted;
+  const getFlatSubtotals = (flat: FlatReservationFormItem) => {
+    const ratesSum = round2((flat.dailyRates || []).reduce((s, d) => s + (Number(d.rate) || 0), 0));
+    const chargesSum = round2((flat.charges || []).reduce((s, c) => s + (Number(c.amount) || 0), 0));
+    return {
+      ratesSum,
+      chargesSum,
+      subtotal: Math.max(0, round2(ratesSum + chargesSum)),
+    };
   };
 
-  const parseCentsMaskInput = (raw: string, allowNegative = false): number => {
-    const isNeg = allowNegative && raw.trim().startsWith("-");
-    const digits = raw.replace(/\D/g, "");
-    if (!digits) return 0;
-    const cents = parseInt(digits, 10);
-    if (isNaN(cents) || cents === 0) return 0;
-    const val = Number((cents / 100).toFixed(2));
-    return isNeg ? -val : val;
-  };
-
-  const keepCurrencyCursorAtEnd = (e: React.SyntheticEvent<HTMLInputElement>) => {
-    const target = e.currentTarget;
-    requestAnimationFrame(() => {
-      try {
-        if (target.selectionStart === target.selectionEnd) {
-          const len = target.value.length;
-          target.setSelectionRange(len, len);
-        }
-      } catch {}
-    });
-  };
-
-  const round2 = (v: number) => Math.round((Number(v) || 0) * 100) / 100
-
-  const calculateTotal = () => {
-    let nightsSubtotal = 0;
-    if (formDailyRates && formDailyRates.length > 0) {
-      nightsSubtotal = formDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
-    } else {
-      try {
-        const d1 = parseISO(formCheckin);
-        const d2 = parseISO(formCheckout);
-        const nights = Math.max(1, differenceInDays(d2, d1));
-        nightsSubtotal = nights * (Number(formDailyRate) || 0);
-      } catch {
-        nightsSubtotal = 0;
-      }
+  const calculateTotal = (targetFlat: FlatReservationFormItem = primaryFlat) => {
+    const { ratesSum, chargesSum } = getFlatSubtotals(targetFlat);
+    if ((targetFlat.dailyRates || []).length > 0) {
+      return Number(Math.max(0, ratesSum + chargesSum).toFixed(2));
     }
-    const chargesSubtotal = formCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
-    return Number(Math.max(0, nightsSubtotal + chargesSubtotal).toFixed(2));
-  }
+    try {
+      const d1 = parseISO(targetFlat.checkinDate);
+      const d2 = parseISO(targetFlat.checkoutDate);
+      const nights = Math.max(1, differenceInDays(d2, d1));
+      return Number(Math.max(0, nights * (Number(targetFlat.dailyRate) || 0) + chargesSum).toFixed(2));
+    } catch {
+      return Number(Math.max(0, chargesSum).toFixed(2));
+    }
+  };
 
   const computeUnifiedReservationTotals = (
-    overrideExtras: MultiFlatExtraItem[] = extraPackageFlats,
+    overrideFlats: FlatReservationFormItem[] = formFlats,
     overridePkgCharges: ReservationChargeItem[] = pkgExtraCharges,
     overrideMode: "sum" | "discount_amount" | "discount_pct" | "fixed_total" = packagePricingMode,
     overrideInput: string = packagePricingInput,
-    overrideDailyRates: DailyRateItem[] = formDailyRates,
-    overrideCharges: ReservationChargeItem[] = formCharges,
     overridePayments: ReservationPaymentItem[] = formPayments,
     overridePaidAmount: string = formPaidAmount,
     overridePaymentStatus: string = formPaymentStatus,
     overrideStatus: string = formStatus
   ) => {
-    const multiActive = !selectedRes && overrideExtras.length > 0;
-    let flat1Sub = 0;
-    if (overrideDailyRates.length > 0) {
-      flat1Sub = Math.max(0, round2(
-        overrideDailyRates.reduce((s, d) => s + (Number(d.rate) || 0), 0) +
-        overrideCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0)
-      ));
-    } else {
-      flat1Sub = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+    const activeFlats = overrideFlats.length > 0 ? overrideFlats : [primaryFlat];
+    const multiActive = !selectedRes && activeFlats.length > 1;
+    const flatSubs = activeFlats.map(fl => getFlatSubtotals(fl).subtotal);
+    const flat1Sub = flatSubs[0] ?? 0;
+    const extraFlatsSub = round2(flatSubs.slice(1).reduce((s, v) => s + v, 0));
+    const pkgChargesSub = round2((overridePkgCharges || []).reduce((s, c) => s + (Number(c.amount) || 0), 0));
+
+    //Soma visível real (WYSIWYG) das diárias + taxas de todos os flats + taxas gerais do pacote
+    const visibleGrandTotal = Math.max(0, round2(flat1Sub + extraFlatsSub + pkgChargesSub));
+    let curTot = visibleGrandTotal;
+    if (!multiActive && selectedRes?.earlyCheckout && Number(formTotalAmount) > 0 && visibleGrandTotal === 0) {
+      curTot = Number(formTotalAmount);
     }
 
-    let curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-    let rawSum = curTot;
-    let extraFlatsSub = 0;
-    let pkgChargesSub = 0;
+    const rawSum = Math.max(0, round2(
+      activeFlats.reduce((acc, fl) => {
+        const rBase = (fl.dailyRates || []).reduce(
+          (s, d) => s + (d.baseRate !== undefined ? Number(d.baseRate) : (Number(d.rate) || 0)),
+          0
+        );
+        const cBase = (fl.charges || []).reduce(
+          (s, c) => s + (c.baseAmount !== undefined ? Number(c.baseAmount) : (Number(c.amount) || 0)),
+          0
+        );
+        return acc + Math.max(0, rBase + cBase);
+      }, 0) +
+      (overridePkgCharges || []).reduce(
+        (s, c) => s + (c.baseAmount !== undefined ? Number(c.baseAmount) : (Number(c.amount) || 0)),
+        0
+      )
+    ));
 
-    if (multiActive) {
-      extraFlatsSub = round2(
-        overrideExtras.reduce((acc, ef) => {
-          const rSum = ef.dailyRates.reduce((s, d) => s + (Number(d.rate) || 0), 0);
-          const cSum = ef.charges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
-          return acc + Math.max(0, rSum + cSum);
-        }, 0)
-      );
-      pkgChargesSub = round2(overridePkgCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0));
-      rawSum = Math.max(0, round2(flat1Sub + extraFlatsSub + pkgChargesSub));
+    // Se rateio ainda não alterou `baseRate` (ex: chamada logo após digitar), garante fallback consistente
+    const hasBaseSnapshots =
+      overrideMode !== "sum" &&
+      activeFlats.some(fl => (fl.dailyRates || []).some(d => d.baseRate !== undefined));
+    if (overrideMode !== "sum" && !hasBaseSnapshots && multiActive) {
       const numVal = Math.max(0, Number(String(overrideInput || "").replace(",", ".")) || 0);
       if (overrideMode === "discount_amount") {
         curTot = Math.max(0, round2(rawSum - numVal));
       } else if (overrideMode === "discount_pct") {
-        curTot = Math.max(0, round2(rawSum * (1 - Math.min(100, numVal) / 100)));
-      } else if (overrideMode === "fixed_total" && String(overrideInput || "").trim() !== "") {
+        curTot = Math.max(0, round2((rawSum * (100 - Math.min(100, numVal))) / 100));
+      } else if (overrideMode === "fixed_total" && String(overrideInput || "").trim() !== "" && numVal > 0) {
         curTot = round2(numVal);
-      } else {
-        curTot = rawSum;
       }
     }
 
@@ -6266,31 +8112,55 @@ export default function PmsCalendar(props?: {
     return { curTot, rawSum, flat1Sub, extraFlatsSub, pkgChargesSub, curPaid, remaining, cardRemaining, isResPaid };
   };
 
-  const syncMultiFlatTotalsAndPayments = (
-    nextExtras: MultiFlatExtraItem[] = extraPackageFlats,
+  const syncTotalsAndPayments = (
+    nextFlats: FlatReservationFormItem[] = formFlats,
     nextPkgCharges: ReservationChargeItem[] = pkgExtraCharges,
-    nextMode: "sum" | "discount_amount" | "discount_pct" | "fixed_total" = packagePricingMode,
-    nextInput: string = packagePricingInput,
-    nextDailyRates: DailyRateItem[] = formDailyRates,
-    nextFlat1Charges: ReservationChargeItem[] = formCharges,
-    nextChannel: string = formChannel
+    targetChannel: string = formChannel,
+    targetMethod?: string,
+    overrideMode: "sum" | "discount_amount" | "discount_pct" | "fixed_total" = packagePricingMode,
+    overrideInput: string = packagePricingInput
   ) => {
     const totals = computeUnifiedReservationTotals(
-      nextExtras,
+      nextFlats,
       nextPkgCharges,
-      nextMode,
-      nextInput,
-      nextDailyRates,
-      nextFlat1Charges,
+      overrideMode,
+      overrideInput,
       formPayments,
       formPaidAmount,
       formPaymentStatus,
       formStatus
     );
     const newTot = totals.curTot;
-    const isOtaCh = nextChannel === "booking" || nextChannel === "airbnb";
-    if (formIsFaturadoBoleto || nextChannel === "b2b" || (formStatus === "pre_reserva" && !isOtaCh)) {
-      const nonSynth = formPayments.filter(p => p && !/^(pagamento integral|pagamento inicial)/i.test(String(p.notes || "").trim()));
+    setFormTotalAmount(String(newTot));
+
+    const multiActive = !selectedRes && nextFlats.length > 1;
+    const isBooking = targetChannel === "booking";
+    const isB2b = targetChannel === "b2b";
+    const isOtaTarget = isBooking || targetChannel === "airbnb";
+    const resolvedMethod =
+      targetMethod ||
+      (isBooking ? "booking" : (targetChannel === "airbnb" ? "airbnb" : (isB2b ? (formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b") : formPaymentMethod)));
+    const rmLower = String(resolvedMethod || "").toLowerCase();
+    const isFaturadoSync = Boolean(
+      formIsFaturadoBoleto ||
+      rmLower === "boleto_faturado" ||
+      rmLower === "faturado_boleto" ||
+      rmLower === "boleto" ||
+      rmLower === "faturado_pj" ||
+      rmLower === "faturado_b2b"
+    );
+
+    if (isBooking) {
+      setFormPaymentMethod("booking");
+      setFormPaymentStatus("pago_total");
+    } else if (targetChannel === "airbnb") {
+      setFormPaymentMethod("airbnb");
+      setFormPaymentStatus("pago_total");
+    } else if (isB2b || isFaturadoSync) {
+      setFormPaymentMethod(isFaturadoSync && !isB2b ? "boleto_faturado" : resolvedMethod);
+      const nonSynth = formPayments.filter(
+        p => p && !(isFaturadoSync && /^(pagamento integral|pagamento inicial|complemento de quita[cç][aã]o)$/i.test(String(p.notes || "").trim()))
+      );
       if (nonSynth.length === 0) {
         if (formPayments.length > 0) setFormPayments([]);
         setFormPaidAmount("0");
@@ -6298,14 +8168,22 @@ export default function PmsCalendar(props?: {
         return newTot;
       }
     }
-    if (isOtaCh) {
-      setFormPaymentMethod(nextChannel);
-      const otaLabel = nextChannel === "booking" ? "Booking.com" : "Airbnb";
+
+    if (formStatus === "pre_reserva" && !isOtaTarget) {
+      setFormPaidAmount("0");
+      setFormPayments([]);
+      setFormPaymentStatus("pendente");
+      return newTot;
+    }
+
+    if (isOtaTarget && (!selectedRes || multiActive)) {
+      setFormPaymentMethod(targetChannel);
+      const otaLabel = isBooking ? "Booking.com" : "Airbnb";
       if (formPayments.length <= 1 && (formPayments.length === 0 || /^(pagamento integral|pagamento inicial)/i.test(String(formPayments[0]?.notes || "").trim()))) {
         setFormPayments([{
           id: formPayments[0]?.id || `pay_${Date.now()}`,
           amount: newTot,
-          method: nextChannel,
+          method: targetChannel,
           category: "quitacao",
           date: formPayments[0]?.date || format(new Date(), "yyyy-MM-dd'T'HH:mm"),
           notes: `Pagamento integral ${otaLabel}`
@@ -6315,22 +8193,138 @@ export default function PmsCalendar(props?: {
         return newTot;
       }
     }
-    if (formPayments.length === 1 && /^(pagamento integral|pagamento inicial)/i.test(String(formPayments[0]?.notes || "").trim()) && formPaymentStatus === "pago_total") {
-      setFormPayments([{ ...formPayments[0], amount: newTot }]);
-      setFormPaidAmount(String(newTot));
-      setFormPaymentStatus("pago_total");
-    } else {
-      const paidSum = round2(formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0));
-      setFormPaidAmount(String(paidSum));
-      if (paidSum >= newTot && newTot > 0) {
+
+    if (!selectedRes) {
+      if (formPayments.length <= 1 && (formPayments.length === 0 || /^(pagamento integral|pagamento inicial)/i.test(String(formPayments[0]?.notes || "").trim())) && formPaymentStatus === "pago_total") {
+        setFormPayments([{
+          id: formPayments[0]?.id || `pay_${Date.now()}`,
+          amount: newTot,
+          method: resolvedMethod || "pix",
+          category: "quitacao",
+          date: formPayments[0]?.date || format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+          notes: formPayments[0]?.notes || "Pagamento integral"
+        }]);
+        setFormPaidAmount(String(newTot));
         setFormPaymentStatus("pago_total");
-      } else if (paidSum > 0) {
-        setFormPaymentStatus("sinal_pago");
       } else {
-        setFormPaymentStatus("pendente");
+        const paidSum = round2(formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0));
+        setFormPaidAmount(String(paidSum));
+        if (paidSum >= newTot && newTot > 0) setFormPaymentStatus("pago_total");
+        else if (paidSum > 0) setFormPaymentStatus("sinal_pago");
+        else setFormPaymentStatus("pendente");
+      }
+      return newTot;
+    }
+
+    // Modo Edição: preserva o valor recebido para diárias diretas e soma novas diárias OTA automaticamente
+    const f1Rates = nextFlats[0]?.dailyRates || [];
+    const origDates = new Set<string>();
+    if (Array.isArray(selectedRes.dailyRates) && selectedRes.dailyRates.length > 0) {
+      selectedRes.dailyRates.forEach((od: any) => { if (od?.date) origDates.add(String(od.date)); });
+    } else if (selectedRes.checkinDate && selectedRes.checkoutDate) {
+      const d1 = new Date(selectedRes.checkinDate + "T12:00:00");
+      const d2 = new Date(selectedRes.checkoutDate + "T12:00:00");
+      const n = Math.max(1, differenceInDays(d2, d1));
+      for (let i = 0; i < n; i++) {
+        origDates.add(format(addDays(d1, i), "yyyy-MM-dd"));
       }
     }
+    const addedRates = f1Rates.filter(d => d.date && !origDates.has(d.date));
+    const addedOtaRates = addedRates.filter(d => d.channel === "booking" || d.channel === "airbnb");
+    const addedOtaSum = Number(addedOtaRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0).toFixed(2));
+    const hasAnyDirectNight = f1Rates.some(d => d.channel && d.channel !== "booking" && d.channel !== "airbnb" && d.channel !== "b2b");
+    const hasOtaDirectExtension = isOtaTarget && Boolean(
+      hasAnyDirectNight ||
+      ((selectedRes.paymentStatus === "sinal_pago" || selectedRes.paymentStatus === "parcial") && hasAnyDirectNight)
+    );
+
+    if ((!isOtaTarget && !isB2b) || hasOtaDirectExtension) {
+      const manualPayments = formPayments.filter(p => p.id !== "pay_auto_ota_ext");
+      const manualPaidSum = manualPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+      const currentPaidSum = Number((manualPaidSum + addedOtaSum).toFixed(2));
+      if (addedOtaSum > 0) {
+        const otaExtMethod = addedOtaRates.some(d => d.channel === "booking") ? "booking" : "airbnb";
+        const otaExtLabel = otaExtMethod === "booking" ? "Booking.com" : "Airbnb";
+        setFormPayments([
+          ...manualPayments,
+          {
+            id: "pay_auto_ota_ext",
+            amount: addedOtaSum,
+            method: otaExtMethod,
+            category: "adicional",
+            date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+            notes: `Diária adicional ${otaExtLabel} (Quitada)`
+          }
+        ]);
+      } else if (formPayments.some(p => p.id === "pay_auto_ota_ext")) {
+        setFormPayments(manualPayments);
+      }
+      setFormPaidAmount(String(currentPaidSum));
+      if (currentPaidSum >= newTot && newTot > 0) setFormPaymentStatus("pago_total");
+      else if (currentPaidSum > 0) setFormPaymentStatus("sinal_pago");
+      else setFormPaymentStatus("pendente");
+      return newTot;
+    }
+
+    setFormPaidAmount(String(newTot));
+    setFormPayments(prev => {
+      if (prev.length <= 1) {
+        return [{
+          id: prev[0]?.id || `pay_${Date.now()}`,
+          amount: newTot,
+          method: resolvedMethod || (isBooking ? "booking" : "pix"),
+          category: prev[0]?.category || "quitacao",
+          date: prev[0]?.date || format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+          notes: prev[0]?.notes || (isBooking ? "Pagamento integral Booking.com" : (targetChannel === "airbnb" ? "Pagamento integral Airbnb" : "Pagamento integral"))
+        }];
+      }
+      return prev;
+    });
     return newTot;
+  };
+
+  // Wrapper de compatibilidade para helpers que ainda recebem diárias/taxas diretas
+  const syncCompositeTotalAndPaid = (
+    newDailyRates: DailyRateItem[] = formDailyRates,
+    newCharges: ReservationChargeItem[] = formCharges,
+    targetChannel: string = formChannel,
+    targetMethod?: string,
+    overrideFlats?: FlatReservationFormItem[]
+  ) => {
+    const baseFlats = overrideFlats || formFlats;
+    const nextFlats = baseFlats.map((fl, idx) =>
+      idx === 0 ? { ...fl, dailyRates: newDailyRates, charges: newCharges } : fl
+    );
+    return syncTotalsAndPayments(nextFlats, pkgExtraCharges, targetChannel, targetMethod);
+  };
+
+  const syncSigiloAutoDefault = (nextReqType: string, flatsCount: number) => {
+    if (selectedRes || nfHideManuallySetRef.current) return;
+    if (nextReqType === "agency_b2b" || nextReqType === "company" || (nextReqType === "other_person" && flatsCount >= 2)) {
+      setFormNfHideFromGuest(true);
+    }
+  };
+
+  const stripRateioSnapshotsKeepEdits = (flats: FlatReservationFormItem[], pkgCharges: ReservationChargeItem[]) => {
+    const cleanFlats = flats.map(fl => ({
+      ...fl,
+      dailyRates: (fl.dailyRates || []).map(({ baseRate: _b, ...d }) => d),
+      charges: (fl.charges || []).map(({ baseAmount: _b, ...c }) => c),
+    }));
+    const cleanPkgCharges = (pkgCharges || []).map(({ baseAmount: _b, ...c }) => c);
+    return { cleanFlats, cleanPkgCharges };
+  };
+
+  const handlePackagePricingChange = (
+    nextMode: "sum" | "discount_amount" | "discount_pct" | "fixed_total",
+    rawInput: string
+  ) => {
+    const result = applyPackageRateioToFlats(formFlats, pkgExtraCharges, nextMode, rawInput);
+    setPackagePricingMode(nextMode);
+    setPackagePricingInput(rawInput);
+    setFormFlats(result.flats);
+    setPkgExtraCharges(result.pkgExtraCharges);
+    syncTotalsAndPayments(result.flats, result.pkgExtraCharges, formChannel, undefined, nextMode, rawInput);
   };
 
   const suggestNextFreeFlatId = (excludedIds: string[], cin: string, cout: string): string => {
@@ -6359,334 +8353,554 @@ export default function PmsCalendar(props?: {
     return localFree?.id ? String(localFree.id) : "auto";
   };
 
-  const handleAddExtraPackageFlat = () => {
-    const cin = formCheckin || format(new Date(), "yyyy-MM-dd");
-    const cout = formCheckout && formCheckout > cin ? formCheckout : format(addDays(parseISO(cin), 1), "yyyy-MM-dd");
-    const excluded = [formFlatId, ...extraPackageFlats.map(f => f.flatId)].filter(v => v && v !== "auto");
+  const buildNewPackageFlatItem = (currentFlats: FlatReservationFormItem[]): FlatReservationFormItem => {
+    const pFlat = currentFlats[0] || primaryFlat;
+    const cin = pFlat.checkinDate || format(new Date(), "yyyy-MM-dd");
+    const cout = pFlat.checkoutDate && pFlat.checkoutDate > cin ? pFlat.checkoutDate : format(addDays(parseISO(cin), 1), "yyyy-MM-dd");
+    const excluded = currentFlats.map(f => f.flatId).filter(v => v && v !== "auto");
     const nextFid = suggestNextFreeFlatId(excluded, cin, cout);
-    const baseRate = Math.max(0, Number(String(formDailyRate || "250").replace(",", ".")) || 250);
+    const baseRate = Math.max(0, Number(String(pFlat.dailyRate || "250").replace(",", ".")) || 250);
     const isOtaCh = formChannel === "booking" || formChannel === "airbnb";
-    const newItem: MultiFlatExtraItem = {
+    const builtRates = buildReservationDailyRates(cin, cout, baseRate, formChannel || "whatsapp");
+    const initCharges: ReservationChargeItem[] = isOtaCh
+      ? [{ id: `charge_${Date.now()}_${Math.random().toString(36).slice(2, 5)}_clean`, type: "cleaning", title: "Taxa de Limpeza", amount: 50, notes: "" }]
+      : [];
+    const initSub = round2(builtRates.reduce((s, d) => s + Number(d.rate || 0), 0) + initCharges.reduce((s, c) => s + Number(c.amount || 0), 0));
+    return createDefaultFlatReservationItem({
       uid: `extra_flat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       flatId: nextFid,
       sameDatesAsPrimary: true,
       checkinDate: cin,
       checkoutDate: cout,
-      checkinTime: formCheckinTime || defaultCheckinTime || "14:00",
-      checkoutTime: formCheckoutTime || defaultCheckoutTime || "12:00",
+      checkinTime: pFlat.checkinTime || defaultCheckinTime || "14:00",
+      checkoutTime: pFlat.checkoutTime || defaultCheckoutTime || "12:00",
       guestCount: "1",
       informGuestsLater: formRequesterType !== "guest",
-      guest2InformLater: false,
-      guestId: "",
-      guestName: "",
-      guestCpf: "",
-      guestPhone: "",
-      guestEmail: "",
-      guest2Id: "",
-      guest2Name: "",
-      guest2Cpf: "",
-      guest2Phone: "",
-      guest2Email: "",
-      guest3Id: "",
-      guest3Name: "",
-      guest3Cpf: "",
-      guest3Phone: "",
-      guest3Email: "",
-      includeBreakfast: formIncludeBreakfast,
-      twinBeds: false,
-      extraMattress: false,
-      vehiclePlate: "",
-      vehicleBrand: "",
-      vehicleModel: "",
-      vehicleColor: "",
-      specialRequests: "",
-      notes: "",
+      includeBreakfast: pFlat.includeBreakfast,
       dailyRate: String(baseRate),
-      dailyRates: buildReservationDailyRates(cin, cout, baseRate, formChannel || "whatsapp"),
-      charges: isOtaCh
-        ? [{ id: `charge_${Date.now()}_${Math.random().toString(36).slice(2, 5)}_clean`, type: "cleaning", title: "Taxa de Limpeza", amount: 50, notes: "" }]
-        : []
-    };
-    const nextExtras = [...extraPackageFlats, newItem];
-    setExtraPackageFlats(nextExtras);
-    syncMultiFlatTotalsAndPayments(nextExtras, pkgExtraCharges, packagePricingMode, packagePricingInput);
-    toast({
-      title: `Flat ${nextExtras.length + 1} adicionado ao pacote!`,
-      description: `Preencha hóspedes, ocupação e preferências deste flat abaixo.`
-    });
+      dailyRates: builtRates,
+      charges: initCharges,
+      rateioTargetInput: initSub > 0 ? String(initSub) : "",
+    }, formChannel || "whatsapp");
   };
 
-  const handleUpdateExtraPackageFlat = (uid: string, patch: Partial<MultiFlatExtraItem>, resyncPayments = false) => {
-    const next = extraPackageFlats.map(item => (item.uid === uid ? { ...item, ...patch } : item));
-    setExtraPackageFlats(next);
-    if (resyncPayments) {
-      syncMultiFlatTotalsAndPayments(next, pkgExtraCharges, packagePricingMode, packagePricingInput);
+  const handleSetFlatCount = (targetCount: number) => {
+    if (selectedRes) return;
+    const clamped = Math.max(1, Math.min(20, Math.floor(targetCount)));
+    if (clamped === formFlats.length) return;
+    if (clamped > formFlats.length) {
+      let nextFlats = [...formFlats];
+      for (let k = formFlats.length; k < clamped; k++) {
+        nextFlats = [...nextFlats, buildNewPackageFlatItem(nextFlats)];
+      }
+      if (packagePricingMode !== "sum") {
+        const res = applyPackageRateioToFlats(nextFlats, pkgExtraCharges, packagePricingMode, packagePricingInput);
+        setFormFlats(res.flats);
+        setPkgExtraCharges(res.pkgExtraCharges);
+        syncTotalsAndPayments(res.flats, res.pkgExtraCharges, formChannel);
+      } else {
+        setFormFlats(nextFlats);
+        syncTotalsAndPayments(nextFlats, pkgExtraCharges, formChannel);
+      }
+      syncSigiloAutoDefault(formRequesterType, nextFlats.length);
+      return;
     }
-  };
 
-  const handleRemoveExtraPackageFlat = (uid: string) => {
-    const nextExtras = extraPackageFlats.filter(item => item.uid !== uid);
-    setExtraPackageFlats(nextExtras);
-    if (pkgChargeTarget === uid) setPkgChargeTarget("package");
-    if (nextExtras.length === 0) {
+    const trimmed = formFlats.slice(0, clamped);
+    if (!trimmed.some(f => f.uid === pkgChargeTarget)) {
+      setPkgChargeTarget("package");
+    }
+    if (trimmed.length === 1) {
+      const mergedCharges = pkgExtraCharges.length > 0 ? [...trimmed[0].charges, ...pkgExtraCharges] : trimmed[0].charges;
+      const { cleanFlats } = stripRateioSnapshotsKeepEdits([{ ...trimmed[0], charges: mergedCharges }], []);
+      setFormFlats(cleanFlats);
+      setPkgExtraCharges([]);
       setPackagePricingMode("sum");
       setPackagePricingInput("");
       setPackageEmitBoletoNow(false);
-      if (pkgExtraCharges.length > 0) {
-        const mergedCharges = [...formCharges, ...pkgExtraCharges];
-        setFormCharges(mergedCharges);
-        setPkgExtraCharges([]);
-        syncCompositeTotalAndPaid(formDailyRates, mergedCharges, formChannel, undefined, nextExtras, "sum", "");
-      } else {
-        syncCompositeTotalAndPaid(formDailyRates, formCharges, formChannel, undefined, nextExtras, "sum", "");
-      }
+      syncTotalsAndPayments(cleanFlats, [], formChannel, undefined, "sum", "");
+    } else if (packagePricingMode !== "sum") {
+      const res = applyPackageRateioToFlats(trimmed, pkgExtraCharges, packagePricingMode, packagePricingInput);
+      setFormFlats(res.flats);
+      setPkgExtraCharges(res.pkgExtraCharges);
+      syncTotalsAndPayments(res.flats, res.pkgExtraCharges, formChannel);
     } else {
-      syncMultiFlatTotalsAndPayments(nextExtras, pkgExtraCharges, packagePricingMode, packagePricingInput);
+      setFormFlats(trimmed);
+      syncTotalsAndPayments(trimmed, pkgExtraCharges, formChannel);
     }
   };
 
-  // ── Helpers de Gerenciamento de Diárias & Pagamentos ──────────────
-  // Sincroniza o Total Composto (diárias + taxas) e pré-preenche sempre o Valor Pago com o mesmo total composto
-  const syncCompositeTotalAndPaid = (
-    newDailyRates: DailyRateItem[] = formDailyRates,
-    newCharges: ReservationChargeItem[] = formCharges,
-    targetChannel: string = formChannel,
-    targetMethod?: string,
-    overrideExtraFlats?: MultiFlatExtraItem[],
-    overridePricingMode?: "sum" | "discount_amount" | "discount_pct" | "fixed_total",
-    overridePricingInput?: string
-  ) => {
-    const subNights = newDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
-    const subCharges = newCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
-    const flat1Tot = Number(Math.max(0, subNights + subCharges).toFixed(2));
-    setFormTotalAmount(String(flat1Tot));
-    setPackageTotalInput(flat1Tot > 0 ? String(flat1Tot) : "");
-    if (newDailyRates.length > 0 && subNights > 0) {
-      setFormDailyRate(String(Math.round((subNights / newDailyRates.length) * 100) / 100));
-    }
-
-    const activeExtras = overrideExtraFlats !== undefined ? overrideExtraFlats : extraPackageFlats;
-    if (!selectedRes && activeExtras.length > 0) {
-      return syncMultiFlatTotalsAndPayments(
-        activeExtras,
-        pkgExtraCharges,
-        overridePricingMode !== undefined ? overridePricingMode : packagePricingMode,
-        overridePricingInput !== undefined ? overridePricingInput : packagePricingInput,
-        newDailyRates,
-        newCharges,
-        targetChannel
-      );
-    }
-    const newTot = flat1Tot;
-
-    const isBooking = targetChannel === "booking";
-    const isB2b = targetChannel === "b2b";
-    const resolvedMethod = targetMethod || (isBooking ? "booking" : (targetChannel === "airbnb" ? "airbnb" : (isB2b ? (formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b") : formPaymentMethod)));
-    const rmLower = String(resolvedMethod || "").toLowerCase();
-    const isFaturadoSync = Boolean(
-      formIsFaturadoBoleto ||
-      rmLower === "boleto_faturado" ||
-      rmLower === "faturado_boleto" ||
-      rmLower === "boleto" ||
-      rmLower === "faturado_pj" ||
-      rmLower === "faturado_b2b"
-    );
-
-    if (isBooking) {
-      setFormPaymentMethod("booking");
-      setFormPaymentStatus("pago_total");
-    } else if (targetChannel === "airbnb") {
-      setFormPaymentMethod("airbnb");
-      setFormPaymentStatus("pago_total");
-    } else if (isB2b || isFaturadoSync) {
-      setFormPaymentMethod(isFaturadoSync && !isB2b ? "boleto_faturado" : resolvedMethod);
-      const nonSyntheticPays = formPayments.filter(p =>
-        p && !(isFaturadoSync && /^(pagamento integral|pagamento inicial)/i.test(String(p.notes || "").trim()))
-      );
-      if (nonSyntheticPays.length === 0) {
-        if (formPayments.length > 0) setFormPayments([]);
-        setFormPaidAmount("0");
-        setFormPaymentStatus("pendente");
-        return newTot;
-      }
-    }
-
-    // Pré-Reserva (canal direto) nunca tem valor pago: atualiza apenas o total
-    if (formStatus === "pre_reserva" && !isBooking && targetChannel !== "airbnb") {
-      setFormPaidAmount("0");
-      setFormPayments([]);
-      setFormPaymentStatus("pendente");
-      return newTot;
-    }
-
-    // Ao editar uma reserva existente (selectedRes !== null), preserva o valor efetivamente recebido
-    // para diárias diretas (WhatsApp/Site/Balcão/Empresa) gerando saldo pendente, mas soma automaticamente
-    // como pagas novas diárias lançadas com canal Airbnb ou Booking.com.
-    const isOtaTarget = isBooking || targetChannel === "airbnb";
-    const origDates = new Set<string>();
-    if (selectedRes) {
-      if (Array.isArray(selectedRes.dailyRates) && selectedRes.dailyRates.length > 0) {
-        selectedRes.dailyRates.forEach((od: any) => { if (od?.date) origDates.add(String(od.date)); });
-      } else if (selectedRes.checkinDate && selectedRes.checkoutDate) {
-        const d1 = new Date(selectedRes.checkinDate + "T12:00:00");
-        const d2 = new Date(selectedRes.checkoutDate + "T12:00:00");
-        const n = Math.max(1, differenceInDays(d2, d1));
-        for (let i = 0; i < n; i++) {
-          origDates.add(format(addDays(d1, i), "yyyy-MM-dd"));
-        }
-      }
-    }
-    const addedRates = selectedRes ? newDailyRates.filter(d => d.date && !origDates.has(d.date)) : [];
-    const addedOtaRates = addedRates.filter(d => d.channel === "booking" || d.channel === "airbnb");
-    const addedOtaSum = Number(addedOtaRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0).toFixed(2));
-    const hasAnyDirectNight = newDailyRates.some(d => d.channel && d.channel !== "booking" && d.channel !== "airbnb" && d.channel !== "b2b");
-
-    const hasOtaDirectExtension = isOtaTarget && Boolean(
-      selectedRes && (
-        hasAnyDirectNight ||
-        ((selectedRes.paymentStatus === "sinal_pago" || selectedRes.paymentStatus === "parcial") && hasAnyDirectNight)
-      )
-    );
-    if (selectedRes && ((!isOtaTarget && !isB2b) || hasOtaDirectExtension)) {
-      const manualPayments = formPayments.filter(p => p.id !== "pay_auto_ota_ext");
-      const manualPaidSum = manualPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
-      const currentPaidSum = Number((manualPaidSum + addedOtaSum).toFixed(2));
-      if (addedOtaSum > 0) {
-        const otaExtMethod = addedOtaRates.some(d => d.channel === "booking") ? "booking" : "airbnb";
-        const otaExtLabel = otaExtMethod === "booking" ? "Booking.com" : "Airbnb";
-        setFormPayments([
-          ...manualPayments,
-          {
-            id: "pay_auto_ota_ext",
-            amount: addedOtaSum,
-            method: otaExtMethod,
-            category: "adicional",
-            date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
-            notes: `Diária adicional ${otaExtLabel} (Quitada)`
-          }
-        ]);
-      } else if (formPayments.some(p => p.id === "pay_auto_ota_ext")) {
-        setFormPayments(manualPayments);
-      }
-      setFormPaidAmount(String(currentPaidSum));
-      if (currentPaidSum >= newTot && newTot > 0) {
-        setFormPaymentStatus("pago_total");
-      } else if (currentPaidSum > 0) {
-        setFormPaymentStatus("sinal_pago");
-      } else {
-        setFormPaymentStatus("pendente");
-      }
-      return newTot;
-    }
-
-    // Para novas reservas já marcadas como confirmadas (ou OTAs sem diária extra direta), pré-preenche o valor pago com o total composto
-    setFormPaidAmount(String(newTot));
-
-    setFormPayments(prev => {
-      if (prev.length <= 1) {
-        return [{
-          id: prev[0]?.id || `pay_${Date.now()}`,
-          amount: newTot,
-          method: resolvedMethod || (isBooking ? "booking" : "pix"),
-          category: prev[0]?.category || "quitacao",
-          date: prev[0]?.date || format(new Date(), "yyyy-MM-dd'T'HH:mm"),
-          notes: prev[0]?.notes || (isBooking ? "Pagamento integral Booking.com" : (targetChannel === "airbnb" ? "Pagamento integral Airbnb" : "Pagamento integral"))
-        }];
-      }
-      return prev;
+  const handleAddExtraPackageFlat = () => {
+    handleSetFlatCount(formFlats.length + 1);
+    toast({
+      title: `Flat ${formFlats.length + 1} adicionado ao pacote!`,
+      description: "Preencha hóspedes, veículo, diárias e configurações deste flat abaixo."
     });
-
-    return newTot;
   };
 
-  const syncExtraFlatsDatesFromPrimary = (
-    newCin: string,
-    newCout: string,
-    nextChannel: string = formChannel
-  ): MultiFlatExtraItem[] => {
-    if (selectedRes || extraPackageFlats.length === 0) return extraPackageFlats;
-    const nextExtras = extraPackageFlats.map(ef => {
-      if (!ef.sameDatesAsPrimary) return ef;
-      const rateNum = Math.max(0, Number(String(ef.dailyRate || "250").replace(",", ".")) || 250);
+  const handleRemoveFlatByUid = (uid: string) => {
+    if (formFlats.length <= 1) return;
+    const remaining = formFlats.filter(item => item.uid !== uid);
+    if (pkgChargeTarget === uid) setPkgChargeTarget("package");
+    if (remaining.length === 1) {
+      const mergedCharges = pkgExtraCharges.length > 0 ? [...remaining[0].charges, ...pkgExtraCharges] : remaining[0].charges;
+      const { cleanFlats } = stripRateioSnapshotsKeepEdits([{ ...remaining[0], charges: mergedCharges }], []);
+      setFormFlats(cleanFlats);
+      setPkgExtraCharges([]);
+      setPackagePricingMode("sum");
+      setPackagePricingInput("");
+      setPackageEmitBoletoNow(false);
+      syncTotalsAndPayments(cleanFlats, [], formChannel, undefined, "sum", "");
+    } else if (packagePricingMode !== "sum") {
+      const res = applyPackageRateioToFlats(remaining, pkgExtraCharges, packagePricingMode, packagePricingInput);
+      setFormFlats(res.flats);
+      setPkgExtraCharges(res.pkgExtraCharges);
+      syncTotalsAndPayments(res.flats, res.pkgExtraCharges, formChannel);
+    } else {
+      setFormFlats(remaining);
+      syncTotalsAndPayments(remaining, pkgExtraCharges, formChannel);
+    }
+  };
+
+  const handleApplyPrimaryDatesToAllFlats = () => {
+    const pCin = primaryFlat.checkinDate;
+    const pCout = primaryFlat.checkoutDate;
+    if (!pCin || !pCout || pCout <= pCin) {
+      toast({
+        title: "Datas inválidas no Flat 1",
+        description: "Defina um check-in e check-out válidos no Flat 1 antes de replicar.",
+        variant: "destructive"
+      });
+      return;
+    }
+    const nextFlats = formFlats.map((fl, idx) => {
+      if (idx === 0) return fl;
+      const rNum = Math.max(0, Number(String(fl.dailyRate || "250").replace(",", ".")) || 250);
       return {
-        ...ef,
-        checkinDate: newCin,
-        checkoutDate: newCout,
-        dailyRates: buildReservationDailyRates(newCin, newCout, rateNum, nextChannel || "whatsapp", ef.dailyRates)
+        ...fl,
+        sameDatesAsPrimary: true,
+        checkinDate: pCin,
+        checkoutDate: pCout,
+        dailyRates: buildReservationDailyRates(pCin, pCout, rNum, formChannel || "whatsapp", fl.dailyRates),
       };
     });
-    setExtraPackageFlats(nextExtras);
-    return nextExtras;
+    if (packagePricingMode !== "sum") {
+      const res = applyPackageRateioToFlats(nextFlats, pkgExtraCharges, packagePricingMode, packagePricingInput);
+      setFormFlats(res.flats);
+      setPkgExtraCharges(res.pkgExtraCharges);
+      syncTotalsAndPayments(res.flats, res.pkgExtraCharges, formChannel);
+    } else {
+      setFormFlats(nextFlats);
+      syncTotalsAndPayments(nextFlats, pkgExtraCharges, formChannel);
+    }
+    toast({
+      title: "Datas replicadas!",
+      description: `Todos os ${formFlats.length} flats agora usam ${pCin.split("-").reverse().join("/")} → ${pCout.split("-").reverse().join("/")}.`
+    });
   };
 
-  // Sincronização centralizada de datas (via digitação manual ou calendário único)
-  const handleDatesChange = (newCin: string, newCout: string) => {
-    setFormCheckin(newCin);
-    setFormCheckout(newCout);
+  const handlePatchFlat = (
+    uid: string,
+    patch: Partial<FlatReservationFormItem>,
+    opts?: { manualFlatSelect?: boolean; syncPrimaryDates?: boolean }
+  ) => {
+    if (opts?.manualFlatSelect) {
+      isFlatManuallyChangedRef.current = true;
+    }
+    let ratesOrChargesChanged = Boolean(patch.dailyRates || patch.charges || opts?.syncPrimaryDates);
+    const nextFlats = formFlats.map(fl => {
+      if (fl.uid !== uid) return fl;
+      let merged = { ...fl, ...patch };
+      if (opts?.syncPrimaryDates) {
+        const pCin = primaryFlat.checkinDate;
+        const pCout = primaryFlat.checkoutDate;
+        const rNum = Math.max(0, Number(String(merged.dailyRate || "250").replace(",", ".")) || 250);
+        merged = {
+          ...merged,
+          sameDatesAsPrimary: true,
+          checkinDate: pCin,
+          checkoutDate: pCout,
+          dailyRates: buildReservationDailyRates(pCin, pCout, rNum, formChannel || "whatsapp", merged.dailyRates),
+        };
+      }
+      return merged;
+    });
+    setFormFlats(nextFlats);
+    if (ratesOrChargesChanged) {
+      syncTotalsAndPayments(nextFlats, pkgExtraCharges, formChannel);
+    }
+  };
+
+  const handleDatesChangeForFlat = (uid: string, newCin: string, newCout: string) => {
+    const isPrimaryUid = uid === formFlats[0]?.uid;
     const dCin = safeParseDate(newCin);
     const dCout = safeParseDate(newCout);
-    if (dCin && dCout && dCin < dCout) {
-      const updated = buildReservationDailyRates(newCin, newCout, Number(formDailyRate) || 250, formChannel, formDailyRates);
-      setFormDailyRates(updated);
-      const nextExtras = syncExtraFlatsDatesFromPrimary(newCin, newCout, formChannel);
-      syncCompositeTotalAndPaid(updated, formCharges, formChannel, undefined, nextExtras);
+    const validRange = Boolean(dCin && dCout && dCin < dCout);
+
+    let nextFlats = formFlats.map((fl, idx) => {
+      if (fl.uid === uid) {
+        const rNum = Math.max(0, Number(String(fl.dailyRate || "250").replace(",", ".")) || 250);
+        const nextRates = validRange
+          ? buildReservationDailyRates(newCin, newCout, rNum, formChannel || "whatsapp", fl.dailyRates)
+          : fl.dailyRates;
+        return { ...fl, checkinDate: newCin, checkoutDate: newCout, dailyRates: nextRates };
+      }
+      if (isPrimaryUid && idx > 0 && fl.sameDatesAsPrimary) {
+        const rNum = Math.max(0, Number(String(fl.dailyRate || "250").replace(",", ".")) || 250);
+        const nextRates = validRange
+          ? buildReservationDailyRates(newCin, newCout, rNum, formChannel || "whatsapp", fl.dailyRates)
+          : fl.dailyRates;
+        return { ...fl, checkinDate: newCin, checkoutDate: newCout, dailyRates: nextRates };
+      }
+      return fl;
+    });
+
+    if (validRange && packagePricingMode !== "sum" && nextFlats.length > 1) {
+      const res = applyPackageRateioToFlats(nextFlats, pkgExtraCharges, packagePricingMode, packagePricingInput);
+      setFormFlats(res.flats);
+      setPkgExtraCharges(res.pkgExtraCharges);
+      syncTotalsAndPayments(res.flats, res.pkgExtraCharges, formChannel);
+    } else {
+      setFormFlats(nextFlats);
+      if (validRange) {
+        syncTotalsAndPayments(nextFlats, pkgExtraCharges, formChannel);
+      }
     }
   };
 
-  const handleCheckinChange = (val: string) => {
-    setFormCheckin(val);
-    const dCin = safeParseDate(val);
-    let targetCout = formCheckout;
-    let dCout = safeParseDate(targetCout);
-    if (dCin && (!dCout || dCin >= dCout)) {
-      const nextDay = addDays(dCin, 1);
-      targetCout = format(nextDay, "yyyy-MM-dd");
-      dCout = nextDay;
-      setFormCheckout(targetCout);
+  const handleDatesChange = (newCin: string, newCout: string) => {
+    if (primaryFlat?.uid) handleDatesChangeForFlat(primaryFlat.uid, newCin, newCout);
+  };
+
+  const handleDistributeNightsForFlat = (uid: string, targetTotal: number) => {
+    if (targetTotal <= 0) {
+      toast({
+        title: "Valor Inválido",
+        description: "Informe um valor total maior que zero para ratear.",
+        variant: "destructive"
+      });
+      return;
     }
-    if (dCin && dCout && dCin < dCout) {
-      const updated = buildReservationDailyRates(val, targetCout, Number(formDailyRate) || 250, formChannel, formDailyRates);
-      setFormDailyRates(updated);
-      const nextExtras = syncExtraFlatsDatesFromPrimary(val, targetCout, formChannel);
-      syncCompositeTotalAndPaid(updated, formCharges, formChannel, undefined, nextExtras);
+    const targetFlat = formFlats.find(f => f.uid === uid);
+    if (!targetFlat) return;
+    const nightsCount = targetFlat.dailyRates.length || 1;
+    const totalCharges = targetFlat.charges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+    const totalChargesCents = Math.round(totalCharges * 100);
+    const amountForNightsCents = Math.max(0, Math.round(targetTotal * 100) - totalChargesCents);
+    const baseNightCents = Math.floor(amountForNightsCents / nightsCount);
+    const remCents = amountForNightsCents - baseNightCents * nightsCount;
+
+    const updatedDailyRates = targetFlat.dailyRates.map((item, idx) => {
+      const { baseRate: _b, ...cleanItem } = item;
+      const cents = idx === targetFlat.dailyRates.length - 1 ? baseNightCents + remCents : baseNightCents;
+      return { ...cleanItem, rate: round2(cents / 100) };
+    });
+    const avgRate = updatedDailyRates.length > 0 ? round2(amountForNightsCents / 100 / updatedDailyRates.length) : 0;
+
+    let nextFlats = formFlats.map(f =>
+      f.uid === uid
+        ? { ...f, dailyRates: updatedDailyRates, dailyRate: String(avgRate), rateioTargetInput: String(targetTotal) }
+        : f
+    );
+    let nextPkgCharges = pkgExtraCharges;
+    if (packagePricingMode !== "sum") {
+      const cleaned = stripRateioSnapshotsKeepEdits(nextFlats, pkgExtraCharges);
+      nextFlats = cleaned.cleanFlats;
+      nextPkgCharges = cleaned.cleanPkgCharges;
+      setPackagePricingMode("sum");
+      setPackagePricingInput("");
+      setPkgExtraCharges(nextPkgCharges);
+    }
+    setFormFlats(nextFlats);
+    syncTotalsAndPayments(nextFlats, nextPkgCharges, formChannel, undefined, "sum", "");
+    toast({
+      title: "Rateio Realizado com Sucesso!",
+      description: `R$ ${targetTotal.toFixed(2)} distribuído em ${nightsCount} diária(s)${totalCharges !== 0 ? ` (descontando R$ ${totalCharges.toFixed(2)} de taxas do flat)` : ""}.`
+    });
+  };
+
+  const handleAddExtraNightForFlat = (uid: string) => {
+    try {
+      const flatIdx = formFlats.findIndex(f => f.uid === uid);
+      if (flatIdx === -1) return;
+      const targetFlat = formFlats[flatIdx];
+      const currentRates = targetFlat.dailyRates.length > 0
+        ? targetFlat.dailyRates
+        : buildReservationDailyRates(targetFlat.checkinDate, targetFlat.checkoutDate, Number(targetFlat.dailyRate) || 250, formChannel);
+      const lastNight = currentRates[currentRates.length - 1];
+      const nextDateStr = lastNight
+        ? format(addDays(parseISO(lastNight.date), 1), "yyyy-MM-dd")
+        : (targetFlat.checkoutDate || format(new Date(), "yyyy-MM-dd"));
+      const newCheckoutStr = format(addDays(parseISO(nextDateStr), 1), "yyyy-MM-dd");
+      const defaultExtraChannel = (selectedRes && (formChannel === "booking" || formChannel === "airbnb"))
+        ? "whatsapp"
+        : (lastNight ? lastNight.channel : formChannel);
+      const newNightItem: DailyRateItem = {
+        date: nextDateStr,
+        rate: lastNight ? Number(lastNight.rate) : (Number(targetFlat.dailyRate) || 250),
+        channel: defaultExtraChannel,
+        notes: "Diária extra"
+      };
+      const updatedRates = [...currentRates, newNightItem];
+      const nextCin = updatedRates[0]?.date || targetFlat.checkinDate;
+      let nextFlats = formFlats.map((f, idx) => {
+        if (f.uid === uid) {
+          return {
+            ...f,
+            ...(idx > 0 ? { sameDatesAsPrimary: false } : {}),
+            checkinDate: nextCin,
+            checkoutDate: newCheckoutStr,
+            dailyRates: updatedRates,
+          };
+        }
+        if (flatIdx === 0 && idx > 0 && f.sameDatesAsPrimary) {
+          const rNum = Math.max(0, Number(String(f.dailyRate || "250").replace(",", ".")) || 250);
+          return {
+            ...f,
+            checkinDate: nextCin,
+            checkoutDate: newCheckoutStr,
+            dailyRates: buildReservationDailyRates(nextCin, newCheckoutStr, rNum, formChannel || "whatsapp", f.dailyRates),
+          };
+        }
+        return f;
+      });
+      let nextPkgCharges = pkgExtraCharges;
+      if (packagePricingMode !== "sum") {
+        const cleaned = stripRateioSnapshotsKeepEdits(nextFlats, pkgExtraCharges);
+        nextFlats = cleaned.cleanFlats;
+        nextPkgCharges = cleaned.cleanPkgCharges;
+        setPackagePricingMode("sum");
+        setPackagePricingInput("");
+        setPkgExtraCharges(nextPkgCharges);
+      }
+      setFormFlats(nextFlats);
+      syncTotalsAndPayments(nextFlats, nextPkgCharges, formChannel, undefined, "sum", "");
+      toast({
+        title: "Diária Adicionada",
+        description: `Nova diária em ${format(parseISO(nextDateStr), "dd/MM")}. Check-out ajustado para ${format(parseISO(newCheckoutStr), "dd/MM")}.`
+      });
+    } catch (e: any) {
+      console.error(e);
     }
   };
 
-  const handleCheckoutChange = (val: string) => {
-    setFormCheckout(val);
-    const dCin = safeParseDate(formCheckin);
-    const dCout = safeParseDate(val);
-    if (dCin && dCout && dCin < dCout) {
-      const updated = buildReservationDailyRates(formCheckin, val, Number(formDailyRate) || 250, formChannel, formDailyRates);
-      setFormDailyRates(updated);
-      const nextExtras = syncExtraFlatsDatesFromPrimary(formCheckin, val, formChannel);
-      syncCompositeTotalAndPaid(updated, formCharges, formChannel, undefined, nextExtras);
+  const handleDeleteNightForFlat = (uid: string, nightIdx: number) => {
+    const flatIdx = formFlats.findIndex(f => f.uid === uid);
+    if (flatIdx === -1) return;
+    const targetFlat = formFlats[flatIdx];
+    if (targetFlat.dailyRates.length <= 1) return;
+    const updatedRates = targetFlat.dailyRates.filter((_, i) => i !== nightIdx);
+    const nextCin = updatedRates[0].date;
+    const nextCout = format(addDays(parseISO(updatedRates[updatedRates.length - 1].date), 1), "yyyy-MM-dd");
+    let nextFlats = formFlats.map((f, idx) => {
+      if (f.uid === uid) {
+        return {
+          ...f,
+          ...(idx > 0 ? { sameDatesAsPrimary: false } : {}),
+          checkinDate: nextCin,
+          checkoutDate: nextCout,
+          dailyRates: updatedRates,
+        };
+      }
+      if (flatIdx === 0 && idx > 0 && f.sameDatesAsPrimary) {
+        const rNum = Math.max(0, Number(String(f.dailyRate || "250").replace(",", ".")) || 250);
+        return {
+          ...f,
+          checkinDate: nextCin,
+          checkoutDate: nextCout,
+          dailyRates: buildReservationDailyRates(nextCin, nextCout, rNum, formChannel || "whatsapp", f.dailyRates),
+        };
+      }
+      return f;
+    });
+    let nextPkgCharges = pkgExtraCharges;
+    if (packagePricingMode !== "sum") {
+      const cleaned = stripRateioSnapshotsKeepEdits(nextFlats, pkgExtraCharges);
+      nextFlats = cleaned.cleanFlats;
+      nextPkgCharges = cleaned.cleanPkgCharges;
+      setPackagePricingMode("sum");
+      setPackagePricingInput("");
+      setPkgExtraCharges(nextPkgCharges);
+    }
+    setFormFlats(nextFlats);
+    syncTotalsAndPayments(nextFlats, nextPkgCharges, formChannel, undefined, "sum", "");
+  };
+
+  const handleEqualizeNightsForFlat = (uid: string) => {
+    const targetFlat = formFlats.find(f => f.uid === uid);
+    if (!targetFlat || targetFlat.dailyRates.length === 0) return;
+    const firstRate = Number(targetFlat.dailyRates[0].rate) || 250;
+    const firstChan = targetFlat.dailyRates[0].channel || formChannel;
+    let nextFlats = formFlats.map(f =>
+      f.uid === uid
+        ? {
+            ...f,
+            dailyRate: String(firstRate),
+            dailyRates: f.dailyRates.map(({ baseRate: _b, ...d }) => ({ ...d, rate: firstRate, channel: firstChan })),
+          }
+        : f
+    );
+    let nextPkgCharges = pkgExtraCharges;
+    if (packagePricingMode !== "sum") {
+      const cleaned = stripRateioSnapshotsKeepEdits(nextFlats, pkgExtraCharges);
+      nextFlats = cleaned.cleanFlats;
+      nextPkgCharges = cleaned.cleanPkgCharges;
+      setPackagePricingMode("sum");
+      setPackagePricingInput("");
+      setPkgExtraCharges(nextPkgCharges);
+    }
+    setFormFlats(nextFlats);
+    syncTotalsAndPayments(nextFlats, nextPkgCharges, formChannel, undefined, "sum", "");
+    toast({
+      title: "Diárias Equalizadas",
+      description: `Todas as diárias ajustadas para R$ ${firstRate.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`
+    });
+  };
+
+  const handleUpdateNightForFlat = (uid: string, nightIndex: number, patch: Partial<DailyRateItem>) => {
+    let nextFlats = formFlats.map(f => {
+      if (f.uid !== uid) return f;
+      const nextRates = f.dailyRates.map((item, i) => {
+        if (i !== nightIndex) return item;
+        const { baseRate: _b, ...cleanItem } = item;
+        return { ...cleanItem, ...patch };
+      });
+      const avg = nextRates.length > 0
+        ? round2(nextRates.reduce((s, r) => s + (Number(r.rate) || 0), 0) / nextRates.length)
+        : (Number(f.dailyRate) || 0);
+      return { ...f, dailyRates: nextRates, dailyRate: String(avg) };
+    });
+    let nextPkgCharges = pkgExtraCharges;
+    if (patch.rate !== undefined && packagePricingMode !== "sum") {
+      const cleaned = stripRateioSnapshotsKeepEdits(nextFlats, pkgExtraCharges);
+      nextFlats = cleaned.cleanFlats;
+      nextPkgCharges = cleaned.cleanPkgCharges;
+      setPackagePricingMode("sum");
+      setPackagePricingInput("");
+      setPkgExtraCharges(nextPkgCharges);
+      setFormFlats(nextFlats);
+      syncTotalsAndPayments(nextFlats, nextPkgCharges, formChannel, undefined, "sum", "");
+      return;
+    }
+    setFormFlats(nextFlats);
+    syncTotalsAndPayments(nextFlats, nextPkgCharges, formChannel);
+  };
+
+  const handleAddChargeForFlat = (
+    uid: string,
+    type: ReservationChargeItem["type"],
+    defaultTitle: string,
+    defaultAmount: number
+  ) => {
+    let amt = type === "cleaning" && defaultAmount === 80 ? 50 : defaultAmount;
+    const targetFlat = formFlats.find(f => f.uid === uid);
+    if (!targetFlat) return;
+    if (formFlats.length > 1 && amt < 0) {
+      const { subtotal } = getFlatSubtotals(targetFlat);
+      if (subtotal <= 0) {
+        toast({ title: "Desconto não permitido", description: "O subtotal deste flat já está zerado.", variant: "destructive" });
+        return;
+      }
+      if (subtotal + amt < 0) {
+        amt = -subtotal;
+        toast({ title: "Desconto ajustado ao limite do flat", description: `Limitado a -R$ ${subtotal.toFixed(2)}.` });
+      }
+    }
+    const newCharge: ReservationChargeItem = {
+      id: `charge_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      type,
+      title: defaultTitle,
+      amount: amt,
+      notes: "",
+    };
+    const nextFlats = formFlats.map(f => (f.uid === uid ? { ...f, charges: [...f.charges, newCharge] } : f));
+    if (packagePricingMode !== "sum" && nextFlats.length > 1) {
+      const res = applyPackageRateioToFlats(nextFlats, pkgExtraCharges, packagePricingMode, packagePricingInput);
+      setFormFlats(res.flats);
+      setPkgExtraCharges(res.pkgExtraCharges);
+      syncTotalsAndPayments(res.flats, res.pkgExtraCharges, formChannel);
+    } else {
+      setFormFlats(nextFlats);
+      syncTotalsAndPayments(nextFlats, pkgExtraCharges, formChannel);
+    }
+    toast({
+      title: "Taxa Adicionada",
+      description: `${defaultTitle} (R$ ${amt > 0 ? amt.toFixed(2) : `-${Math.abs(amt).toFixed(2)}`}) incluída no flat.`
+    });
+  };
+
+  const handleUpdateChargeForFlat = (
+    uid: string,
+    chargeId: string,
+    field: "title" | "amount" | "type",
+    val: any
+  ) => {
+    const targetFlat = formFlats.find(f => f.uid === uid);
+    if (!targetFlat) return;
+    let nextVal = val;
+    if (field === "amount" && formFlats.length > 1 && Number(val) < 0) {
+      const ratesSum = targetFlat.dailyRates.reduce((s, d) => s + (Number(d.rate) || 0), 0);
+      const otherChargesSum = targetFlat.charges.filter(c => c.id !== chargeId).reduce((s, c) => s + (Number(c.amount) || 0), 0);
+      const maxNeg = -Math.max(0, round2(ratesSum + otherChargesSum));
+      if (Number(val) < maxNeg) nextVal = maxNeg;
+    }
+    const nextFlats = formFlats.map(f =>
+      f.uid === uid
+        ? {
+            ...f,
+            charges: f.charges.map(c => {
+              if (c.id !== chargeId) return c;
+              const { baseAmount: _b, ...cleanC } = c;
+              return { ...cleanC, [field]: nextVal };
+            }),
+          }
+        : f
+    );
+    if (field === "amount" && packagePricingMode !== "sum" && nextFlats.length > 1) {
+      const res = applyPackageRateioToFlats(nextFlats, pkgExtraCharges, packagePricingMode, packagePricingInput);
+      setFormFlats(res.flats);
+      setPkgExtraCharges(res.pkgExtraCharges);
+      syncTotalsAndPayments(res.flats, res.pkgExtraCharges, formChannel);
+    } else {
+      setFormFlats(nextFlats);
+      if (field === "amount") syncTotalsAndPayments(nextFlats, pkgExtraCharges, formChannel);
     }
   };
 
-  // ── Funções de Gestão de Taxas, Adicionais & Rateio Inteligente ──
-  const handleAddCharge = (type: ReservationChargeItem["type"], defaultTitle: string, defaultAmount: number) => {
+  const handleRemoveChargeForFlat = (uid: string, chargeId: string) => {
+    const nextFlats = formFlats.map(f =>
+      f.uid === uid ? { ...f, charges: f.charges.filter(c => c.id !== chargeId) } : f
+    );
+    if (packagePricingMode !== "sum" && nextFlats.length > 1) {
+      const res = applyPackageRateioToFlats(nextFlats, pkgExtraCharges, packagePricingMode, packagePricingInput);
+      setFormFlats(res.flats);
+      setPkgExtraCharges(res.pkgExtraCharges);
+      syncTotalsAndPayments(res.flats, res.pkgExtraCharges, formChannel);
+    } else {
+      setFormFlats(nextFlats);
+      syncTotalsAndPayments(nextFlats, pkgExtraCharges, formChannel);
+    }
+  };
+
+  const handleAddCharge = (type: ReservationChargeItem["type"], defaultTitle: string, defaultAmount: number, explicitScope?: string) => {
+    const scope = explicitScope || (isMultiFlat ? pkgChargeTarget : formFlats[0]?.uid || "flat_0");
     let amt = (type === "cleaning" && defaultAmount === 80) ? 50 : defaultAmount;
 
-    if (isMultiFlat && pkgChargeTarget === "package" && (type === "discount" || amt < 0)) {
+    if (isMultiFlat && scope === "package" && (type === "discount" || amt < 0)) {
       const absAmt = Math.abs(amt);
       const nextDiscount = packagePricingMode === "discount_amount"
         ? round2((Number(String(packagePricingInput || "").replace(",", ".")) || 0) + absAmt)
         : round2(absAmt);
-      const nextDiscountStr = String(nextDiscount);
-      setPackagePricingMode("discount_amount");
-      setPackagePricingInput(nextDiscountStr);
-      syncMultiFlatTotalsAndPayments(extraPackageFlats, pkgExtraCharges, "discount_amount", nextDiscountStr);
+      handlePackagePricingChange("discount_amount", String(nextDiscount));
       toast({
         title: "Desconto no Pacote Aplicado",
-        description: `Desconto de R$ ${nextDiscount.toFixed(2)} aplicado proporcionalmente em todo o pacote (rateio automático).`
+        description: `Desconto de R$ ${nextDiscount.toFixed(2)} rateado proporcionalmente em todo o pacote.`
       });
       return;
     }
 
-    if (isMultiFlat && pkgChargeTarget === "package") {
-      const anyFlatHasCleaning = formCharges.some(c => c.type === "cleaning") ||
-        extraPackageFlats.some(ef => (ef.charges || []).some(c => c.type === "cleaning"));
+    if (isMultiFlat && scope === "package") {
+      const anyFlatHasCleaning = formFlats.some(fl => (fl.charges || []).some(c => c.type === "cleaning"));
       const isConvertedCleaning = type === "cleaning" && anyFlatHasCleaning;
       const pkgCharge: ReservationChargeItem = {
         id: `charge_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -6696,204 +8910,78 @@ export default function PmsCalendar(props?: {
         notes: ""
       };
       const nextPkgCharges = [...pkgExtraCharges, pkgCharge];
-      setPkgExtraCharges(nextPkgCharges);
-      syncMultiFlatTotalsAndPayments(extraPackageFlats, nextPkgCharges, packagePricingMode, packagePricingInput);
+      if (packagePricingMode !== "sum") {
+        const res = applyPackageRateioToFlats(formFlats, nextPkgCharges, packagePricingMode, packagePricingInput);
+        setFormFlats(res.flats);
+        setPkgExtraCharges(res.pkgExtraCharges);
+        syncTotalsAndPayments(res.flats, res.pkgExtraCharges, formChannel);
+      } else {
+        setPkgExtraCharges(nextPkgCharges);
+        syncTotalsAndPayments(formFlats, nextPkgCharges, formChannel);
+      }
       toast({
-        title: isConvertedCleaning ? "Taxa de Limpeza (Pacote) Adicionada" : "Taxa do Pacote Adicionada",
-        description: isConvertedCleaning
-          ? `${pkgCharge.title} (R$ ${amt.toFixed(2)}) lançada no pacote para somar além da limpeza por flat.`
-          : `${pkgCharge.title} (R$ ${amt > 0 ? amt.toFixed(2) : `-${Math.abs(amt).toFixed(2)}`}) incluída no pacote.`
+        title: "Taxa do Pacote Adicionada",
+        description: `${pkgCharge.title} (R$ ${amt > 0 ? amt.toFixed(2) : `-${Math.abs(amt).toFixed(2)}`}) incluída no pacote.`
       });
       return;
     }
 
-    if (isMultiFlat && pkgChargeTarget !== "flat_0") {
-      const targetEf = extraPackageFlats.find(ef => ef.uid === pkgChargeTarget);
-      if (targetEf && amt < 0) {
-        const efRatesSum = (targetEf.dailyRates || []).reduce((s, d) => s + (Number(d.rate) || 0), 0);
-        const efChargesSum = (targetEf.charges || []).reduce((s, c) => s + (Number(c.amount) || 0), 0);
-        const efAvailable = round2(efRatesSum + efChargesSum);
-        if (efAvailable <= 0) {
-          toast({
-            title: "Desconto não permitido",
-            description: "O subtotal deste flat já está zerado.",
-            variant: "destructive"
-          });
-          return;
-        }
-        if (efAvailable + amt < 0) {
-          amt = -efAvailable;
-          toast({
-            title: "Desconto ajustado ao limite do flat",
-            description: `Desconto limitado a -R$ ${efAvailable.toFixed(2)} para não negativar o flat.`
-          });
-        }
-      }
-      const newCharge: ReservationChargeItem = {
-        id: `charge_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        type,
-        title: defaultTitle,
-        amount: amt,
-        notes: ""
-      };
-      const nextExtras = extraPackageFlats.map(ef =>
-        ef.uid === pkgChargeTarget ? { ...ef, charges: [...ef.charges, newCharge] } : ef
-      );
-      setExtraPackageFlats(nextExtras);
-      syncMultiFlatTotalsAndPayments(nextExtras, pkgExtraCharges, packagePricingMode, packagePricingInput);
-      toast({
-        title: "Taxa do Flat Adicionada",
-        description: `${defaultTitle} (R$ ${amt > 0 ? amt.toFixed(2) : `-${Math.abs(amt).toFixed(2)}`}) incluída no flat selecionado.`
-      });
-      return;
+    const resolvedFlatUid = scope === "flat_0" ? (formFlats[0]?.uid || "") : scope;
+    if (resolvedFlatUid) {
+      handleAddChargeForFlat(resolvedFlatUid, type, defaultTitle, defaultAmount);
     }
-
-    if (isMultiFlat && amt < 0) {
-      const f1RatesSum = formDailyRates.reduce((s, d) => s + (Number(d.rate) || 0), 0);
-      const f1ChargesSum = formCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
-      const f1Available = round2(f1RatesSum + f1ChargesSum);
-      if (f1Available <= 0) {
-        toast({
-          title: "Desconto não permitido",
-          description: "O subtotal do Flat 1 já está zerado.",
-          variant: "destructive"
-        });
-        return;
-      }
-      if (f1Available + amt < 0) {
-        amt = -f1Available;
-        toast({
-          title: "Desconto ajustado ao limite do Flat 1",
-          description: `Desconto limitado a -R$ ${f1Available.toFixed(2)} para não negativar o Flat 1.`
-        });
-      }
-    }
-
-    const newCharge: ReservationChargeItem = {
-      id: `charge_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      type,
-      title: defaultTitle,
-      amount: amt,
-      notes: ""
-    };
-    const updated = [...formCharges, newCharge];
-    setFormCharges(updated);
-    syncCompositeTotalAndPaid(formDailyRates, updated, formChannel);
-    toast({
-      title: "Taxa Adicionada",
-      description: `${defaultTitle} (R$ ${amt > 0 ? amt.toFixed(2) : `-${Math.abs(amt).toFixed(2)}`}) incluída no custo da estadia.`
-    });
   };
 
   const handleRemoveCharge = (chargeId: string, scope: "flat_0" | "package" | string = "flat_0") => {
     if (scope === "package") {
       const nextPkgCharges = pkgExtraCharges.filter(c => c.id !== chargeId);
-      setPkgExtraCharges(nextPkgCharges);
-      syncMultiFlatTotalsAndPayments(extraPackageFlats, nextPkgCharges, packagePricingMode, packagePricingInput);
+      if (packagePricingMode !== "sum" && formFlats.length > 1) {
+        const res = applyPackageRateioToFlats(formFlats, nextPkgCharges, packagePricingMode, packagePricingInput);
+        setFormFlats(res.flats);
+        setPkgExtraCharges(res.pkgExtraCharges);
+        syncTotalsAndPayments(res.flats, res.pkgExtraCharges, formChannel);
+      } else {
+        setPkgExtraCharges(nextPkgCharges);
+        syncTotalsAndPayments(formFlats, nextPkgCharges, formChannel);
+      }
       return;
     }
-    if (scope !== "flat_0") {
-      const nextExtras = extraPackageFlats.map(ef =>
-        ef.uid === scope ? { ...ef, charges: ef.charges.filter(c => c.id !== chargeId) } : ef
-      );
-      setExtraPackageFlats(nextExtras);
-      syncMultiFlatTotalsAndPayments(nextExtras, pkgExtraCharges, packagePricingMode, packagePricingInput);
-      return;
-    }
-    const updated = formCharges.filter(c => c.id !== chargeId);
-    setFormCharges(updated);
-    syncCompositeTotalAndPaid(formDailyRates, updated, formChannel);
+    const targetUid = scope === "flat_0" ? (formFlats[0]?.uid || "") : scope;
+    if (targetUid) handleRemoveChargeForFlat(targetUid, chargeId);
   };
 
   const handleUpdateCharge = (chargeId: string, field: keyof ReservationChargeItem, value: any, scope: "flat_0" | "package" | string = "flat_0") => {
     if (scope === "package") {
       let nextVal = value;
       if (field === "amount" && isMultiFlat && Number(value) < 0) {
-        const f1SubNow = round2(
-          formDailyRates.reduce((s, d) => s + (Number(d.rate) || 0), 0) +
-          formCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0)
-        );
+        const flatsSub = formFlats.reduce((acc, fl) => acc + getFlatSubtotals(fl).subtotal, 0);
         const otherPkgSum = pkgExtraCharges.filter(c => c.id !== chargeId).reduce((s, c) => s + (Number(c.amount) || 0), 0);
-        const maxNeg = -Math.max(0, round2(f1SubNow + otherPkgSum));
-        if (Number(value) < maxNeg) {
-          nextVal = maxNeg;
-        }
+        const maxNeg = -Math.max(0, round2(flatsSub + otherPkgSum));
+        if (Number(value) < maxNeg) nextVal = maxNeg;
       }
-      const nextPkgCharges = pkgExtraCharges.map(c => (c.id === chargeId ? { ...c, [field]: nextVal } : c));
-      setPkgExtraCharges(nextPkgCharges);
-      syncMultiFlatTotalsAndPayments(extraPackageFlats, nextPkgCharges, packagePricingMode, packagePricingInput);
-      return;
-    }
-    if (scope !== "flat_0") {
-      const targetEf = extraPackageFlats.find(ef => ef.uid === scope);
-      let nextVal = value;
-      if (field === "amount" && isMultiFlat && targetEf && Number(value) < 0) {
-        const efRatesSum = (targetEf.dailyRates || []).reduce((s, d) => s + (Number(d.rate) || 0), 0);
-        const otherChargesSum = (targetEf.charges || []).filter(c => c.id !== chargeId).reduce((s, c) => s + (Number(c.amount) || 0), 0);
-        const maxNeg = -Math.max(0, round2(efRatesSum + otherChargesSum));
-        if (Number(value) < maxNeg) {
-          nextVal = maxNeg;
-        }
-      }
-      const nextExtras = extraPackageFlats.map(ef =>
-        ef.uid === scope
-          ? { ...ef, charges: ef.charges.map(c => (c.id === chargeId ? { ...c, [field]: nextVal } : c)) }
-          : ef
-      );
-      setExtraPackageFlats(nextExtras);
-      syncMultiFlatTotalsAndPayments(nextExtras, pkgExtraCharges, packagePricingMode, packagePricingInput);
-      return;
-    }
-    let nextVal = value;
-    if (field === "amount" && isMultiFlat && Number(value) < 0) {
-      const f1RatesSum = formDailyRates.reduce((s, d) => s + (Number(d.rate) || 0), 0);
-      const otherChargesSum = formCharges.filter(c => c.id !== chargeId).reduce((s, c) => s + (Number(c.amount) || 0), 0);
-      const maxNeg = -Math.max(0, round2(f1RatesSum + otherChargesSum));
-      if (Number(value) < maxNeg) {
-        nextVal = maxNeg;
-      }
-    }
-    const updated = formCharges.map(c => {
-      if (c.id === chargeId) {
-        return { ...c, [field]: nextVal };
-      }
-      return c;
-    });
-    setFormCharges(updated);
-    syncCompositeTotalAndPaid(formDailyRates, updated, formChannel);
-  };
-
-  const handleDistributeTotalToNights = (targetTotal: number) => {
-    if (targetTotal <= 0) {
-      toast({
-        title: "Valor Inválido",
-        description: "Informe um valor total maior que zero para ratear.",
-        variant: "destructive"
+      const nextPkgCharges = pkgExtraCharges.map(c => {
+        if (c.id !== chargeId) return c;
+        const { baseAmount: _b, ...cleanC } = c;
+        return { ...cleanC, [field]: nextVal };
       });
+      if (field === "amount" && packagePricingMode !== "sum" && formFlats.length > 1) {
+        const res = applyPackageRateioToFlats(formFlats, nextPkgCharges, packagePricingMode, packagePricingInput);
+        setFormFlats(res.flats);
+        setPkgExtraCharges(res.pkgExtraCharges);
+        syncTotalsAndPayments(res.flats, res.pkgExtraCharges, formChannel);
+      } else {
+        setPkgExtraCharges(nextPkgCharges);
+        if (field === "amount") syncTotalsAndPayments(formFlats, nextPkgCharges, formChannel);
+      }
       return;
     }
-    const nightsCount = formDailyRates.length || 1;
-    const totalCharges = formCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
-    const amountForNights = Math.max(0, targetTotal - totalCharges);
-
-    const baseNightRate = Math.floor((amountForNights / nightsCount) * 100) / 100;
-    const remainder = Number((amountForNights - (baseNightRate * nightsCount)).toFixed(2));
-
-    const updatedDailyRates = formDailyRates.map((item, idx) => {
-      const rate = idx === formDailyRates.length - 1 ? Number((baseNightRate + remainder).toFixed(2)) : baseNightRate;
-      return { ...item, rate };
-    });
-
-    setFormDailyRates(updatedDailyRates);
-    syncCompositeTotalAndPaid(updatedDailyRates, formCharges, formChannel);
-    toast({
-      title: "Rateio Realizado com Sucesso!",
-      description: `R$ ${targetTotal.toFixed(2)} distribuído em ${nightsCount} diária(s)${totalCharges > 0 ? ` (descontando R$ ${totalCharges.toFixed(2)} de taxas/adicionais)` : ""}.`
-    });
+    const targetUid = scope === "flat_0" ? (formFlats[0]?.uid || "") : scope;
+    if (targetUid && (field === "title" || field === "amount" || field === "type")) {
+      handleUpdateChargeForFlat(targetUid, chargeId, field, value);
+    }
   };
 
   // ── Regra oficial de Status x Pagamento (canais diretos) ──
-  // Pré-Reserva = nenhum valor pago. Confirmada = quitada por padrão (mantém sinal já lançado).
   const handleSelectPreReserva = () => {
     const isOta = formChannel === "booking" || formChannel === "airbnb"
     if (isOta) {
@@ -6929,11 +9017,10 @@ export default function PmsCalendar(props?: {
       pmLower === "faturado_b2b"
     )
     if (isFaturadoMode) {
-      // Reserva faturada no boleto / B2B pode ser confirmada sem pagamento antecipado (permanece a faturar / pendente)
       return
     }
     const curPaid = formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
-    if (curPaid > 0) return // mantém sinal/quitação já lançados
+    if (curPaid > 0) return
     const { curTot } = computeUnifiedReservationTotals()
     if (curTot <= 0) return
     const isBooking = formChannel === "booking"
@@ -6973,7 +9060,6 @@ export default function PmsCalendar(props?: {
     } else {
       setFormPaymentStatus("pendente")
     }
-    // Regra: qualquer valor pago (sinal ou quitação) confirma a reserva
     if (newPaidSum > 0) setFormStatus("confirmada")
   }
 
@@ -6990,18 +9076,12 @@ export default function PmsCalendar(props?: {
     } else {
       setFormPaymentStatus("pendente")
     }
-    // Regra: qualquer valor pago (sinal ou quitação) confirma a reserva
     if (newPaidSum > 0) setFormStatus("confirmada")
   }
 
   const handleUpdatePayment = (payId: string, field: keyof ReservationPaymentItem, value: any) => {
     const { curTot } = computeUnifiedReservationTotals()
-    const updated = formPayments.map(p => {
-      if (p.id === payId) {
-        return { ...p, [field]: value }
-      }
-      return p
-    })
+    const updated = formPayments.map(p => (p.id === payId ? { ...p, [field]: value } : p))
     setFormPayments(updated)
     const newPaidSum = round2(updated.reduce((acc, p) => acc + (Number(p.amount) || 0), 0))
     setFormPaidAmount(String(newPaidSum))
@@ -7012,64 +9092,16 @@ export default function PmsCalendar(props?: {
     } else {
       setFormPaymentStatus("pendente")
     }
-    // Regra: qualquer valor pago (sinal ou quitação) confirma a reserva
     if (newPaidSum > 0) setFormStatus("confirmada")
-  }
-
-  const handleAddExtraNight = () => {
-    try {
-      const currentRates = formDailyRates.length > 0 
-        ? formDailyRates 
-        : buildReservationDailyRates(formCheckin, formCheckout, Number(formDailyRate) || 250, formChannel)
-      const lastNight = currentRates[currentRates.length - 1]
-      const nextDateStr = lastNight 
-        ? format(addDays(parseISO(lastNight.date), 1), "yyyy-MM-dd")
-        : (formCheckout || format(new Date(), "yyyy-MM-dd"))
-      const newCheckoutStr = format(addDays(parseISO(nextDateStr), 1), "yyyy-MM-dd")
-      
-      const defaultExtraChannel = (selectedRes && (formChannel === "booking" || formChannel === "airbnb"))
-        ? "whatsapp"
-        : (lastNight ? lastNight.channel : formChannel)
-      const newNightItem: DailyRateItem = {
-        date: nextDateStr,
-        rate: lastNight ? Number(lastNight.rate) : (Number(formDailyRate) || 250),
-        channel: defaultExtraChannel,
-        notes: "Diária extra"
-      }
-      const updatedRates = [...currentRates, newNightItem]
-      setFormDailyRates(updatedRates)
-      setFormCheckout(newCheckoutStr)
-      const nextCin = updatedRates[0]?.date || formCheckin
-      const nextExtras = syncExtraFlatsDatesFromPrimary(nextCin, newCheckoutStr, formChannel)
-      syncCompositeTotalAndPaid(updatedRates, formCharges, formChannel, undefined, nextExtras)
-      toast({ title: "Diária Adicionada", description: `Nova diária em ${format(parseISO(nextDateStr), "dd/MM")}. Check-out ajustado para ${format(parseISO(newCheckoutStr), "dd/MM")}.` })
-    } catch (e: any) {
-      console.error(e)
-    }
-  }
-
-  const handleRemoveLastNight = () => {
-    if (formDailyRates.length <= 1) {
-      toast({ title: "Atenção", description: "A reserva precisa ter no mínimo 1 diária.", variant: "destructive" })
-      return
-    }
-    const updatedRates = formDailyRates.slice(0, -1)
-    const lastRemaining = updatedRates[updatedRates.length - 1]
-    const newCheckoutStr = format(addDays(parseISO(lastRemaining.date), 1), "yyyy-MM-dd")
-    setFormDailyRates(updatedRates)
-    setFormCheckout(newCheckoutStr)
-    const nextCin = updatedRates[0]?.date || formCheckin
-    const nextExtras = syncExtraFlatsDatesFromPrimary(nextCin, newCheckoutStr, formChannel)
-    syncCompositeTotalAndPaid(updatedRates, formCharges, formChannel, undefined, nextExtras)
-    toast({ title: "Diária Removida", description: `Check-out ajustado para ${format(parseISO(newCheckoutStr), "dd/MM")}.` })
   }
 
   const handleSaveRes = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    const isMultiFlatSubmit = !selectedRes && extraPackageFlats.length > 0
+    const isMultiFlatSubmit = !selectedRes && formFlats.length > 1
+    const pFlat = formFlats[0] || primaryFlat
 
-    if (!formFlatId) {
+    if (!pFlat.flatId || (!isMultiFlatSubmit && pFlat.flatId === "auto")) {
       toast({
         title: "Apartamento obrigatório",
         description: "Por favor, selecione o apartamento (Flat) da reserva.",
@@ -7079,7 +9111,7 @@ export default function PmsCalendar(props?: {
     }
     const hasInlineCompanyForReq = Boolean(!formCompanyId && inlineCompanyData && (String(inlineCompanyData.corporateName || "").trim() || String(inlineCompanyData.cnpj || "").replace(/\D/g, "").length === 14))
     const hasSeparateRequester = formRequesterType !== "guest" || formChannel === "b2b"
-    if (!formGuestName.trim() && !hasSeparateRequester) {
+    if (!pFlat.guest1.name.trim() && !hasSeparateRequester && !pFlat.informGuestsLater) {
       toast({
         title: "Nome do Hóspede obrigatório",
         description: "Por favor, preencha o nome do hóspede titular (ou selecione um Solicitante para preencher depois via link).",
@@ -7087,7 +9119,7 @@ export default function PmsCalendar(props?: {
       })
       return
     }
-    if (!formGuestName.trim() && hasSeparateRequester) {
+    if (!pFlat.guest1.name.trim() && hasSeparateRequester) {
       if (formRequesterType === "other_person" && !formRequesterName.trim()) {
         toast({
           title: "Solicitante obrigatório",
@@ -7113,56 +9145,44 @@ export default function PmsCalendar(props?: {
         return
       }
     }
-    if (!formCheckin || !formCheckout) {
-      toast({
-        title: "Datas obrigatórias",
-        description: "Por favor, preencha as datas de check-in e check-out.",
-        variant: "destructive"
-      })
-      return
-    }
-    if (formCheckout <= formCheckin) {
-      toast({
-        title: "Período inválido",
-        description: "A data de check-out deve ser posterior à data de check-in.",
-        variant: "destructive"
-      })
-      return
+
+    for (let i = 0; i < formFlats.length; i++) {
+      const fl = formFlats[i]
+      const flCin = i > 0 && fl.sameDatesAsPrimary ? pFlat.checkinDate : fl.checkinDate
+      const flCout = i > 0 && fl.sameDatesAsPrimary ? pFlat.checkoutDate : fl.checkoutDate
+      if (!flCin || !flCout) {
+        toast({
+          title: `Datas obrigatórias${isMultiFlatSubmit ? ` (Flat ${i + 1})` : ""}`,
+          description: "Por favor, preencha as datas de check-in e check-out.",
+          variant: "destructive"
+        })
+        return
+      }
+      if (flCout <= flCin) {
+        toast({
+          title: `Período inválido${isMultiFlatSubmit ? ` (Flat ${i + 1})` : ""}`,
+          description: "A data de check-out deve ser posterior à data de check-in.",
+          variant: "destructive"
+        })
+        return
+      }
     }
 
     if (isMultiFlatSubmit) {
-      for (let i = 0; i < extraPackageFlats.length; i++) {
-        const ef = extraPackageFlats[i]
-        const efCin = ef.sameDatesAsPrimary ? formCheckin : ef.checkinDate
-        const efCout = ef.sameDatesAsPrimary ? formCheckout : ef.checkoutDate
-        if (!efCin || !efCout || efCout <= efCin) {
-          toast({
-            title: `Datas inválidas no Flat ${i + 2}`,
-            description: "O check-out deve ser posterior ao check-in em cada flat do pacote.",
-            variant: "destructive"
-          })
-          return
-        }
-      }
-      const allFlatsCheck = [
-        { label: "Flat 1", flatId: formFlatId, cin: formCheckin, cout: formCheckout },
-        ...extraPackageFlats.map((ef, idx) => ({
-          label: `Flat ${idx + 2}`,
-          flatId: ef.flatId,
-          cin: ef.sameDatesAsPrimary ? formCheckin : ef.checkinDate,
-          cout: ef.sameDatesAsPrimary ? formCheckout : ef.checkoutDate
-        }))
-      ]
-      for (let a = 0; a < allFlatsCheck.length; a++) {
-        for (let b = a + 1; b < allFlatsCheck.length; b++) {
-          const itemA = allFlatsCheck[a]
-          const itemB = allFlatsCheck[b]
+      for (let a = 0; a < formFlats.length; a++) {
+        for (let b = a + 1; b < formFlats.length; b++) {
+          const itemA = formFlats[a]
+          const itemB = formFlats[b]
+          const cinA = a > 0 && itemA.sameDatesAsPrimary ? pFlat.checkinDate : itemA.checkinDate
+          const coutA = a > 0 && itemA.sameDatesAsPrimary ? pFlat.checkoutDate : itemA.checkoutDate
+          const cinB = b > 0 && itemB.sameDatesAsPrimary ? pFlat.checkinDate : itemB.checkinDate
+          const coutB = b > 0 && itemB.sameDatesAsPrimary ? pFlat.checkoutDate : itemB.checkoutDate
           if (itemA.flatId && itemA.flatId !== "auto" && itemB.flatId && itemB.flatId !== "auto" && Number(itemA.flatId) === Number(itemB.flatId)) {
-            if (itemA.cin < itemB.cout && itemA.cout > itemB.cin) {
+            if (cinA < coutB && coutA > cinB) {
               const dupFlatNum = data.flats.find(f => String(f.id) === String(itemA.flatId))?.number || itemA.flatId
               toast({
                 title: "Flat duplicado no mesmo período",
-                description: `O Apt ${dupFlatNum} foi selecionado tanto no ${itemA.label} quanto no ${itemB.label} com datas sobrepostas. Escolha outro apartamento ou selecione Automático.`,
+                description: `O Apt ${dupFlatNum} foi selecionado tanto no Flat ${a + 1} quanto no Flat ${b + 1} com datas sobrepostas. Escolha outro apartamento ou selecione Automático.`,
                 variant: "destructive"
               })
               return
@@ -7172,32 +9192,27 @@ export default function PmsCalendar(props?: {
       }
     }
 
-    // Validação R4 de múltiplos e-mails separados por ';'
-    const numGuestsValidation = Number(formGuestCount) || 1
+    // Validação R4 de múltiplos e-mails separados por ';' em todos os flats 1..N + Solicitante/NF
     const emailFieldsToValidate: Array<{ label: string; value: string }> = [
       ...(formRequesterType === "other_person" || formRequesterType === "company"
         ? [{ label: "E-mail do Solicitante", value: formRequesterEmail }]
         : []),
-      { label: "E-mail do Hóspede 1", value: formGuestEmail },
-      ...(numGuestsValidation >= 2 ? [{ label: "E-mail do Hóspede 2", value: formGuest2Email }] : []),
-      ...(numGuestsValidation === 3 ? [{ label: "E-mail do Hóspede 3", value: formGuest3Email }] : []),
       ...((formChannel === "b2b" || formRequesterType === "agency_b2b")
         ? [{ label: "E-mail do Agente B2B", value: formAgencyAgentEmail }]
         : []),
       { label: "E-mail do Responsável Financeiro", value: formFinRespEmail },
       { label: "E-mails p/ Envio da NFS-e", value: formNfDeliveryEmails },
       { label: "E-mail Financeiro da Empresa (CNPJ Inline)", value: String(inlineCompanyData?.financialEmail || "") },
-      ...(isMultiFlatSubmit
-        ? extraPackageFlats.flatMap((ef, idx) => {
-            if (ef.informGuestsLater) return []
-            const occ = Number(ef.guestCount) || 1
-            return [
-              { label: `E-mail do Hóspede 1 (Flat ${idx + 2})`, value: ef.guestEmail },
-              ...(occ >= 2 && !ef.guest2InformLater ? [{ label: `E-mail do Hóspede 2 (Flat ${idx + 2})`, value: ef.guest2Email }] : []),
-              ...(occ === 3 ? [{ label: `E-mail do Hóspede 3 (Flat ${idx + 2})`, value: ef.guest3Email }] : []),
-            ]
-          })
-        : []),
+      ...formFlats.flatMap((fl, idx) => {
+        if (fl.informGuestsLater) return []
+        const occ = Number(fl.guestCount) || 1
+        const suffix = isMultiFlatSubmit ? ` (Flat ${idx + 1})` : ""
+        return [
+          { label: `E-mail do Hóspede 1${suffix}`, value: fl.guest1.email },
+          ...(occ >= 2 && !fl.guest2InformLater ? [{ label: `E-mail do Hóspede 2${suffix}`, value: fl.guest2.email }] : []),
+          ...(occ === 3 && !fl.guest3InformLater ? [{ label: `E-mail do Hóspede 3${suffix}`, value: fl.guest3.email }] : []),
+        ]
+      }),
     ]
     for (const efField of emailFieldsToValidate) {
       if (efField.value && efField.value.trim()) {
@@ -7212,40 +9227,35 @@ export default function PmsCalendar(props?: {
         }
       }
     }
+
     if (isMultiFlatSubmit) {
-      const f1RatesSumCheck = formDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
-      const f1ChargesSumCheck = formCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
-      if (round2(f1RatesSumCheck + f1ChargesSumCheck) < 0) {
-        toast({
-          title: "Subtotal inválido no Flat 1",
-          description: "Os descontos aplicados no Flat 1 excedem o valor das diárias. Ajuste o desconto antes de salvar.",
-          variant: "destructive"
-        })
-        return
-      }
-      for (let i = 0; i < extraPackageFlats.length; i++) {
-        const ef = extraPackageFlats[i]
-        const efRatesSumCheck = (ef.dailyRates || []).reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
-        const efChargesSumCheck = (ef.charges || []).reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
-        if (round2(efRatesSumCheck + efChargesSumCheck) < 0) {
+      let totalFlatsSum = 0
+      for (let i = 0; i < formFlats.length; i++) {
+        const fl = formFlats[i]
+        const flRatesSum = (fl.dailyRates || []).reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
+        const flChargesSum = (fl.charges || []).reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+        const flSub = round2(flRatesSum + flChargesSum)
+        totalFlatsSum += flSub
+        if (flSub < 0) {
           toast({
-            title: `Subtotal inválido no Flat ${i + 2}`,
-            description: `Os descontos aplicados no Flat ${i + 2} excedem o valor das diárias. Ajuste o desconto antes de salvar.`,
+            title: `Subtotal inválido no Flat ${i + 1}`,
+            description: `Os descontos aplicados no Flat ${i + 1} excedem o valor das diárias. Ajuste o desconto antes de salvar.`,
             variant: "destructive"
           })
           return
         }
       }
       const pkgNegChargesSum = pkgExtraCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
-      if (pkgNegChargesSum < 0 && round2(f1RatesSumCheck + f1ChargesSumCheck + pkgNegChargesSum) < 0) {
+      if (pkgNegChargesSum < 0 && round2(totalFlatsSum + pkgNegChargesSum) < 0) {
         toast({
-          title: "Desconto do pacote excede o Flat 1",
-          description: "Use o modo 'Desconto Direto no Pacote (R$)' na barra de precificação para ratear descontos maiores em todo o pacote.",
+          title: "Desconto do pacote excede o total",
+          description: "Use o modo 'Desconto Direto no Pacote (R$)' na barra de precificação para ratear descontos maiores.",
           variant: "destructive"
         })
         return
       }
     }
+
     if (inlineCompanyData && String(inlineCompanyData.cnpj || formCompanyCnpj || "").replace(/\D/g, "").length === 14 && !String(inlineCompanyData.corporateName || formCompanyName || "").trim()) {
       toast({
         title: "Razão Social da Empresa obrigatória",
@@ -7255,70 +9265,82 @@ export default function PmsCalendar(props?: {
       return
     }
 
-    if (activeServiceBlockConflict) {
-      const flatObj = data.flats.find(f => String(f.id) === String(formFlatId));
-      const flatNum = flatObj?.number || formFlatId;
-      const servTitle = activeServiceBlockConflict.serviceTitle || activeServiceBlockConflict.title || "Serviço Externo";
-      const workerTxt = activeServiceBlockConflict.workerName ? ` (Prestador: ${activeServiceBlockConflict.workerName})` : "";
-      const proceed = confirm(
-        `⚠️ AVISO DE CONFLITO COM SERVIÇO EXTERNO\n\n` +
-        `Este apartamento (Apt ${flatNum}) possui serviço externo agendado/em andamento neste período: ${servTitle}${workerTxt}.\n\n` +
-        `A reserva pode ser criada, mas o flat pode estar indisponível.\n\n` +
-        `Deseja prosseguir e salvar a reserva mesmo assim?`
-      );
-      if (!proceed) {
-        return;
-      }
-    }
-
-    if (isMultiFlatSubmit) {
-      for (let i = 0; i < extraPackageFlats.length; i++) {
-        const ef = extraPackageFlats[i]
-        if (!ef.flatId || ef.flatId === "auto") continue
-        const efCin = ef.sameDatesAsPrimary ? formCheckin : ef.checkinDate
-        const efCout = ef.sameDatesAsPrimary ? formCheckout : ef.checkoutDate
-        const blk = (data.blocks || []).find((b: any) => {
-          const isService = Boolean(b.isServiceBlock || b.reason === "service_order")
-          if (!isService) return false
-          const sameFlat = Number(b.flatId) === Number(ef.flatId) || String(b.flatNumber) === String(ef.flatId)
-          return sameFlat && b.startDate <= efCout && b.endDate >= efCin
-        })
-        if (blk) {
-          const flatNum = data.flats.find(f => String(f.id) === String(ef.flatId))?.number || ef.flatId
-          const servTitle = blk.serviceTitle || blk.title || "Serviço Externo"
-          const proceed = confirm(
-            `⚠️ AVISO DE CONFLITO COM SERVIÇO EXTERNO (Flat ${i + 2})\n\n` +
-            `O Apt ${flatNum} possui serviço externo agendado/em andamento neste período: ${servTitle}.\n\n` +
-            `Deseja prosseguir e salvar o pacote mesmo assim?`
-          )
-          if (!proceed) return
-        }
-      }
-    }
-
-    if (formGuestPhone.trim().replace(/\D/g, "").length >= 10) {
-      const cleanDigits = cleanWhatsAppPhone(formGuestPhone);
-      let ver = phoneVerification && phoneVerification.phone === cleanDigits && phoneVerification.checked !== undefined ? phoneVerification : null;
-      if (!ver) {
-        setSavingRes(true);
-        ver = await verifyGuestPhoneWhatsApp(formGuestPhone);
-        setSavingRes(false);
-      }
-      if (ver && ver.checked && ver.exists === false) {
+    for (let i = 0; i < formFlats.length; i++) {
+      const fl = formFlats[i]
+      if (!fl.flatId || fl.flatId === "auto") continue
+      const flCin = i > 0 && fl.sameDatesAsPrimary ? pFlat.checkinDate : fl.checkinDate
+      const flCout = i > 0 && fl.sameDatesAsPrimary ? pFlat.checkoutDate : fl.checkoutDate
+      const blk = (data.blocks || []).find((b: any) => {
+        const isService = Boolean(b.isServiceBlock || b.reason === "service_order")
+        if (!isService) return false
+        const sameFlat = Number(b.flatId) === Number(fl.flatId) || String(b.flatNumber) === String(fl.flatId)
+        return sameFlat && b.startDate <= flCout && b.endDate >= flCin
+      })
+      if (blk) {
+        const flatNum = data.flats.find(f => String(f.id) === String(fl.flatId))?.number || fl.flatId
+        const servTitle = blk.serviceTitle || blk.title || "Serviço Externo"
+        const workerTxt = blk.workerName ? ` (Prestador: ${blk.workerName})` : ""
         const proceed = confirm(
-          `⚠️ Atenção: O telefone informado (${formGuestPhone}) NÃO possui conta ativa no WhatsApp (possível erro de digitação no DDD ou no 9º dígito).\n\nDeseja salvar a reserva mesmo assim?`
-        );
-        if (!proceed) {
-          return;
+          `⚠️ AVISO DE CONFLITO COM SERVIÇO EXTERNO${isMultiFlatSubmit ? ` (Flat ${i + 1})` : ""}\n\n` +
+          `O Apt ${flatNum} possui serviço externo agendado/em andamento neste período: ${servTitle}${workerTxt}.\n\n` +
+          `Deseja prosseguir e salvar mesmo assim?`
+        )
+        if (!proceed) return
+      }
+    }
+
+    // Validação unificada de WhatsApp em Solicitante + Hóspedes 1..3 de TODOS os flats 1..N
+    const phonesToValidate: Array<{ label: string; phone: string }> = []
+    if ((formRequesterType === "other_person" || formRequesterType === "company") && formRequesterPhone.trim().replace(/\D/g, "").length >= 10) {
+      phonesToValidate.push({ label: "Solicitante", phone: formRequesterPhone.trim() })
+    }
+    if ((formChannel === "b2b" || formRequesterType === "agency_b2b") && formAgencyAgentPhone.trim().replace(/\D/g, "").length >= 10) {
+      phonesToValidate.push({ label: "Agente B2B", phone: formAgencyAgentPhone.trim() })
+    }
+    formFlats.forEach((fl, idx) => {
+      if (fl.informGuestsLater) return
+      const suffix = isMultiFlatSubmit ? ` (Flat ${idx + 1})` : ""
+      if (fl.guest1.phone.trim().replace(/\D/g, "").length >= 10) {
+        phonesToValidate.push({ label: `Hóspede 1${suffix}`, phone: fl.guest1.phone.trim() })
+      }
+      const occ = Number(fl.guestCount) || 1
+      if (occ >= 2 && !fl.guest2InformLater && fl.guest2.phone.trim().replace(/\D/g, "").length >= 10) {
+        phonesToValidate.push({ label: `Hóspede 2${suffix}`, phone: fl.guest2.phone.trim() })
+      }
+      if (occ >= 3 && !fl.guest3InformLater && fl.guest3.phone.trim().replace(/\D/g, "").length >= 10) {
+        phonesToValidate.push({ label: `Hóspede 3${suffix}`, phone: fl.guest3.phone.trim() })
+      }
+    })
+    if (phonesToValidate.length > 0) {
+      const seenKeys = new Set<string>()
+      const invalidWaList: Array<{ label: string; phone: string }> = []
+      for (const item of phonesToValidate) {
+        const k = getPhoneVerifyKey(item.phone)
+        if (!k || seenKeys.has(k)) continue
+        seenKeys.add(k)
+        let ver = phoneVerifyCacheRef.current[k]
+        if (!ver || ver.checking) {
+          setSavingRes(true)
+          ver = (await verifyGuestPhoneWhatsApp(item.phone)) as PhoneVerificationEntry
+          setSavingRes(false)
         }
+        if (ver && ver.checked && ver.exists === false) {
+          invalidWaList.push(item)
+        }
+      }
+      if (invalidWaList.length > 0) {
+        const listTxt = invalidWaList.map(i => `• ${i.label}: ${i.phone}`).join("\n")
+        const proceed = confirm(
+          `⚠️ Atenção: Os seguintes números informados NÃO possuem conta ativa no WhatsApp (possível erro de digitação):\n\n${listTxt}\n\nDeseja salvar a reserva mesmo assim?`
+        )
+        if (!proceed) return
       }
     }
 
     setSavingRes(true)
     try {
-      const calcTot = calculateTotal()
-      const nightsSubInSave = formDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
-      const chargesSubInSave = formCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+      const calcTot = calculateTotal(pFlat)
+      const { ratesSum: nightsSubInSave, chargesSum: chargesSubInSave } = getFlatSubtotals(pFlat)
       const rawFormTot = Number(formTotalAmount) || 0
       const flat1TotalAmount = (!selectedRes?.earlyCheckout && chargesSubInSave !== 0 && Math.abs(rawFormTot - nightsSubInSave) < 0.05)
         ? calcTot
@@ -7347,7 +9369,7 @@ export default function PmsCalendar(props?: {
         sumPaidFromList > 0 && sumPaidFromList < totalAmount - 0.01 && (
           formPaymentStatus === "sinal_pago" ||
           formPaymentStatus === "parcial" ||
-          formDailyRates.some(d => d.channel && d.channel !== "booking" && d.channel !== "airbnb" && d.channel !== "b2b")
+          pFlat.dailyRates.some(d => d.channel && d.channel !== "booking" && d.channel !== "airbnb" && d.channel !== "b2b")
         )
       )
 
@@ -7382,14 +9404,11 @@ export default function PmsCalendar(props?: {
         resolvedPaymentStatus = "pendente"
       }
 
-      // Regra oficial Pré-Reserva x Confirmada (canais diretos):
-      // - Pré-Reserva: nenhum valor pago (pagamentos zerados, status pendente)
-      // - Qualquer valor pago > 0 ou Reserva B2B: reserva é Confirmada
       let statusToSave: string = formStatus
       if (selectedRes && formStatus === "confirmada") {
         const prevStLower = String(selectedRes.status || "").toLowerCase()
         const isStillCheckedOut = Boolean(selectedRes.earlyCheckout || selectedRes.checkoutDone) &&
-          (!formCheckout || !selectedRes.checkoutDate || formCheckout <= selectedRes.checkoutDate)
+          (!pFlat.checkoutDate || !selectedRes.checkoutDate || pFlat.checkoutDate <= selectedRes.checkoutDate)
         if ((prevStLower === "completed" || prevStLower === "checked_out") && isStillCheckedOut) {
           statusToSave = selectedRes.status
         } else if (prevStLower === "in_house" || prevStLower === "hospedado" || prevStLower === "checkin") {
@@ -7406,64 +9425,6 @@ export default function PmsCalendar(props?: {
         } else if (resolvedPaidAmount > 0 && statusToSave === "pre_reserva") {
           statusToSave = "confirmada"
         }
-      }
-
-      const numG = Number(formGuestCount) || 1
-      const rawCandidateGuest1Id =
-        formGuestId && formGuestId !== "manual"
-          ? Number(formGuestId)
-          : (!formGuestId && selectedRes && areGuestNamesCompatibleUI(formGuestName, selectedRes.guestName)
-              ? (selectedRes.guests?.[0]?.guestId || selectedRes.guestId || null)
-              : null)
-      const linkedCrmGuest1 = rawCandidateGuest1Id
-        ? crmGuests.find(cg => Number(cg.id) === Number(rawCandidateGuest1Id))
-        : null
-      const resolvedGuest1Id =
-        rawCandidateGuest1Id && (!linkedCrmGuest1 || areGuestNamesCompatibleUI(formGuestName, linkedCrmGuest1.name || linkedCrmGuest1.fullName))
-          ? rawCandidateGuest1Id
-          : null
-
-      const guestsPayload: any[] = [
-        {
-          index: 1,
-          guestId: resolvedGuest1Id,
-          name: formGuestName.trim(),
-          cpf: formGuest1Cpf.trim(),
-          phone: formGuestPhone.trim(),
-          email: formGuestEmail.trim()
-        }
-      ]
-      if (numG >= 2) {
-        const resolvedGuest2Id =
-          formGuest2Id && formGuest2Id !== "manual"
-            ? Number(formGuest2Id)
-            : (!formGuest2Id && selectedRes?.guests?.[1]?.guestId && areGuestNamesCompatibleUI(formGuest2Name, selectedRes?.guests?.[1]?.name)
-                ? Number(selectedRes.guests[1].guestId)
-                : null)
-        guestsPayload.push({
-          index: 2,
-          guestId: resolvedGuest2Id,
-          name: formGuest2Name.trim() || "Hóspede 2",
-          cpf: formGuest2Cpf.trim(),
-          phone: formGuest2Phone.trim(),
-          email: formGuest2Email.trim()
-        })
-      }
-      if (numG === 3) {
-        const resolvedGuest3Id =
-          formGuest3Id && formGuest3Id !== "manual"
-            ? Number(formGuest3Id)
-            : (!formGuest3Id && selectedRes?.guests?.[2]?.guestId && areGuestNamesCompatibleUI(formGuest3Name, selectedRes?.guests?.[2]?.name)
-                ? Number(selectedRes.guests[2].guestId)
-                : null)
-        guestsPayload.push({
-          index: 3,
-          guestId: resolvedGuest3Id,
-          name: formGuest3Name.trim() || "Hóspede 3",
-          cpf: formGuest3Cpf.trim(),
-          phone: formGuest3Phone.trim(),
-          email: formGuest3Email.trim()
-        })
       }
 
       const selectedComp = companies.find(c => String(c.id) === formCompanyId)
@@ -7510,6 +9471,145 @@ export default function PmsCalendar(props?: {
               ? Number(selectedRes.requesterInfo.guestId)
               : null)
 
+      const serializeFlatPayload = (fl: FlatReservationFormItem, idx: number) => {
+        const flCin = idx > 0 && fl.sameDatesAsPrimary ? pFlat.checkinDate : fl.checkinDate
+        const flCout = idx > 0 && fl.sameDatesAsPrimary ? pFlat.checkoutDate : fl.checkoutDate
+        const occ = Math.max(1, Math.min(3, Number(fl.guestCount) || 1))
+        const rawRates = fl.dailyRates && fl.dailyRates.length > 0
+          ? fl.dailyRates
+          : buildReservationDailyRates(flCin, flCout, Math.max(0, Number(String(fl.dailyRate || "250").replace(",", ".")) || 250), formChannel || "whatsapp")
+        const cleanRates = rawRates.map(({ baseRate: _b, ...d }) => d)
+        const cleanCharges = (fl.charges || []).map(({ baseAmount: _b, ...c }) => c)
+        const ratesSum = round2(cleanRates.reduce((s, d) => s + (Number(d.rate) || 0), 0))
+        const chargesSum = round2(cleanCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0))
+        const flTotal = idx === 0 && !isMultiFlatSubmit ? flat1TotalAmount : Math.max(0, round2(ratesSum + chargesSum))
+        const avgRate = cleanRates.length > 0 ? round2(ratesSum / cleanRates.length) : (Number(fl.dailyRate) || 0)
+
+        const rawCandidateG1Id =
+          fl.guest1.guestId && fl.guest1.guestId !== "manual"
+            ? Number(fl.guest1.guestId)
+            : (idx === 0 && !fl.guest1.guestId && selectedRes && areGuestNamesCompatibleUI(fl.guest1.name, selectedRes.guestName)
+                ? (selectedRes.guests?.[0]?.guestId || selectedRes.guestId || null)
+                : null)
+        const linkedCrmG1 = rawCandidateG1Id
+          ? crmGuests.find(cg => Number(cg.id) === Number(rawCandidateG1Id))
+          : null
+        const g1Id =
+          rawCandidateG1Id && (!linkedCrmG1 || areGuestNamesCompatibleUI(fl.guest1.name, linkedCrmG1.name || linkedCrmG1.fullName))
+            ? rawCandidateG1Id
+            : null
+        const g2Id =
+          fl.guest2.guestId && fl.guest2.guestId !== "manual"
+            ? Number(fl.guest2.guestId)
+            : (idx === 0 && !fl.guest2.guestId && selectedRes?.guests?.[1]?.guestId && areGuestNamesCompatibleUI(fl.guest2.name, selectedRes?.guests?.[1]?.name)
+                ? Number(selectedRes.guests[1].guestId)
+                : null)
+        const g3Id =
+          fl.guest3.guestId && fl.guest3.guestId !== "manual"
+            ? Number(fl.guest3.guestId)
+            : (idx === 0 && !fl.guest3.guestId && selectedRes?.guests?.[2]?.guestId && areGuestNamesCompatibleUI(fl.guest3.name, selectedRes?.guests?.[2]?.name)
+                ? Number(selectedRes.guests[2].guestId)
+                : null)
+
+        const informLater = Boolean(fl.informGuestsLater) || (resolvedReqType !== "guest" && !fl.guest1.name.trim())
+        const g2InformLater = occ >= 2 && (Boolean(fl.guest2InformLater) || !fl.guest2.name.trim())
+        const g3InformLater = occ >= 3 && (Boolean(fl.guest3InformLater) || !fl.guest3.name.trim())
+
+        const guestsArr: any[] = [
+          {
+            index: 1,
+            guestId: g1Id,
+            name: fl.guest1.name.trim(),
+            cpf: fl.guest1.cpf.trim(),
+            phone: fl.guest1.phone.trim(),
+            email: fl.guest1.email.trim(),
+            informLater
+          }
+        ]
+        if (occ >= 2) {
+          guestsArr.push({
+            index: 2,
+            guestId: g2Id,
+            name: fl.guest2.name.trim() || "Hóspede 2",
+            cpf: fl.guest2.cpf.trim(),
+            phone: fl.guest2.phone.trim(),
+            email: fl.guest2.email.trim(),
+            informLater: g2InformLater
+          })
+        }
+        if (occ >= 3) {
+          guestsArr.push({
+            index: 3,
+            guestId: g3Id,
+            name: fl.guest3.name.trim() || "Hóspede 3",
+            cpf: fl.guest3.cpf.trim(),
+            phone: fl.guest3.phone.trim(),
+            email: fl.guest3.email.trim(),
+            informLater: g3InformLater
+          })
+        }
+
+        return {
+          flatId: fl.flatId && fl.flatId !== "auto" ? Number(fl.flatId) : "auto",
+          checkinDate: flCin,
+          checkoutDate: flCout,
+          checkinTime: fl.checkinTime || defaultCheckinTime || "14:00",
+          checkoutTime: fl.checkoutTime || defaultCheckoutTime || "12:00",
+          guestCount: occ,
+          requesterIsGuest1: Boolean(fl.requesterIsGuest1 || (resolvedReqType === "guest" && idx === 0)),
+          informGuestsLater: informLater,
+          guestId: g1Id,
+          guestName: fl.guest1.name.trim(),
+          guestPhone: fl.guest1.phone.trim(),
+          guestEmail: fl.guest1.email.trim(),
+          guestDocument: fl.guest1.cpf.trim(),
+          guest2InformLater: g2InformLater,
+          guest2Id: g2Id,
+          guest2Name: occ >= 2 ? fl.guest2.name.trim() : "",
+          guest2Phone: occ >= 2 ? fl.guest2.phone.trim() : "",
+          guest2Email: occ >= 2 ? fl.guest2.email.trim() : "",
+          guest2Document: occ >= 2 ? fl.guest2.cpf.trim() : "",
+          guest3InformLater: g3InformLater,
+          guest3Id: g3Id,
+          guest3Name: occ >= 3 ? fl.guest3.name.trim() : "",
+          guest3Phone: occ >= 3 ? fl.guest3.phone.trim() : "",
+          guest3Email: occ >= 3 ? fl.guest3.email.trim() : "",
+          guest3Document: occ >= 3 ? fl.guest3.cpf.trim() : "",
+          guests: guestsArr,
+          docPhotoUrl: fl.docPhotoUrl || undefined,
+          hasMinor: Boolean(fl.hasMinor),
+          isCamposResident: Boolean(fl.isCamposResident),
+          includeBreakfast: Boolean(fl.includeBreakfast),
+          prefersHighFloor: Boolean(fl.prefersHighFloor),
+          twinBeds: Boolean(fl.twinBeds),
+          extraMattress: Boolean(fl.extraMattress) || occ >= 3,
+          isFlatLocked: Boolean(fl.isFlatLocked),
+          flatLocked: Boolean(fl.isFlatLocked),
+          flatLockReason: fl.isFlatLocked ? fl.flatLockReason.trim() : "",
+          earlyCheckinAuthorized: Boolean(fl.earlyCheckinAuthorized),
+          forceOverbooking: Boolean(fl.forceOverbooking),
+          nfHideFromGuest: Boolean(formNfHideFromGuest),
+          hideFinancialForGuest: Boolean(formNfHideFromGuest),
+          specialRequests: fl.specialRequests.trim(),
+          receptionNotes: fl.receptionNotes.trim(),
+          notes: fl.notes.trim(),
+          dailyRate: avgRate,
+          dailyRates: cleanRates,
+          charges: cleanCharges,
+          cleaningFee: cleanCharges.filter(c => c.type === "cleaning").reduce((acc, c) => acc + (Number(c.amount) || 0), 0),
+          totalAmount: flTotal,
+          vehicle: fl.vehiclePlate.trim() ? {
+            plate: fl.vehiclePlate.trim().toUpperCase(),
+            brand: fl.vehicleBrand.trim(),
+            model: fl.vehicleModel.trim(),
+            color: fl.vehicleColor.trim()
+          } : null
+        }
+      }
+
+      const serializedFlats = formFlats.map((fl, idx) => serializeFlatPayload(fl, idx))
+      const primaryPayloadFlat = serializedFlats[0]
+
       const holdInfoForSave = statusToSave === "pre_reserva" ? computeHoldExpirationInfo() : null
       const baseExtCinForSave = selectedRes
         ? (selectedRes.pendingStayExtension?.isPreReservationHold
@@ -7527,7 +9627,7 @@ export default function PmsCalendar(props?: {
         !formIsFaturadoBoleto &&
         !isB2b &&
         resolvedPaidAmount < totalAmount - 0.01 &&
-        formDailyRates.some(d => {
+        pFlat.dailyRates.some(d => {
           const ch = String(d.channel || "").toLowerCase()
           const isPaidOtaOrB2bChan = ch.includes("booking") || ch.includes("airbnb") || ch.includes("b2b")
           return !isPaidOtaOrB2bChan && (d.date < baseExtCinForSave || d.date >= baseExtCoutForSave)
@@ -7559,49 +9659,41 @@ export default function PmsCalendar(props?: {
       )
 
       const resolvedRequesterNameForPkg = isGuestSelfRequester
-        ? formGuestName.trim()
+        ? pFlat.guest1.name.trim()
         : (
             formRequesterName.trim() ||
             (resolvedReqType === "company" ? (selectedComp?.contactPerson || resolvedCompName) : "") ||
             (isB2b ? (formAgencyAgentName.trim() || resolvedAgName) : "") ||
-            formGuestName.trim()
+            pFlat.guest1.name.trim()
           )
       const resolvedRequesterPhoneForPkg = isGuestSelfRequester
-        ? formGuestPhone.trim()
+        ? pFlat.guest1.phone.trim()
         : (
             formRequesterPhone.trim() ||
             (resolvedReqType === "company" ? (selectedComp?.phone || (selectedComp as any)?.telefone || inlineCompanyPayload?.phone || "") : "") ||
             (isB2b ? formAgencyAgentPhone.trim() : "") ||
-            formGuestPhone.trim()
+            pFlat.guest1.phone.trim()
           )
       const resolvedRequesterEmailForPkg = isGuestSelfRequester
-        ? formatEmailList(formGuestEmail)
-        : (formattedReqEmail || (isB2b ? formatEmailList(formAgencyAgentEmail) : "") || formatEmailList(formGuestEmail))
+        ? formatEmailList(pFlat.guest1.email)
+        : (formattedReqEmail || (isB2b ? formatEmailList(formAgencyAgentEmail) : "") || formatEmailList(pFlat.guest1.email))
       const resolvedRequesterDocForPkg = isGuestSelfRequester
-        ? formGuest1Cpf.trim()
-        : (formRequesterCpf.trim() || formGuest1Cpf.trim())
+        ? pFlat.guest1.cpf.trim()
+        : (formRequesterCpf.trim() || pFlat.guest1.cpf.trim())
 
-      const anyFlatHasCleaningInPkg = isMultiFlatSubmit && (
-        formCharges.some(c => c.type === "cleaning") ||
-        extraPackageFlats.some(ef => (ef.charges || []).some(c => c.type === "cleaning"))
-      )
-      const normalizedPkgExtraCharges = anyFlatHasCleaningInPkg
+      const anyFlatHasCleaningInPkg = isMultiFlatSubmit && formFlats.some(fl => (fl.charges || []).some(c => c.type === "cleaning"))
+      const normalizedPkgExtraCharges = (anyFlatHasCleaningInPkg
         ? pkgExtraCharges.map(c =>
             c.type === "cleaning"
               ? { ...c, type: "other" as const, title: c.title === "Taxa de Limpeza" ? "Taxa de Limpeza (Pacote)" : c.title }
               : c
           )
         : pkgExtraCharges
+      ).map(({ baseAmount: _b, ...c }) => c)
 
       const basePayload: any = {
-        flatId: Number(formFlatId),
-        guestId: resolvedGuest1Id,
-        guestName: formGuestName.trim(),
-        guestPhone: formGuestPhone.trim(),
-        guestEmail: formGuestEmail.trim(),
-        guestDocument: formGuest1Cpf.trim(),
-        guestCount: numG,
-        guests: guestsPayload,
+        ...primaryPayloadFlat,
+        flatId: primaryPayloadFlat.flatId === "auto" ? "auto" : Number(primaryPayloadFlat.flatId),
         requesterType: resolvedReqType,
         requesterName: resolvedRequesterNameForPkg,
         requesterPhone: resolvedRequesterPhoneForPkg,
@@ -7641,7 +9733,7 @@ export default function PmsCalendar(props?: {
         b2bCommissionPct: isB2b ? commPct : undefined,
         b2bCommissionAmount: isB2b ? commAmt : undefined,
         b2bNetAmount: isB2b ? netAmt : undefined,
-        b2bNetRate: isB2b ? (formDailyRates.length > 0 ? Number((netAmt / formDailyRates.length).toFixed(2)) : netAmt) : undefined,
+        b2bNetRate: isB2b ? (primaryPayloadFlat.dailyRates.length > 0 ? Number((netAmt / primaryPayloadFlat.dailyRates.length).toFixed(2)) : netAmt) : undefined,
         b2bPaymentType: isB2b ? formB2bPaymentType : undefined,
         b2bCardBrand: isB2b ? formB2bCardBrand.trim() : undefined,
         b2bCardMasked: isB2b ? formB2bCardMasked.trim() : undefined,
@@ -7654,11 +9746,8 @@ export default function PmsCalendar(props?: {
         invoiceRecipientType: resolvedInvRecType,
         nfRecipientType: resolvedInvRecType,
         nfDeliveryEmails: resolvedDeliveryEmails.length > 0 ? resolvedDeliveryEmails : undefined,
-        nfHideFromGuest: (isB2b || resolvedReqType === "company" || resolvedInvRecType === "company") ? Boolean(formNfHideFromGuest) : false,
-        checkinDate: formCheckin,
-        checkoutDate: formCheckout,
-        checkinTime: formCheckinTime || defaultCheckinTime || "14:00",
-        checkoutTime: formCheckoutTime || defaultCheckoutTime || "12:00",
+        nfHideFromGuest: Boolean(formNfHideFromGuest),
+        hideFinancialForGuest: Boolean(formNfHideFromGuest),
         status: formIsFaturadoBoleto && statusToSave === "pre_reserva" ? "confirmada" : statusToSave,
         ...(holdInfoForSave && !formIsFaturadoBoleto ? {
           holdPreset: holdInfoForSave.holdPreset,
@@ -7681,7 +9770,7 @@ export default function PmsCalendar(props?: {
         } : {})),
         ...(isReactivatingExt ? { reactivateExpiredExtension: true } : {}),
         ...(isReactivatingNow ? { reactivatePreReservation: true } : {}),
-        channel: isB2b ? "b2b" : (formChannel || (formDailyRates.length > 0 && formDailyRates[0].channel) || "whatsapp"),
+        channel: isB2b ? "b2b" : (formChannel || (primaryPayloadFlat.dailyRates.length > 0 && primaryPayloadFlat.dailyRates[0].channel) || "whatsapp"),
         paymentMethod: formIsFaturadoBoleto ? "boleto_faturado" : resolvedMethod,
         isFaturadoBoleto: Boolean(formIsFaturadoBoleto),
         boletoTermDays: Number(formBoletoTermDays) || 15,
@@ -7711,27 +9800,18 @@ export default function PmsCalendar(props?: {
           sendEmail: Boolean(formRecSendEmail),
           sendWhatsapp: Boolean(formRecSendWhatsapp)
         },
-        dailyRate: formDailyRates.length > 0 
-          ? Math.round((nightsSubInSave / formDailyRates.length) * 100) / 100
-          : (Number(formDailyRate) || 0),
-        dailyRates: formDailyRates,
-        charges: isMultiFlatSubmit ? normalizedPkgExtraCharges : formCharges,
-        cleaningFee: (isMultiFlatSubmit ? normalizedPkgExtraCharges : formCharges)
-          .filter(c => c.type === "cleaning")
-          .reduce((acc, c) => acc + (Number(c.amount) || 0), 0),
+        charges: isMultiFlatSubmit ? normalizedPkgExtraCharges : primaryPayloadFlat.charges,
+        cleaningFee: (isMultiFlatSubmit ? normalizedPkgExtraCharges : primaryPayloadFlat.charges)
+          .filter((c: any) => c.type === "cleaning")
+          .reduce((acc: number, c: any) => acc + (Number(c.amount) || 0), 0),
         payments: normalizedPayments,
         totalAmount,
         paidAmount: resolvedPaidAmount,
         paymentStatus: resolvedPaymentStatus,
-        notes: formNotes.trim() || formSpecialRequests.trim() || "",
-        earlyCheckinAuthorized: formEarlyCheckin,
-        receptionNotes: formReceptionNotes,
+        notes: isMultiFlatSubmit ? "" : primaryPayloadFlat.notes,
+        receptionNotes: isMultiFlatSubmit ? "" : primaryPayloadFlat.receptionNotes,
+        specialRequests: isMultiFlatSubmit ? "" : primaryPayloadFlat.specialRequests,
         autoEmitInvoice: formIsFaturadoBoleto ? true : formAutoInvoice,
-        prefersHighFloor: formPrefersHighFloor,
-        twinBeds: formTwinBeds,
-        extraMattress: formExtraMattress,
-        includeBreakfast: formIncludeBreakfast,
-        specialRequests: formSpecialRequests.trim() || formNotes.trim() || "",
         isMonthlyGuest: Boolean(formIsMonthlyGuest),
         clientType: formIsMonthlyGuest
           ? "mensalista"
@@ -7739,165 +9819,23 @@ export default function PmsCalendar(props?: {
         source: selectedRes
           ? "PMS Calendário (Edição Manual)"
           : (isMultiFlatSubmit ? "PMS Calendário (Pacote Multi-Flat)" : "PMS Calendário (Nova Reserva)"),
-        docPhotoUrl: formDocPhotoUrl || undefined,
-        hasMinor: formHasMinor,
-        isCamposResident: formIsCamposResident,
-        isFlatLocked: formIsFlatLocked,
-        flatLocked: formIsFlatLocked,
-        flatLockReason: formIsFlatLocked ? formFlatLockReason.trim() : "",
-        forceOverbooking: Boolean(formForceReplace),
-        vehicle: formVehiclePlate.trim() ? {
-          plate: formVehiclePlate.trim().toUpperCase(),
-          brand: formVehicleBrand.trim(),
-          model: formVehicleModel.trim(),
-          color: formVehicleColor.trim()
-        } : null
-      }
-
-      const serializeExtraFlatForPackage = (ef: MultiFlatExtraItem) => {
-        const efCin = ef.sameDatesAsPrimary ? formCheckin : ef.checkinDate
-        const efCout = ef.sameDatesAsPrimary ? formCheckout : ef.checkoutDate
-        const efOcc = Math.max(1, Math.min(3, Number(ef.guestCount) || 1))
-        const efRates = ef.dailyRates && ef.dailyRates.length > 0
-          ? ef.dailyRates
-          : buildReservationDailyRates(efCin, efCout, Math.max(0, Number(String(ef.dailyRate || "250").replace(",", ".")) || 250), formChannel || "whatsapp")
-        const efRatesSum = round2(efRates.reduce((s, d) => s + (Number(d.rate) || 0), 0))
-        const efChargesSum = round2(ef.charges.reduce((s, c) => s + (Number(c.amount) || 0), 0))
-        const efTotal = Math.max(0, round2(efRatesSum + efChargesSum))
-        const efAvgRate = efRates.length > 0 ? round2(efRatesSum / efRates.length) : Math.max(0, Number(ef.dailyRate) || 0)
-        const efG1Id = ef.guestId && ef.guestId !== "manual" ? Number(ef.guestId) : null
-        const efG2Id = ef.guest2Id && ef.guest2Id !== "manual" ? Number(ef.guest2Id) : null
-        const efG3Id = ef.guest3Id && ef.guest3Id !== "manual" ? Number(ef.guest3Id) : null
-        const efInformLater = Boolean(ef.informGuestsLater) || !ef.guestName.trim()
-        const efG2InformLater = efOcc >= 2 && (Boolean(ef.guest2InformLater) || !ef.guest2Name.trim())
-        const efGuests: any[] = [
-          {
-            index: 1,
-            guestId: efG1Id,
-            name: ef.guestName.trim(),
-            cpf: ef.guestCpf.trim(),
-            phone: ef.guestPhone.trim(),
-            email: ef.guestEmail.trim(),
-            informLater: efInformLater
-          }
-        ]
-        if (efOcc >= 2) {
-          efGuests.push({
-            index: 2,
-            guestId: efG2Id,
-            name: ef.guest2Name.trim() || "Hóspede 2",
-            cpf: ef.guest2Cpf.trim(),
-            phone: ef.guest2Phone.trim(),
-            email: ef.guest2Email.trim(),
-            informLater: efG2InformLater
-          })
-        }
-        if (efOcc === 3) {
-          efGuests.push({
-            index: 3,
-            guestId: efG3Id,
-            name: ef.guest3Name.trim() || "Hóspede 3",
-            cpf: ef.guest3Cpf.trim(),
-            phone: ef.guest3Phone.trim(),
-            email: ef.guest3Email.trim(),
-            informLater: !ef.guest3Name.trim()
-          })
-        }
-        return {
-          flatId: ef.flatId && ef.flatId !== "auto" ? Number(ef.flatId) : "auto",
-          checkinDate: efCin,
-          checkoutDate: efCout,
-          checkinTime: ef.checkinTime || formCheckinTime || defaultCheckinTime || "14:00",
-          checkoutTime: ef.checkoutTime || formCheckoutTime || defaultCheckoutTime || "12:00",
-          guestCount: efOcc,
-          requesterIsGuest1: false,
-          informGuestsLater: efInformLater,
-          guestId: efG1Id,
-          guestName: ef.guestName.trim(),
-          guestPhone: ef.guestPhone.trim(),
-          guestEmail: ef.guestEmail.trim(),
-          guestDocument: ef.guestCpf.trim(),
-          guest2InformLater: efG2InformLater,
-          guest2Id: efG2Id,
-          guest2Name: ef.guest2Name.trim(),
-          guest2Phone: ef.guest2Phone.trim(),
-          guest2Email: ef.guest2Email.trim(),
-          guest2Document: ef.guest2Cpf.trim(),
-          guests: efGuests,
-          includeBreakfast: Boolean(ef.includeBreakfast),
-          twinBeds: Boolean(ef.twinBeds),
-          extraMattress: Boolean(ef.extraMattress) || efOcc >= 3,
-          dailyRate: efAvgRate,
-          dailyRates: efRates,
-          charges: ef.charges,
-          cleaningFee: ef.charges.filter(c => c.type === "cleaning").reduce((acc, c) => acc + (Number(c.amount) || 0), 0),
-          totalAmount: efTotal,
-          specialRequests: ef.specialRequests.trim() || formSpecialRequests.trim() || "",
-          notes: ef.notes.trim() || formNotes.trim() || "",
-          receptionNotes: formReceptionNotes,
-          vehicle: ef.vehiclePlate.trim() ? {
-            plate: ef.vehiclePlate.trim().toUpperCase(),
-            brand: ef.vehicleBrand.trim(),
-            model: ef.vehicleModel.trim(),
-            color: ef.vehicleColor.trim()
-          } : null
-        }
       }
 
       const pkgPricingNumVal = Math.max(0, Number(String(packagePricingInput || "").replace(",", ".")) || 0)
-      const flat1ForPackage = {
-        flatId: Number(formFlatId),
-        checkinDate: formCheckin,
-        checkoutDate: formCheckout,
-        checkinTime: formCheckinTime || defaultCheckinTime || "14:00",
-        checkoutTime: formCheckoutTime || defaultCheckoutTime || "12:00",
-        guestCount: numG,
-        requesterIsGuest1: resolvedReqType === "guest",
-        informGuestsLater: resolvedReqType !== "guest" && !formGuestName.trim(),
-        guestId: resolvedGuest1Id,
-        guestName: formGuestName.trim(),
-        guestPhone: formGuestPhone.trim(),
-        guestEmail: formGuestEmail.trim(),
-        guestDocument: formGuest1Cpf.trim(),
-        guest2InformLater: numG >= 2 && !formGuest2Name.trim(),
-        guest2Id: guestsPayload[1]?.guestId || null,
-        guest2Name: guestsPayload[1]?.name || "",
-        guest2Phone: guestsPayload[1]?.phone || "",
-        guest2Email: guestsPayload[1]?.email || "",
-        guest2Document: guestsPayload[1]?.cpf || "",
-        guests: guestsPayload,
-        includeBreakfast: formIncludeBreakfast,
-        twinBeds: formTwinBeds,
-        extraMattress: formExtraMattress || numG >= 3,
-        dailyRate: formDailyRates.length > 0 ? round2(nightsSubInSave / formDailyRates.length) : (Number(formDailyRate) || 0),
-        dailyRates: formDailyRates,
-        charges: formCharges,
-        cleaningFee: formCharges.filter(c => c.type === "cleaning").reduce((acc, c) => acc + (Number(c.amount) || 0), 0),
-        totalAmount: flat1TotalAmount,
-        specialRequests: formSpecialRequests.trim() || formNotes.trim() || "",
-        notes: formNotes.trim() || formSpecialRequests.trim() || "",
-        receptionNotes: formReceptionNotes,
-        vehicle: formVehiclePlate.trim() ? {
-          plate: formVehiclePlate.trim().toUpperCase(),
-          brand: formVehicleBrand.trim(),
-          model: formVehicleModel.trim(),
-          color: formVehicleColor.trim()
-        } : null
-      }
-
       const effectivePackagePricingMode =
-        packagePricingMode === "fixed_total" && packagePricingInput.trim() === ""
+        packagePricingMode === "fixed_total" && (packagePricingInput.trim() === "" || pkgPricingNumVal <= 0)
           ? "sum"
           : packagePricingMode
       const payload: any = isMultiFlatSubmit
         ? {
             ...basePayload,
+            ratesAlreadyProrated: effectivePackagePricingMode !== "sum",
             packagePricingMode: effectivePackagePricingMode,
             packageDiscountAmount: effectivePackagePricingMode === "discount_amount" ? pkgPricingNumVal : 0,
             packageDiscountPct: effectivePackagePricingMode === "discount_pct" ? Math.min(100, pkgPricingNumVal) : 0,
             packageFixedTotal: effectivePackagePricingMode === "fixed_total" ? pkgPricingNumVal : null,
             emitConsolidatedBoletoNow: Boolean(formIsFaturadoBoleto && packageEmitBoletoNow),
-            packageFlats: [flat1ForPackage, ...extraPackageFlats.map(serializeExtraFlatForPackage)],
+            packageFlats: serializedFlats,
           }
         : basePayload
 
@@ -7936,8 +9874,14 @@ export default function PmsCalendar(props?: {
           })
           return
         }
-        setFormForceReplace(true)
-        resp = await sendSaveRequest({ ...payload, forceOverbooking: true })
+        setFormFlats(prev => prev.map(f => ({ ...f, forceOverbooking: true })))
+        resp = await sendSaveRequest({
+          ...payload,
+          forceOverbooking: true,
+          ...(payload.packageFlats
+            ? { packageFlats: payload.packageFlats.map((pf: any) => ({ ...pf, forceOverbooking: true })) }
+            : {}),
+        })
       }
 
       if (!resp.ok) {
@@ -7953,7 +9897,7 @@ export default function PmsCalendar(props?: {
       const savedRes = await resp.json().catch(() => null)
       if (savedRes?.isPackage && savedRes?.packageSummary) {
         const pkgSum = savedRes.packageSummary
-        const flatsCount = savedRes.reservations?.length || (1 + extraPackageFlats.length)
+        const flatsCount = savedRes.reservations?.length || formFlats.length
         const pendingVal = Number(pkgSum.pendingAmount ?? 0)
         const totVal = Number(pkgSum.totalAmount ?? totalAmount)
         const balanceLabel = formIsFaturadoBoleto
@@ -7973,7 +9917,7 @@ export default function PmsCalendar(props?: {
         }
         toast({
           title: selectedRes ? "Reserva Atualizada" : "Reserva Criada com Sucesso",
-          description: `${payload.guestName || resolvedRequesterNameForPkg} • Flat ${data.flats.find(f => f.id === Number(formFlatId))?.number || formFlatId}`
+          description: `${payload.guestName || resolvedRequesterNameForPkg} • Flat ${data.flats.find(f => f.id === Number(pFlat.flatId))?.number || pFlat.flatId}`
         })
       }
 
@@ -8084,9 +10028,6 @@ export default function PmsCalendar(props?: {
       const restored = json.reservation
       if (restored && selectedRes && String(selectedRes.id) === String(targetRes.id)) {
         setSelectedRes(restored)
-        setFormCheckout(restored.checkoutDate)
-        setFormNotes(restored.notes || "")
-        setFormSpecialRequests(restored.specialRequests || restored.notes || "")
         setFormStatus("confirmada")
         const unitRate = Number(formDailyRate) || Number(restored.dailyRate) || 250
         const rebuiltRates = buildReservationDailyRates(
@@ -8096,7 +10037,19 @@ export default function PmsCalendar(props?: {
           restored.channel || formChannel || "whatsapp",
           Array.isArray(restored.dailyRates) ? restored.dailyRates : formDailyRates
         )
-        setFormDailyRates(rebuiltRates)
+        setFormFlats(prev =>
+          prev.map((f, idx) =>
+            idx === 0
+              ? {
+                  ...f,
+                  checkoutDate: restored.checkoutDate,
+                  notes: restored.notes || "",
+                  specialRequests: restored.specialRequests || "",
+                  dailyRates: rebuiltRates,
+                }
+              : f
+          )
+        )
       }
       const hasConflicts = Array.isArray(json.conflicts) && json.conflicts.length > 0
       const restoredBr = restored?.checkoutDate ? format(parseISO(restored.checkoutDate), "dd/MM/yyyy") : ""
@@ -8137,9 +10090,18 @@ export default function PmsCalendar(props?: {
       if (!resp.ok) throw new Error(json.error || "Falha ao converter para check-out normal.")
       if (selectedRes && String(selectedRes.id) === String(targetRes.id)) {
         setSelectedRes(json)
-        setFormCheckout(json.checkoutDate || selectedRes.checkoutDate)
-        setFormNotes(json.notes || "")
-        setFormSpecialRequests(json.specialRequests || json.notes || "")
+        setFormFlats(prev =>
+          prev.map((f, idx) =>
+            idx === 0
+              ? {
+                  ...f,
+                  checkoutDate: json.checkoutDate || selectedRes.checkoutDate,
+                  notes: json.notes || "",
+                  specialRequests: json.specialRequests || "",
+                }
+              : f
+          )
+        )
       }
       toast({
         title: "Convertido para Check-out Normal! ✓",
@@ -8444,10 +10406,7 @@ export default function PmsCalendar(props?: {
     [dataGuestLookup]
   )
 
-  const stableSelectGuest = useStableCallback(handleSelectGuest)
   const stableSelectRequester = useStableCallback(handleSelectRequester)
-  const stableSelectGuest2 = useStableCallback(handleSelectGuest2)
-  const stableSelectGuest3 = useStableCallback(handleSelectGuest3)
   const stableSelectAgency = useStableCallback(handleSelectAgency)
 
   const handleLookupInlineCompanyCnpj = async (rawCnpj: string) => {
@@ -8717,8 +10676,12 @@ export default function PmsCalendar(props?: {
       if (!formRequesterName.trim() && (c.contactPerson || c.tradeName || c.corporateName)) {
         setFormRequesterName(c.contactPerson || c.tradeName || c.corporateName)
       }
-      if (!formRequesterPhone.trim() && (c.phone || c.telefone)) {
-        setFormRequesterPhone(c.phone || c.telefone)
+      const cPhone = c.phone || c.telefone || ""
+      if (!formRequesterPhone.trim() && cPhone) {
+        setFormRequesterPhone(cPhone)
+        verifyGuestPhoneWhatsApp(cPhone)
+      } else if (cPhone) {
+        verifyGuestPhoneWhatsApp(cPhone)
       }
       const compEmails = formatEmailList(c.email || c.financialEmail || c.emailFinanceiro || "")
       if (!formRequesterEmail.trim() && compEmails) {
@@ -8728,49 +10691,61 @@ export default function PmsCalendar(props?: {
         setFormNfDeliveryEmails(compEmails)
       }
       applyCompanyBillingDefaultsToForm(c)
+      syncSigiloAutoDefault("company", formFlats.length)
     }
   })
 
   const stableSelectFlat = useStableCallback((val: string) => {
     isFlatManuallyChangedRef.current = true
-    setFormFlatId(val)
-    setFormForceReplace(false)
+    setFormFlats(prev =>
+      prev.map((f, idx) => (idx === 0 ? { ...f, flatId: val, forceOverbooking: false } : f))
+    )
   })
 
   const stableSelectChannel = useStableCallback((val: string) => {
     setFormChannel(val)
-    const allSame = formDailyRates.length <= 1 || formDailyRates.every(d => (d.channel || "whatsapp") === formChannel)
-    const updatedDailyRates = allSame
-      ? formDailyRates.map(d => ({ ...d, channel: val }))
-      : formDailyRates
-    setFormDailyRates(updatedDailyRates)
+    let nextFlats = formFlats.map((fl) => {
+      const allSame = fl.dailyRates.length <= 1 || fl.dailyRates.every(d => (d.channel || "whatsapp") === formChannel)
+      return allSame
+        ? { ...fl, dailyRates: fl.dailyRates.map(d => ({ ...d, channel: val })) }
+        : fl
+    })
 
     if (val === "b2b") {
       setFormRequesterType("agency_b2b")
-      setFormPaymentMethod(formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b")
+      syncSigiloAutoDefault("agency_b2b", nextFlats.length)
+      const pm = formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b"
+      setFormPaymentMethod(pm)
       setFormStatus("confirmada")
-      syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val, formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b")
+      setFormFlats(nextFlats)
+      syncTotalsAndPayments(nextFlats, pkgExtraCharges, val, pm)
     } else if (val === "booking" || val === "airbnb") {
-      const updatedCharges = [...formCharges]
-      const cleanIdx = updatedCharges.findIndex(c => c.type === "cleaning")
-      if (cleanIdx === -1) {
-        updatedCharges.push({
-          id: `charge_${Date.now()}_clean`,
-          type: "cleaning",
-          title: "Taxa de Limpeza",
-          amount: 50,
-          notes: ""
-        })
-      } else if (updatedCharges[cleanIdx].amount === 80) {
-        updatedCharges[cleanIdx] = { ...updatedCharges[cleanIdx], amount: 50 }
-      }
-      setFormCharges(updatedCharges)
-      syncCompositeTotalAndPaid(updatedDailyRates, updatedCharges, val, val)
+      nextFlats = nextFlats.map((fl, idx) => {
+        if (idx > 0) return fl
+        const updatedCharges = [...fl.charges]
+        const cleanIdx = updatedCharges.findIndex(c => c.type === "cleaning")
+        if (cleanIdx === -1) {
+          updatedCharges.push({
+            id: `charge_${Date.now()}_clean`,
+            type: "cleaning",
+            title: "Taxa de Limpeza",
+            amount: 50,
+            notes: ""
+          })
+        } else if (updatedCharges[cleanIdx].amount === 80) {
+          updatedCharges[cleanIdx] = { ...updatedCharges[cleanIdx], amount: 50 }
+        }
+        return { ...fl, charges: updatedCharges }
+      })
+      setFormFlats(nextFlats)
+      syncTotalsAndPayments(nextFlats, pkgExtraCharges, val, val)
     } else if (val === "site") {
       setFormPaymentMethod("pix")
-      syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val, "pix")
+      setFormFlats(nextFlats)
+      syncTotalsAndPayments(nextFlats, pkgExtraCharges, val, "pix")
     } else {
-      syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val)
+      setFormFlats(nextFlats)
+      syncTotalsAndPayments(nextFlats, pkgExtraCharges, val)
     }
   })
 
@@ -10578,75 +12553,81 @@ export default function PmsCalendar(props?: {
               </DialogDescription>
             </DialogHeader>
 
-            <Tabs 
-              value={resModalTab === "details" ? "reservation" : resModalTab} 
-              onValueChange={(v: any) => setResModalTab(v)} 
-              className="w-full mt-1 mb-2"
-            >
-              <TabsList className={`w-full p-1 bg-muted/60 rounded-xl grid ${selectedRes ? "grid-cols-5" : "grid-cols-2"} gap-1 h-auto`}>
-                <TabsTrigger
-                  value="reservation"
-                  className="text-[10.5px] sm:text-xs font-semibold py-1.5 sm:py-2 px-1 gap-0.5 sm:gap-1 rounded-lg flex flex-col sm:flex-row items-center justify-center truncate data-[state=active]:shadow-xs"
-                >
-                  <CalendarDays className="w-3.5 h-3.5 shrink-0 text-primary" />
-                  <span className="truncate">Reserva</span>
-                </TabsTrigger>
-                
-                <TabsTrigger
-                  value="payments"
-                  className="text-[10.5px] sm:text-xs font-semibold py-1.5 sm:py-2 px-1 gap-0.5 sm:gap-1 rounded-lg flex flex-col sm:flex-row items-center justify-center truncate data-[state=active]:shadow-xs"
-                >
-                  <CreditCard className="w-3.5 h-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                  <span className="truncate">Pagamento</span>
-                </TabsTrigger>
+            {selectedRes ? (
+              <Tabs
+                value={resModalTab === "details" || resModalTab === "payments" ? "reservation" : resModalTab}
+                onValueChange={(v: any) => setResModalTab(v)}
+                className="w-full mt-1 mb-2"
+              >
+                <TabsList className="w-full p-1 bg-muted/60 rounded-xl grid grid-cols-4 gap-1 h-auto">
+                  <TabsTrigger
+                    value="reservation"
+                    className="text-[10.5px] sm:text-xs font-semibold py-1.5 sm:py-2 px-1 gap-0.5 sm:gap-1 rounded-lg flex flex-col sm:flex-row items-center justify-center truncate data-[state=active]:shadow-xs"
+                  >
+                    <CalendarDays className="w-3.5 h-3.5 shrink-0 text-primary" />
+                    <span className="truncate">Reserva</span>
+                  </TabsTrigger>
 
-                {selectedRes && (
-                  <>
-                    <TabsTrigger
-                      value="communications"
-                      className="text-[10.5px] sm:text-xs font-semibold py-1.5 sm:py-2 px-1 gap-0.5 sm:gap-1 rounded-lg flex flex-col sm:flex-row items-center justify-center truncate data-[state=active]:shadow-xs"
-                    >
-                      <div className="flex items-center gap-0.5">
-                        <MessageCircle className="w-3.5 h-3.5 shrink-0 text-sky-500" />
-                        {(communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length) > 0 && (
-                          <span className="text-[9px] px-1 py-0 rounded-full bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 font-bold shrink-0 sm:hidden">
-                            {communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length}
-                          </span>
-                        )}
-                      </div>
-                      <span className="truncate">Mensagens</span>
+                  <TabsTrigger
+                    value="communications"
+                    className="text-[10.5px] sm:text-xs font-semibold py-1.5 sm:py-2 px-1 gap-0.5 sm:gap-1 rounded-lg flex flex-col sm:flex-row items-center justify-center truncate data-[state=active]:shadow-xs"
+                  >
+                    <div className="flex items-center gap-0.5">
+                      <MessageCircle className="w-3.5 h-3.5 shrink-0 text-sky-500" />
                       {(communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length) > 0 && (
-                        <span className="hidden sm:inline-flex text-[10px] px-1.5 py-0.2 rounded-full bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 font-bold shrink-0 ml-0.5">
+                        <span className="text-[9px] px-1 py-0 rounded-full bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 font-bold shrink-0 sm:hidden">
                           {communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length}
                         </span>
                       )}
-                    </TabsTrigger>
+                    </div>
+                    <span className="truncate">Mensagens</span>
+                    {(communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length) > 0 && (
+                      <span className="hidden sm:inline-flex text-[10px] px-1.5 py-0.2 rounded-full bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 font-bold shrink-0 ml-0.5">
+                        {communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length}
+                      </span>
+                    )}
+                  </TabsTrigger>
 
-                    <TabsTrigger
-                      value="audit"
-                      className="text-[10.5px] sm:text-xs font-semibold py-1.5 sm:py-2 px-1 gap-0.5 sm:gap-1 rounded-lg flex flex-col sm:flex-row items-center justify-center truncate data-[state=active]:shadow-xs"
-                    >
-                      <Clock className="w-3.5 h-3.5 shrink-0 text-blue-500" />
-                      <span className="truncate">Histórico</span>
-                    </TabsTrigger>
+                  <TabsTrigger
+                    value="audit"
+                    className="text-[10.5px] sm:text-xs font-semibold py-1.5 sm:py-2 px-1 gap-0.5 sm:gap-1 rounded-lg flex flex-col sm:flex-row items-center justify-center truncate data-[state=active]:shadow-xs"
+                  >
+                    <Clock className="w-3.5 h-3.5 shrink-0 text-blue-500" />
+                    <span className="truncate">Histórico</span>
+                  </TabsTrigger>
 
-                    <TabsTrigger
-                      value="links"
-                      className="text-[10.5px] sm:text-xs font-semibold py-1.5 sm:py-2 px-1 gap-0.5 sm:gap-1 rounded-lg flex flex-col sm:flex-row items-center justify-center truncate data-[state=active]:shadow-xs"
-                    >
-                      <Link2 className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
-                      <span className="truncate">Links</span>
-                    </TabsTrigger>
-                  </>
-                )}
-              </TabsList>
-            </Tabs>
+                  <TabsTrigger
+                    value="links"
+                    className="text-[10.5px] sm:text-xs font-semibold py-1.5 sm:py-2 px-1 gap-0.5 sm:gap-1 rounded-lg flex flex-col sm:flex-row items-center justify-center truncate data-[state=active]:shadow-xs"
+                  >
+                    <Link2 className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+                    <span className="truncate">Links</span>
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            ) : (
+              <div className="w-full p-1 bg-muted/60 rounded-xl grid grid-cols-4 gap-1 mt-1 mb-2 text-[10.5px] sm:text-xs">
+                {[
+                  { id: "sec-1-solicitante", label: "1. Solicitante" },
+                  { id: "sec-2-qtd-flats", label: `2. Flats (${formFlats.length})` },
+                  { id: "sec-3-flats", label: "3. Hóspedes & Diárias" },
+                  { id: "sec-4-final", label: "4. NFS-e & Pgto" },
+                ].map((nav) => (
+                  <button
+                    key={nav.id}
+                    type="button"
+                    onClick={() => document.getElementById(nav.id)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                    className="py-1.5 px-1.5 rounded-lg bg-background/80 hover:bg-primary/10 border border-border/60 font-bold text-foreground truncate transition-colors cursor-pointer"
+                  >
+                    {nav.label}
+                  </button>
+                ))}
+              </div>
+            )}
 
-            {(resModalTab === "reservation" || resModalTab === "details" || resModalTab === "payments") && (
+            {(!selectedRes || resModalTab === "reservation" || resModalTab === "details" || resModalTab === "payments") && (
               <form noValidate onSubmit={handleSaveRes}>
-                {(resModalTab === "reservation" || resModalTab === "details") && (
-
-              <div className="py-2.5 space-y-3">
+                <div className="py-2.5 space-y-4">
                 {/* Painel de Gestão de Reserva Pertencente a Pacote Multi-Flat (Edição) */}
                 {selectedRes && Boolean(selectedRes.packageId || selectedRes.packageCode) && (() => {
                   const pkgCode = String(selectedRes.packageCode || selectedRes.packageId || "")
@@ -10680,14 +12661,17 @@ export default function PmsCalendar(props?: {
                             variant="outline"
                             size="sm"
                             onClick={() => {
-                              const url = `${window.location.origin}/minha-reserva/${encodeURIComponent(pkgCode)}?requester=1`
+                              const reqToken = String(selectedRes.requesterPortalToken || "").trim()
+                              const url = selectedRes.requesterPortalPath
+                                ? `${window.location.origin}${selectedRes.requesterPortalPath}`
+                                : `${window.location.origin}/solicitante/${encodeURIComponent(pkgCode)}${reqToken ? `?t=${encodeURIComponent(reqToken)}` : ""}`
                               navigator.clipboard.writeText(url)
                               toast({ title: "Link único do Solicitante copiado!", description: url })
                             }}
                             className="h-7 px-2 text-[11px] font-bold gap-1"
                           >
                             <Copy className="w-3 h-3" />
-                            <span>PIX / Portal Único</span>
+                            <span>Portal Solicitante / PIX</span>
                           </Button>
                           <Button
                             type="button"
@@ -11147,732 +13131,52 @@ export default function PmsCalendar(props?: {
                   </div>
                 )}
 
-                {/* Banner de Aviso de Conflito com Serviço Externo */}
-                {activeServiceBlockConflict && (
-                  <div className="p-3.5 bg-amber-500/15 dark:bg-amber-950/40 border-2 border-amber-500/70 rounded-2xl flex items-start gap-3 text-xs text-amber-950 dark:text-amber-200 shadow-2xs">
-                    <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                {/* ========================================================= */}
+                {/* 1. DADOS DO SOLICITANTE & CANAL DE ORIGEM                 */}
+                {/* ========================================================= */}
+                <div id="sec-1-solicitante" className="p-3.5 bg-slate-100/80 dark:bg-slate-900/80 border border-border rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between gap-2 flex-wrap border-b border-border/60 pb-2">
+                    <div className="flex items-center gap-2">
+                      <Badge className="bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-900 font-black text-[10.5px]">
+                        1. Dados do Solicitante
+                      </Badge>
+                      <span className="text-xs font-bold text-foreground">
+                        Canal de Origem, Solicitante & Vínculo Corporativo
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-center">
                     <div className="space-y-1">
-                      <div className="font-black text-sm flex items-center gap-1.5 text-amber-900 dark:text-amber-300">
-                        <span>Aviso de Serviço Externo</span>
-                      </div>
-                      <p className="text-[11.5px] leading-relaxed font-medium">
-                        ⚠️ Atenção: Este apartamento possui serviço externo agendado/em andamento neste período: <strong>{activeServiceBlockConflict.serviceTitle || activeServiceBlockConflict.title || "Serviço Externo"}</strong>{activeServiceBlockConflict.workerName ? ` (Prestador: ${activeServiceBlockConflict.workerName})` : ""}. A reserva pode ser criada, mas o flat pode estar indisponível.
-                      </p>
-                      <p className="text-[10.5px] text-amber-800 dark:text-amber-400 italic">
-                        ℹ️ Este bloqueio é visual. Administradores podem salvar a reserva normalmente para sobrescrever o período após confirmação.
-                      </p>
+                      <Label className="text-xs font-bold">Canal de Origem</Label>
+                      <Select value={formChannel} onValueChange={stableSelectChannel}>
+                        <SelectTrigger className="text-xs h-9 w-full bg-background">
+                          <SelectValue placeholder="Canal" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="site">🟠 Site Próprio / Motor de Reservas</SelectItem>
+                          <SelectItem value="whatsapp">🟢 WhatsApp / Reserva Direta</SelectItem>
+                          <SelectItem value="booking">🔵 Booking.com</SelectItem>
+                          <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
+                          <SelectItem value="b2b">🟣 B2B Reservas / Agência Corporativa</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
-                  </div>
-                )}
 
-                {selectedRes && (selectedRes.isFlatLocked || selectedRes.flatLocked) && (
-                  String(formFlatId) !== String(selectedRes.flatId) ? (
-                    <div className="p-3 bg-amber-500/15 border-2 border-amber-500/50 rounded-xl text-amber-950 dark:text-amber-200 text-xs flex items-start gap-2.5 animate-in fade-in">
-                      <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                      <div className="space-y-0.5">
-                        <p className="font-bold text-[12px] text-amber-900 dark:text-amber-300">
-                          Aviso: Alterando Quarto Preferencial / Bloqueado!
-                        </p>
-                        <p className="text-[11px] leading-tight text-amber-800 dark:text-amber-300/90">
-                          Esta reserva possui trava de quarto preferencial{selectedRes.flatLockReason ? ` (${selectedRes.flatLockReason})` : ""}. A Sofia AI está proibida de alterar este quarto. Como administrador, você pode prosseguir com a alteração manual e essa mudança será registrada em auditoria.
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-900 dark:text-amber-200 text-xs flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <Lock className="w-4 h-4 text-amber-600 shrink-0" />
-                        <span className="font-semibold text-[11.5px]">
-                          Quarto Preferencial Ativo{selectedRes.flatLockReason ? `: "${selectedRes.flatLockReason}"` : ""}
-                        </span>
-                      </div>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-400/30 text-amber-900 dark:text-amber-200 uppercase tracking-wider">
-                        Não Trocar
-                      </span>
-                    </div>
-                  )
-                )}
-
-                {/* Banner Multi-Flat Unificado (só aparece ao adicionar 2+ flats dentro do formulário completo) */}
-                {!selectedRes && isMultiFlat && (
-                  <div className="p-3 rounded-2xl border-2 border-indigo-300 dark:border-indigo-700 bg-indigo-50/80 dark:bg-indigo-950/35 space-y-2 text-xs">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <Badge className="bg-indigo-600 text-white font-black text-[10.5px]">
-                          📦 Pacote Multi-Flat ({1 + extraPackageFlats.length} Flats)
-                        </Badge>
-                        <span className="font-bold text-indigo-950 dark:text-indigo-100">
-                          1 Solicitante • 1 PIX / Link Único (saldo restante) • CRM + NFS-e + Boleto integrados
-                        </span>
-                      </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={handleAddExtraPackageFlat}
-                        className="h-7 px-2.5 text-[11px] font-bold border-indigo-400 text-indigo-700 dark:text-indigo-200 bg-white dark:bg-slate-900 gap-1"
-                      >
-                        <Plus className="w-3.5 h-3.5" /> Adicionar Flat
-                      </Button>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[10.5px]">
-                      <div className="px-2 py-1 rounded-lg bg-white/80 dark:bg-slate-900/70 border border-indigo-200/80 dark:border-indigo-800/60">
-                        <strong className="text-indigo-800 dark:text-indigo-300">Por Flat:</strong> Apartamento, Datas, Ocupação (1–3), Hóspedes 1 e 2 (CRM), Café, Camas, Veículo, Diárias e Taxas do Flat.
-                      </div>
-                      <div className="px-2 py-1 rounded-lg bg-white/80 dark:bg-slate-900/70 border border-indigo-200/80 dark:border-indigo-800/60">
-                        <strong className="text-emerald-800 dark:text-emerald-300">Compartilhado no Pacote:</strong> Solicitante / Empresa / CNPJ, Canal, Status & Hold, Tomador NFS-e + E-mails (;), Boleto e Pagamentos Divididos.
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {!selectedRes && isMultiFlat && (
-                  <div className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-indigo-600/10 border border-indigo-300/70 dark:border-indigo-700/60 text-xs">
-                    <span className="font-black text-indigo-800 dark:text-indigo-200 flex items-center gap-1.5">
-                      <span>🏢 Flat 1 (Principal do Pacote)</span>
-                    </span>
-                    <span className="text-[10.5px] text-muted-foreground">Dados abaixo valem para o Flat 1; Flats adicionais ficam logo após o veículo</span>
-                  </div>
-                )}
-
-                                {/* 1º Bloco: Datas e Horários de Entrada (Check-in) e Saída (Check-out) com Calendário Range Picker Unificado */}
-                <Popover 
-                  open={rangePickerOpen} 
-                  onOpenChange={(open) => {
-                    setRangePickerOpen(open);
-                    if (!open) {
-                      setPickerRangeStart(null);
-                      setPickerHoverDate(null);
-                    }
-                  }}
-                >
-                  <PopoverAnchor asChild>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 items-start">
-                      {/* Entrada / Check-in */}
-                      <div className="space-y-1.5 p-2.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-border/70 min-w-0">
-                        <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between">
-                          <span className="flex items-center gap-1.5">
-                            <LogIn className="w-3.5 h-3.5 text-emerald-600" />
-                            Entrada (Check-in)
-                          </span>
-                          <span className="text-[10px] text-muted-foreground font-normal">Padrão: {defaultCheckinTime}</span>
-                        </Label>
-                        <div className="grid grid-cols-5 gap-2 items-center">
-                          <div className="col-span-3 min-w-0">
-                            <Label className="text-[10px] text-muted-foreground block mb-0.5">Data</Label>
-                            <div className="relative flex items-center">
-                              <Input 
-                                type="date" 
-                                value={formCheckin} 
-                                onChange={e => handleCheckinChange(e.target.value)} 
-                                min="2020-01-01"
-                                max="2099-12-31"
-                                required 
-                                className="text-xs h-9 w-full min-w-0 pr-8 pl-2 [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:pointer-events-none [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-0 [&::-webkit-calendar-picker-indicator]:w-7"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setPickerRangeStart(null);
-                                  setPickerHoverDate(null);
-                                  setPickerMonth(safeParseDate(formCheckin) || new Date());
-                                  setRangePickerOpen(true);
-                                }}
-                                className="absolute right-1.5 z-10 p-1 text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 transition-colors cursor-pointer rounded pointer-events-auto"
-                                title="Abrir calendário de período (Range Picker)"
-                              >
-                                <CalendarIcon className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </div>
-                          <div className="col-span-2 min-w-0">
-                            <Label className="text-[10px] text-muted-foreground block mb-0.5">Horário</Label>
-                            <Input 
-                              type="time" 
-                              value={formCheckinTime} 
-                              onChange={e => setFormCheckinTime(e.target.value)} 
-                              required 
-                              className="text-xs h-9 font-medium w-full min-w-0 px-2"
-                              title="Horário previsto para início do Check-in"
-                            />
-                          </div>
+                    <div className="p-2.5 bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/60 rounded-xl flex items-center justify-between gap-2 sm:mt-4">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Building2 className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
+                        <div className="min-w-0">
+                          <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block leading-tight">Cliente Mensalista / Long Stay</span>
+                          <span className="text-[10px] text-muted-foreground block truncate">Destaque visual no Livro de Reservas</span>
                         </div>
                       </div>
-
-                      {/* Saída / Check-out */}
-                      <div className="space-y-1.5 p-2.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-border/70 min-w-0">
-                        <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between">
-                          <span className="flex items-center gap-1.5">
-                            <LogOut className="w-3.5 h-3.5 text-rose-600" />
-                            Saída (Check-out)
-                          </span>
-                          <span className="text-[10px] text-muted-foreground font-normal">Padrão: {defaultCheckoutTime}</span>
-                        </Label>
-                        <div className="grid grid-cols-5 gap-2 items-center">
-                          <div className="col-span-3 min-w-0">
-                            <Label className="text-[10px] text-muted-foreground block mb-0.5">Data</Label>
-                            <div className="relative flex items-center">
-                              <Input 
-                                type="date" 
-                                value={formCheckout} 
-                                onChange={e => handleCheckoutChange(e.target.value)} 
-                                min="2020-01-01"
-                                max="2099-12-31"
-                                required 
-                                className="text-xs h-9 w-full min-w-0 pr-8 pl-2 [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:pointer-events-none [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-0 [&::-webkit-calendar-picker-indicator]:w-7"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setPickerRangeStart(null);
-                                  setPickerHoverDate(null);
-                                  setPickerMonth(safeParseDate(formCheckin) || safeParseDate(formCheckout) || new Date());
-                                  setRangePickerOpen(true);
-                                }}
-                                className="absolute right-1.5 z-10 p-1 text-rose-600 hover:text-rose-700 dark:text-rose-400 dark:hover:text-rose-300 transition-colors cursor-pointer rounded pointer-events-auto"
-                                title="Abrir calendário de período (Range Picker)"
-                              >
-                                <CalendarIcon className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </div>
-                          <div className="col-span-2 min-w-0">
-                            <Label className="text-[10px] text-muted-foreground block mb-0.5">Horário</Label>
-                            <Input 
-                              type="time" 
-                              value={formCheckoutTime} 
-                              onChange={e => setFormCheckoutTime(e.target.value)} 
-                              required 
-                              className="text-xs h-9 font-medium w-full min-w-0 px-2"
-                              title="Horário limite para conclusão do Check-out"
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Aviso visual inline quando Check-out <= Check-in ao digitar */}
-                      {formCheckin && formCheckout && formCheckout <= formCheckin && (
-                        <div className="col-span-1 sm:col-span-2 text-[11px] text-rose-600 dark:text-rose-400 bg-rose-500/10 border border-rose-500/30 px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 font-semibold animate-in fade-in">
-                          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                          <span>A data de saída (check-out) deve ser posterior à data de entrada (check-in).</span>
-                        </div>
-                      )}
+                      <Switch checked={formIsMonthlyGuest} onCheckedChange={setFormIsMonthlyGuest} />
                     </div>
-                  </PopoverAnchor>
-
-                  <PopoverContent 
-                    align="center" 
-                    side="bottom" 
-                    sideOffset={8}
-                    className="z-[70] w-[310px] sm:w-[330px] max-w-[calc(100vw-2rem)] p-3 bg-popover border border-border shadow-2xl rounded-2xl animate-in fade-in-0 zoom-in-95"
-                  >
-                    {rangePickerOpen && (() => {
-                      const safeMonth = !pickerMonth || isNaN(pickerMonth.getTime()) ? new Date() : pickerMonth;
-                      return (
-                        <>
-                          {/* Cabeçalho do Range Picker com navegação de mês e ano */}
-                          <div className="flex items-center justify-between pb-2 mb-2 border-b border-border/60">
-                            <div className="flex items-center gap-0.5">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => setPickerMonth(prev => subYears(prev, 1))}
-                                className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
-                                title="Ano anterior (-1 ano)"
-                              >
-                                <ChevronsLeft className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => setPickerMonth(prev => subMonths(prev, 1))}
-                                className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
-                                title="Mês anterior"
-                              >
-                                <ChevronLeft className="w-4 h-4" />
-                              </Button>
-                            </div>
-
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-xs font-bold capitalize text-foreground select-none">
-                                {format(safeMonth, "MMMM 'de' yyyy", { locale: ptBR })}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => setPickerMonth(new Date())}
-                                className="text-[10px] text-primary hover:underline font-semibold cursor-pointer px-1.5 py-0.5 rounded bg-muted/60 hover:bg-muted"
-                                title="Ir para o mês atual"
-                              >
-                                Hoje
-                              </button>
-                            </div>
-
-                            <div className="flex items-center gap-0.5">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => setPickerMonth(prev => addMonths(prev, 1))}
-                                className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
-                                title="Próximo mês"
-                              >
-                                <ChevronRight className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => setPickerMonth(prev => addYears(prev, 1))}
-                                className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
-                                title="Próximo ano (+1 ano)"
-                              >
-                                <ChevronsRight className="w-4 h-4" />
-                              </Button>
-                            </div>
-                          </div>
-
-                          {/* Guia de Seleção */}
-                          <div className="text-[11px] font-semibold py-1 px-2 mb-2 rounded-lg text-center bg-muted/60 text-muted-foreground flex items-center justify-between">
-                            <span>
-                              {!pickerRangeStart ? (
-                                "1º clique / toque: Selecione a Entrada"
-                              ) : (
-                                <>
-                                  Entrada: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">{(() => {
-                                    const pStart = safeParseDate(pickerRangeStart);
-                                    return pStart ? format(pStart, "dd/MM") : pickerRangeStart;
-                                  })()}</strong> ➔ 2º clique / toque: Saída
-                                </>
-                              )}
-                            </span>
-                            {pickerRangeStart && (
-                              <button
-                                type="button"
-                                onClick={() => { setPickerRangeStart(null); setPickerHoverDate(null); }}
-                                className="text-[10px] text-rose-500 hover:underline font-bold cursor-pointer"
-                              >
-                                Limpar
-                              </button>
-                            )}
-                          </div>
-
-                          {/* Dias da Semana */}
-                          <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-muted-foreground mb-1">
-                            {["D", "S", "T", "Q", "Q", "S", "S"].map((dia, idx) => (
-                              <div key={idx} className="h-5 flex items-center justify-center">
-                                {dia}
-                              </div>
-                            ))}
-                          </div>
-
-                          {/* Grid dos Dias do Mês */}
-                          {(() => {
-                            const mStart = startOfMonth(safeMonth);
-                            const mEnd = endOfMonth(safeMonth);
-                            const days = eachDayOfInterval({ start: mStart, end: mEnd });
-                            const startDay = getDay(mStart);
-
-                            const validCin = safeParseDate(formCheckin);
-                            const validCout = safeParseDate(formCheckout);
-                            const hasValidPreExistingRange = Boolean(validCin && validCout && formCheckin < formCheckout);
-
-                            const effectiveStart = pickerRangeStart || (hasValidPreExistingRange ? formCheckin : null);
-                            const effectiveEnd = pickerRangeStart
-                              ? (pickerHoverDate && pickerHoverDate > pickerRangeStart ? pickerHoverDate : null)
-                              : (hasValidPreExistingRange ? formCheckout : null);
-
-                            return (
-                              <div 
-                                className="grid grid-cols-7 gap-1"
-                                onMouseLeave={() => setPickerHoverDate(null)}
-                              >
-                                {Array.from({ length: startDay }).map((_, idx) => (
-                                  <div key={`blank-${idx}`} className="h-7 w-full" />
-                                ))}
-
-                                {days.map(d => {
-                                  const dStr = format(d, "yyyy-MM-dd");
-                                  const isStart = Boolean(effectiveStart && dStr === effectiveStart);
-                                  const isEnd = Boolean(effectiveEnd && dStr === effectiveEnd);
-                                  const isBetween = Boolean(effectiveStart && effectiveEnd && effectiveStart < effectiveEnd && dStr > effectiveStart && dStr < effectiveEnd);
-                                  const isTodayDate = isToday(d);
-
-                                  return (
-                                    <button
-                                      key={dStr}
-                                      type="button"
-                                      title={format(d, "dd/MM/yyyy")}
-                                      aria-label={format(d, "dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
-                                      onClick={() => {
-                                        if (!pickerRangeStart) {
-                                          setPickerRangeStart(dStr);
-                                          setPickerHoverDate(null);
-                                        } else {
-                                          if (dStr <= pickerRangeStart) {
-                                            setPickerRangeStart(dStr);
-                                            setPickerHoverDate(null);
-                                          } else {
-                                            handleDatesChange(pickerRangeStart, dStr);
-                                            setPickerRangeStart(null);
-                                            setPickerHoverDate(null);
-                                            setRangePickerOpen(false);
-                                          }
-                                        }
-                                      }}
-                                      onMouseEnter={() => {
-                                        if (pickerRangeStart) {
-                                          setPickerHoverDate(dStr);
-                                        }
-                                      }}
-                                      className={cn(
-                                        "h-7 w-full text-[11px] font-semibold rounded-md flex items-center justify-center transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none",
-                                        isStart && "bg-emerald-600 text-white font-bold shadow-xs",
-                                        isEnd && "bg-rose-600 text-white font-bold shadow-xs",
-                                        isBetween && "bg-emerald-500/20 text-emerald-950 dark:text-emerald-100 rounded-none",
-                                        !isStart && !isEnd && !isBetween && "hover:bg-muted text-foreground",
-                                        isTodayDate && !isStart && !isEnd && "border border-primary font-bold"
-                                      )}
-                                    >
-                                      {format(d, "d")}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            );
-                          })()}
-                        </>
-                      );
-                    })()}
-
-                    {/* Rodapé com Resumo de Diárias e Botão Fechar */}
-                    <div className="pt-2 mt-2 border-t border-border/60 flex items-center justify-between text-xs">
-                      <span className="text-[11px] text-muted-foreground">
-                        {(() => {
-                          if (pickerRangeStart) {
-                            if (pickerHoverDate && pickerHoverDate > pickerRangeStart) {
-                              const dStart = safeParseDate(pickerRangeStart);
-                              const dHover = safeParseDate(pickerHoverDate);
-                              if (dStart && dHover) {
-                                const nights = differenceInCalendarDays(dHover, dStart);
-                                return (
-                                  <span className="text-emerald-700 dark:text-emerald-300 font-medium">
-                                    <strong className="text-emerald-600 dark:text-emerald-400 font-bold">{nights}</strong>{" "}
-                                    {nights === 1 ? "diária" : "diárias"} (selecionando)
-                                  </span>
-                                );
-                              }
-                            }
-                            return "Selecione a data de saída";
-                          }
-
-                          const validCin = safeParseDate(formCheckin);
-                          const validCout = safeParseDate(formCheckout);
-                          if (validCin && validCout && formCheckin < formCheckout) {
-                            const nights = differenceInCalendarDays(validCout, validCin);
-                            return (
-                              <>
-                                <strong className="text-foreground font-bold">{nights}</strong>{" "}
-                                {nights === 1 ? "diária" : "diárias"}
-                              </>
-                            );
-                          }
-                          return "Selecione entrada e saída";
-                        })()}
-                      </span>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setPickerRangeStart(null);
-                          setPickerHoverDate(null);
-                          setRangePickerOpen(false);
-                        }}
-                        className="h-6 px-2 text-[11px] font-semibold cursor-pointer"
-                      >
-                        Fechar
-                      </Button>
-                    </div>
-                  </PopoverContent>
-                </Popover>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 items-start">
-                  <div className="space-y-1.5 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Apartamento</Label>
-                      {!selectedRes && fairShareResult?.bestFlatId && String(formFlatId) === String(fairShareResult.bestFlatId) && (
-                        <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold flex items-center gap-1">
-                          ✨ Sugerido da vez
-                        </span>
-                      )}
-                    </div>
-                    <Select 
-                      value={formFlatId} 
-                      onValueChange={stableSelectFlat}
-                    >
-                      <SelectTrigger className="text-xs font-bold h-9 w-full min-w-0">
-                        <SelectValue placeholder={loadingFairShare ? "✨ Buscando quarto sugerido..." : "Selecione o Flat"}>
-                          {(() => {
-                            if (!formFlatId) {
-                              return loadingFairShare ? "✨ Selecionando quarto sugerido..." : "Selecione o Flat";
-                            }
-                            const todayIso = format(new Date(), "yyyy-MM-dd");
-                            const isFutureCheckin = formCheckin > todayIso;
-                            const selFlat = data.flats.find(f => String(f.id) === String(formFlatId));
-                            const selStat = fairShareResult?.allStats?.find(
-                              (s: any) => Number(s.flat?.id) === Number(formFlatId) || (selFlat && String(s.flat?.number) === String(selFlat.number))
-                            );
-                            const cleanSt = isFutureCheckin ? "clean" : (selStat?.cleaningStatus || (selFlat as any)?.cleaningStatus || "clean");
-                            const isDirty = !isFutureCheckin && (cleanSt === "dirty" || Boolean(selStat?.isDirty));
-                            const isCleaningNow = !isFutureCheckin && (cleanSt === "cleaning_now" || Boolean(selStat?.isCleaningNow));
-                            const hasSameDay = Boolean(selStat?.hasCheckoutOnCheckinDay);
-                            const isAvail = selStat ? Boolean(selStat.isAvailable) : true;
-                            const isBest = !selectedRes && String(formFlatId) === String(fairShareResult?.bestFlatId);
-                            let statusShort = "🟢 Vago & Limpo";
-                            if (!isAvail) {
-                              const hasResC = (selStat?.conflicts || []).some((c: any) => !selectedRes || String(c.id) !== String(selectedRes.id));
-                              statusShort = hasResC ? "⚠️ Ocupado" : "🔒 Bloqueado";
-                            } else if (hasSameDay) {
-                              statusShort = "🔄 Saída no Dia";
-                            } else if (isDirty) {
-                              statusShort = "🧹 Vago & Sujo";
-                            } else if (isCleaningNow) {
-                              statusShort = "🧽 Em Limpeza";
-                            }
-                            return `Apt ${selFlat?.number || formFlatId} • ${statusShort}${isBest ? " ✨" : ""}`;
-                          })()}
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent className="max-h-64">
-                        {flatSelectOptions}
-                      </SelectContent>
-                    </Select>
                   </div>
 
-                  <div className="space-y-1.5 min-w-0">
-                    <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Canal de Origem</Label>
-                    <Select 
-                      value={formChannel} 
-                      onValueChange={stableSelectChannel}
-                    >
-                      <SelectTrigger className="text-xs h-9 w-full min-w-0">
-                        <SelectValue placeholder="Canal" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="site">🟠 Site Próprio / Motor de Reservas</SelectItem>
-                        <SelectItem value="whatsapp">🟢 WhatsApp / Reserva Direta</SelectItem>
-                        <SelectItem value="booking">🔵 Booking.com</SelectItem>
-                        <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
-                        <SelectItem value="b2b">🟣 B2B Reservas / Agência Corporativa</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                {!selectedRes && (
-                  <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-dashed border-indigo-300 dark:border-indigo-700 bg-indigo-50/40 dark:bg-indigo-950/20 text-xs">
-                    <span className="text-[11px] text-indigo-900 dark:text-indigo-200 font-medium">
-                      {isMultiFlat
-                        ? `Pacote com ${1 + extraPackageFlats.length} flats configurado — cada flat mantém seus próprios hóspedes no CRM e um pagamento único consolidado.`
-                        : "Precisa reservar 2 ou mais flats para o mesmo solicitante ou empresa?"}
-                    </span>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={handleAddExtraPackageFlat}
-                      className="h-7 px-2.5 text-[11px] font-bold border-indigo-400 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100/70 dark:hover:bg-indigo-900/40 shrink-0 gap-1 cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Adicionar Outro Flat ao Pacote</span>
-                    </Button>
-                  </div>
-                )}
-
-                {/* Banner sutil do Quarto da Vez apenas na criação de Nova Reserva */}
-                {!selectedRes && fairShareResult?.bestFlatNumber && (() => {
-                  const todayIso = format(new Date(), "yyyy-MM-dd");
-                  const isFutureCheckin = formCheckin > todayIso;
-                  const bestStat = fairShareResult?.allStats?.find(
-                    (s: any) => Number(s.flat?.id) === Number(fairShareResult.bestFlatId) || String(s.flat?.number) === String(fairShareResult.bestFlatNumber)
-                  );
-                  const bestStatusLabel = bestStat?.hasCheckoutOnCheckinDay
-                    ? "🔄 Saída no Dia"
-                    : !isFutureCheckin && (bestStat?.isDirty || bestStat?.cleaningStatus === "dirty")
-                    ? "🧹 Vago & Sujo"
-                    : !isFutureCheckin && (bestStat?.isCleaningNow || bestStat?.cleaningStatus === "cleaning_now")
-                    ? "🧽 Em Limpeza"
-                    : "🟢 Vago & Limpo";
-                  return (
-                    <div className="text-[11px] text-amber-800 dark:text-amber-200 font-medium flex items-center justify-between bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-lg animate-in fade-in">
-                      <div className="flex items-center gap-1.5">
-                        <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                        <span>
-                          Sugestão da vez para equilíbrio: <strong className="font-bold">Apt {fairShareResult.bestFlatNumber}</strong>{" "}
-                          <span className="text-[10px] opacity-90">({bestStatusLabel})</span>
-                          {String(formFlatId) === String(fairShareResult.bestFlatId) && (
-                            <span className="ml-1.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">✓ Selecionado</span>
-                          )}
-                        </span>
-                      </div>
-                      {String(formFlatId) !== String(fairShareResult.bestFlatId) && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            isFlatManuallyChangedRef.current = false;
-                            setFormFlatId(String(fairShareResult.bestFlatId));
-                            setFormForceReplace(false);
-                          }}
-                          className="h-6 text-[10px] font-bold text-amber-800 dark:text-amber-200 hover:bg-amber-500/20 px-2 py-0 border border-amber-500/30 rounded"
-                        >
-                          Usar Apt {fairShareResult.bestFlatNumber}
-                        </Button>
-                      )}
-                    </div>
-                  );
-                })()}
-
-                {/* Alerta Operacional: Quarto Vago & Sujo ou Saída no Dia Selecionado */}
-                {(() => {
-                  const todayIso = format(new Date(), "yyyy-MM-dd");
-                  const isFutureCheckin = formCheckin > todayIso;
-                  const selFlat = data.flats.find(f => String(f.id) === String(formFlatId));
-                  const selectedStat = fairShareResult?.allStats?.find(
-                    (s: any) => String(s.flat?.id) === String(formFlatId) || (selFlat && String(s.flat?.number) === String(selFlat.number))
-                  );
-                  const isAvail = selectedStat ? Boolean(selectedStat.isAvailable) : true;
-                  if (!isAvail) return null;
-                  const cleanSt = isFutureCheckin ? "clean" : (selectedStat?.cleaningStatus || (selFlat as any)?.cleaningStatus || "clean");
-                  const isDirty = !isFutureCheckin && (cleanSt === "dirty" || Boolean(selectedStat?.isDirty));
-                  const hasSameDay = Boolean(selectedStat?.hasCheckoutOnCheckinDay);
-                  if (!isDirty && !hasSameDay) return null;
-
-                  const isSelectedTheBestFlat = Boolean(
-                    fairShareResult?.bestFlatId && String(fairShareResult.bestFlatId) === String(formFlatId)
-                  );
-                  const nextCleanStat = (fairShareResult?.allStats || [])
-                    .filter((s: any) =>
-                      s?.isAvailable &&
-                      String(s.flat?.id) !== String(formFlatId) &&
-                      !s.isDirty &&
-                      s.cleaningStatus !== "dirty" &&
-                      !s.hasCheckoutOnCheckinDay
-                    )
-                    .sort((a: any, b: any) => {
-                      if ((a.monthOccupiedDays || 0) !== (b.monthOccupiedDays || 0)) {
-                        return (a.monthOccupiedDays || 0) - (b.monthOccupiedDays || 0);
-                      }
-                      return (b.daysSinceLastCheckout || 0) - (a.daysSinceLastCheckout || 0);
-                    })[0];
-
-                  return (
-                    <div className="p-2.5 bg-orange-50 dark:bg-orange-950/40 border border-orange-300 dark:border-orange-700/60 rounded-xl flex items-center justify-between gap-2 text-xs animate-in fade-in">
-                      <div className="flex items-start gap-2 text-orange-900 dark:text-orange-200">
-                        <AlertCircle className="w-4 h-4 text-orange-600 dark:text-orange-400 shrink-0 mt-0.5" />
-                        <div>
-                          {hasSameDay ? (
-                            <span className="font-bold block">
-                              🔄 Atenção: Apt {selFlat?.number || formFlatId} {isSelectedTheBestFlat ? `é o Quarto da Vez (${selectedStat?.monthOccupiedDays || 0}d), mas ` : ""}possui saída prevista no dia (hóspede anterior ainda no flat).
-                            </span>
-                          ) : (
-                            <span className="font-bold block">
-                              🧹 Atenção: Apt {selFlat?.number || formFlatId} {isSelectedTheBestFlat ? `é o Quarto da Vez (${selectedStat?.monthOccupiedDays || 0}d ocupados), porém ` : ""}consta como VAGO & SUJO na Governança.
-                            </span>
-                          )}
-                          <span className="text-[11px] text-orange-800/90 dark:text-orange-300/90 block">
-                            {hasSameDay
-                              ? "Mantenha para equilíbrio de ocupação (confirmando o check-out/limpeza) ou escolha outro apartamento."
-                              : "Mantenha para equilibrar a ocupação (acionando a Governança) ou troque para o próximo quarto já limpo se for entrada imediata."}
-                          </span>
-                        </div>
-                      </div>
-                      {nextCleanStat?.flat?.id && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            isFlatManuallyChangedRef.current = true;
-                            setFormFlatId(String(nextCleanStat.flat.id));
-                            setFormForceReplace(false);
-                          }}
-                          className="h-7 text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white border-0 shrink-0 px-2.5"
-                        >
-                          Usar próximo limpo (Apt {nextCleanStat.flat.number})
-                        </Button>
-                      )}
-                    </div>
-                  );
-                })()}
-
-                {/* Alerta de Quarto Ocupado & Trava Anti-Overbooking */}
-                {(() => {
-                  const selectedStat = fairShareResult?.allStats?.find((s: any) => String(s.flat?.id) === String(formFlatId));
-                  if (!selectedStat || selectedStat.isAvailable) return null;
-                  const conflictsList = (selectedStat.conflicts || []).filter((c: any) => !selectedRes || String(c.id) !== String(selectedRes.id));
-                  if (conflictsList.length === 0 && selectedStat.blocks?.length === 0) return null;
-                  const conflict = conflictsList[0];
-
-                  return (
-                    <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-700/60 rounded-2xl space-y-2 text-xs">
-                      <div className="flex items-start gap-2 text-rose-800 dark:text-rose-200">
-                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                        <div>
-                          <span className="font-bold block">🚨 Conflito de Ocupação: Apt {selectedStat.flat?.number} já possui reserva neste período!</span>
-                          {conflict && (
-                            <span className="text-[11px] text-rose-700 dark:text-rose-300/90 block">
-                              Hóspede em conflito: <strong>{conflict?.guestName || "Outro Hóspede"}</strong> ({conflict?.checkinDate} a {conflict?.checkoutDate})
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="pt-1.5 border-t border-rose-200 dark:border-rose-800/60 flex items-center justify-between gap-2">
-                        <div className="text-[11px] text-slate-700 dark:text-slate-300 font-medium">
-                          Forçar encaixe mesmo com conflito (Overbooking — notifica Gestão imediatamente)
-                        </div>
-                        <Switch checked={formForceReplace} onCheckedChange={setFormForceReplace} />
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* 1. Quantidade de Hóspedes Autorizados (1, 2 ou 3) */}
-                <div className="p-3 bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60 rounded-xl space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                      <Users className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                      <span>Quantidade de Hóspedes na Reserva</span>
-                    </span>
-                    <Badge variant="outline" className="text-[10px] bg-indigo-100 dark:bg-indigo-900/60 text-indigo-900 dark:text-indigo-200">
-                      Capacidade Máxima: 3 Pessoas
-                    </Badge>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    {(["1", "2", "3"] as const).map(num => (
-                      <button
-                        key={num}
-                        type="button"
-                        onClick={() => setFormGuestCount(num)}
-                        className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                          formGuestCount === num
-                            ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                            : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-indigo-400"
-                        }`}
-                      >
-                        <User className="w-3.5 h-3.5" />
-                        <span>{num} {num === "1" ? "Hóspede" : "Hóspedes"}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* 2. Tipo de Solicitante da Reserva (Próprio Hóspede, Terceiro, Empresa ou Agência B2B 4-Pontas) */}
-                <div className="p-3 bg-slate-100/80 dark:bg-slate-900/80 border rounded-xl space-y-2.5">
+                  {/* Tipo de Solicitante da Reserva (Próprio Hóspede, Terceiro, Empresa ou Agência B2B 4-Pontas) */}
+                  <div className="space-y-2.5 pt-1 border-t border-border/50">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
                       Quem está solicitando a reserva?
@@ -11884,6 +13188,7 @@ export default function PmsCalendar(props?: {
                       onClick={() => {
                         setFormChannel("b2b")
                         setFormRequesterType("agency_b2b")
+                        syncSigiloAutoDefault("agency_b2b", formFlats.length)
                         setShowVoucherParser(!showVoucherParser)
                       }}
                       className="h-7 px-2.5 text-[10.5px] font-bold bg-purple-600/10 hover:bg-purple-600/20 text-purple-700 dark:text-purple-300 border-purple-400/50 gap-1"
@@ -11902,9 +13207,16 @@ export default function PmsCalendar(props?: {
                         setFormRequesterPhone("")
                         setFormRequesterEmail("")
                         setFormRequesterCpf("")
-                        if (formInvoiceRecipientType === "requester" || formInvoiceRecipientType === "agency") {
-                          setFormInvoiceRecipientType(formCompanyId ? "company" : "guest")
+                        const nextInv = (formInvoiceRecipientType === "requester" || formInvoiceRecipientType === "agency")
+                          ? (formCompanyId ? "company" : "guest")
+                          : formInvoiceRecipientType
+                        if (nextInv !== formInvoiceRecipientType) {
+                          setFormInvoiceRecipientType(nextInv)
                         }
+                        if (!selectedRes && !nfHideManuallySetRef.current && formFlats.length < 2 && nextInv !== "company") {
+                          setFormNfHideFromGuest(false)
+                        }
+                        syncSigiloAutoDefault("guest", formFlats.length)
                       }}
                       className={`p-2 rounded-xl border text-[11px] font-bold text-left transition-all ${
                         formRequesterType === "guest"
@@ -11921,6 +13233,7 @@ export default function PmsCalendar(props?: {
                         if (formInvoiceRecipientType === "agency") {
                           setFormInvoiceRecipientType("guest")
                         }
+                        syncSigiloAutoDefault("other_person", formFlats.length)
                       }}
                       className={`p-2 rounded-xl border text-[11px] font-bold text-left transition-all ${
                         formRequesterType === "other_person"
@@ -11937,6 +13250,7 @@ export default function PmsCalendar(props?: {
                         if (!selectedRes) {
                           setFormInvoiceRecipientType("company")
                         }
+                        syncSigiloAutoDefault("company", formFlats.length)
                       }}
                       className={`p-2 rounded-xl border text-[11px] font-bold text-left transition-all ${
                         formRequesterType === "company"
@@ -11955,8 +13269,9 @@ export default function PmsCalendar(props?: {
                         setFormStatus("confirmada")
                         if (!selectedRes) {
                           setFormInvoiceRecipientType("agency")
-                          setFormNfHideFromGuest(true)
+                          if (!nfHideManuallySetRef.current) setFormNfHideFromGuest(true)
                         }
+                        syncSigiloAutoDefault("agency_b2b", formFlats.length)
                       }}
                       className={`p-2 rounded-xl border text-[11px] font-bold text-left transition-all ${
                         formRequesterType === "agency_b2b" || formChannel === "b2b"
@@ -12243,14 +13558,53 @@ export default function PmsCalendar(props?: {
                             placeholder="E-mail do Agente"
                             className="h-8 text-xs"
                           />
-                          <Input
-                            type="tel"
-                            inputMode="tel"
-                            value={formAgencyAgentPhone}
-                            onChange={e => setFormAgencyAgentPhone(formatBrazilPhone(e.target.value))}
-                            placeholder="Telefone da Agência"
-                            className="h-8 text-xs"
-                          />
+                          {(() => {
+                            const agentVerKey = getPhoneVerifyKey(formAgencyAgentPhone)
+                            const agentPhoneVer = agentVerKey ? phoneVerificationMap[agentVerKey] : undefined
+                            return (
+                              <div className="space-y-1">
+                                <div className="relative">
+                                  <Input
+                                    type="tel"
+                                    inputMode="tel"
+                                    value={formAgencyAgentPhone}
+                                    onChange={e => setFormAgencyAgentPhone(formatBrazilPhone(e.target.value))}
+                                    onBlur={() => {
+                                      if (cleanWhatsAppPhone(formAgencyAgentPhone).length >= 10) {
+                                        verifyGuestPhoneWhatsApp(formAgencyAgentPhone)
+                                      }
+                                    }}
+                                    placeholder="Telefone da Agência"
+                                    className={cn(
+                                      "h-8 text-xs pr-7",
+                                      agentPhoneVer?.checked && agentPhoneVer.exists === false
+                                        ? "border-amber-500 bg-amber-500/5 focus-visible:ring-amber-500"
+                                        : agentPhoneVer?.checked && agentPhoneVer.exists === true
+                                        ? "border-emerald-500/80 bg-emerald-500/5"
+                                        : ""
+                                    )}
+                                  />
+                                  {agentPhoneVer?.checking && (
+                                    <span className="absolute right-2 top-2 text-[10px] text-muted-foreground flex items-center gap-1">
+                                      <RefreshCw className="w-2.5 h-2.5 animate-spin text-muted-foreground" />
+                                    </span>
+                                  )}
+                                </div>
+                                {agentPhoneVer && agentPhoneVer.checked && agentPhoneVer.exists === false && (
+                                  <div className="text-[10px] text-amber-700 dark:text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded flex items-center gap-1 leading-tight">
+                                    <span>⚠️</span>
+                                    <span>Número sem WhatsApp ativo (verifique digitação).</span>
+                                  </div>
+                                )}
+                                {agentPhoneVer && agentPhoneVer.checked && agentPhoneVer.exists === true && (
+                                  <div className="text-[10px] text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded flex items-center gap-1 leading-tight">
+                                    <span>✓</span>
+                                    <span>WhatsApp verificado e ativo.</span>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })()}
                         </div>
                       </div>
 
@@ -12400,65 +13754,9 @@ export default function PmsCalendar(props?: {
                           )
                         })()}
 
-                        {/* 3 Opções de Tomador da NFS-e */}
-                        <div className="space-y-1.5 pt-1 border-t border-border/50">
-                          <Label className="text-[10px] font-bold uppercase text-slate-700 dark:text-slate-300 block">
-                            Tomador Padrão da NFS-e (Editável na Emissão Fiscal)
-                          </Label>
-                          <div className="grid grid-cols-3 gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setFormInvoiceRecipientType("agency")}
-                              className={`py-1.5 px-2 rounded-lg border text-[11px] font-bold transition-all ${
-                                formInvoiceRecipientType === "agency"
-                                  ? "bg-purple-600 text-white border-purple-600"
-                                  : "bg-background border-border text-slate-700 dark:text-slate-300"
-                              }`}
-                            >
-                              🟣 Agência PJ
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setFormInvoiceRecipientType("company")}
-                              className={`py-1.5 px-2 rounded-lg border text-[11px] font-bold transition-all ${
-                                formInvoiceRecipientType === "company"
-                                  ? "bg-indigo-600 text-white border-indigo-600"
-                                  : "bg-background border-border text-slate-700 dark:text-slate-300"
-                              }`}
-                            >
-                              🏢 Empresa PJ
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setFormInvoiceRecipientType("guest")}
-                              className={`py-1.5 px-2 rounded-lg border text-[11px] font-bold transition-all ${
-                                formInvoiceRecipientType === "guest"
-                                  ? "bg-emerald-600 text-white border-emerald-600"
-                                  : "bg-background border-border text-slate-700 dark:text-slate-300"
-                              }`}
-                            >
-                              👤 Hóspede PF
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-center pt-1">
-                          <div className="space-y-1">
-                            <Label className="text-[10px] font-bold">E-mails p/ Envio da NFS-e & Conciliação</Label>
-                            <Input
-                              value={formNfDeliveryEmails}
-                              onChange={e => setFormNfDeliveryEmails(e.target.value)}
-                              placeholder="conciliacao@b2breservas.com.br, agente@agencia.com.br"
-                              className="h-8 text-xs"
-                            />
-                          </div>
-                          <div className="flex items-center justify-between p-2 rounded-lg bg-slate-50 dark:bg-slate-900 border border-border mt-3 sm:mt-4">
-                            <div>
-                              <span className="text-[11px] font-bold block">Sigilo Tarifário p/ Hóspede</span>
-                              <span className="text-[9.5px] text-muted-foreground block">Ocultar diárias no Portal/WhatsApp e não enviar NFS-e ao hóspede</span>
-                            </div>
-                            <Switch checked={formNfHideFromGuest} onCheckedChange={setFormNfHideFromGuest} />
-                          </div>
+                        {/* Tomador NFS-e, E-mails & Sigilo Tarifário unificados na Seção 4 (4A e 4B) abaixo */}
+                        <div className="text-[10.5px] text-purple-800 dark:text-purple-200 bg-purple-50/70 dark:bg-purple-950/30 border border-purple-200/70 dark:border-purple-800/50 rounded-lg px-2.5 py-1.5">
+                          Tomador da NFS-e, E-mails Fiscais e Sigilo Tarifário configurados na <strong>Seção 4 (Tomador &amp; Nota Fiscal)</strong> ao final.
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
@@ -12500,125 +13798,11 @@ export default function PmsCalendar(props?: {
 
                   {/* Detalhes do Solicitante Próprio Hóspede */}
                   {formRequesterType === "guest" && (
-                    <div className="p-2.5 bg-background border border-primary/20 rounded-xl space-y-2 mt-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] uppercase font-black text-primary block">
-                          Buscar Hóspede Cadastrado (CRM 360°)
-                        </span>
-                        {formGuestId && formGuestId !== "manual" && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setFormGuestId("manual")
-                              setFormGuestName("")
-                              setFormGuest1Cpf("")
-                              setFormGuestPhone("")
-                              setFormGuestEmail("")
-                              setFormDocPhotoUrl("")
-                              setFormDocFileName("")
-                              setFormIsCamposResident(false)
-                              setFormIsMonthlyGuest(false)
-                              setFormAutoInvoice(false)
-                            }}
-                            className="text-[10px] text-muted-foreground hover:text-rose-600 underline font-semibold transition-colors cursor-pointer"
-                          >
-                            Desvincular / Novo Hóspede
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Dropdown com filtro em tempo real ao digitar */}
-                      <div className="relative">
-                        <Input
-                          value={guestSearchFilter}
-                          onChange={e => setGuestSearchFilter(e.target.value)}
-                          placeholder="🔍 Digite para filtrar no CRM por nome, CPF ou WhatsApp..."
-                          className="text-xs h-8 bg-muted/40"
-                        />
-                        {guestSearchFilter.trim() && (
-                          <div className="absolute left-0 right-0 top-full mt-1 bg-popover/95 backdrop-blur-sm border border-border shadow-2xl rounded-2xl z-50 overflow-hidden max-h-56 overflow-y-auto animate-in fade-in zoom-in-95">
-                            <div className="px-2.5 py-1 bg-muted/60 text-[10px] font-bold text-muted-foreground flex items-center justify-between border-b">
-                              <span>Resultados no CRM ({filteredGuests.length})</span>
-                              <span className="text-[9px]">Clique para selecionar</span>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (formGuestId && formGuestId !== "manual") {
-                                  setFormGuest1Cpf("")
-                                  setFormGuestPhone("")
-                                  setFormGuestEmail("")
-                                  setFormDocPhotoUrl("")
-                                  setFormDocFileName("")
-                                  setFormIsCamposResident(false)
-                                }
-                                setFormGuestId("manual")
-                                setFormGuestName(guestSearchFilter)
-                                setGuestSearchFilter("")
-                              }}
-                              className="w-full text-left p-2 hover:bg-primary/10 text-primary font-bold text-xs flex items-center gap-2 border-b cursor-pointer"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                              <span>➕ Cadastrar "{guestSearchFilter}" como Novo Hóspede</span>
-                            </button>
-
-                            {filteredGuests.length > 0 ? (
-                              <div className="divide-y divide-border/40">
-                                {filteredGuests.slice(0, 10).map((g: any) => (
-                                  <button
-                                    key={g.id}
-                                    type="button"
-                                    onClick={() => {
-                                      handleSelectGuest(String(g.id))
-                                      setGuestSearchFilter("")
-                                    }}
-                                    className="w-full text-left p-2 hover:bg-primary/10 transition-colors flex items-start gap-2 group cursor-pointer"
-                                  >
-                                    <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
-                                      <User className="w-3.5 h-3.5" />
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                      <div className="text-xs font-bold text-foreground truncate">
-                                        {g.name || g.fullName}
-                                      </div>
-                                      <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
-                                        {g.documentNumber || g.document ? (
-                                          <span>CPF: {g.documentNumber || g.document}</span>
-                                        ) : null}
-                                        {g.phone ? (
-                                          <span>• Tel: {g.phone}</span>
-                                        ) : null}
-                                        {g.companyName ? (
-                                          <span className="text-indigo-600 dark:text-indigo-400 font-semibold">• {g.companyName}</span>
-                                        ) : null}
-                                      </div>
-                                    </div>
-                                  </button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="p-3 text-center text-xs text-muted-foreground">
-                                Nenhum hóspede localizado com esse termo.
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Lista Suspensa Select tradicional com opção de Novo Hóspede */}
-                      <MemoCrmGuestSelect
-                        value={formGuestId}
-                        onValueChange={stableSelectGuest}
-                        guests={crmGuests}
-                        placeholder="Ou selecione um Hóspede Cadastrado..."
-                        manualLabel="➕ Novo Hóspede (Digitar manualmente)"
-                      />
-                      {formGuestId && formGuestId !== "manual" && (
-                        <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1 mt-0.5">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Hóspede vinculado do CRM ({formGuestName}). Dados preenchidos abaixo.
-                        </div>
-                      )}
+                    <div className="p-2.5 bg-background border border-primary/20 rounded-xl text-[11px] text-muted-foreground flex items-center gap-2 mt-2">
+                      <User className="w-3.5 h-3.5 text-primary shrink-0" />
+                      <span>
+                        O próprio hóspede titular é o solicitante. Busque no CRM ou preencha os dados diretamente no <strong>Flat 1</strong> (Seção 3 abaixo).
+                      </span>
                     </div>
                   )}
 
@@ -12638,6 +13822,7 @@ export default function PmsCalendar(props?: {
                               setFormRequesterCpf("")
                               setFormRequesterPhone("")
                               setFormRequesterEmail("")
+                              syncRequesterFieldToGuest1Flats({ name: "", cpf: "", phone: "", email: "", guestId: "manual" })
                             }}
                             className="text-[10px] text-muted-foreground hover:text-rose-600 underline font-semibold transition-colors cursor-pointer"
                           >
@@ -12666,6 +13851,7 @@ export default function PmsCalendar(props?: {
                               onClick={() => {
                                 setFormRequesterId("manual")
                                 setFormRequesterName(requesterSearchFilter)
+                                syncRequesterFieldToGuest1Flats({ name: requesterSearchFilter, guestId: "manual" })
                                 setRequesterSearchFilter("")
                               }}
                               className="w-full text-left p-2 hover:bg-primary/10 text-primary font-bold text-xs flex items-center gap-2 border-b cursor-pointer"
@@ -12753,7 +13939,9 @@ export default function PmsCalendar(props?: {
                             <Input
                               value={formRequesterName}
                               onChange={e => {
-                                setFormRequesterName(e.target.value)
+                                const val = e.target.value
+                                setFormRequesterName(val)
+                                syncRequesterFieldToGuest1Flats({ name: val })
                                 setShowRequesterSuggestions(true)
                               }}
                               onFocus={() => {
@@ -12824,24 +14012,75 @@ export default function PmsCalendar(props?: {
                           </div>
                           <Input
                             value={formRequesterCpf}
-                            onChange={e => setFormRequesterCpf(e.target.value)}
+                            onChange={e => {
+                              const val = e.target.value
+                              setFormRequesterCpf(val)
+                              syncRequesterFieldToGuest1Flats({ cpf: val })
+                            }}
                             placeholder="CPF / Documento"
                             className="text-xs h-8"
                           />
                         </div>
 
-                        <div className="grid grid-cols-2 gap-2">
-                          <Input
-                            type="tel"
-                            inputMode="tel"
-                            value={formRequesterPhone}
-                            onChange={e => setFormRequesterPhone(formatBrazilPhone(e.target.value))}
-                            placeholder="WhatsApp / Celular"
-                            className="text-xs h-8"
-                          />
+                        <div className="grid grid-cols-2 gap-2 items-start">
+                          {(() => {
+                            const reqVerKey = getPhoneVerifyKey(formRequesterPhone)
+                            const reqPhoneVer = reqVerKey ? phoneVerificationMap[reqVerKey] : undefined
+                            return (
+                              <div className="space-y-1">
+                                <div className="relative">
+                                  <Input
+                                    type="tel"
+                                    inputMode="tel"
+                                    value={formRequesterPhone}
+                                    onChange={e => {
+                                      const formatted = formatBrazilPhone(e.target.value)
+                                      setFormRequesterPhone(formatted)
+                                      syncRequesterFieldToGuest1Flats({ phone: formatted })
+                                    }}
+                                    onBlur={() => {
+                                      if (cleanWhatsAppPhone(formRequesterPhone).length >= 10) {
+                                        verifyGuestPhoneWhatsApp(formRequesterPhone)
+                                      }
+                                    }}
+                                    placeholder="WhatsApp / Celular"
+                                    className={cn(
+                                      "text-xs h-8 pr-7",
+                                      reqPhoneVer?.checked && reqPhoneVer.exists === false
+                                        ? "border-amber-500 bg-amber-500/5 focus-visible:ring-amber-500"
+                                        : reqPhoneVer?.checked && reqPhoneVer.exists === true
+                                        ? "border-emerald-500/80 bg-emerald-500/5"
+                                        : ""
+                                    )}
+                                  />
+                                  {reqPhoneVer?.checking && (
+                                    <span className="absolute right-2 top-2 text-[10px] text-muted-foreground flex items-center gap-1">
+                                      <RefreshCw className="w-2.5 h-2.5 animate-spin text-muted-foreground" />
+                                    </span>
+                                  )}
+                                </div>
+                                {reqPhoneVer && reqPhoneVer.checked && reqPhoneVer.exists === false && (
+                                  <div className="text-[10px] text-amber-700 dark:text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded flex items-center gap-1 leading-tight">
+                                    <span>⚠️</span>
+                                    <span>Número sem WhatsApp ativo (verifique digitação).</span>
+                                  </div>
+                                )}
+                                {reqPhoneVer && reqPhoneVer.checked && reqPhoneVer.exists === true && (
+                                  <div className="text-[10px] text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded flex items-center gap-1 leading-tight">
+                                    <span>✓</span>
+                                    <span>WhatsApp verificado e ativo.</span>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })()}
                           <Input
                             value={formRequesterEmail}
-                            onChange={e => setFormRequesterEmail(e.target.value)}
+                            onChange={e => {
+                              const val = e.target.value
+                              setFormRequesterEmail(val)
+                              syncRequesterFieldToGuest1Flats({ email: val })
+                            }}
                             placeholder="E-mail(s) — separe por ;"
                             type="text"
                             className="text-xs h-8"
@@ -12894,25 +14133,76 @@ export default function PmsCalendar(props?: {
                         <span className="text-[10px] uppercase font-black text-slate-700 dark:text-slate-300 block">
                           Contato Solicitante da Empresa (Receberá o Link de Credenciamento do Hóspede)
                         </span>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-start">
                           <Input
                             value={formRequesterName}
-                            onChange={e => setFormRequesterName(e.target.value)}
+                            onChange={e => {
+                              const val = e.target.value
+                              setFormRequesterName(val)
+                              syncRequesterFieldToGuest1Flats({ name: val })
+                            }}
                             placeholder="Nome do Solicitante na Empresa"
                             className="text-xs h-8"
                           />
-                          <Input
-                            type="tel"
-                            inputMode="tel"
-                            value={formRequesterPhone}
-                            onChange={e => setFormRequesterPhone(formatBrazilPhone(e.target.value))}
-                            placeholder="WhatsApp (Ex: 22999999999)"
-                            className="text-xs h-8"
-                          />
+                          {(() => {
+                            const compVerKey = getPhoneVerifyKey(formRequesterPhone)
+                            const compPhoneVer = compVerKey ? phoneVerificationMap[compVerKey] : undefined
+                            return (
+                              <div className="space-y-1">
+                                <div className="relative">
+                                  <Input
+                                    type="tel"
+                                    inputMode="tel"
+                                    value={formRequesterPhone}
+                                    onChange={e => {
+                                      const formatted = formatBrazilPhone(e.target.value)
+                                      setFormRequesterPhone(formatted)
+                                      syncRequesterFieldToGuest1Flats({ phone: formatted })
+                                    }}
+                                    onBlur={() => {
+                                      if (cleanWhatsAppPhone(formRequesterPhone).length >= 10) {
+                                        verifyGuestPhoneWhatsApp(formRequesterPhone)
+                                      }
+                                    }}
+                                    placeholder="WhatsApp (Ex: 22999999999)"
+                                    className={cn(
+                                      "text-xs h-8 pr-7",
+                                      compPhoneVer?.checked && compPhoneVer.exists === false
+                                        ? "border-amber-500 bg-amber-500/5 focus-visible:ring-amber-500"
+                                        : compPhoneVer?.checked && compPhoneVer.exists === true
+                                        ? "border-emerald-500/80 bg-emerald-500/5"
+                                        : ""
+                                    )}
+                                  />
+                                  {compPhoneVer?.checking && (
+                                    <span className="absolute right-2 top-2 text-[10px] text-muted-foreground flex items-center gap-1">
+                                      <RefreshCw className="w-2.5 h-2.5 animate-spin text-muted-foreground" />
+                                    </span>
+                                  )}
+                                </div>
+                                {compPhoneVer && compPhoneVer.checked && compPhoneVer.exists === false && (
+                                  <div className="text-[10px] text-amber-700 dark:text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded flex items-center gap-1 leading-tight">
+                                    <span>⚠️</span>
+                                    <span>Número sem WhatsApp ativo (verifique digitação).</span>
+                                  </div>
+                                )}
+                                {compPhoneVer && compPhoneVer.checked && compPhoneVer.exists === true && (
+                                  <div className="text-[10px] text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded flex items-center gap-1 leading-tight">
+                                    <span>✓</span>
+                                    <span>WhatsApp verificado e ativo.</span>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })()}
                           <Input
                             type="text"
                             value={formRequesterEmail}
-                            onChange={e => setFormRequesterEmail(e.target.value)}
+                            onChange={e => {
+                              const val = e.target.value
+                              setFormRequesterEmail(val)
+                              syncRequesterFieldToGuest1Flats({ email: val })
+                            }}
                             placeholder="E-mail(s) do Solicitante — separe por ;"
                             className="text-xs h-8"
                           />
@@ -12920,840 +14210,1249 @@ export default function PmsCalendar(props?: {
                       </div>
                     </div>
                   )}
+                  </div>
                 </div>
 
-                {/* 3. Dados dos Hóspedes Autorizados (1, 2 e 3) */}
-                <div className="space-y-3">
-                  {/* Hóspede 1 (Principal) */}
-                  <div className="p-3 bg-muted/30 border rounded-xl space-y-2.5">
-                    <div className="font-bold text-xs text-slate-900 dark:text-slate-100 flex items-center justify-between gap-2 flex-wrap">
-                      <span className="flex items-center gap-1.5">
-                        <User className="w-3.5 h-3.5 text-primary" />
-                        <span>Hóspede 1 (Titular)</span>
-                        {formRequesterType !== "guest" && !formGuestName.trim() && (
-                          <Badge variant="secondary" className="text-[9px] bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300/60">
-                            Opcional agora — Solicitante receberá link de preenchimento
+                {/* ========================================================= */}
+                {/* 2. QUANTIDADE DE FLATS                                    */}
+                {/* ========================================================= */}
+                {!selectedRes && (
+                  <div id="sec-2-qtd-flats" className="p-3.5 bg-indigo-50/70 dark:bg-indigo-950/25 border border-indigo-200 dark:border-indigo-800/70 rounded-2xl space-y-2.5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge className="bg-indigo-600 text-white font-black text-[10.5px]">
+                            2. Quantidade de Flats
                           </Badge>
-                        )}
-                      </span>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {formRequesterType !== "guest" && (
-                          <div className="w-44 sm:w-56">
-                            <MemoCrmGuestSelect
-                              value={formGuestId}
-                              onValueChange={stableSelectGuest}
-                              guests={crmGuests}
-                              placeholder="Puxar do CRM..."
-                              manualLabel="Digitar manualmente"
-                              triggerClassName="text-[10px] h-6 px-2"
-                              contentClassName="max-h-60"
-                              compact
-                            />
-                          </div>
-                        )}
+                          <span className="text-xs font-bold text-foreground">
+                            Reserva Individual ou Pacote Multi-Flat
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          Selecione 1 flat ou monte um pacote com vários flats vinculados a 1 único localizador.
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className="flex items-center gap-1 bg-background border border-indigo-200 dark:border-indigo-800 rounded-xl p-1">
+                          {[1, 2, 3, 4].map((cnt) => (
+                            <button
+                              key={cnt}
+                              type="button"
+                              onClick={() => handleSetFlatCount(cnt)}
+                              className={cn(
+                                "h-7 px-2.5 rounded-lg text-xs font-black transition-all cursor-pointer",
+                                formFlats.length === cnt
+                                  ? "bg-indigo-600 text-white shadow-2xs"
+                                  : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                              )}
+                            >
+                              {cnt} {cnt === 1 ? "Flat" : "Flats"}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="flex items-center gap-1 bg-background border border-border rounded-xl p-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            disabled={formFlats.length <= 1}
+                            onClick={() => handleSetFlatCount(Math.max(1, formFlats.length - 1))}
+                            className="h-7 w-7 p-0 text-xs font-black cursor-pointer"
+                            title="Remover último flat"
+                          >
+                            -
+                          </Button>
+                          <span className="px-2 text-xs font-black tabular-nums">{formFlats.length}</span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleSetFlatCount(formFlats.length + 1)}
+                            className="h-7 w-7 p-0 text-xs font-black cursor-pointer"
+                            title="Adicionar flat"
+                          >
+                            +
+                          </Button>
+                        </div>
+
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={handleAddExtraPackageFlat}
+                          className="h-8 px-3 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5 shadow-xs cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>+ Adicionar Outro Flat ao Pacote</span>
+                        </Button>
+                      </div>
+                    </div>
+
+                    {formFlats.length >= 2 && (
+                      <div className="pt-2 border-t border-indigo-200/70 dark:border-indigo-800/50 flex items-center justify-between gap-2 flex-wrap">
+                        <span className="text-[11px] font-semibold text-indigo-800 dark:text-indigo-200">
+                          📦 Pacote com <strong>{formFlats.length} flats</strong> — cada flat tem seus próprios hóspedes, veículo, camareira, portaria, diárias e taxas.
+                        </span>
                         <Button
                           type="button"
                           size="sm"
                           variant="outline"
-                          onClick={() => {
-                            const url = `${window.location.origin}/identificar-reserva`
-                            navigator.clipboard.writeText(url)
-                            toast({
-                              title: "Link Estático (/identificar-reserva) Copiado!",
-                              description: `${url} — Envie ao hóspede para ele digitar o localizador e preencher os dados.`
-                            })
-                          }}
-                          className="h-6 px-2 text-[10px] font-bold border-teal-400/70 text-teal-700 dark:text-teal-300 gap-1"
-                          title="Copia o link estático (/identificar-reserva) para o hóspede digitar o localizador e preencher nome, CPF, WhatsApp, e-mail e documento"
+                          onClick={handleApplyPrimaryDatesToAllFlats}
+                          className="h-7 px-2.5 text-[11px] font-bold border-indigo-300 dark:border-indigo-700 bg-background text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 cursor-pointer"
                         >
-                          <Copy className="w-2.5 h-2.5" /> Link Identificar Reserva
+                          Aplicar mesmas datas do Flat 1 em todos
                         </Button>
-                        <Badge variant="outline" className="text-[9px] shrink-0">Check-in Principal</Badge>
                       </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="relative" ref={guestSuggestionsRef}>
-                        <Input 
-                          value={formGuestName} 
-                          onChange={e => {
-                            setFormGuestName(e.target.value)
-                            setShowGuestSuggestions(true)
-                          }} 
-                          onFocus={() => {
-                            if (formGuestName.trim().length > 0) setShowGuestSuggestions(true)
-                          }}
-                          placeholder={formRequesterType !== "guest" ? "Nome Completo (Opcional agora)" : "Nome Completo *"} 
-                          required={formRequesterType === "guest"} 
-                          className="text-xs h-8" 
-                        />
+                    )}
+                  </div>
+                )}
 
-                        {/* Floating live matches dropdown when typing guest name */}
-                        {showGuestSuggestions && formGuestName.trim().length > 0 && (
-                          <div className="absolute left-0 right-0 top-full mt-1 bg-popover/95 backdrop-blur-sm border border-border shadow-2xl rounded-2xl z-50 overflow-hidden max-h-64 overflow-y-auto animate-in fade-in zoom-in-95">
-                            <div className="px-2.5 py-1.5 bg-muted/60 text-[10px] font-bold text-muted-foreground flex items-center justify-between border-b">
-                              <span>Hóspedes no CRM ({liveGuestMatches.length})</span>
-                              <span className="text-[9px]">Clique para preencher</span>
-                            </div>
-
-                            {liveGuestMatches.length > 0 ? (
-                              <div className="divide-y divide-border/40">
-                                {liveGuestMatches.map((g: any) => (
-                                  <button
-                                    key={g.id}
-                                    type="button"
-                                    onClick={() => {
-                                      handleSelectGuest(String(g.id))
-                                      setShowGuestSuggestions(false)
-                                    }}
-                                    className="w-full text-left p-2 hover:bg-primary/10 transition-colors flex items-start gap-2 group cursor-pointer"
-                                  >
-                                    <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
-                                      <User className="w-3.5 h-3.5" />
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                      <div className="text-xs font-bold text-foreground truncate">
-                                        {g.name || g.fullName}
-                                      </div>
-                                      <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
-                                        {g.documentNumber || g.document ? (
-                                          <span>CPF: {g.documentNumber || g.document}</span>
-                                        ) : null}
-                                        {g.phone ? (
-                                          <span>• Tel: {g.phone}</span>
-                                        ) : null}
-                                        {g.companyName ? (
-                                          <span className="text-indigo-600 dark:text-indigo-400 font-semibold">• {g.companyName}</span>
-                                        ) : null}
-                                      </div>
-                                    </div>
-                                  </button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="p-3 text-center text-[11px] text-muted-foreground">
-                                Nenhum hóspede localizado no CRM com este nome.
-                              </div>
-                            )}
-
-                            {/* Ação para registrar como Novo Hóspede */}
-                            <div className="p-1.5 bg-muted/30 border-t border-border">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (formGuestId && formGuestId !== "manual") {
-                                    setFormDocPhotoUrl("")
-                                    setFormDocFileName("")
-                                    setFormIsCamposResident(false)
-                                  }
-                                  setFormGuestId("manual")
-                                  setShowGuestSuggestions(false)
-                                  toast({
-                                    title: "Novo Hóspede",
-                                    description: `Preencha os dados de '${formGuestName}' para registrá-lo.`
-                                  })
-                                }}
-                                className="w-full py-1.5 px-2 text-[11px] font-bold text-primary hover:bg-primary/10 rounded-lg flex items-center gap-1.5 justify-center transition-colors cursor-pointer"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                                <span>Cadastrar como Novo Hóspede: "{formGuestName}"</span>
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      <Input
-                        value={formGuest1Cpf}
-                        onChange={e => setFormGuest1Cpf(e.target.value)}
-                        placeholder={formRequesterType !== "guest" ? "CPF / Documento (Opcional agora)" : "CPF / Documento"}
-                        className="text-xs h-8"
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="space-y-1">
-                        <div className="relative">
-                          <Input 
-                            type="tel"
-                            inputMode="tel"
-                            value={formGuestPhone} 
-                            onChange={e => {
-                              const formatted = formatBrazilPhone(e.target.value)
-                              setFormGuestPhone(formatted)
-                              if (phoneVerification && phoneVerification.phone !== formatted.replace(/\D/g, "")) {
-                                setPhoneVerification(null)
-                              }
-                            }} 
-                            onBlur={() => {
-                              const trimmed = formGuestPhone.trim()
-                              const digitsLen = trimmed.replace(/\D/g, "").length
-                              if (digitsLen >= 10 || (trimmed.startsWith("+") && digitsLen >= 8)) {
-                                verifyGuestPhoneWhatsApp(formGuestPhone)
-                              }
-                            }}
-                            placeholder={formRequesterType !== "guest" ? "WhatsApp do Hóspede (Opcional agora)" : "WhatsApp / Celular"} 
-                            className={`text-xs h-8 ${phoneVerification && phoneVerification.checked && phoneVerification.exists === false ? "border-amber-500 bg-amber-500/5 focus-visible:ring-amber-500" : (phoneVerification && phoneVerification.checked && phoneVerification.exists ? "border-emerald-500/80 bg-emerald-500/5" : "")}`} 
-                          />
-                          {phoneVerification?.checking && (
-                            <span className="absolute right-2 top-2 text-[10px] text-muted-foreground flex items-center gap-1">
-                              <RefreshCw className="w-2.5 h-2.5 animate-spin text-muted-foreground" />
-                            </span>
-                          )}
-                        </div>
-                        {phoneVerification && phoneVerification.checked && phoneVerification.exists === false && (
-                          <div className="text-[10px] text-amber-700 dark:text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded flex items-center gap-1 animate-in fade-in leading-tight">
-                            <span>⚠️</span>
-                            <span>Número sem WhatsApp ativo (verifique digitação).</span>
-                          </div>
-                        )}
-                        {phoneVerification && phoneVerification.checked && phoneVerification.exists === true && (
-                          <div className="text-[10px] text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded flex items-center gap-1 animate-in fade-in leading-tight">
-                            <span>✓</span>
-                            <span>WhatsApp verificado e ativo.</span>
-                          </div>
-                        )}
-                      </div>
-                      <Input
-                        type="text"
-                        value={formGuestEmail}
-                        onChange={e => setFormGuestEmail(e.target.value)}
-                        placeholder={formRequesterType !== "guest" ? "E-mail do Hóspede (Opcional agora)" : "E-mail"}
-                        autoCorrect="off"
-                        autoCapitalize="none"
-                        spellCheck={false}
-                        className="text-xs h-8"
-                      />
+                {/* ========================================================= */}
+                {/* 3. CONFIGURAÇÕES PADRONIZADAS DE CADA FLAT (FLAT 1..N)    */}
+                {/* ========================================================= */}
+                <div id="sec-3-flats" className="space-y-3">
+                  <div className="flex items-center justify-between gap-2 flex-wrap px-1">
+                    <div className="flex items-center gap-2">
+                      <Badge className="bg-primary text-primary-foreground font-black text-[10.5px]">
+                        3. Configurações Padronizadas de Cada Flat e Hóspedes
+                      </Badge>
+                      <span className="text-xs font-bold text-foreground">
+                        {formFlats.length > 1 ? `Flat 1 a Flat ${formFlats.length} (Paridade Total)` : "Flat 1"}
+                      </span>
                     </div>
                   </div>
 
-                  {/* Documento com Foto do Hóspede Oficial (Foto / PDF) */}
-                  <div className="p-3 bg-muted/40 border border-border/80 rounded-xl space-y-2 animate-in fade-in">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <Label className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                        <FileText className="w-3.5 h-3.5 text-primary" />
-                        <span>
-                          Documento com Foto (RG, CNH, Passaporte - Foto ou PDF)
-                          {formRequesterType !== "guest" ? " — Opcional agora" : ""}
-                        </span>
-                      </Label>
-                      <div className="flex items-center gap-1.5">
-                        {formHasMinor && (
-                          <Badge className="text-[10px] bg-rose-600 text-white font-black hover:bg-rose-700">
-                            👶 Menor de Idade
-                          </Badge>
-                        )}
-                        {formIsCamposResident && (
-                          <Badge className="text-[10px] bg-purple-700 text-white font-black hover:bg-purple-800">
-                            📍 Campos/RJ
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
+                  {(() => {
+                    const renderRangePickerContent = (activeFlat: FlatReservationFormItem) => {
+                      const effCin = activeFlat.uid !== primaryFlat.uid && activeFlat.sameDatesAsPrimary ? primaryFlat.checkinDate : activeFlat.checkinDate;
+                      const effCout = activeFlat.uid !== primaryFlat.uid && activeFlat.sameDatesAsPrimary ? primaryFlat.checkoutDate : activeFlat.checkoutDate;
+                      const mStart = startOfMonth(pickerMonth);
+                      const mEnd = endOfMonth(pickerMonth);
+                      const monthDays = eachDayOfInterval({ start: mStart, end: mEnd });
+                      const leadingEmpty = getDay(mStart);
+                      const selectedFlatNum = activeFlat.flatId && activeFlat.flatId !== "auto"
+                        ? (data.flats || []).find((f: any) => String(f.id) === String(activeFlat.flatId))?.number
+                        : null;
 
-                    <input
-                      ref={pmsDocInputRef}
-                      type="file"
-                      accept="image/*,application/pdf"
-                      onChange={handleDocSelect}
-                      className="hidden"
-                    />
-
-                    {!formDocPhotoUrl ? (
-                      <div className="flex items-center gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={uploadingDoc}
-                          onClick={() => pmsDocInputRef.current?.click()}
-                          className="w-full text-xs h-8 rounded-xl font-bold flex items-center justify-center gap-1.5 border-dashed border-primary/40 hover:bg-primary/5"
-                        >
-                          <Camera className="w-3.5 h-3.5 text-primary" />
-                          <span>{uploadingDoc ? "Processando e Analisando..." : "Anexar Foto ou PDF do Documento"}</span>
-                        </Button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-between p-2 bg-background border border-border rounded-xl text-xs">
-                        <div className="flex items-center gap-2 min-w-0">
-                          {formDocPhotoUrl.startsWith("data:application/pdf") || formDocPhotoUrl.toLowerCase().endsWith(".pdf") ? (
-                            <div className="w-8 h-8 rounded bg-rose-500/10 border border-rose-500/30 flex items-center justify-center shrink-0">
-                              <FileText className="w-4 h-4 text-rose-600" />
+                      return (
+                        <div className="space-y-2.5 select-none">
+                          <div className="flex items-center justify-between gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setPickerMonth(subMonths(pickerMonth, 1))}
+                              className="h-7 w-7 rounded-lg border border-border flex items-center justify-center hover:bg-muted cursor-pointer"
+                            >
+                              <ChevronLeft className="w-4 h-4" />
+                            </button>
+                            <div className="text-center">
+                              <span className="text-xs font-black capitalize block">
+                                {format(pickerMonth, "MMMM yyyy", { locale: ptBR })}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground block">
+                                {pickerRangeStart ? "Agora clique na Saída (Check-out)" : "1º clique: Entrada • 2º clique: Saída"}
+                              </span>
                             </div>
-                          ) : (
-                            <img
-                              src={formDocPhotoUrl}
-                              alt="Documento Hóspede"
-                              className="w-8 h-8 object-cover rounded border border-border shrink-0"
-                            />
-                          )}
-                          <div className="min-w-0 flex flex-col">
-                            <span className="truncate text-[11px] font-bold text-foreground">
-                              {formDocFileName || (formDocPhotoUrl.includes(".pdf") ? "documento_oficial.pdf" : "documento_oficial.jpg")}
+                            <button
+                              type="button"
+                              onClick={() => setPickerMonth(addMonths(pickerMonth, 1))}
+                              className="h-7 w-7 rounded-lg border border-border flex items-center justify-center hover:bg-muted cursor-pointer"
+                            >
+                              <ChevronRight className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-muted-foreground">
+                            {["D", "S", "T", "Q", "Q", "S", "S"].map((w, wi) => (
+                              <span key={wi} className="py-0.5">{w}</span>
+                            ))}
+                          </div>
+
+                          <div className="grid grid-cols-7 gap-1">
+                            {Array.from({ length: leadingEmpty }).map((_, padIdx) => (
+                              <div key={`pad_${padIdx}`} />
+                            ))}
+                            {monthDays.map((dayDate) => {
+                              const dStr = format(dayDate, "yyyy-MM-dd");
+                              const rangeStart = pickerRangeStart || effCin;
+                              const rangeEnd = pickerRangeStart
+                                ? (pickerHoverDate && pickerHoverDate > pickerRangeStart ? pickerHoverDate : "")
+                                : effCout;
+                              const isStart = dStr === rangeStart;
+                              const isEnd = Boolean(rangeEnd && dStr === rangeEnd);
+                              const isInRange = Boolean(rangeStart && rangeEnd && dStr > rangeStart && dStr < rangeEnd);
+                              const isOccupied = Boolean(
+                                activeFlat.flatId && activeFlat.flatId !== "auto" &&
+                                (data.reservations || []).some((r: any) => {
+                                  if (selectedRes && String(r.id) === String(selectedRes.id)) return false;
+                                  if (Number(r.flatId) !== Number(activeFlat.flatId) && (!selectedFlatNum || String(r.flatNumber) !== String(selectedFlatNum))) return false;
+                                  const st = String(r.status || "").toLowerCase();
+                                  if (["cancelada", "cancelled", "no_show", "expirada"].includes(st)) return false;
+                                  return r.checkinDate <= dStr && r.checkoutDate > dStr;
+                                })
+                              );
+
+                              return (
+                                <button
+                                  key={dStr}
+                                  type="button"
+                                  onMouseEnter={() => {
+                                    if (pickerRangeStart) setPickerHoverDate(dStr);
+                                  }}
+                                  onClick={() => {
+                                    if (!pickerRangeStart || dStr <= pickerRangeStart) {
+                                      setPickerRangeStart(dStr);
+                                      setPickerHoverDate(null);
+                                    } else {
+                                      handleDatesChangeForFlat(activeFlat.uid, pickerRangeStart, dStr);
+                                      setRangePickerFlatUid(null);
+                                      setPickerRangeStart(null);
+                                      setPickerHoverDate(null);
+                                    }
+                                  }}
+                                  className={cn(
+                                    "h-8 rounded-lg text-xs font-bold transition-colors relative cursor-pointer",
+                                    isStart || isEnd
+                                      ? "bg-primary text-primary-foreground shadow-xs"
+                                      : isInRange
+                                      ? "bg-primary/20 text-primary"
+                                      : isOccupied
+                                      ? "bg-rose-500/15 text-rose-700 dark:text-rose-300 hover:bg-rose-500/25"
+                                      : "hover:bg-muted text-foreground",
+                                    isToday(dayDate) && !isStart && !isEnd && "ring-1 ring-primary/60"
+                                  )}
+                                >
+                                  {format(dayDate, "d")}
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          <div className="pt-2 border-t border-border/60 flex items-center justify-between gap-2 text-[10.5px]">
+                            <span className="text-muted-foreground">
+                              {pickerRangeStart
+                                ? `Entrada: ${pickerRangeStart.split("-").reverse().join("/")}`
+                                : `${effCin.split("-").reverse().join("/")} → ${effCout.split("-").reverse().join("/")}`}
                             </span>
-                            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-0.5">
-                              <CheckCircle2 className="w-3 h-3 inline" /> Anexado (enviado à recepção por e-mail)
-                            </span>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setRangePickerFlatUid(null);
+                                setPickerRangeStart(null);
+                                setPickerHoverDate(null);
+                              }}
+                              className="h-6 px-2 text-[10.5px] font-bold"
+                            >
+                              Fechar
+                            </Button>
                           </div>
                         </div>
+                      );
+                    };
 
-                        <div className="flex items-center gap-1 shrink-0">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              if (formDocPhotoUrl.startsWith("data:application/pdf") || formDocPhotoUrl.toLowerCase().includes(".pdf") || formDocFileName.toLowerCase().endsWith(".pdf")) {
-                                setDocPdfViewerOpen(true)
-                              } else {
-                                window.open(formDocPhotoUrl, "_blank")
-                              }
-                            }}
-                            className="text-[10px] h-6 px-1.5"
-                          >
-                            <ExternalLink className="w-3 h-3 mr-0.5" /> Ver
-                          </Button>
-                          {docPdfViewerOpen && (
-                            <PdfViewerDialog
-                              open={docPdfViewerOpen}
-                              onOpenChange={setDocPdfViewerOpen}
-                              url={formDocPhotoUrl}
-                              title={formDocFileName || "Documento do Hóspede"}
+                    return formFlats.map((flat, idx) => (
+                      <FlatReservationCard
+                        key={flat.uid}
+                        flat={flat}
+                        index={idx}
+                        totalFlats={formFlats.length}
+                        isEditMode={Boolean(selectedRes)}
+                        selectedRes={selectedRes}
+                        flatsList={data.flats || []}
+                        reservationsList={data.reservations || []}
+                        blocksList={data.blocks || []}
+                        otherFlatsInPackage={formFlats
+                          .filter((_, i) => i !== idx)
+                          .map((fl) => {
+                            const isFlPrimary = fl.uid === primaryFlat.uid;
+                            return {
+                              uid: fl.uid,
+                              flatId: fl.flatId,
+                              checkinDate: !isFlPrimary && fl.sameDatesAsPrimary ? primaryFlat.checkinDate : fl.checkinDate,
+                              checkoutDate: !isFlPrimary && fl.sameDatesAsPrimary ? primaryFlat.checkoutDate : fl.checkoutDate,
+                            };
+                          })}
+                        crmGuests={crmGuests}
+                        searchIndexedCrm={searchIndexedCrm}
+                        fairShareResult={fairShareResult}
+                        loadingFairShare={loadingFairShare}
+                        defaultChannel={formChannel}
+                        defaultCheckinTime={defaultCheckinTime}
+                        defaultCheckoutTime={defaultCheckoutTime}
+                        primaryCheckinDate={primaryFlat.checkinDate}
+                        primaryCheckoutDate={primaryFlat.checkoutDate}
+                        requesterType={formRequesterType}
+                        requesterHasData={Boolean(formRequesterName.trim() || formCompanyName.trim() || formAgencyName.trim())}
+                        phoneVerificationMap={phoneVerificationMap}
+                        uploadingDoc={uploadingDocFlatUid === flat.uid}
+                        isRangePickerOpen={rangePickerFlatUid === flat.uid}
+                        rangePickerContent={rangePickerFlatUid === flat.uid ? renderRangePickerContent(flat) : null}
+                        editOperationalSlot={
+                          idx === 0 && selectedRes ? (
+                            <div className="space-y-3 pt-1">
+                              {formIncludeBreakfast && (
+                                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-2">
+                                  <div className="flex items-center gap-2">
+                                    <Coffee className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                                      Links &amp; Envio do Café da Manhã Incluso
+                                    </span>
+                                  </div>
+                              <div className="pt-2 border-t border-amber-500/20 space-y-2 animate-in fade-in">
+                                <div className="text-[11px] text-muted-foreground">
+                                  Link exclusivo para escolha de itens e horários pelo hóspede:
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    {...bindZapiClickOrHoldWaWeb({
+                                      onClickZapi: async () => {
+                                        const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                                        const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
+                                        const phone = (formGuestPhone || selectedRes?.guestPhone || "").replace(/\D/g, "")
+                                        const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
+                                        const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
+                                        const msg = `Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`
+                                        await sendDirectZapiWithFallback({
+                                          phone,
+                                          message: msg,
+                                          recipientName: guestName,
+                                          reservationCode: String(resCode),
+                                          flatNumber: String(flatNum),
+                                          triggerEvent: "breakfast_link_manual",
+                                          label: "Link do Café da Manhã",
+                                          toast
+                                        })
+                                      },
+                                      getWaUrl: () => {
+                                        const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                                        const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
+                                        const phone = formGuestPhone || selectedRes?.guestPhone || ""
+                                        const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
+                                        const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
+                                        const msg = `Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`
+                                        return buildDirectWaWebUrl(phone, msg)
+                                      },
+                                      toast
+                                    })}
+                                    title="Clique rápido: enviar via Z-API • Segure por 2 segundos: abrir no WhatsApp Web"
+                                    className="w-full h-8 text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs"
+                                  >
+                                    <MessageCircle className="w-3.5 h-3.5" /> Enviar WhatsApp (Z-API)
+                                  </Button>
+
+                                  <div className="flex items-center gap-1.5">
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => {
+                                        const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                                        const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
+                                        navigator.clipboard.writeText(url)
+                                        toast({ title: "Link copiado!", description: "Link do café da manhã copiado para a área de transferência." })
+                                      }}
+                                      className="flex-1 h-8 text-xs font-bold gap-1.5 bg-background hover:bg-muted border-border"
+                                    >
+                                      <Copy className="w-3.5 h-3.5" /> Copiar Link
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => {
+                                        const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                                        const url = `/cafe/${encodeURIComponent(String(resCode))}`
+                                        window.open(url, "_blank")
+                                      }}
+                                      className="h-8 px-2.5 text-xs font-bold text-muted-foreground hover:text-foreground"
+                                      title="Abrir página de pedidos"
+                                    >
+                                      Abrir ↗
+                                    </Button>
+                                  </div>
+                                </div>
+                              </div>
+                                </div>
+                              )}
+
+                        {/* Seção Própria: Frigobar & Notas Fiscais da Reserva */}
+                        {selectedRes && (
+                          <div className="p-3 bg-cyan-500/10 border border-cyan-500/30 rounded-2xl space-y-2.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <Refrigerator className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                                <div>
+                                  <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                                    Frigobar & Notas Fiscais da Reserva
+                                  </span>
+                                  <span className="text-[11px] text-muted-foreground">
+                                    Extrato de consumo, pagamentos e Notas Fiscais anexadas
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    const resCode = selectedRes?.code || selectedRes?.reservationCode || `RES-${selectedRes?.id}`
+                                    const url = `${window.location.origin}/minha-reserva/${encodeURIComponent(String(resCode))}/frigobar`
+                                    navigator.clipboard.writeText(url)
+                                    toast({ title: "Link copiado!", description: "Link do frigobar da reserva copiado para a área de transferência." })
+                                  }}
+                                  className="h-7 px-2.5 text-[11px] font-bold gap-1 bg-background hover:bg-muted border-border"
+                                >
+                                  <Copy className="w-3 h-3" /> Link
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => {
+                                    const resCode = selectedRes?.code || selectedRes?.reservationCode || `RES-${selectedRes?.id}`
+                                    window.open(`/minha-reserva/${encodeURIComponent(String(resCode))}/frigobar`, "_blank")
+                                  }}
+                                  className="h-7 px-2.5 text-[11px] font-bold gap-1 bg-cyan-600 hover:bg-cyan-700 text-white"
+                                >
+                                  <span>Abrir Frigobar ↗</span>
+                                </Button>
+                              </div>
+                            </div>
+
+                            {/* Sub-bloco Segregado de Cortesias Consumidas (R$ 0,00) */}
+                            {(() => {
+                              const liveRes = (data?.reservations || []).find((r: any) => Number(r.id) === Number(selectedRes.id)) || selectedRes
+                              const welcomeKit = (liveRes as any)?.welcomeKitConsumption
+                              const courtesyWater = Number(welcomeKit?.waterCups ?? welcomeKit?.waterCupsConsumed) || 0
+                              const courtesyPeanuts = Number(welcomeKit?.mendoratoPeanuts ?? welcomeKit?.peanutsConsumed) || 0
+                              if (courtesyWater <= 0 && courtesyPeanuts <= 0) return null
+                              return (
+                                <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs space-y-1">
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+                                      <Gift className="w-3.5 h-3.5" />
+                                      <span>Kit de Boas-Vindas Consumido (Cortesia)</span>
+                                    </span>
+                                    <Badge variant="outline" className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px]">
+                                      R$ 0,00
+                                    </Badge>
+                                  </div>
+                                  <p className="text-[11px] text-muted-foreground">
+                                    {[
+                                      courtesyWater > 0 ? `${courtesyWater}x Copo d'Água 200ml` : null,
+                                      courtesyPeanuts > 0 ? `${courtesyPeanuts}x Amendoim Mendorato 27g` : null
+                                    ].filter(Boolean).join(" • ")}
+                                  </p>
+                                </div>
+                              )
+                            })()}
+
+                            {(() => {
+                              const liveRes = (data?.reservations || []).find((r: any) => Number(r.id) === Number(selectedRes.id))
+                              const rawOrders = Array.isArray((liveRes as any)?.minibarOrders)
+                                ? (liveRes as any).minibarOrders
+                                : Array.isArray((selectedRes as any).minibarOrders)
+                                  ? (selectedRes as any).minibarOrders
+                                  : []
+                              const visibleOrders = rawOrders.filter((o: any) => o && o.paymentStatus !== "cancelado")
+                              if (visibleOrders.length === 0) return null
+                              return (
+                                <div className="pt-2 border-t border-cyan-500/20 space-y-1.5">
+                                  {visibleOrders.map((ord: any) => {
+                                      const invUrl = ord.invoice?.invoiceFileUrl || ord.invoice?.fileUrl || ord.invoiceFileUrl || ""
+                                      const invName = ord.invoice?.invoiceFileName || ord.invoiceFileName || "Nota_Fiscal_Frigobar.pdf"
+                                      const invNum = ord.invoice?.invoiceNumber || ord.invoiceNumber || ""
+                                      const isOrdPaid =
+                                        ord.paymentStatus === "pago" ||
+                                        ord.paymentStatus === "lancamento_quitado" ||
+                                        Boolean(invUrl)
+                                      return (
+                                        <div
+                                          key={ord.id}
+                                          className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-xl bg-background/90 border border-border text-xs"
+                                        >
+                                          <div className="space-y-0.5">
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                              <span className="font-bold text-slate-900 dark:text-slate-100">
+                                                {ord.guestName || selectedRes.guestName || "Hóspede"}
+                                              </span>
+                                              <Badge
+                                                variant="outline"
+                                                className={
+                                                  isOrdPaid
+                                                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px]"
+                                                    : "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[10px]"
+                                                }
+                                              >
+                                                {isOrdPaid ? "✓ Pago" : "Pendente"} • R${" "}
+                                                {Number(ord.totalAmount || 0)
+                                                  .toFixed(2)
+                                                  .replace(".", ",")}
+                                              </Badge>
+                                              {invNum && (
+                                                <Badge
+                                                  variant="outline"
+                                                  className="bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border-cyan-500/30 text-[10px]"
+                                                >
+                                                  NF #{invNum}
+                                                </Badge>
+                                              )}
+                                            </div>
+                                            {Array.isArray(ord.items) && ord.items.length > 0 && (
+                                              <p className="text-[11px] text-muted-foreground">
+                                                {ord.items
+                                                  .map((it: any) => `${it.quantity}x ${it.productName || it.name}`)
+                                                  .join(", ")}
+                                              </p>
+                                            )}
+                                          </div>
+
+                                          {invUrl ? (
+                                            <a
+                                              href={invUrl}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              download={invName}
+                                              className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-[11px] shadow-2xs transition-all shrink-0"
+                                            >
+                                              <FileText className="w-3.5 h-3.5" />
+                                              <span>Baixar Nota Fiscal</span>
+                                              <ExternalLink className="w-3 h-3" />
+                                            </a>
+                                          ) : isOrdPaid ? (
+                                            <Badge
+                                              variant="outline"
+                                              className="text-[10px] text-muted-foreground border-border shrink-0"
+                                            >
+                                              NF em emissão
+                                            </Badge>
+                                          ) : null}
+                                        </div>
+                                      )
+                                    })}
+                                </div>
+                              )
+                            })()}
+                          </div>
+                        )}
+
+                        {/* Banner de Check-out Antecipado & Ações Rápidas */}
+                        {selectedRes && (
+                          selectedRes.earlyCheckout ? (
+                            <div className="p-3.5 rounded-2xl border-2 border-amber-400/90 dark:border-amber-600/80 bg-amber-50/90 dark:bg-amber-950/40 space-y-2 shadow-2xs">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex items-center gap-2">
+                                  <Zap className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                                  <span className="text-xs font-black text-amber-950 dark:text-amber-100 uppercase tracking-wide">
+                                    ⚡ Check-out Antecipado Registrado
+                                  </span>
+                                </div>
+                                <Badge className="bg-amber-500 text-slate-950 font-black text-[10px]">
+                                  Datas Liberadas p/ Novas Reservas
+                                </Badge>
+                              </div>
+                              <div className="text-[11px] text-amber-900 dark:text-amber-200 space-y-0.5 leading-relaxed">
+                                <p>
+                                  <strong>Informado por:</strong>{" "}
+                                  {selectedRes.earlyCheckoutReportedBy || selectedRes.checkoutReportedBy || "Portaria / Governança / Recepção"}
+                                </p>
+                                <p>
+                                  <strong>Saída realizada em:</strong>{" "}
+                                  {format(parseISO(selectedRes.earlyCheckoutDate || selectedRes.checkoutDate), "dd/MM/yyyy")}
+                                  {selectedRes.earlyCheckoutTime ? ` às ${selectedRes.earlyCheckoutTime}` : ""}
+                                  {selectedRes.originalCheckoutDate && (
+                                    <>
+                                      {" "}• <strong>Saída original prevista:</strong>{" "}
+                                      {format(parseISO(selectedRes.originalCheckoutDate), "dd/MM/yyyy")}
+                                    </>
+                                  )}
+                                </p>
+                                <p className="text-[10.5px] text-amber-800/90 dark:text-amber-300/90">
+                                  O valor integral contratado foi preservado, os pedidos futuros de café foram suspensos e os dias restantes ficaram abertos no calendário (com rastro tracejado).
+                                </p>
+                              </div>
+                              <div className="pt-1 flex flex-wrap justify-end gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={clearingFalseEarlyCheckoutId === selectedRes.id || undoingEarlyCheckoutId === selectedRes.id}
+                                  onClick={() => handleClearFalseEarlyCheckout(selectedRes, { closeModal: false })}
+                                  title="Mantém o check-out realizado na data atual, mas remove o status de Check-out Antecipado (útil quando uma diária extra expirou ou foi excluída)"
+                                  className="h-7 text-xs font-bold gap-1.5 bg-white dark:bg-slate-900 border-emerald-400 text-emerald-900 dark:text-emerald-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/40"
+                                >
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                  <span>{clearingFalseEarlyCheckoutId === selectedRes.id ? "Ajustando..." : "Não foi antecipado (Check-out Normal)"}</span>
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={undoingEarlyCheckoutId === selectedRes.id || clearingFalseEarlyCheckoutId === selectedRes.id}
+                                  onClick={() => handleUndoEarlyCheckout(selectedRes, { closeModal: true })}
+                                  className="h-7 text-xs font-bold gap-1.5 bg-white dark:bg-slate-900 border-amber-400 text-amber-950 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50"
+                                >
+                                  <RotateCcw className={`w-3 h-3 ${undoingEarlyCheckoutId === selectedRes.id ? "animate-spin" : ""}`} />
+                                  <span>{undoingEarlyCheckoutId === selectedRes.id ? "Restaurando..." : "Desfazer Check-out Antecipado"}</span>
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            selectedRes.checkinDate <= todayStr &&
+                            selectedRes.checkoutDate > todayStr && (
+                              <div className="p-3 rounded-2xl border border-amber-300/80 dark:border-amber-800/60 bg-amber-50/40 dark:bg-amber-950/20 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                <div className="space-y-0.5">
+                                  <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900 dark:text-amber-200">
+                                    <DoorOpen className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                    <span>Hóspede saiu antes da data prevista?</span>
+                                  </div>
+                                  <p className="text-[10.5px] text-muted-foreground">
+                                    Libera o calendário a partir de hoje mantendo a reserva visível em tracejado, preserva o valor pago e suspende os cafés futuros.
+                                  </p>
+                                </div>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={async () => {
+                                    try {
+                                      const resp = await fetch(`/api/pms/reservations/${selectedRes.id}/checkout`, {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ source: "reception_pms" }),
+                                        credentials: "include"
+                                      });
+                                      const json = await resp.json().catch(() => ({}));
+                                      if (!resp.ok) throw new Error(json.error || "Falha ao registrar check-out antecipado.");
+                                      toast({
+                                        title: "Check-out antecipado registrado! ⚡",
+                                        description: `Datas restantes do Flat ${selectedRes.flatNumber} liberadas no calendário e cafés futuros suspensos.`
+                                      });
+                                      await fetchData(false);
+                                      notifyCalendarUpdated();
+                                      setResModalOpen(false);
+                                    } catch (err: any) {
+                                      toast({
+                                        title: "Erro ao registrar check-out antecipado",
+                                        description: err.message || "Tente novamente.",
+                                        variant: "destructive"
+                                      });
+                                    }
+                                  }}
+                                  className="h-8 text-xs font-bold gap-1.5 shrink-0 border-amber-400 bg-amber-500/10 text-amber-900 dark:text-amber-200 hover:bg-amber-500/20"
+                                >
+                                  <Zap className="w-3.5 h-3.5 text-amber-600" />
+                                  <span>Registrar Check-out Antecipado Hoje</span>
+                                </Button>
+                              </div>
+                            )
+                          )
+                        )}
+
+                        {selectedRes && (
+                          <div className="p-3 bg-emerald-50/80 dark:bg-emerald-950/30 rounded-2xl border border-emerald-200 dark:border-emerald-800 space-y-2 relative">
+                            {/* Janelinha Flutuante de Prévia no Modal (Ao passar o cursor sobre qualquer atalho) */}
+                            {(() => {
+                              const buildModalEffectiveRes = () => {
+                                const liveTot = calculateTotal() || Number(formTotalAmount) || Number(selectedRes?.totalAmount) || 0;
+                                const livePaid = formPayments.length > 0
+                                  ? formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+                                  : (Number(formPaidAmount) || Number(selectedRes?.paidAmount) || 0);
+                                return {
+                                  ...selectedRes,
+                                  flatId: formFlatId ? Number(formFlatId) : selectedRes?.flatId,
+                                  flatNumber: formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || selectedRes?.flatNumber) : selectedRes?.flatNumber,
+                                  guestName: formGuestName.trim() || selectedRes?.guestName,
+                                  guestPhone: formGuestPhone.trim() || selectedRes?.guestPhone,
+                                  guestEmail: formGuestEmail.trim() || selectedRes?.guestEmail,
+                                  guests: (() => {
+                                    const base = Array.isArray(selectedRes?.guests) ? [...selectedRes.guests] : [];
+                                    const gList: any[] = [{
+                                      ...(base[0] || {}),
+                                      index: 1,
+                                      name: formGuestName.trim() || base[0]?.name || selectedRes?.guestName || "Hóspede",
+                                      phone: formGuestPhone.trim() || base[0]?.phone || selectedRes?.guestPhone || "",
+                                      email: formGuestEmail.trim() || base[0]?.email || selectedRes?.guestEmail || ""
+                                    }];
+                                    if ((Number(formGuestCount) || 1) >= 2 || formGuest2Name.trim() || formGuest2Phone.trim() || base[1]) {
+                                      gList.push({
+                                        ...(base[1] || {}),
+                                        index: 2,
+                                        name: formGuest2Name.trim() || base[1]?.name || "Hóspede 2",
+                                        phone: formGuest2Phone.trim() || base[1]?.phone || base[1]?.whatsapp || "",
+                                        email: formGuest2Email.trim() || base[1]?.email || ""
+                                      });
+                                    }
+                                    if ((Number(formGuestCount) || 1) >= 3 || formGuest3Name.trim() || formGuest3Phone.trim() || base[2]) {
+                                      gList.push({
+                                        ...(base[2] || {}),
+                                        index: 3,
+                                        name: formGuest3Name.trim() || base[2]?.name || "Hóspede 3",
+                                        phone: formGuest3Phone.trim() || base[2]?.phone || base[2]?.whatsapp || "",
+                                        email: formGuest3Email.trim() || base[2]?.email || ""
+                                      });
+                                    }
+                                    return gList;
+                                  })(),
+                                  checkinDate: formCheckin || selectedRes?.checkinDate,
+                                  checkoutDate: formCheckout || selectedRes?.checkoutDate,
+                                  checkinTime: formCheckinTime || selectedRes?.checkinTime,
+                                  checkoutTime: formCheckoutTime || selectedRes?.checkoutTime,
+                                  includeBreakfast: formIncludeBreakfast,
+                                  hasBreakfast: formIncludeBreakfast,
+                                  totalAmount: liveTot > 0 ? liveTot : selectedRes?.totalAmount,
+                                  paidAmount: livePaid,
+                                  dailyRates: formDailyRates.length > 0 ? formDailyRates : selectedRes?.dailyRates,
+                                  charges: formCharges,
+                                  cleaningFee: formCharges
+                                    .filter(c => c.type === "cleaning")
+                                    .reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+                                };
+                              };
+
+                              const modalEffectiveRes = buildModalEffectiveRes();
+                              const modalRecipients = getReservationRecipients(modalEffectiveRes);
+                              const modalCompanionsWithPhone = (modalRecipients.companions || []).filter(
+                                c => c.cleanDigits && c.cleanDigits.length >= 8 && c.cleanDigits !== modalRecipients.guest.cleanDigits && c.cleanDigits !== modalRecipients.requester.cleanDigits
+                              );
+                              const selectedModalCompanion = modalCompanionsWithPhone.find(c => c.key === quickMsgTargetKey) || null;
+                              const activeTargetPhoneDisplay = selectedModalCompanion
+                                ? selectedModalCompanion.phone
+                                : (formGuestPhone || selectedRes.guestPhone || "");
+
+                              return (
+                                <>
+                                  {hoveredModalQuickMsg && (() => {
+                                    const target = hoveredModalQuickMsg.recipientTarget || "guest";
+                                    const isTargetRequester = target === "requester";
+                                    const renderTarget = isTargetRequester
+                                      ? "requester"
+                                      : selectedModalCompanion
+                                      ? selectedModalCompanion.key
+                                      : "guest";
+                                    return (
+                                      <div className="absolute left-2 right-2 bottom-[calc(100%+8px)] z-50 p-3 rounded-2xl bg-slate-950/98 dark:bg-black/98 text-white border border-slate-700 shadow-2xl backdrop-blur-md animate-in fade-in-0 zoom-in-95 pointer-events-none text-left">
+                                        <div className="flex items-center justify-between pb-1.5 border-b border-slate-800 mb-2">
+                                          <div className="flex items-center gap-1.5 font-bold text-xs text-emerald-400">
+                                            <span className="text-sm">{hoveredModalQuickMsg.icon}</span>
+                                            <span className="truncate max-w-[200px]">{hoveredModalQuickMsg.title}</span>
+                                          </div>
+                                          <div className="flex items-center gap-1">
+                                            {isTargetRequester ? (
+                                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
+                                                👥 Solicitante
+                                              </span>
+                                            ) : selectedModalCompanion ? (
+                                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-bold border border-sky-500/30">
+                                                👥 Só {selectedModalCompanion.index}º Hóspede
+                                              </span>
+                                            ) : quickMsgTargetKey === "all_guests" && modalCompanionsWithPhone.length > 0 ? (
+                                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
+                                                ✨ Todos os Hóspedes
+                                              </span>
+                                            ) : target === "both" ? (
+                                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
+                                                ✨ Ambos
+                                              </span>
+                                            ) : (
+                                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-bold border border-sky-500/30">
+                                                👤 {modalCompanionsWithPhone.length > 0 ? "Só 1º Hóspede" : "Hóspede"}
+                                              </span>
+                                            )}
+                                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                                              Manual
+                                            </span>
+                                          </div>
+                                        </div>
+                                        <div className="text-[11px] leading-relaxed text-slate-200 font-normal whitespace-pre-wrap max-h-48 overflow-y-auto pr-1">
+                                          {renderQuickMessage(
+                                            hoveredModalQuickMsg.message,
+                                            modalEffectiveRes,
+                                            typeof window !== "undefined" ? window.location.origin : undefined,
+                                            renderTarget
+                                          )}
+                                        </div>
+                                        <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[9.5px] text-slate-400">
+                                          <span className="font-mono truncate max-w-[260px]">
+                                            {isTargetRequester ? (
+                                              <>
+                                                <strong className="text-amber-400">Destino: 👥 Solicitante</strong>
+                                                <span className="text-slate-300 ml-1">({modalRecipients.requester.name})</span>
+                                              </>
+                                            ) : selectedModalCompanion ? (
+                                              <>
+                                                <strong className="text-sky-400">Destino: 👥 Só {selectedModalCompanion.index}º Hóspede</strong>
+                                                <span className="text-slate-300 ml-1">({selectedModalCompanion.name})</span>
+                                              </>
+                                            ) : quickMsgTargetKey === "all_guests" && modalCompanionsWithPhone.length > 0 ? (
+                                              <>
+                                                <strong className="text-purple-400">Destino: ✨ Todos os Hóspedes</strong>
+                                                <span className="text-slate-300 ml-1">({[modalRecipients.guest.firstName, ...modalCompanionsWithPhone.map(c => c.firstName)].join(" + ")})</span>
+                                              </>
+                                            ) : target === "both" ? (
+                                              <>
+                                                <strong className="text-purple-400">Destino: ✨ Ambos</strong>
+                                                <span className="text-slate-300 ml-1">({modalRecipients.guest.firstName} + {modalRecipients.requester.firstName})</span>
+                                              </>
+                                            ) : (
+                                              <>
+                                                <strong className="text-sky-400">Destino: 👤 {modalCompanionsWithPhone.length > 0 ? "Só 1º Hóspede" : "Hóspede"}</strong>
+                                                <span className="text-slate-300 ml-1">({modalRecipients.guest.name})</span>
+                                              </>
+                                            )}
+                                          </span>
+                                          <span className="text-emerald-400 font-bold shrink-0">⚡ Clique: Z-API • Segure 2s: WhatsApp Web</span>
+                                        </div>
+                                        <div className="absolute top-full left-12 w-2.5 h-2.5 -mt-1 bg-slate-950 dark:bg-black border-r border-b border-slate-700 rotate-45" />
+                                      </div>
+                                    );
+                                  })()}
+
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs font-bold text-emerald-900 dark:text-emerald-300 flex items-center gap-1.5">
+                                      <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                                      Disparar WhatsApp (Clique: Z-API • Segure 2s: Web)
+                                    </span>
+                                    <div className="flex items-center gap-2">
+                                      {activeTargetPhoneDisplay && (
+                                        <a
+                                          href={`https://wa.me/${cleanWhatsAppPhone(activeTargetPhoneDisplay)}`}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="text-[10px] text-muted-foreground hover:text-emerald-700 dark:hover:text-emerald-400 font-mono hover:underline flex items-center gap-0.5"
+                                          title="Abrir WhatsApp Web manualmente para este número"
+                                        >
+                                          <span>
+                                            Destino:{" "}
+                                            {selectedModalCompanion
+                                              ? `${selectedModalCompanion.firstName} (${activeTargetPhoneDisplay})`
+                                              : quickMsgTargetKey === "all_guests" && modalCompanionsWithPhone.length > 0
+                                              ? "Todos os hóspedes"
+                                              : activeTargetPhoneDisplay}
+                                          </span>
+                                          <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                                        </a>
+                                      )}
+                                      <a 
+                                        href="/whatsapp?tab=quick_messages" 
+                                        target="_blank" 
+                                        rel="noreferrer" 
+                                        className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold hover:underline flex items-center gap-0.5"
+                                        title="Gerenciar modelos e ativar/desativar mensagens"
+                                      >
+                                        <SlidersHorizontal className="w-3 h-3" />
+                                        <span>Gerenciar</span>
+                                      </a>
+                                    </div>
+                                  </div>
+
+                                  {modalCompanionsWithPhone.length > 0 && (
+                                    <div className="flex items-center flex-wrap gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-emerald-200/80 dark:border-emerald-900/60">
+                                      <span className="text-[10.5px] font-bold text-slate-600 dark:text-slate-300 flex items-center gap-1 mr-0.5">
+                                        <Users className="w-3 h-3 text-emerald-600" />
+                                        <span>Enviar para:</span>
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => setQuickMsgTargetKey("guest")}
+                                        className={`h-6 px-2 rounded-lg text-[10.5px] font-bold transition-all cursor-pointer border ${
+                                          quickMsgTargetKey === "guest"
+                                            ? "bg-emerald-600 text-white border-emerald-600 shadow-2xs"
+                                            : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-emerald-400"
+                                        }`}
+                                        title={`Enviar SOMENTE para o 1º Hóspede Titular (${modalRecipients.guest.name})`}
+                                      >
+                                        👤 Só 1º ({modalRecipients.guest.firstName})
+                                      </button>
+                                      {modalCompanionsWithPhone.map(comp => (
+                                        <button
+                                          key={comp.key}
+                                          type="button"
+                                          onClick={() => setQuickMsgTargetKey(comp.key)}
+                                          className={`h-6 px-2 rounded-lg text-[10.5px] font-bold transition-all cursor-pointer border ${
+                                            quickMsgTargetKey === comp.key
+                                              ? "bg-sky-600 text-white border-sky-600 shadow-2xs"
+                                              : "bg-white dark:bg-slate-800 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800 hover:border-sky-500"
+                                          }`}
+                                          title={`Enviar SOMENTE para o ${comp.index}º Hóspede (${comp.name} • ${comp.phone}) sem reenviar ao 1º titular`}
+                                        >
+                                          👥 Só {comp.index}º ({comp.firstName})
+                                        </button>
+                                      ))}
+                                      <button
+                                        type="button"
+                                        onClick={() => setQuickMsgTargetKey("all_guests")}
+                                        className={`h-6 px-2 rounded-lg text-[10.5px] font-bold transition-all cursor-pointer border ${
+                                          quickMsgTargetKey === "all_guests"
+                                            ? "bg-purple-600 text-white border-purple-600 shadow-2xs"
+                                            : "bg-white dark:bg-slate-800 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800 hover:border-purple-500"
+                                        }`}
+                                        title="Enviar individualmente para todos os hóspedes cadastrados na reserva"
+                                      >
+                                        ✨ Ambos / Todos
+                                      </button>
+                                    </div>
+                                  )}
+
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {activeQuickMessages.map(qm => {
+                                      const isSending = modalSendingMsgId === qm.id;
+                                      const target = qm.recipientTarget || "guest";
+                                      return (
+                                        <Button
+                                          key={qm.id}
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          disabled={isSending}
+                                          onMouseEnter={() => setHoveredModalQuickMsg(qm)}
+                                          onMouseLeave={() => setHoveredModalQuickMsg(null)}
+                                          title={
+                                            target === "requester"
+                                              ? `${qm.title} (Envia para o Solicitante • Clique: Z-API | Segure 2s: WhatsApp Web)`
+                                              : selectedModalCompanion
+                                              ? `${qm.title} (Envia SÓ para ${selectedModalCompanion.index}º Hóspede: ${selectedModalCompanion.name} • Clique: Z-API | Segure 2s: WhatsApp Web)`
+                                              : quickMsgTargetKey === "all_guests" && modalCompanionsWithPhone.length > 0
+                                              ? `${qm.title} (Envia para Todos os Hóspedes • Clique: Z-API | Segure 2s: WhatsApp Web)`
+                                              : target === "both"
+                                              ? `${qm.title} (Envia para Hóspede e Solicitante • Clique: Z-API | Segure 2s: WhatsApp Web)`
+                                              : `${qm.title} (Envia para o Hóspede • Clique: Z-API | Segure 2s: WhatsApp Web)`
+                                          }
+                                          {...bindZapiClickOrHoldWaWeb({
+                                            onClickZapi: () => {
+                                              setHoveredModalQuickMsg(null);
+                                              const effectiveRes = buildModalEffectiveRes();
+                                              setConfirmingModalQuickMsg({ qm, effectiveRes, initialTargetKey: quickMsgTargetKey });
+                                            },
+                                            getWaUrl: () => {
+                                              setHoveredModalQuickMsg(null);
+                                              const effectiveRes = buildModalEffectiveRes();
+                                              if (selectedModalCompanion && target !== "requester") {
+                                                return buildQuickMessageWaWebUrl(qm, effectiveRes, undefined, {
+                                                  overrideTarget: selectedModalCompanion.key,
+                                                  guestIndex: selectedModalCompanion.index,
+                                                  customPhone: selectedModalCompanion.phone,
+                                                  customName: selectedModalCompanion.name
+                                                });
+                                              }
+                                              return buildQuickMessageWaWebUrl(qm, effectiveRes);
+                                            },
+                                            toast
+                                          })}
+                                          className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 flex items-center gap-1.5 shadow-2xs cursor-pointer active:scale-95"
+                                        >
+                                          {isSending ? (
+                                            <RefreshCw className="w-3 h-3 animate-spin text-emerald-600" />
+                                          ) : (
+                                            <span>{qm.icon || "💬"}</span>
+                                          )}
+                                          <span>{qm.title}</span>
+                                          {target === "both" && (
+                                            <span className="text-[9px] px-1 py-0.2 rounded bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold border border-purple-300 dark:border-purple-800 leading-tight" title="Hóspede + Solicitante">
+                                              ✨ Ambos
+                                            </span>
+                                          )}
+                                          {target === "requester" && (
+                                            <span className="text-[9px] px-1 py-0.2 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-800 leading-tight" title="Só Solicitante">
+                                              👥 Solicitante
+                                            </span>
+                                          )}
+                                        </Button>
+                                      );
+                                    })}
+                                  </div>
+                                </>
+                              );
+                            })()}
+
+                            <QuickMessageConfirmDialog
+                              open={Boolean(confirmingModalQuickMsg)}
+                              onOpenChange={(open) => {
+                                if (!open) setConfirmingModalQuickMsg(null);
+                              }}
+                              quickMessage={confirmingModalQuickMsg?.qm || null}
+                              resItem={confirmingModalQuickMsg?.effectiveRes || selectedRes}
+                              initialTargetKey={confirmingModalQuickMsg?.initialTargetKey || quickMsgTargetKey}
+                              onConfirm={async (qm, options) => {
+                                setModalSendingMsgId(qm.id);
+                                try {
+                                  await dispatchQuickMessage(
+                                    qm,
+                                    confirmingModalQuickMsg?.effectiveRes || selectedRes,
+                                    undefined,
+                                    options
+                                  );
+                                } finally {
+                                  setModalSendingMsgId(null);
+                                }
+                              }}
                             />
-                          )}
-                          <Button
+                          </div>
+                        )}
+                            </div>
+                          ) : undefined
+                        }
+                        onPatchFlat={handlePatchFlat}
+                        onRemoveFlat={handleRemoveFlatByUid}
+                        onOpenRangePicker={(uid, focusDate) => {
+                          setRangePickerFlatUid(uid);
+                          setPickerRangeStart(null);
+                          setPickerHoverDate(null);
+                          if (focusDate) {
+                            setPickerMonth(safeParseDate(focusDate) || new Date());
+                          }
+                        }}
+                        onCloseRangePicker={() => {
+                          setRangePickerFlatUid(null);
+                          setPickerRangeStart(null);
+                          setPickerHoverDate(null);
+                        }}
+                        onDatesChangeForFlat={handleDatesChangeForFlat}
+                        onSelectCrmGuestForFlat={handleSelectCrmGuestForFlat}
+                        onSaveGuestToCrmForFlat={handleSaveGuestToCrmForFlat}
+                        onToggleRequesterIsGuest1={handleToggleRequesterIsGuest1}
+                        onVerifyPhone={(phone) => { void verifyGuestPhoneWhatsApp(phone); }}
+                        onDocFileChange={handleDocSelectForFlat}
+                        onSendCompanionInstructions={handleSendCompanionInstructions}
+                        onCopyIdentifyLink={() => {
+                          const url = `${window.location.origin}/identificar-reserva`;
+                          navigator.clipboard.writeText(url);
+                          toast({
+                            title: "Link Estático (/identificar-reserva) Copiado!",
+                            description: `${url} — Envie ao hóspede para ele digitar o localizador e preencher os dados.`
+                          });
+                        }}
+                        onDistributeNightsForFlat={handleDistributeNightsForFlat}
+                        onAddExtraNightForFlat={handleAddExtraNightForFlat}
+                        onDeleteNightForFlat={handleDeleteNightForFlat}
+                        onEqualizeNightsForFlat={handleEqualizeNightsForFlat}
+                        onUpdateNightForFlat={handleUpdateNightForFlat}
+                        onAddChargeForFlat={handleAddChargeForFlat}
+                        onUpdateChargeForFlat={handleUpdateChargeForFlat}
+                        onRemoveChargeForFlat={handleRemoveChargeForFlat}
+                      />
+                    ));
+                  })()}
+                </div>
+
+                {/* ========================================================= */}
+                {/* 4. BLOCO FINAL (4A. TOMADOR -> 4B. NFS-E -> 4C. PAGAMENTO)*/}
+                {/* ========================================================= */}
+                <div id="sec-4-final" className="space-y-3.5 pt-1">
+                  {/* 4A. Tomador da NFS-e */}
+                  <div id="sec-4a-tomador" className="p-3.5 bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 rounded-2xl space-y-2.5">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <Badge className="bg-emerald-700 text-white font-black text-[10.5px]">
+                          4A. Tomador da NFS-e
+                        </Badge>
+                        <span className="text-xs font-bold text-emerald-950 dark:text-emerald-100">
+                          Para quem emitir a Nota Fiscal?
+                        </span>
+                      </div>
+                      <Badge variant="outline" className="text-[9.5px] bg-background/80 border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-300">
+                        Independente do Solicitante • Hóspede sempre sai na descrição
+                      </Badge>
+                    </div>
+
+                    {(formChannel === "b2b" || formRequesterType === "agency_b2b") ? (
+                      <div className={`grid gap-1.5 ${formInvoiceRecipientType === "requester" ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-3"}`}>
+                        <button
+                          type="button"
+                          onClick={() => setFormInvoiceRecipientType("agency")}
+                          className={`py-1.5 px-2.5 rounded-lg border text-[11px] font-bold transition-all text-left cursor-pointer ${
+                            formInvoiceRecipientType === "agency"
+                              ? "bg-purple-600 text-white border-purple-600 shadow-xs"
+                              : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-purple-500/60"
+                          }`}
+                        >
+                          🟣 Agência PJ
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFormInvoiceRecipientType("company")}
+                          className={`py-1.5 px-2.5 rounded-lg border text-[11px] font-bold transition-all text-left cursor-pointer ${
+                            formInvoiceRecipientType === "company"
+                              ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                              : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-indigo-500/60"
+                          }`}
+                        >
+                          🏢 Empresa PJ
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFormInvoiceRecipientType("guest")}
+                          className={`py-1.5 px-2.5 rounded-lg border text-[11px] font-bold transition-all text-left cursor-pointer ${
+                            formInvoiceRecipientType === "guest"
+                              ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                              : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-emerald-500/60"
+                          }`}
+                        >
+                          👤 Hóspede PF
+                        </button>
+                        {formInvoiceRecipientType === "requester" && (
+                          <button
                             type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => pmsDocInputRef.current?.click()}
-                            className="text-[10px] h-6 px-1.5"
+                            onClick={() => setFormInvoiceRecipientType("requester")}
+                            className="py-1.5 px-2.5 rounded-lg border text-[11px] font-bold transition-all text-left bg-amber-600 text-white border-amber-600 shadow-xs"
                           >
-                            Trocar
-                          </Button>
-                          <Button
+                            👥 Solicitante PF
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className={`grid gap-1.5 ${(formRequesterType === "other_person" || formInvoiceRecipientType === "requester") ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-2"}`}>
+                        <button
+                          type="button"
+                          onClick={() => setFormInvoiceRecipientType("guest")}
+                          className={`py-1.5 px-2.5 rounded-lg border text-[11px] font-bold transition-all text-left cursor-pointer ${
+                            formInvoiceRecipientType === "guest"
+                              ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                              : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-emerald-500/60"
+                          }`}
+                        >
+                          👤 Hóspede Titular (PF)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFormInvoiceRecipientType("company")}
+                          className={`py-1.5 px-2.5 rounded-lg border text-[11px] font-bold transition-all text-left cursor-pointer ${
+                            formInvoiceRecipientType === "company"
+                              ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                              : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-indigo-500/60"
+                          }`}
+                        >
+                          🏢 Empresa (CNPJ / PJ)
+                        </button>
+                        {(formRequesterType === "other_person" || formInvoiceRecipientType === "requester") && (
+                          <button
                             type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              setFormDocPhotoUrl("")
-                              setFormDocFileName("")
-                            }}
-                            className="text-[10px] h-6 px-1 text-rose-500 hover:text-rose-600"
+                            onClick={() => setFormInvoiceRecipientType("requester")}
+                            className={`py-1.5 px-2.5 rounded-lg border text-[11px] font-bold transition-all text-left cursor-pointer ${
+                              formInvoiceRecipientType === "requester"
+                                ? "bg-amber-600 text-white border-amber-600 shadow-xs"
+                                : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-amber-500/60"
+                            }`}
                           >
-                            <Trash2 className="w-3 h-3" />
-                          </Button>
-                        </div>
+                            👥 Solicitante / Terceiro (PF)
+                          </button>
+                        )}
                       </div>
                     )}
 
-                    {/* Toggles manuais para Menor de Idade e Residente de Campos/RJ */}
-                    <div className="flex items-center justify-between gap-2 flex-wrap pt-1 border-t border-border/50 text-[11px]">
-                      <label className="flex items-center gap-1.5 cursor-pointer font-medium text-muted-foreground select-none">
-                        <input
-                          type="checkbox"
-                          checked={formHasMinor}
-                          onChange={(e) => setFormHasMinor(e.target.checked)}
-                          className="rounded border-border text-rose-600 focus:ring-rose-500 w-3.5 h-3.5"
+                    {formInvoiceRecipientType === "company" && formRequesterType !== "company" && formRequesterType !== "agency_b2b" && formChannel !== "b2b" && (
+                      <div className="p-2.5 bg-background border border-indigo-300/60 dark:border-indigo-800/60 rounded-xl space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] uppercase font-black text-indigo-700 dark:text-indigo-300">
+                            Empresa Tomadora da Nota Fiscal (PJ)
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenNewCompanyModal("invoice_only")}
+                            className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold flex items-center gap-1 cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" /> Cadastrar Empresa (Só NFS-e)
+                          </button>
+                        </div>
+                        <MemoCompanySelect
+                          value={formCompanyId}
+                          onValueChange={stableSelectCompanyInvoice}
+                          companies={companies}
+                          placeholder="Selecione a Empresa para emissão da NFS-e..."
+                          newLabel="➕ Cadastrar Nova Empresa (Só NFS-e)..."
                         />
-                        <span>👶 Menor de Idade (ECA Art. 82)</span>
-                      </label>
-                      <label className="flex items-center gap-1.5 cursor-pointer font-medium text-muted-foreground select-none">
-                        <input
-                          type="checkbox"
-                          checked={formIsCamposResident}
-                          onChange={(e) => setFormIsCamposResident(e.target.checked)}
-                          className="rounded border-border text-purple-600 focus:ring-purple-500 w-3.5 h-3.5"
+                        {renderInlineCnpjBox("invoice_only")}
+                        <p className="text-[10px] text-muted-foreground leading-snug">
+                          ✓ Emite a NFS-e no CNPJ sem ativar boleto faturado e já salva essa preferência como padrão no CRM do hóspede para as próximas reservas.
+                        </p>
+                      </div>
+                    )}
+
+                    {formInvoiceRecipientType === "requester" && formRequesterType === "other_person" && (
+                      <div className="px-2.5 py-1.5 rounded-lg bg-background/80 border border-amber-300/60 text-[11px] text-amber-900 dark:text-amber-200">
+                        Tomador selecionado: <strong>{formRequesterName || "Solicitante PF"}</strong>{formRequesterCpf ? ` (CPF: ${formRequesterCpf})` : " — informe o CPF do solicitante na Seção 1"}.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 4B. Nota Fiscal (NFS-e) & Sigilo Tarifário */}
+                  <div id="sec-4b-nfse" className="p-3.5 bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/60 rounded-2xl space-y-2.5">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <Badge className="bg-emerald-600 text-white font-black text-[10.5px]">
+                          4B. Nota Fiscal (NFS-e)
+                        </Badge>
+                        <span className="text-xs font-bold text-emerald-950 dark:text-emerald-100">
+                          Entrega Fiscal, Sigilo Tarifário &amp; Auto-Emissão
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-[10.5px] font-bold text-emerald-950 dark:text-emerald-200">
+                        E-mail(s) p/ Envio da NFS-e &amp; Comprovantes (separe múltiplos por ;)
+                      </Label>
+                      <Input
+                        type="text"
+                        value={formNfDeliveryEmails}
+                        onChange={e => setFormNfDeliveryEmails(e.target.value)}
+                        placeholder="financeiro@empresa.com; nfse@empresa.com"
+                        className="h-8 text-xs bg-background"
+                      />
+                    </div>
+
+                    {(formRequesterType !== "guest" || formChannel === "b2b" || formInvoiceRecipientType !== "guest" || formFlats.length >= 2) && (
+                      <div className="flex items-center justify-between p-2.5 rounded-xl bg-background/90 border border-border/70 gap-3">
+                        <div className="space-y-0.5">
+                          <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                            Sigilo Tarifário p/ Hóspede
+                          </span>
+                          <span className="text-[10.5px] text-muted-foreground block">
+                            Se ativo, oculta diárias e valores no Portal do Hóspede (/minha-reserva) e no WhatsApp; envia NFS-e e recibo financeiro somente ao solicitante/tomador.
+                          </span>
+                        </div>
+                        <Switch
+                          checked={formNfHideFromGuest}
+                          onCheckedChange={(checked) => {
+                            nfHideManuallySetRef.current = true;
+                            setFormNfHideFromGuest(checked);
+                          }}
                         />
-                        <span>📍 Morador de Campos/RJ (Radar)</span>
-                      </label>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between pt-1">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                        <div>
+                          <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                            Auto-Emitir Nota Fiscal (NFS-e) no Check-out
+                          </span>
+                          <span className="text-[11px] text-muted-foreground">
+                            Emite na SEFIN Nacional e envia o PDF oficial no WhatsApp no check-out (Padrão: OFF)
+                          </span>
+                        </div>
+                      </div>
+                      <Switch checked={formAutoInvoice} onCheckedChange={setFormAutoInvoice} />
                     </div>
                   </div>
 
-                  {/* Hóspede 2 */}
-                  {Number(formGuestCount) >= 2 && (
-                    <div className="p-3 bg-muted/30 border rounded-xl space-y-2.5 animate-in fade-in">
-                      <div className="font-bold text-xs text-slate-900 dark:text-slate-100 flex items-center justify-between">
-                        <span className="flex items-center gap-1.5">
-                          <User className="w-3.5 h-3.5 text-indigo-600" />
-                          <span>Hóspede 2 (Autorizado)</span>
+                  {/* 4C. Pagamento, Status & Composição Financeira */}
+                  <div id="sec-4c-pagamento" className="p-3.5 bg-slate-50/90 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-3.5 shadow-2xs">
+                    <div className="flex items-center justify-between gap-2 flex-wrap border-b border-border/60 pb-2">
+                      <div className="flex items-center gap-2">
+                        <Badge className="bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-900 font-black text-[10.5px]">
+                          4C. Pagamento
+                        </Badge>
+                        <span className="text-xs font-bold text-foreground">
+                          Status da Reserva, Prazo, Consolidação do Pacote &amp; Lançamentos
                         </span>
-                        <div className="flex items-center gap-2">
-                          {formGuest2Name.trim() && (!formGuest2Id || formGuest2Id === "manual") && (
-                            <button
-                              type="button"
-                              onClick={() => handleSaveAdditionalGuestToCrm(2)}
-                              className="text-[10px] text-primary hover:underline font-bold flex items-center gap-1 cursor-pointer"
-                            >
-                              <Plus className="w-3 h-3" /> Cadastrar no CRM agora
-                            </button>
-                          )}
-                          <Badge variant="outline" className="text-[9px]">Acompanhante</Badge>
-                        </div>
                       </div>
-
-                      {/* Busca CRM para Hóspede 2 */}
-                      <div className="p-2 bg-background border border-indigo-500/20 rounded-xl space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] uppercase font-black text-indigo-600 dark:text-indigo-400 block">
-                            Buscar 2º Hóspede Cadastrado (CRM 360°)
-                          </span>
-                          {formGuest2Id && formGuest2Id !== "manual" && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setFormGuest2Id("manual")
-                                setFormGuest2Name("")
-                                setFormGuest2Cpf("")
-                                setFormGuest2Phone("")
-                                setFormGuest2Email("")
-                              }}
-                              className="text-[10px] text-muted-foreground hover:text-rose-600 underline font-semibold transition-colors cursor-pointer"
-                            >
-                              Desvincular / Novo Hóspede
-                            </button>
-                          )}
-                        </div>
-
-                        <div className="relative">
-                          <Input
-                            value={guest2SearchFilter}
-                            onChange={e => setGuest2SearchFilter(e.target.value)}
-                            placeholder="🔍 Digite para filtrar no CRM por nome, CPF ou WhatsApp..."
-                            className="text-xs h-8 bg-muted/40"
-                          />
-                          {guest2SearchFilter.trim() && (
-                            <div className="absolute left-0 right-0 top-full mt-1 bg-popover/95 backdrop-blur-sm border border-border shadow-2xl rounded-2xl z-50 overflow-hidden max-h-56 overflow-y-auto animate-in fade-in zoom-in-95">
-                              <div className="px-2.5 py-1 bg-muted/60 text-[10px] font-bold text-muted-foreground flex items-center justify-between border-b">
-                                <span>Resultados no CRM ({filteredGuests2.length})</span>
-                                <span className="text-[9px]">Clique para selecionar</span>
-                              </div>
-
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setFormGuest2Id("manual")
-                                  setFormGuest2Name(guest2SearchFilter)
-                                  setGuest2SearchFilter("")
-                                }}
-                                className="w-full text-left p-2 hover:bg-primary/10 text-primary font-bold text-xs flex items-center gap-2 border-b cursor-pointer"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                                <span>➕ Cadastrar "{guest2SearchFilter}" como Novo Hóspede</span>
-                              </button>
-
-                              {filteredGuests2.length > 0 ? (
-                                <div className="divide-y divide-border/40">
-                                  {filteredGuests2.slice(0, 10).map((g: any) => (
-                                    <button
-                                      key={g.id}
-                                      type="button"
-                                      onClick={() => {
-                                        handleSelectGuest2(String(g.id))
-                                        setGuest2SearchFilter("")
-                                      }}
-                                      className="w-full text-left p-2 hover:bg-primary/10 transition-colors flex items-start gap-2 group cursor-pointer"
-                                    >
-                                      <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
-                                        <User className="w-3.5 h-3.5" />
-                                      </div>
-                                      <div className="flex-1 min-w-0">
-                                        <div className="text-xs font-bold text-foreground truncate">
-                                          {g.name || g.fullName}
-                                        </div>
-                                        <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
-                                          {g.documentNumber || g.document ? (
-                                            <span>CPF: {g.documentNumber || g.document}</span>
-                                          ) : null}
-                                          {g.phone ? (
-                                            <span>• Tel: {g.phone}</span>
-                                          ) : null}
-                                          {g.companyName ? (
-                                            <span className="text-indigo-600 dark:text-indigo-400 font-semibold">• {g.companyName}</span>
-                                          ) : null}
-                                        </div>
-                                      </div>
-                                    </button>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="p-3 text-center text-xs text-muted-foreground">
-                                  Nenhum hóspede localizado com esse termo.
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-
-                        <MemoCrmGuestSelect
-                          value={formGuest2Id}
-                          onValueChange={stableSelectGuest2}
-                          guests={crmGuests}
-                          placeholder="Ou selecione um Hóspede Cadastrado..."
-                          manualLabel="➕ Novo Hóspede (Digitar manualmente)"
-                        />
-
-                        {formGuest2Id && formGuest2Id !== "manual" && (
-                          <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1 mt-0.5">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> 2º Hóspede vinculado do CRM ({formGuest2Name}).
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="relative" ref={guest2SuggestionsRef}>
-                          <Input
-                            value={formGuest2Name}
-                            onChange={e => {
-                              setFormGuest2Name(e.target.value)
-                              setShowGuest2Suggestions(true)
-                            }}
-                            onFocus={() => {
-                              if (formGuest2Name.trim().length > 0) setShowGuest2Suggestions(true)
-                            }}
-                            placeholder="Nome do 2º Hóspede"
-                            className="text-xs h-8"
-                          />
-                          {showGuest2Suggestions && formGuest2Name.trim().length > 0 && (
-                            <div className="absolute left-0 right-0 top-full mt-1 bg-popover/95 backdrop-blur-sm border border-border shadow-2xl rounded-2xl z-50 overflow-hidden max-h-64 overflow-y-auto animate-in fade-in zoom-in-95">
-                              <div className="px-2.5 py-1.5 bg-muted/60 text-[10px] font-bold text-muted-foreground flex items-center justify-between border-b">
-                                <span>Hóspedes no CRM ({liveGuest2Matches.length})</span>
-                                <span className="text-[9px]">Clique para preencher</span>
-                              </div>
-                              {liveGuest2Matches.length > 0 ? (
-                                <div className="divide-y divide-border/40">
-                                  {liveGuest2Matches.map((g: any) => (
-                                    <button
-                                      key={g.id}
-                                      type="button"
-                                      onClick={() => {
-                                        handleSelectGuest2(String(g.id))
-                                        setShowGuest2Suggestions(false)
-                                      }}
-                                      className="w-full text-left p-2 hover:bg-primary/10 transition-colors flex items-start gap-2 group cursor-pointer"
-                                    >
-                                      <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
-                                        <User className="w-3.5 h-3.5" />
-                                      </div>
-                                      <div className="flex-1 min-w-0">
-                                        <div className="text-xs font-bold text-foreground truncate">
-                                          {g.name || g.fullName}
-                                        </div>
-                                        <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
-                                          {g.documentNumber || g.document ? <span>CPF: {g.documentNumber || g.document}</span> : null}
-                                          {g.phone ? <span>• Tel: {g.phone}</span> : null}
-                                          {g.companyName ? <span className="text-indigo-600 dark:text-indigo-400 font-semibold">• {g.companyName}</span> : null}
-                                        </div>
-                                      </div>
-                                    </button>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="p-3 text-center text-[11px] text-muted-foreground">
-                                  Nenhum hóspede localizado no CRM com este nome.
-                                </div>
-                              )}
-                              <div className="p-1.5 bg-muted/30 border-t border-border">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setFormGuest2Id("manual")
-                                    setShowGuest2Suggestions(false)
-                                    toast({
-                                      title: "Novo Hóspede",
-                                      description: `Preencha os dados de '${formGuest2Name}' para registrá-lo.`
-                                    })
-                                  }}
-                                  className="w-full py-1.5 px-2 text-[11px] font-bold text-primary hover:bg-primary/10 rounded-lg flex items-center gap-1.5 justify-center transition-colors cursor-pointer"
-                                >
-                                  <Plus className="w-3.5 h-3.5" />
-                                  <span>Cadastrar como Novo Hóspede: "{formGuest2Name}"</span>
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                        <Input value={formGuest2Cpf} onChange={e => setFormGuest2Cpf(e.target.value)} placeholder="CPF do 2º Hóspede" className="text-xs h-8" />
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <Input type="tel" inputMode="tel" value={formGuest2Phone} onChange={e => setFormGuest2Phone(formatBrazilPhone(e.target.value))} placeholder="WhatsApp do 2º Hóspede" className="text-xs h-8" />
-                        <Input type="text" value={formGuest2Email} onChange={e => setFormGuest2Email(e.target.value)} placeholder="E-mail" className="text-xs h-8" />
-                      </div>
-                      {selectedRes && selectedRes.status !== "pre_reserva" && (
-                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 px-2.5 py-2 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/70">
-                          <div className="text-[10.5px] text-emerald-900 dark:text-emerald-200 leading-tight">
-                            <span className="font-bold">📲 Envio exclusivo p/ 2º Hóspede:</span>{" "}
-                            <span className="text-emerald-800/80 dark:text-emerald-300/80">Manual PDF + instruções + link individual (sem reenviar ao 1º)</span>
-                          </div>
-                          <Button
-                            type="button"
-                            size="sm"
-                            disabled={sendingCompanionInstrIdx === 2 || formGuest2Phone.replace(/\D/g, "").length < 10}
-                            onClick={() => handleSendCompanionInstructions(2)}
-                            title={
-                              formGuest2Phone.replace(/\D/g, "").length < 10
-                                ? "Informe o WhatsApp com DDD do 2º hóspede para liberar o envio"
-                                : "Envia instruções completas, Manual PDF e link de Check-in Digital exclusivamente para o 2º Hóspede"
-                            }
-                            className="h-7 px-2.5 text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 shadow-2xs cursor-pointer shrink-0"
-                          >
-                            {sendingCompanionInstrIdx === 2 ? (
-                              <>
-                                <RefreshCw className="w-3 h-3 animate-spin" />
-                                <span>Enviando...</span>
-                              </>
-                            ) : (
-                              <>
-                                <Send className="w-3 h-3" />
-                                <span>Enviar Instruções só p/ 2º Hóspede</span>
-                              </>
-                            )}
-                          </Button>
-                        </div>
-                      )}
                     </div>
-                  )}
-
-                  {/* Hóspede 3 */}
-                  {Number(formGuestCount) === 3 && (
-                    <div className="p-3 bg-muted/30 border rounded-xl space-y-2.5 animate-in fade-in">
-                      <div className="font-bold text-xs text-slate-900 dark:text-slate-100 flex items-center justify-between">
-                        <span className="flex items-center gap-1.5">
-                          <User className="w-3.5 h-3.5 text-purple-600" />
-                          <span>Hóspede 3 (Autorizado)</span>
-                        </span>
-                        <div className="flex items-center gap-2">
-                          {formGuest3Name.trim() && (!formGuest3Id || formGuest3Id === "manual") && (
-                            <button
-                              type="button"
-                              onClick={() => handleSaveAdditionalGuestToCrm(3)}
-                              className="text-[10px] text-primary hover:underline font-bold flex items-center gap-1 cursor-pointer"
-                            >
-                              <Plus className="w-3 h-3" /> Cadastrar no CRM agora
-                            </button>
-                          )}
-                          <Badge variant="outline" className="text-[9px]">Acompanhante Extra</Badge>
-                        </div>
-                      </div>
-
-                      {/* Busca CRM para Hóspede 3 */}
-                      <div className="p-2 bg-background border border-purple-500/20 rounded-xl space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] uppercase font-black text-purple-600 dark:text-purple-400 block">
-                            Buscar 3º Hóspede Cadastrado (CRM 360°)
-                          </span>
-                          {formGuest3Id && formGuest3Id !== "manual" && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setFormGuest3Id("manual")
-                                setFormGuest3Name("")
-                                setFormGuest3Cpf("")
-                                setFormGuest3Phone("")
-                                setFormGuest3Email("")
-                              }}
-                              className="text-[10px] text-muted-foreground hover:text-rose-600 underline font-semibold transition-colors cursor-pointer"
-                            >
-                              Desvincular / Novo Hóspede
-                            </button>
-                          )}
-                        </div>
-
-                        <div className="relative">
-                          <Input
-                            value={guest3SearchFilter}
-                            onChange={e => setGuest3SearchFilter(e.target.value)}
-                            placeholder="🔍 Digite para filtrar no CRM por nome, CPF ou WhatsApp..."
-                            className="text-xs h-8 bg-muted/40"
-                          />
-                          {guest3SearchFilter.trim() && (
-                            <div className="absolute left-0 right-0 top-full mt-1 bg-popover/95 backdrop-blur-sm border border-border shadow-2xl rounded-2xl z-50 overflow-hidden max-h-56 overflow-y-auto animate-in fade-in zoom-in-95">
-                              <div className="px-2.5 py-1 bg-muted/60 text-[10px] font-bold text-muted-foreground flex items-center justify-between border-b">
-                                <span>Resultados no CRM ({filteredGuests3.length})</span>
-                                <span className="text-[9px]">Clique para selecionar</span>
-                              </div>
-
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setFormGuest3Id("manual")
-                                  setFormGuest3Name(guest3SearchFilter)
-                                  setGuest3SearchFilter("")
-                                }}
-                                className="w-full text-left p-2 hover:bg-primary/10 text-primary font-bold text-xs flex items-center gap-2 border-b cursor-pointer"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                                <span>➕ Cadastrar "{guest3SearchFilter}" como Novo Hóspede</span>
-                              </button>
-
-                              {filteredGuests3.length > 0 ? (
-                                <div className="divide-y divide-border/40">
-                                  {filteredGuests3.slice(0, 10).map((g: any) => (
-                                    <button
-                                      key={g.id}
-                                      type="button"
-                                      onClick={() => {
-                                        handleSelectGuest3(String(g.id))
-                                        setGuest3SearchFilter("")
-                                      }}
-                                      className="w-full text-left p-2 hover:bg-primary/10 transition-colors flex items-start gap-2 group cursor-pointer"
-                                    >
-                                      <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
-                                        <User className="w-3.5 h-3.5" />
-                                      </div>
-                                      <div className="flex-1 min-w-0">
-                                        <div className="text-xs font-bold text-foreground truncate">
-                                          {g.name || g.fullName}
-                                        </div>
-                                        <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
-                                          {g.documentNumber || g.document ? (
-                                            <span>CPF: {g.documentNumber || g.document}</span>
-                                          ) : null}
-                                          {g.phone ? (
-                                            <span>• Tel: {g.phone}</span>
-                                          ) : null}
-                                          {g.companyName ? (
-                                            <span className="text-indigo-600 dark:text-indigo-400 font-semibold">• {g.companyName}</span>
-                                          ) : null}
-                                        </div>
-                                      </div>
-                                    </button>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="p-3 text-center text-xs text-muted-foreground">
-                                  Nenhum hóspede localizado com esse termo.
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-
-                        <MemoCrmGuestSelect
-                          value={formGuest3Id}
-                          onValueChange={stableSelectGuest3}
-                          guests={crmGuests}
-                          placeholder="Ou selecione um Hóspede Cadastrado..."
-                          manualLabel="➕ Novo Hóspede (Digitar manualmente)"
-                        />
-
-                        {formGuest3Id && formGuest3Id !== "manual" && (
-                          <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1 mt-0.5">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> 3º Hóspede vinculado do CRM ({formGuest3Name}).
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="relative" ref={guest3SuggestionsRef}>
-                          <Input
-                            value={formGuest3Name}
-                            onChange={e => {
-                              setFormGuest3Name(e.target.value)
-                              setShowGuest3Suggestions(true)
-                            }}
-                            onFocus={() => {
-                              if (formGuest3Name.trim().length > 0) setShowGuest3Suggestions(true)
-                            }}
-                            placeholder="Nome do 3º Hóspede"
-                            className="text-xs h-8"
-                          />
-                          {showGuest3Suggestions && formGuest3Name.trim().length > 0 && (
-                            <div className="absolute left-0 right-0 top-full mt-1 bg-popover/95 backdrop-blur-sm border border-border shadow-2xl rounded-2xl z-50 overflow-hidden max-h-64 overflow-y-auto animate-in fade-in zoom-in-95">
-                              <div className="px-2.5 py-1.5 bg-muted/60 text-[10px] font-bold text-muted-foreground flex items-center justify-between border-b">
-                                <span>Hóspedes no CRM ({liveGuest3Matches.length})</span>
-                                <span className="text-[9px]">Clique para preencher</span>
-                              </div>
-                              {liveGuest3Matches.length > 0 ? (
-                                <div className="divide-y divide-border/40">
-                                  {liveGuest3Matches.map((g: any) => (
-                                    <button
-                                      key={g.id}
-                                      type="button"
-                                      onClick={() => {
-                                        handleSelectGuest3(String(g.id))
-                                        setShowGuest3Suggestions(false)
-                                      }}
-                                      className="w-full text-left p-2 hover:bg-primary/10 transition-colors flex items-start gap-2 group cursor-pointer"
-                                    >
-                                      <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
-                                        <User className="w-3.5 h-3.5" />
-                                      </div>
-                                      <div className="flex-1 min-w-0">
-                                        <div className="text-xs font-bold text-foreground truncate">
-                                          {g.name || g.fullName}
-                                        </div>
-                                        <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
-                                          {g.documentNumber || g.document ? <span>CPF: {g.documentNumber || g.document}</span> : null}
-                                          {g.phone ? <span>• Tel: {g.phone}</span> : null}
-                                          {g.companyName ? <span className="text-indigo-600 dark:text-indigo-400 font-semibold">• {g.companyName}</span> : null}
-                                        </div>
-                                      </div>
-                                    </button>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="p-3 text-center text-[11px] text-muted-foreground">
-                                  Nenhum hóspede localizado no CRM com este nome.
-                                </div>
-                              )}
-                              <div className="p-1.5 bg-muted/30 border-t border-border">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setFormGuest3Id("manual")
-                                    setShowGuest3Suggestions(false)
-                                    toast({
-                                      title: "Novo Hóspede",
-                                      description: `Preencha os dados de '${formGuest3Name}' para registrá-lo.`
-                                    })
-                                  }}
-                                  className="w-full py-1.5 px-2 text-[11px] font-bold text-primary hover:bg-primary/10 rounded-lg flex items-center gap-1.5 justify-center transition-colors cursor-pointer"
-                                >
-                                  <Plus className="w-3.5 h-3.5" />
-                                  <span>Cadastrar como Novo Hóspede: "{formGuest3Name}"</span>
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                        <Input value={formGuest3Cpf} onChange={e => setFormGuest3Cpf(e.target.value)} placeholder="CPF do 3º Hóspede" className="text-xs h-8" />
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <Input type="tel" inputMode="tel" value={formGuest3Phone} onChange={e => setFormGuest3Phone(formatBrazilPhone(e.target.value))} placeholder="WhatsApp do 3º Hóspede" className="text-xs h-8" />
-                        <Input type="text" value={formGuest3Email} onChange={e => setFormGuest3Email(e.target.value)} placeholder="E-mail" className="text-xs h-8" />
-                      </div>
-                      {selectedRes && selectedRes.status !== "pre_reserva" && (
-                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 px-2.5 py-2 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/70">
-                          <div className="text-[10.5px] text-emerald-900 dark:text-emerald-200 leading-tight">
-                            <span className="font-bold">📲 Envio exclusivo p/ 3º Hóspede:</span>{" "}
-                            <span className="text-emerald-800/80 dark:text-emerald-300/80">Manual PDF + instruções + link individual (sem reenviar ao 1º)</span>
-                          </div>
-                          <Button
-                            type="button"
-                            size="sm"
-                            disabled={sendingCompanionInstrIdx === 3 || formGuest3Phone.replace(/\D/g, "").length < 10}
-                            onClick={() => handleSendCompanionInstructions(3)}
-                            title={
-                              formGuest3Phone.replace(/\D/g, "").length < 10
-                                ? "Informe o WhatsApp com DDD do 3º hóspede para liberar o envio"
-                                : "Envia instruções completas, Manual PDF e link de Check-in Digital exclusivamente para o 3º Hóspede"
-                            }
-                            className="h-7 px-2.5 text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 shadow-2xs cursor-pointer shrink-0"
-                          >
-                            {sendingCompanionInstrIdx === 3 ? (
-                              <>
-                                <RefreshCw className="w-3 h-3 animate-spin" />
-                                <span>Enviando...</span>
-                              </>
-                            ) : (
-                              <>
-                                <Send className="w-3 h-3" />
-                                <span>Enviar Instruções só p/ 3º Hóspede</span>
-                              </>
-                            )}
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
 
                 {/* Status & Confirmação da Reserva (Regra Oficial: só confirmada se marcada aqui) */}
                 <div className={`p-3.5 rounded-2xl border transition-all ${
@@ -14276,1481 +15975,12 @@ export default function PmsCalendar(props?: {
                   )
                 })()}
 
-                {/* Resumo Financeiro & Atalho para a Aba de Pagamentos */}
-                <div className="p-3.5 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent border border-emerald-500/20 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <CreditCard className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                      <span className="text-xs font-bold text-foreground">
-                        {isMultiFlat ? `Resumo Financeiro do Pacote (${1 + extraPackageFlats.length} Flats)` : "Resumo Financeiro da Hospedagem"}
-                      </span>
-                      {(() => {
-                        const { curTot, curPaid, remaining, isResPaid } = computeUnifiedReservationTotals();
-                        if (isResPaid || (remaining === 0 && curTot > 0)) {
-                          return <Badge className="bg-emerald-600 text-white font-bold text-[10px]">✓ Quitado</Badge>;
-                        } else if (curPaid > 0) {
-                          return <Badge className="bg-amber-600 text-white font-bold text-[10px]">⚡ Sinal Pago</Badge>;
-                        }
-                        return <Badge className="bg-rose-500 text-white font-bold text-[10px]">⏳ Pagamento Pendente</Badge>;
-                      })()}
-                    </div>
-                    <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
-                      {(() => {
-                        const { curTot, curPaid, remaining } = computeUnifiedReservationTotals();
-                        const totalNightsAll = formDailyRates.length + extraPackageFlats.reduce((s, ef) => s + ef.dailyRates.length, 0);
-                        return (
-                          <>
-                            <span>Total: <strong className="text-foreground font-bold">R$ {curTot.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
-                            <span>•</span>
-                            <span>Pago: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">R$ {curPaid.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
-                            {remaining > 0 && (
-                              <>
-                                <span>•</span>
-                                <span>Restante PIX/Link: <strong className="text-amber-700 dark:text-amber-300 font-bold">R$ {remaining.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
-                              </>
-                            )}
-                            <span>•</span>
-                            <span>{totalNightsAll} {totalNightsAll === 1 ? "diária" : "diárias"} configuradas</span>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  </div>
-
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setResModalTab("payments")}
-                    className="h-8 px-3 text-xs font-bold border-emerald-400/60 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100 flex items-center gap-1.5 shrink-0 cursor-pointer"
-                  >
-                    <span>Gerenciar Pagamentos & Diárias</span>
-                    <span className="font-bold">➔</span>
-                  </Button>
-                </div>
-
-                {/* Seção Própria: Serviço de Café da Manhã */}
-                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Coffee className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                      <div>
-                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
-                          Café da Manhã Incluso na Diária
-                        </span>
-                        <span className="text-[11px] text-muted-foreground">
-                          Habilita link de cardápio e agendamento de café para este hóspede
-                        </span>
-                      </div>
-                    </div>
-                    <Switch checked={formIncludeBreakfast} onCheckedChange={setFormIncludeBreakfast} />
-                  </div>
-
-                  {formIncludeBreakfast && (
-                    <div className="pt-2 border-t border-amber-500/20 space-y-2 animate-in fade-in">
-                      <div className="text-[11px] text-muted-foreground">
-                        Link exclusivo para escolha de itens e horários pelo hóspede:
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          {...bindZapiClickOrHoldWaWeb({
-                            onClickZapi: async () => {
-                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                              const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
-                              const phone = (formGuestPhone || selectedRes?.guestPhone || "").replace(/\D/g, "")
-                              const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
-                              const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
-                              const msg = `Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`
-                              await sendDirectZapiWithFallback({
-                                phone,
-                                message: msg,
-                                recipientName: guestName,
-                                reservationCode: String(resCode),
-                                flatNumber: String(flatNum),
-                                triggerEvent: "breakfast_link_manual",
-                                label: "Link do Café da Manhã",
-                                toast
-                              })
-                            },
-                            getWaUrl: () => {
-                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                              const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
-                              const phone = formGuestPhone || selectedRes?.guestPhone || ""
-                              const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
-                              const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
-                              const msg = `Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`
-                              return buildDirectWaWebUrl(phone, msg)
-                            },
-                            toast
-                          })}
-                          title="Clique rápido: enviar via Z-API • Segure por 2 segundos: abrir no WhatsApp Web"
-                          className="w-full h-8 text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs"
-                        >
-                          <MessageCircle className="w-3.5 h-3.5" /> Enviar WhatsApp (Z-API)
-                        </Button>
-
-                        <div className="flex items-center gap-1.5">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                              const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
-                              navigator.clipboard.writeText(url)
-                              toast({ title: "Link copiado!", description: "Link do café da manhã copiado para a área de transferência." })
-                            }}
-                            className="flex-1 h-8 text-xs font-bold gap-1.5 bg-background hover:bg-muted border-border"
-                          >
-                            <Copy className="w-3.5 h-3.5" /> Copiar Link
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                              const url = `/cafe/${encodeURIComponent(String(resCode))}`
-                              window.open(url, "_blank")
-                            }}
-                            className="h-8 px-2.5 text-xs font-bold text-muted-foreground hover:text-foreground"
-                            title="Abrir página de pedidos"
-                          >
-                            Abrir ↗
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Seção Própria: Frigobar & Notas Fiscais da Reserva */}
-                {selectedRes && (
-                  <div className="p-3 bg-cyan-500/10 border border-cyan-500/30 rounded-2xl space-y-2.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <Refrigerator className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
-                        <div>
-                          <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
-                            Frigobar & Notas Fiscais da Reserva
-                          </span>
-                          <span className="text-[11px] text-muted-foreground">
-                            Extrato de consumo, pagamentos e Notas Fiscais anexadas
-                          </span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            const resCode = selectedRes?.code || selectedRes?.reservationCode || `RES-${selectedRes?.id}`
-                            const url = `${window.location.origin}/minha-reserva/${encodeURIComponent(String(resCode))}/frigobar`
-                            navigator.clipboard.writeText(url)
-                            toast({ title: "Link copiado!", description: "Link do frigobar da reserva copiado para a área de transferência." })
-                          }}
-                          className="h-7 px-2.5 text-[11px] font-bold gap-1 bg-background hover:bg-muted border-border"
-                        >
-                          <Copy className="w-3 h-3" /> Link
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => {
-                            const resCode = selectedRes?.code || selectedRes?.reservationCode || `RES-${selectedRes?.id}`
-                            window.open(`/minha-reserva/${encodeURIComponent(String(resCode))}/frigobar`, "_blank")
-                          }}
-                          className="h-7 px-2.5 text-[11px] font-bold gap-1 bg-cyan-600 hover:bg-cyan-700 text-white"
-                        >
-                          <span>Abrir Frigobar ↗</span>
-                        </Button>
-                      </div>
-                    </div>
-
-                    {/* Sub-bloco Segregado de Cortesias Consumidas (R$ 0,00) */}
-                    {(() => {
-                      const liveRes = (data?.reservations || []).find((r: any) => Number(r.id) === Number(selectedRes.id)) || selectedRes
-                      const welcomeKit = (liveRes as any)?.welcomeKitConsumption
-                      const courtesyWater = Number(welcomeKit?.waterCups ?? welcomeKit?.waterCupsConsumed) || 0
-                      const courtesyPeanuts = Number(welcomeKit?.mendoratoPeanuts ?? welcomeKit?.peanutsConsumed) || 0
-                      if (courtesyWater <= 0 && courtesyPeanuts <= 0) return null
-                      return (
-                        <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs space-y-1">
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
-                              <Gift className="w-3.5 h-3.5" />
-                              <span>Kit de Boas-Vindas Consumido (Cortesia)</span>
-                            </span>
-                            <Badge variant="outline" className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px]">
-                              R$ 0,00
-                            </Badge>
-                          </div>
-                          <p className="text-[11px] text-muted-foreground">
-                            {[
-                              courtesyWater > 0 ? `${courtesyWater}x Copo d'Água 200ml` : null,
-                              courtesyPeanuts > 0 ? `${courtesyPeanuts}x Amendoim Mendorato 27g` : null
-                            ].filter(Boolean).join(" • ")}
-                          </p>
-                        </div>
-                      )
-                    })()}
-
-                    {(() => {
-                      const liveRes = (data?.reservations || []).find((r: any) => Number(r.id) === Number(selectedRes.id))
-                      const rawOrders = Array.isArray((liveRes as any)?.minibarOrders)
-                        ? (liveRes as any).minibarOrders
-                        : Array.isArray((selectedRes as any).minibarOrders)
-                          ? (selectedRes as any).minibarOrders
-                          : []
-                      const visibleOrders = rawOrders.filter((o: any) => o && o.paymentStatus !== "cancelado")
-                      if (visibleOrders.length === 0) return null
-                      return (
-                        <div className="pt-2 border-t border-cyan-500/20 space-y-1.5">
-                          {visibleOrders.map((ord: any) => {
-                              const invUrl = ord.invoice?.invoiceFileUrl || ord.invoice?.fileUrl || ord.invoiceFileUrl || ""
-                              const invName = ord.invoice?.invoiceFileName || ord.invoiceFileName || "Nota_Fiscal_Frigobar.pdf"
-                              const invNum = ord.invoice?.invoiceNumber || ord.invoiceNumber || ""
-                              const isOrdPaid =
-                                ord.paymentStatus === "pago" ||
-                                ord.paymentStatus === "lancamento_quitado" ||
-                                Boolean(invUrl)
-                              return (
-                                <div
-                                  key={ord.id}
-                                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-xl bg-background/90 border border-border text-xs"
-                                >
-                                  <div className="space-y-0.5">
-                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                      <span className="font-bold text-slate-900 dark:text-slate-100">
-                                        {ord.guestName || selectedRes.guestName || "Hóspede"}
-                                      </span>
-                                      <Badge
-                                        variant="outline"
-                                        className={
-                                          isOrdPaid
-                                            ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px]"
-                                            : "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[10px]"
-                                        }
-                                      >
-                                        {isOrdPaid ? "✓ Pago" : "Pendente"} • R${" "}
-                                        {Number(ord.totalAmount || 0)
-                                          .toFixed(2)
-                                          .replace(".", ",")}
-                                      </Badge>
-                                      {invNum && (
-                                        <Badge
-                                          variant="outline"
-                                          className="bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border-cyan-500/30 text-[10px]"
-                                        >
-                                          NF #{invNum}
-                                        </Badge>
-                                      )}
-                                    </div>
-                                    {Array.isArray(ord.items) && ord.items.length > 0 && (
-                                      <p className="text-[11px] text-muted-foreground">
-                                        {ord.items
-                                          .map((it: any) => `${it.quantity}x ${it.productName || it.name}`)
-                                          .join(", ")}
-                                      </p>
-                                    )}
-                                  </div>
-
-                                  {invUrl ? (
-                                    <a
-                                      href={invUrl}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      download={invName}
-                                      className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-[11px] shadow-2xs transition-all shrink-0"
-                                    >
-                                      <FileText className="w-3.5 h-3.5" />
-                                      <span>Baixar Nota Fiscal</span>
-                                      <ExternalLink className="w-3 h-3" />
-                                    </a>
-                                  ) : isOrdPaid ? (
-                                    <Badge
-                                      variant="outline"
-                                      className="text-[10px] text-muted-foreground border-border shrink-0"
-                                    >
-                                      NF em emissão
-                                    </Badge>
-                                  ) : null}
-                                </div>
-                              )
-                            })}
-                        </div>
-                      )
-                    })()}
-                  </div>
-                )}
-
-                {/* Configuração do Quarto para a Governança / Camareiras */}
-                <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                      <BedDouble className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                      <span>Preparação do Quarto para as Camareiras</span>
-                    </span>
-                    <Badge variant="outline" className="text-[10px] bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-300 border-amber-300">
-                      Exibido no Card da Governança
-                    </Badge>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    {/* 2 Camas de solteiro */}
-                    <button
-                      type="button"
-                      onClick={() => setFormTwinBeds(!formTwinBeds)}
-                      className={`p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between ${
-                        formTwinBeds 
-                          ? "bg-indigo-600 text-white border-indigo-600 shadow-xs" 
-                          : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-indigo-400"
-                      }`}
-                    >
-                      <span>🛏️ {formTwinBeds ? "2 Camas Solteiro" : "1 Cama Casal"}</span>
-                      {formTwinBeds ? <CheckCircle2 className="w-3.5 h-3.5" /> : <span className="text-[10px] text-muted-foreground font-semibold">Padrão</span>}
-                    </button>
-
-                    {/* Colchão extra */}
-                    <button
-                      type="button"
-                      onClick={() => setFormExtraMattress(!formExtraMattress)}
-                      className={`p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between ${
-                        formExtraMattress 
-                          ? "bg-purple-600 text-white border-purple-600 shadow-xs" 
-                          : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-purple-400"
-                      }`}
-                    >
-                      <span>➕ Colchão Extra</span>
-                      {formExtraMattress && <CheckCircle2 className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-
-                  <div className="space-y-1">
-                    <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
-                      Nota / Recado para a Camareira (Exibida no Card de Limpeza no Check-in)
-                    </Label>
-                    <Input 
-                      value={formSpecialRequests}
-                      onChange={e => setFormSpecialRequests(e.target.value)}
-                      placeholder="Ex: Montar berço, kit bebê, toalhas extras, atenção especial ao ar-condicionado..."
-                      className="text-xs"
-                    />
-                  </div>
-                </div>
-
-                {/* Bloqueio de Flat / Quarto Preferencial */}
-                <div className="p-3 bg-slate-50/80 dark:bg-slate-900/50 border border-border/70 rounded-xl space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <Lock className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                      <div>
-                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
-                          Bloquear Flat (Quarto Preferencial / Não Trocar)
-                        </span>
-                        <span className="text-[11px] text-muted-foreground block leading-tight">
-                          Impede a Sofia AI de trocar ou remanejar o quarto deste hóspede. Evita alocação de novos hóspedes neste flat.
-                        </span>
-                      </div>
-                    </div>
-                    <Switch 
-                      checked={formIsFlatLocked} 
-                      onCheckedChange={setFormIsFlatLocked} 
-                    />
-                  </div>
-
-                  {formIsFlatLocked && (
-                    <div className="pt-2 border-t border-border/60 animate-in fade-in space-y-1">
-                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                        Motivo / Justificativa do Quarto Fixo (Opcional)
-                      </Label>
-                      <Input
-                        value={formFlatLockReason}
-                        onChange={e => setFormFlatLockReason(e.target.value)}
-                        placeholder="Ex: Hóspede pediu cama casal + ar split; hóspede idoso pediu andar baixo..."
-                        className="text-xs h-8"
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {/* Early Check-in Switch */}
-                <div className="p-3 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60 rounded-xl flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                    <div>
-                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Autorizar Early Check-in</span>
-                      <span className="text-[11px] text-muted-foreground">Permite liberação na portaria antes das 13:00</span>
-                    </div>
-                  </div>
-                  <Switch checked={formEarlyCheckin} onCheckedChange={setFormEarlyCheckin} />
-                </div>
-
-                {/* Switch: Mensalista / Contrato */}
-                <div className="p-3 bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/60 rounded-xl flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Building2 className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                    <div>
-                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Cliente Mensalista / Contrato Long Stay</span>
-                      <span className="text-[11px] text-muted-foreground">Exibe destaque visual exclusivo no Livro de Reservas</span>
-                    </div>
-                  </div>
-                  <Switch checked={formIsMonthlyGuest} onCheckedChange={setFormIsMonthlyGuest} />
-                </div>
-
-                {/* Bloco Fiscal: Tomador da NFS-e (Independente do Solicitante) + Auto-Emissão no Check-out */}
-                <div className="p-3 bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 rounded-xl space-y-2.5">
-                  {formChannel !== "b2b" && formRequesterType !== "agency_b2b" && (
-                    <div className="space-y-2 pb-2.5 border-b border-emerald-200/70 dark:border-emerald-800/50">
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <span className="text-[11px] font-black uppercase tracking-wide text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5">
-                          <FileText className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                          <span>Para quem emitir a Nota Fiscal (Tomador NFS-e)?</span>
-                        </span>
-                        <Badge variant="outline" className="text-[9.5px] bg-background/80 border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-300">
-                          Independente do Solicitante • Hóspede sempre sai na descrição
-                        </Badge>
-                      </div>
-
-                      <div className={`grid gap-1.5 ${(formRequesterType === "other_person" || formInvoiceRecipientType === "requester") ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-2"}`}>
-                        <button
-                          type="button"
-                          onClick={() => setFormInvoiceRecipientType("guest")}
-                          className={`py-1.5 px-2.5 rounded-lg border text-[11px] font-bold transition-all text-left ${
-                            formInvoiceRecipientType === "guest"
-                              ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
-                              : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-emerald-500/60"
-                          }`}
-                        >
-                          👤 Hóspede Titular (PF)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setFormInvoiceRecipientType("company")}
-                          className={`py-1.5 px-2.5 rounded-lg border text-[11px] font-bold transition-all text-left ${
-                            formInvoiceRecipientType === "company"
-                              ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                              : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-indigo-500/60"
-                          }`}
-                        >
-                          🏢 Empresa (CNPJ / PJ)
-                        </button>
-                        {(formRequesterType === "other_person" || formInvoiceRecipientType === "requester") && (
-                          <button
-                            type="button"
-                            onClick={() => setFormInvoiceRecipientType("requester")}
-                            className={`py-1.5 px-2.5 rounded-lg border text-[11px] font-bold transition-all text-left ${
-                              formInvoiceRecipientType === "requester"
-                                ? "bg-amber-600 text-white border-amber-600 shadow-xs"
-                                : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-amber-500/60"
-                            }`}
-                          >
-                            👥 Solicitante / Terceiro (PF)
-                          </button>
-                        )}
-                      </div>
-
-                      {formInvoiceRecipientType === "company" && formRequesterType !== "company" && (
-                        <div className="p-2.5 bg-background border border-indigo-300/60 dark:border-indigo-800/60 rounded-xl space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] uppercase font-black text-indigo-700 dark:text-indigo-300">
-                              Empresa Tomadora da Nota Fiscal (PJ)
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleOpenNewCompanyModal("invoice_only")}
-                              className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold flex items-center gap-1 cursor-pointer"
-                            >
-                              <Plus className="w-3.5 h-3.5" /> Cadastrar Empresa (Só NFS-e)
-                            </button>
-                          </div>
-                          <MemoCompanySelect
-                            value={formCompanyId}
-                            onValueChange={stableSelectCompanyInvoice}
-                            companies={companies}
-                            placeholder="Selecione a Empresa para emissão da NFS-e..."
-                            newLabel="➕ Cadastrar Nova Empresa (Só NFS-e)..."
-                          />
-                          {renderInlineCnpjBox("invoice_only")}
-                          <p className="text-[10px] text-muted-foreground leading-snug">
-                            ✓ Emite a NFS-e no CNPJ sem ativar boleto faturado e já salva essa preferência como padrão no CRM do hóspede para as próximas reservas.
-                          </p>
-                        </div>
-                      )}
-
-                      {(formInvoiceRecipientType === "company" || formInvoiceRecipientType === "requester" || formRequesterType === "company" || isMultiFlat) && (
-                        <div className="space-y-1">
-                          <Label className="text-[10.5px] font-bold text-emerald-950 dark:text-emerald-200">
-                            E-mail(s) p/ Envio da NFS-e & Comprovantes (separe múltiplos por ;)
-                          </Label>
-                          <Input
-                            type="text"
-                            value={formNfDeliveryEmails}
-                            onChange={e => setFormNfDeliveryEmails(e.target.value)}
-                            placeholder="financeiro@empresa.com; nfse@empresa.com"
-                            className="h-8 text-xs bg-background"
-                          />
-                        </div>
-                      )}
-
-                      {(formInvoiceRecipientType === "company" || formRequesterType === "company") && (
-                        <div className="flex items-center justify-between p-2 rounded-lg bg-background/80 border border-border/60">
-                          <div>
-                            <span className="text-[11px] font-bold text-slate-900 dark:text-slate-100 block">Sigilo Tarifário p/ Hóspede</span>
-                            <span className="text-[10px] text-muted-foreground block">Se ativo, oculta tarifa do hóspede e envia a NFS-e somente para a empresa</span>
-                          </div>
-                          <Switch checked={formNfHideFromGuest} onCheckedChange={setFormNfHideFromGuest} />
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                      <div>
-                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Auto-Emitir Nota Fiscal (NFS-e) no Check-out</span>
-                        <span className="text-[11px] text-muted-foreground">Emite na SEFIN Nacional e envia o PDF oficial no WhatsApp no check-out (Padrão: OFF)</span>
-                      </div>
-                    </div>
-                    <Switch checked={formAutoInvoice} onCheckedChange={setFormAutoInvoice} />
-                  </div>
-                </div>
-
-                {/* Special Reception Notice */}
-                <div className="space-y-1">
-                  <Label className="text-xs font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
-                    <KeyRound className="w-3.5 h-3.5" />
-                    <span>Aviso / Nota Especial para a Portaria & Recepção</span>
-                  </Label>
-                  <Input 
-                    value={formReceptionNotes} 
-                    onChange={e => setFormReceptionNotes(e.target.value)} 
-                    placeholder="Ex: Entregar chave extra, vaga de garagem G2-14 liberada..." 
-                    className="text-xs border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-amber-950/30"
-                  />
-                </div>
-
-                {/* Banner de Check-out Antecipado & Ações Rápidas */}
-                {selectedRes && (
-                  selectedRes.earlyCheckout ? (
-                    <div className="p-3.5 rounded-2xl border-2 border-amber-400/90 dark:border-amber-600/80 bg-amber-50/90 dark:bg-amber-950/40 space-y-2 shadow-2xs">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <Zap className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                          <span className="text-xs font-black text-amber-950 dark:text-amber-100 uppercase tracking-wide">
-                            ⚡ Check-out Antecipado Registrado
-                          </span>
-                        </div>
-                        <Badge className="bg-amber-500 text-slate-950 font-black text-[10px]">
-                          Datas Liberadas p/ Novas Reservas
-                        </Badge>
-                      </div>
-                      <div className="text-[11px] text-amber-900 dark:text-amber-200 space-y-0.5 leading-relaxed">
-                        <p>
-                          <strong>Informado por:</strong>{" "}
-                          {selectedRes.earlyCheckoutReportedBy || selectedRes.checkoutReportedBy || "Portaria / Governança / Recepção"}
-                        </p>
-                        <p>
-                          <strong>Saída realizada em:</strong>{" "}
-                          {format(parseISO(selectedRes.earlyCheckoutDate || selectedRes.checkoutDate), "dd/MM/yyyy")}
-                          {selectedRes.earlyCheckoutTime ? ` às ${selectedRes.earlyCheckoutTime}` : ""}
-                          {selectedRes.originalCheckoutDate && (
-                            <>
-                              {" "}• <strong>Saída original prevista:</strong>{" "}
-                              {format(parseISO(selectedRes.originalCheckoutDate), "dd/MM/yyyy")}
-                            </>
-                          )}
-                        </p>
-                        <p className="text-[10.5px] text-amber-800/90 dark:text-amber-300/90">
-                          O valor integral contratado foi preservado, os pedidos futuros de café foram suspensos e os dias restantes ficaram abertos no calendário (com rastro tracejado).
-                        </p>
-                      </div>
-                      <div className="pt-1 flex flex-wrap justify-end gap-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          disabled={clearingFalseEarlyCheckoutId === selectedRes.id || undoingEarlyCheckoutId === selectedRes.id}
-                          onClick={() => handleClearFalseEarlyCheckout(selectedRes, { closeModal: false })}
-                          title="Mantém o check-out realizado na data atual, mas remove o status de Check-out Antecipado (útil quando uma diária extra expirou ou foi excluída)"
-                          className="h-7 text-xs font-bold gap-1.5 bg-white dark:bg-slate-900 border-emerald-400 text-emerald-900 dark:text-emerald-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/40"
-                        >
-                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                          <span>{clearingFalseEarlyCheckoutId === selectedRes.id ? "Ajustando..." : "Não foi antecipado (Check-out Normal)"}</span>
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          disabled={undoingEarlyCheckoutId === selectedRes.id || clearingFalseEarlyCheckoutId === selectedRes.id}
-                          onClick={() => handleUndoEarlyCheckout(selectedRes, { closeModal: true })}
-                          className="h-7 text-xs font-bold gap-1.5 bg-white dark:bg-slate-900 border-amber-400 text-amber-950 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50"
-                        >
-                          <RotateCcw className={`w-3 h-3 ${undoingEarlyCheckoutId === selectedRes.id ? "animate-spin" : ""}`} />
-                          <span>{undoingEarlyCheckoutId === selectedRes.id ? "Restaurando..." : "Desfazer Check-out Antecipado"}</span>
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    selectedRes.checkinDate <= todayStr &&
-                    selectedRes.checkoutDate > todayStr && (
-                      <div className="p-3 rounded-2xl border border-amber-300/80 dark:border-amber-800/60 bg-amber-50/40 dark:bg-amber-950/20 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        <div className="space-y-0.5">
-                          <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900 dark:text-amber-200">
-                            <DoorOpen className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                            <span>Hóspede saiu antes da data prevista?</span>
-                          </div>
-                          <p className="text-[10.5px] text-muted-foreground">
-                            Libera o calendário a partir de hoje mantendo a reserva visível em tracejado, preserva o valor pago e suspende os cafés futuros.
-                          </p>
-                        </div>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={async () => {
-                            try {
-                              const resp = await fetch(`/api/pms/reservations/${selectedRes.id}/checkout`, {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ source: "reception_pms" }),
-                                credentials: "include"
-                              });
-                              const json = await resp.json().catch(() => ({}));
-                              if (!resp.ok) throw new Error(json.error || "Falha ao registrar check-out antecipado.");
-                              toast({
-                                title: "Check-out antecipado registrado! ⚡",
-                                description: `Datas restantes do Flat ${selectedRes.flatNumber} liberadas no calendário e cafés futuros suspensos.`
-                              });
-                              await fetchData(false);
-                              notifyCalendarUpdated();
-                              setResModalOpen(false);
-                            } catch (err: any) {
-                              toast({
-                                title: "Erro ao registrar check-out antecipado",
-                                description: err.message || "Tente novamente.",
-                                variant: "destructive"
-                              });
-                            }
-                          }}
-                          className="h-8 text-xs font-bold gap-1.5 shrink-0 border-amber-400 bg-amber-500/10 text-amber-900 dark:text-amber-200 hover:bg-amber-500/20"
-                        >
-                          <Zap className="w-3.5 h-3.5 text-amber-600" />
-                          <span>Registrar Check-out Antecipado Hoje</span>
-                        </Button>
-                      </div>
-                    )
-                  )
-                )}
-
-                {/* Observações Gerais da Reserva */}
-                <div className="space-y-1">
-                  <Label className="text-xs font-semibold">Observações Gerais da Reserva</Label>
-                  <Textarea 
-                    value={formNotes} 
-                    onChange={e => setFormNotes(e.target.value)} 
-                    placeholder="Ex: Cama de casal, chegada de madrugada, berço..." 
-                    className="text-xs h-16 resize-none"
-                  />
-                </div>
-
-                {selectedRes && (
-                  <div className="p-3 bg-emerald-50/80 dark:bg-emerald-950/30 rounded-2xl border border-emerald-200 dark:border-emerald-800 space-y-2 relative">
-                    {/* Janelinha Flutuante de Prévia no Modal (Ao passar o cursor sobre qualquer atalho) */}
-                    {(() => {
-                      const buildModalEffectiveRes = () => {
-                        const liveTot = calculateTotal() || Number(formTotalAmount) || Number(selectedRes?.totalAmount) || 0;
-                        const livePaid = formPayments.length > 0
-                          ? formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
-                          : (Number(formPaidAmount) || Number(selectedRes?.paidAmount) || 0);
-                        return {
-                          ...selectedRes,
-                          flatId: formFlatId ? Number(formFlatId) : selectedRes?.flatId,
-                          flatNumber: formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || selectedRes?.flatNumber) : selectedRes?.flatNumber,
-                          guestName: formGuestName.trim() || selectedRes?.guestName,
-                          guestPhone: formGuestPhone.trim() || selectedRes?.guestPhone,
-                          guestEmail: formGuestEmail.trim() || selectedRes?.guestEmail,
-                          guests: (() => {
-                            const base = Array.isArray(selectedRes?.guests) ? [...selectedRes.guests] : [];
-                            const gList: any[] = [{
-                              ...(base[0] || {}),
-                              index: 1,
-                              name: formGuestName.trim() || base[0]?.name || selectedRes?.guestName || "Hóspede",
-                              phone: formGuestPhone.trim() || base[0]?.phone || selectedRes?.guestPhone || "",
-                              email: formGuestEmail.trim() || base[0]?.email || selectedRes?.guestEmail || ""
-                            }];
-                            if ((Number(formGuestCount) || 1) >= 2 || formGuest2Name.trim() || formGuest2Phone.trim() || base[1]) {
-                              gList.push({
-                                ...(base[1] || {}),
-                                index: 2,
-                                name: formGuest2Name.trim() || base[1]?.name || "Hóspede 2",
-                                phone: formGuest2Phone.trim() || base[1]?.phone || base[1]?.whatsapp || "",
-                                email: formGuest2Email.trim() || base[1]?.email || ""
-                              });
-                            }
-                            if ((Number(formGuestCount) || 1) >= 3 || formGuest3Name.trim() || formGuest3Phone.trim() || base[2]) {
-                              gList.push({
-                                ...(base[2] || {}),
-                                index: 3,
-                                name: formGuest3Name.trim() || base[2]?.name || "Hóspede 3",
-                                phone: formGuest3Phone.trim() || base[2]?.phone || base[2]?.whatsapp || "",
-                                email: formGuest3Email.trim() || base[2]?.email || ""
-                              });
-                            }
-                            return gList;
-                          })(),
-                          checkinDate: formCheckin || selectedRes?.checkinDate,
-                          checkoutDate: formCheckout || selectedRes?.checkoutDate,
-                          checkinTime: formCheckinTime || selectedRes?.checkinTime,
-                          checkoutTime: formCheckoutTime || selectedRes?.checkoutTime,
-                          includeBreakfast: formIncludeBreakfast,
-                          hasBreakfast: formIncludeBreakfast,
-                          totalAmount: liveTot > 0 ? liveTot : selectedRes?.totalAmount,
-                          paidAmount: livePaid,
-                          dailyRates: formDailyRates.length > 0 ? formDailyRates : selectedRes?.dailyRates,
-                          charges: formCharges,
-                          cleaningFee: formCharges
-                            .filter(c => c.type === "cleaning")
-                            .reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
-                        };
-                      };
-
-                      const modalEffectiveRes = buildModalEffectiveRes();
-                      const modalRecipients = getReservationRecipients(modalEffectiveRes);
-                      const modalCompanionsWithPhone = (modalRecipients.companions || []).filter(
-                        c => c.cleanDigits && c.cleanDigits.length >= 8 && c.cleanDigits !== modalRecipients.guest.cleanDigits && c.cleanDigits !== modalRecipients.requester.cleanDigits
-                      );
-                      const selectedModalCompanion = modalCompanionsWithPhone.find(c => c.key === quickMsgTargetKey) || null;
-                      const activeTargetPhoneDisplay = selectedModalCompanion
-                        ? selectedModalCompanion.phone
-                        : (formGuestPhone || selectedRes.guestPhone || "");
-
-                      return (
-                        <>
-                          {hoveredModalQuickMsg && (() => {
-                            const target = hoveredModalQuickMsg.recipientTarget || "guest";
-                            const isTargetRequester = target === "requester";
-                            const renderTarget = isTargetRequester
-                              ? "requester"
-                              : selectedModalCompanion
-                              ? selectedModalCompanion.key
-                              : "guest";
-                            return (
-                              <div className="absolute left-2 right-2 bottom-[calc(100%+8px)] z-50 p-3 rounded-2xl bg-slate-950/98 dark:bg-black/98 text-white border border-slate-700 shadow-2xl backdrop-blur-md animate-in fade-in-0 zoom-in-95 pointer-events-none text-left">
-                                <div className="flex items-center justify-between pb-1.5 border-b border-slate-800 mb-2">
-                                  <div className="flex items-center gap-1.5 font-bold text-xs text-emerald-400">
-                                    <span className="text-sm">{hoveredModalQuickMsg.icon}</span>
-                                    <span className="truncate max-w-[200px]">{hoveredModalQuickMsg.title}</span>
-                                  </div>
-                                  <div className="flex items-center gap-1">
-                                    {isTargetRequester ? (
-                                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
-                                        👥 Solicitante
-                                      </span>
-                                    ) : selectedModalCompanion ? (
-                                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-bold border border-sky-500/30">
-                                        👥 Só {selectedModalCompanion.index}º Hóspede
-                                      </span>
-                                    ) : quickMsgTargetKey === "all_guests" && modalCompanionsWithPhone.length > 0 ? (
-                                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
-                                        ✨ Todos os Hóspedes
-                                      </span>
-                                    ) : target === "both" ? (
-                                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
-                                        ✨ Ambos
-                                      </span>
-                                    ) : (
-                                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-bold border border-sky-500/30">
-                                        👤 {modalCompanionsWithPhone.length > 0 ? "Só 1º Hóspede" : "Hóspede"}
-                                      </span>
-                                    )}
-                                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
-                                      Manual
-                                    </span>
-                                  </div>
-                                </div>
-                                <div className="text-[11px] leading-relaxed text-slate-200 font-normal whitespace-pre-wrap max-h-48 overflow-y-auto pr-1">
-                                  {renderQuickMessage(
-                                    hoveredModalQuickMsg.message,
-                                    modalEffectiveRes,
-                                    typeof window !== "undefined" ? window.location.origin : undefined,
-                                    renderTarget
-                                  )}
-                                </div>
-                                <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[9.5px] text-slate-400">
-                                  <span className="font-mono truncate max-w-[260px]">
-                                    {isTargetRequester ? (
-                                      <>
-                                        <strong className="text-amber-400">Destino: 👥 Solicitante</strong>
-                                        <span className="text-slate-300 ml-1">({modalRecipients.requester.name})</span>
-                                      </>
-                                    ) : selectedModalCompanion ? (
-                                      <>
-                                        <strong className="text-sky-400">Destino: 👥 Só {selectedModalCompanion.index}º Hóspede</strong>
-                                        <span className="text-slate-300 ml-1">({selectedModalCompanion.name})</span>
-                                      </>
-                                    ) : quickMsgTargetKey === "all_guests" && modalCompanionsWithPhone.length > 0 ? (
-                                      <>
-                                        <strong className="text-purple-400">Destino: ✨ Todos os Hóspedes</strong>
-                                        <span className="text-slate-300 ml-1">({[modalRecipients.guest.firstName, ...modalCompanionsWithPhone.map(c => c.firstName)].join(" + ")})</span>
-                                      </>
-                                    ) : target === "both" ? (
-                                      <>
-                                        <strong className="text-purple-400">Destino: ✨ Ambos</strong>
-                                        <span className="text-slate-300 ml-1">({modalRecipients.guest.firstName} + {modalRecipients.requester.firstName})</span>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <strong className="text-sky-400">Destino: 👤 {modalCompanionsWithPhone.length > 0 ? "Só 1º Hóspede" : "Hóspede"}</strong>
-                                        <span className="text-slate-300 ml-1">({modalRecipients.guest.name})</span>
-                                      </>
-                                    )}
-                                  </span>
-                                  <span className="text-emerald-400 font-bold shrink-0">⚡ Clique: Z-API • Segure 2s: WhatsApp Web</span>
-                                </div>
-                                <div className="absolute top-full left-12 w-2.5 h-2.5 -mt-1 bg-slate-950 dark:bg-black border-r border-b border-slate-700 rotate-45" />
-                              </div>
-                            );
-                          })()}
-
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-bold text-emerald-900 dark:text-emerald-300 flex items-center gap-1.5">
-                              <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
-                              Disparar WhatsApp (Clique: Z-API • Segure 2s: Web)
-                            </span>
-                            <div className="flex items-center gap-2">
-                              {activeTargetPhoneDisplay && (
-                                <a
-                                  href={`https://wa.me/${cleanWhatsAppPhone(activeTargetPhoneDisplay)}`}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="text-[10px] text-muted-foreground hover:text-emerald-700 dark:hover:text-emerald-400 font-mono hover:underline flex items-center gap-0.5"
-                                  title="Abrir WhatsApp Web manualmente para este número"
-                                >
-                                  <span>
-                                    Destino:{" "}
-                                    {selectedModalCompanion
-                                      ? `${selectedModalCompanion.firstName} (${activeTargetPhoneDisplay})`
-                                      : quickMsgTargetKey === "all_guests" && modalCompanionsWithPhone.length > 0
-                                      ? "Todos os hóspedes"
-                                      : activeTargetPhoneDisplay}
-                                  </span>
-                                  <ExternalLink className="w-2.5 h-2.5 opacity-60" />
-                                </a>
-                              )}
-                              <a 
-                                href="/whatsapp?tab=quick_messages" 
-                                target="_blank" 
-                                rel="noreferrer" 
-                                className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold hover:underline flex items-center gap-0.5"
-                                title="Gerenciar modelos e ativar/desativar mensagens"
-                              >
-                                <SlidersHorizontal className="w-3 h-3" />
-                                <span>Gerenciar</span>
-                              </a>
-                            </div>
-                          </div>
-
-                          {modalCompanionsWithPhone.length > 0 && (
-                            <div className="flex items-center flex-wrap gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-emerald-200/80 dark:border-emerald-900/60">
-                              <span className="text-[10.5px] font-bold text-slate-600 dark:text-slate-300 flex items-center gap-1 mr-0.5">
-                                <Users className="w-3 h-3 text-emerald-600" />
-                                <span>Enviar para:</span>
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => setQuickMsgTargetKey("guest")}
-                                className={`h-6 px-2 rounded-lg text-[10.5px] font-bold transition-all cursor-pointer border ${
-                                  quickMsgTargetKey === "guest"
-                                    ? "bg-emerald-600 text-white border-emerald-600 shadow-2xs"
-                                    : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-emerald-400"
-                                }`}
-                                title={`Enviar SOMENTE para o 1º Hóspede Titular (${modalRecipients.guest.name})`}
-                              >
-                                👤 Só 1º ({modalRecipients.guest.firstName})
-                              </button>
-                              {modalCompanionsWithPhone.map(comp => (
-                                <button
-                                  key={comp.key}
-                                  type="button"
-                                  onClick={() => setQuickMsgTargetKey(comp.key)}
-                                  className={`h-6 px-2 rounded-lg text-[10.5px] font-bold transition-all cursor-pointer border ${
-                                    quickMsgTargetKey === comp.key
-                                      ? "bg-sky-600 text-white border-sky-600 shadow-2xs"
-                                      : "bg-white dark:bg-slate-800 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800 hover:border-sky-500"
-                                  }`}
-                                  title={`Enviar SOMENTE para o ${comp.index}º Hóspede (${comp.name} • ${comp.phone}) sem reenviar ao 1º titular`}
-                                >
-                                  👥 Só {comp.index}º ({comp.firstName})
-                                </button>
-                              ))}
-                              <button
-                                type="button"
-                                onClick={() => setQuickMsgTargetKey("all_guests")}
-                                className={`h-6 px-2 rounded-lg text-[10.5px] font-bold transition-all cursor-pointer border ${
-                                  quickMsgTargetKey === "all_guests"
-                                    ? "bg-purple-600 text-white border-purple-600 shadow-2xs"
-                                    : "bg-white dark:bg-slate-800 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800 hover:border-purple-500"
-                                }`}
-                                title="Enviar individualmente para todos os hóspedes cadastrados na reserva"
-                              >
-                                ✨ Ambos / Todos
-                              </button>
-                            </div>
-                          )}
-
-                          <div className="flex flex-wrap gap-1.5">
-                            {activeQuickMessages.map(qm => {
-                              const isSending = modalSendingMsgId === qm.id;
-                              const target = qm.recipientTarget || "guest";
-                              return (
-                                <Button
-                                  key={qm.id}
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={isSending}
-                                  onMouseEnter={() => setHoveredModalQuickMsg(qm)}
-                                  onMouseLeave={() => setHoveredModalQuickMsg(null)}
-                                  title={
-                                    target === "requester"
-                                      ? `${qm.title} (Envia para o Solicitante • Clique: Z-API | Segure 2s: WhatsApp Web)`
-                                      : selectedModalCompanion
-                                      ? `${qm.title} (Envia SÓ para ${selectedModalCompanion.index}º Hóspede: ${selectedModalCompanion.name} • Clique: Z-API | Segure 2s: WhatsApp Web)`
-                                      : quickMsgTargetKey === "all_guests" && modalCompanionsWithPhone.length > 0
-                                      ? `${qm.title} (Envia para Todos os Hóspedes • Clique: Z-API | Segure 2s: WhatsApp Web)`
-                                      : target === "both"
-                                      ? `${qm.title} (Envia para Hóspede e Solicitante • Clique: Z-API | Segure 2s: WhatsApp Web)`
-                                      : `${qm.title} (Envia para o Hóspede • Clique: Z-API | Segure 2s: WhatsApp Web)`
-                                  }
-                                  {...bindZapiClickOrHoldWaWeb({
-                                    onClickZapi: () => {
-                                      setHoveredModalQuickMsg(null);
-                                      const effectiveRes = buildModalEffectiveRes();
-                                      setConfirmingModalQuickMsg({ qm, effectiveRes, initialTargetKey: quickMsgTargetKey });
-                                    },
-                                    getWaUrl: () => {
-                                      setHoveredModalQuickMsg(null);
-                                      const effectiveRes = buildModalEffectiveRes();
-                                      if (selectedModalCompanion && target !== "requester") {
-                                        return buildQuickMessageWaWebUrl(qm, effectiveRes, undefined, {
-                                          overrideTarget: selectedModalCompanion.key,
-                                          guestIndex: selectedModalCompanion.index,
-                                          customPhone: selectedModalCompanion.phone,
-                                          customName: selectedModalCompanion.name
-                                        });
-                                      }
-                                      return buildQuickMessageWaWebUrl(qm, effectiveRes);
-                                    },
-                                    toast
-                                  })}
-                                  className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 flex items-center gap-1.5 shadow-2xs cursor-pointer active:scale-95"
-                                >
-                                  {isSending ? (
-                                    <RefreshCw className="w-3 h-3 animate-spin text-emerald-600" />
-                                  ) : (
-                                    <span>{qm.icon || "💬"}</span>
-                                  )}
-                                  <span>{qm.title}</span>
-                                  {target === "both" && (
-                                    <span className="text-[9px] px-1 py-0.2 rounded bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold border border-purple-300 dark:border-purple-800 leading-tight" title="Hóspede + Solicitante">
-                                      ✨ Ambos
-                                    </span>
-                                  )}
-                                  {target === "requester" && (
-                                    <span className="text-[9px] px-1 py-0.2 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-800 leading-tight" title="Só Solicitante">
-                                      👥 Solicitante
-                                    </span>
-                                  )}
-                                </Button>
-                              );
-                            })}
-                          </div>
-                        </>
-                      );
-                    })()}
-
-                    <QuickMessageConfirmDialog
-                      open={Boolean(confirmingModalQuickMsg)}
-                      onOpenChange={(open) => {
-                        if (!open) setConfirmingModalQuickMsg(null);
-                      }}
-                      quickMessage={confirmingModalQuickMsg?.qm || null}
-                      resItem={confirmingModalQuickMsg?.effectiveRes || selectedRes}
-                      initialTargetKey={confirmingModalQuickMsg?.initialTargetKey || quickMsgTargetKey}
-                      onConfirm={async (qm, options) => {
-                        setModalSendingMsgId(qm.id);
-                        try {
-                          await dispatchQuickMessage(
-                            qm,
-                            confirmingModalQuickMsg?.effectiveRes || selectedRes,
-                            undefined,
-                            options
-                          );
-                        } finally {
-                          setModalSendingMsgId(null);
-                        }
-                      }}
-                    />
-                  </div>
-                )}
-
-                {/* Veículo & Garagem (Disparo automático p/ garagem e portaria) */}
-                <div className="p-3.5 bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/60 rounded-2xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                      <Car className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                      <span>Veículo & Garagem (Disparo Automático)</span>
-                    </span>
-                    <Badge variant="outline" className="text-[10px] bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 border-blue-300">
-                      Notifica PFB Estacionamento
-                    </Badge>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    <div className="space-y-1">
-                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Placa</Label>
-                      <Input
-                        value={formVehiclePlate}
-                        onChange={e => setFormVehiclePlate(e.target.value.toUpperCase())}
-                        placeholder="ABC-1234"
-                        className="text-xs font-mono uppercase bg-white dark:bg-slate-900"
-                        maxLength={8}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Marca</Label>
-                      <Input
-                        value={formVehicleBrand}
-                        onChange={e => setFormVehicleBrand(e.target.value)}
-                        placeholder="Ex: Toyota"
-                        className="text-xs bg-white dark:bg-slate-900"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Modelo</Label>
-                      <Input
-                        value={formVehicleModel}
-                        onChange={e => setFormVehicleModel(e.target.value)}
-                        placeholder="Ex: Corolla"
-                        className="text-xs bg-white dark:bg-slate-900"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Cor</Label>
-                      <Input
-                        value={formVehicleColor}
-                        onChange={e => setFormVehicleColor(e.target.value)}
-                        placeholder="Ex: Preto"
-                        className="text-xs bg-white dark:bg-slate-900"
-                      />
-                    </div>
-                  </div>
-                  <p className="text-[11px] text-blue-700/80 dark:text-blue-300/80">
-                    Ao cadastrar ou alterar a placa, o sistema envia e-mail com flat, dados da reserva e do veículo diretamente para a garagem (<span className="font-semibold">promenadesoho@pfbestacionamentos.com.br</span>).
-                  </p>
-                </div>
-
-                {/* Flats Adicionais do Pacote Multi-Flat (Flat 2..N dentro do mesmo formulário) */}
-                {!selectedRes && isMultiFlat && (
-                  <div className="space-y-3 pt-1">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <span className="text-xs font-black uppercase tracking-wider text-indigo-800 dark:text-indigo-200 flex items-center gap-1.5">
-                        <Building2 className="w-4 h-4 text-indigo-600" />
-                        <span>Flats Adicionais do Pacote ({extraPackageFlats.length})</span>
-                      </span>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={handleAddExtraPackageFlat}
-                        className="h-7 px-2.5 text-xs font-bold border-indigo-400 text-indigo-700 dark:text-indigo-200 gap-1"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>+ Adicionar Outro Flat</span>
-                      </Button>
-                    </div>
-
-                    {extraPackageFlats.map((ef, idx) => {
-                      const flatIdxLabel = idx + 2
-                      const efCin = ef.sameDatesAsPrimary ? formCheckin : ef.checkinDate
-                      const efCout = ef.sameDatesAsPrimary ? formCheckout : ef.checkoutDate
-                      const efSubtotal = round2(
-                        ef.dailyRates.reduce((s, d) => s + (Number(d.rate) || 0), 0) +
-                        ef.charges.reduce((s, c) => s + (Number(c.amount) || 0), 0)
-                      )
-                      return (
-                        <div
-                          key={ef.uid}
-                          className="p-3.5 rounded-2xl border-2 border-indigo-200 dark:border-indigo-800/80 bg-indigo-50/40 dark:bg-indigo-950/20 space-y-3"
-                        >
-                          <div className="flex items-center justify-between gap-2 flex-wrap border-b border-indigo-200/70 dark:border-indigo-800/60 pb-2">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <Badge className="bg-indigo-600 text-white font-black text-[10.5px]">
-                                🏢 Flat {flatIdxLabel}
-                              </Badge>
-                              <span className="text-xs font-bold text-foreground">
-                                {ef.dailyRates.length} {ef.dailyRates.length === 1 ? "diária" : "diárias"} • Subtotal R$ {efSubtotal.toFixed(2)}
-                              </span>
-                            </div>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleRemoveExtraPackageFlat(ef.uid)}
-                              className="h-7 px-2 text-xs text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-bold gap-1 cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>Remover Flat {flatIdxLabel}</span>
-                            </Button>
-                          </div>
-
-                          {/* Seleção de Apartamento + Datas */}
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                            <div className="space-y-1">
-                              <Label className="text-[11px] font-bold">Apartamento (Flat {flatIdxLabel})</Label>
-                              <Select
-                                value={ef.flatId || "auto"}
-                                onValueChange={(val) => handleUpdateExtraPackageFlat(ef.uid, { flatId: val })}
-                              >
-                                <SelectTrigger className="h-8 text-xs font-bold bg-background">
-                                  <SelectValue placeholder="Selecione o Flat" />
-                                </SelectTrigger>
-                                <SelectContent className="max-h-64">
-                                  <SelectItem value="auto">⚡ Automático (Alocar livre)</SelectItem>
-                                  {(data.flats || []).map((fObj: any) => {
-                                    const usedInOther =
-                                      (formFlatId && String(formFlatId) === String(fObj.id) && efCin < formCheckout && efCout > formCheckin) ||
-                                      extraPackageFlats.some((other) => other.uid !== ef.uid && String(other.flatId) === String(fObj.id) && efCin < (other.sameDatesAsPrimary ? formCheckout : other.checkoutDate) && efCout > (other.sameDatesAsPrimary ? formCheckin : other.checkinDate))
-                                    const hasConf = (data.reservations || []).some((r: any) => {
-                                      if (Number(r.flatId) !== Number(fObj.id) && String(r.flatNumber) !== String(fObj.number)) return false
-                                      const st = String(r.status || "").toLowerCase()
-                                      if (["cancelada", "cancelled", "no_show", "expirada"].includes(st)) return false
-                                      return r.checkinDate < efCout && r.checkoutDate > efCin
-                                    })
-                                    return (
-                                      <SelectItem key={fObj.id} value={String(fObj.id)}>
-                                        Apt {fObj.number}{usedInOther ? " (Já escolhido neste pacote)" : hasConf ? " (⚠️ Ocupado)" : " (🟢 Livre)"}
-                                      </SelectItem>
-                                    )
-                                  })}
-                                </SelectContent>
-                              </Select>
-                            </div>
-
-                            <div className="space-y-1">
-                              <div className="flex items-center justify-between">
-                                <Label className="text-[11px] font-bold">Período do Flat {flatIdxLabel}</Label>
-                                <label className="flex items-center gap-1.5 text-[10.5px] font-semibold text-indigo-700 dark:text-indigo-300 cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={ef.sameDatesAsPrimary}
-                                    onChange={(e) => {
-                                      const checked = e.target.checked
-                                      const nextCin = checked ? formCheckin : ef.checkinDate
-                                      const nextCout = checked ? formCheckout : ef.checkoutDate
-                                      const rNum = Math.max(0, Number(String(ef.dailyRate || "250").replace(",", ".")) || 250)
-                                      handleUpdateExtraPackageFlat(ef.uid, {
-                                        sameDatesAsPrimary: checked,
-                                        checkinDate: nextCin,
-                                        checkoutDate: nextCout,
-                                        dailyRates: buildReservationDailyRates(nextCin, nextCout, rNum, formChannel || "whatsapp", ef.dailyRates)
-                                      }, true)
-                                    }}
-                                    className="rounded border-indigo-400"
-                                  />
-                                  <span>Mesmas datas do Flat 1</span>
-                                </label>
-                              </div>
-                              {ef.sameDatesAsPrimary ? (
-                                <div className="h-8 px-2.5 rounded-md border border-border bg-background/70 flex items-center justify-between text-xs text-muted-foreground">
-                                  <span>{formCheckin.split("-").reverse().join("/")} ({ef.checkinTime}) → {formCheckout.split("-").reverse().join("/")} ({ef.checkoutTime})</span>
-                                </div>
-                              ) : (
-                                <div className="grid grid-cols-2 gap-1.5">
-                                  <Input
-                                    type="date"
-                                    value={ef.checkinDate}
-                                    onChange={(e) => {
-                                      const newCin = e.target.value
-                                      const newCout = ef.checkoutDate <= newCin ? format(addDays(parseISO(newCin), 1), "yyyy-MM-dd") : ef.checkoutDate
-                                      const rNum = Math.max(0, Number(String(ef.dailyRate || "250").replace(",", ".")) || 250)
-                                      handleUpdateExtraPackageFlat(ef.uid, {
-                                        checkinDate: newCin,
-                                        checkoutDate: newCout,
-                                        dailyRates: buildReservationDailyRates(newCin, newCout, rNum, formChannel || "whatsapp", ef.dailyRates)
-                                      }, true)
-                                    }}
-                                    className="h-8 text-xs bg-background"
-                                  />
-                                  <Input
-                                    type="date"
-                                    value={ef.checkoutDate}
-                                    onChange={(e) => {
-                                      const newCout = e.target.value
-                                      const rNum = Math.max(0, Number(String(ef.dailyRate || "250").replace(",", ".")) || 250)
-                                      handleUpdateExtraPackageFlat(ef.uid, {
-                                        checkoutDate: newCout,
-                                        dailyRates: ef.checkinDate < newCout ? buildReservationDailyRates(ef.checkinDate, newCout, rNum, formChannel || "whatsapp", ef.dailyRates) : ef.dailyRates
-                                      }, true)
-                                    }}
-                                    className="h-8 text-xs bg-background"
-                                  />
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Ocupação + Informar Depois */}
-                          <div className="flex flex-wrap items-center justify-between gap-2 p-2 rounded-xl bg-background/80 border border-border">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[11px] font-bold text-foreground">Ocupação:</span>
-                              {(["1", "2", "3"] as const).map((occ) => (
-                                <button
-                                  key={occ}
-                                  type="button"
-                                  onClick={() => handleUpdateExtraPackageFlat(ef.uid, {
-                                    guestCount: occ,
-                                    guest2InformLater: Number(occ) >= 2 ? false : ef.guest2InformLater,
-                                    extraMattress: occ === "3" ? true : ef.extraMattress
-                                  })}
-                                  className={cn(
-                                    "px-2 py-1 rounded-lg text-[11px] font-bold border cursor-pointer",
-                                    ef.guestCount === occ
-                                      ? "bg-indigo-600 text-white border-indigo-600"
-                                      : "bg-background text-muted-foreground border-border"
-                                  )}
-                                >
-                                  {occ} {occ === "1" ? "Hóspede" : "Hóspedes"}
-                                </button>
-                              ))}
-                            </div>
-                            <label className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={ef.informGuestsLater}
-                                onChange={(e) => handleUpdateExtraPackageFlat(ef.uid, { informGuestsLater: e.target.checked })}
-                                className="rounded border-amber-400"
-                              />
-                              <span>Informar hóspedes depois (via link único)</span>
-                            </label>
-                          </div>
-
-                          {/* Hóspede 1 & Hóspede 2 (e 3) com CRM Autocomplete */}
-                          {!ef.informGuestsLater && (
-                            <div className="space-y-2">
-                              <CrmGuestFieldsBlock
-                                guestIndex={1}
-                                label={`Hóspede 1 (Titular do Flat ${flatIdxLabel})`}
-                                optional={formRequesterType !== "guest"}
-                                guestId={ef.guestId}
-                                name={ef.guestName}
-                                cpf={ef.guestCpf}
-                                phone={ef.guestPhone}
-                                email={ef.guestEmail}
-                                crmGuests={crmGuests}
-                                searchIndexedCrm={searchIndexedCrm}
-                                onVerifyPhone={verifyGuestPhoneWhatsApp}
-                                onChangeField={(field, val) => {
-                                  const patch: Partial<MultiFlatExtraItem> =
-                                    field === "name" ? { guestName: val }
-                                      : field === "cpf" ? { guestCpf: val }
-                                        : field === "phone" ? { guestPhone: val }
-                                          : { guestEmail: val }
-                                  handleUpdateExtraPackageFlat(ef.uid, patch)
-                                }}
-                                onSelectCrmGuest={(g) => {
-                                  handleUpdateExtraPackageFlat(ef.uid, {
-                                    guestId: String(g.id),
-                                    guestName: g.name || g.fullName || "",
-                                    guestCpf: g.documentNumber || g.document || g.cpf || "",
-                                    guestPhone: g.phone || "",
-                                    guestEmail: g.email || "",
-                                    informGuestsLater: false,
-                                  })
-                                  toast({ title: `Hóspede 1 (Flat ${flatIdxLabel}) carregado`, description: g.name || g.fullName })
-                                }}
-                                onMarkManual={(clearFields) => {
-                                  handleUpdateExtraPackageFlat(ef.uid, clearFields
-                                    ? { guestId: "manual", guestName: "", guestCpf: "", guestPhone: "", guestEmail: "" }
-                                    : { guestId: "manual" }
-                                  )
-                                }}
-                              />
-
-                              {Number(ef.guestCount) >= 2 && (
-                                <div className="space-y-1.5">
-                                  <div className="flex items-center justify-between px-1">
-                                    <span className="text-[10.5px] font-bold text-indigo-700 dark:text-indigo-300">
-                                      2º Hóspede (Acompanhante do Flat {flatIdxLabel})
-                                    </span>
-                                    <label className="flex items-center gap-1.5 text-[10.5px] text-muted-foreground cursor-pointer">
-                                      <input
-                                        type="checkbox"
-                                        checked={ef.guest2InformLater}
-                                        onChange={(e) => handleUpdateExtraPackageFlat(ef.uid, { guest2InformLater: e.target.checked })}
-                                        className="rounded"
-                                      />
-                                      <span>Informar Hóspede 2 depois</span>
-                                    </label>
-                                  </div>
-                                  {!ef.guest2InformLater && (
-                                    <CrmGuestFieldsBlock
-                                      guestIndex={2}
-                                      label={`Hóspede 2 (Flat ${flatIdxLabel})`}
-                                      optional
-                                      guestId={ef.guest2Id}
-                                      name={ef.guest2Name}
-                                      cpf={ef.guest2Cpf}
-                                      phone={ef.guest2Phone}
-                                      email={ef.guest2Email}
-                                      crmGuests={crmGuests}
-                                      searchIndexedCrm={searchIndexedCrm}
-                                      onChangeField={(field, val) => {
-                                        const patch: Partial<MultiFlatExtraItem> =
-                                          field === "name" ? { guest2Name: val }
-                                            : field === "cpf" ? { guest2Cpf: val }
-                                              : field === "phone" ? { guest2Phone: val }
-                                                : { guest2Email: val }
-                                        handleUpdateExtraPackageFlat(ef.uid, patch)
-                                      }}
-                                      onSelectCrmGuest={(g) => {
-                                        handleUpdateExtraPackageFlat(ef.uid, {
-                                          guest2Id: String(g.id),
-                                          guest2Name: g.name || g.fullName || "",
-                                          guest2Cpf: g.documentNumber || g.document || g.cpf || "",
-                                          guest2Phone: g.phone || "",
-                                          guest2Email: g.email || "",
-                                          guest2InformLater: false,
-                                        })
-                                        toast({ title: `Hóspede 2 (Flat ${flatIdxLabel}) carregado`, description: g.name || g.fullName })
-                                      }}
-                                      onMarkManual={(clearFields) => {
-                                        handleUpdateExtraPackageFlat(ef.uid, clearFields
-                                          ? { guest2Id: "manual", guest2Name: "", guest2Cpf: "", guest2Phone: "", guest2Email: "" }
-                                          : { guest2Id: "manual" }
-                                        )
-                                      }}
-                                    />
-                                  )}
-                                </div>
-                              )}
-
-                              {Number(ef.guestCount) === 3 && (
-                                <CrmGuestFieldsBlock
-                                  guestIndex={3}
-                                  label={`Hóspede 3 (Flat ${flatIdxLabel})`}
-                                  optional
-                                  guestId={ef.guest3Id}
-                                  name={ef.guest3Name}
-                                  cpf={ef.guest3Cpf}
-                                  phone={ef.guest3Phone}
-                                  email={ef.guest3Email}
-                                  crmGuests={crmGuests}
-                                  searchIndexedCrm={searchIndexedCrm}
-                                  onChangeField={(field, val) => {
-                                    const patch: Partial<MultiFlatExtraItem> =
-                                      field === "name" ? { guest3Name: val }
-                                        : field === "cpf" ? { guest3Cpf: val }
-                                          : field === "phone" ? { guest3Phone: val }
-                                            : { guest3Email: val }
-                                    handleUpdateExtraPackageFlat(ef.uid, patch)
-                                  }}
-                                  onSelectCrmGuest={(g) => {
-                                    handleUpdateExtraPackageFlat(ef.uid, {
-                                      guest3Id: String(g.id),
-                                      guest3Name: g.name || g.fullName || "",
-                                      guest3Cpf: g.documentNumber || g.document || g.cpf || "",
-                                      guest3Phone: g.phone || "",
-                                      guest3Email: g.email || "",
-                                    })
-                                  }}
-                                  onMarkManual={(clearFields) => {
-                                    handleUpdateExtraPackageFlat(ef.uid, clearFields
-                                      ? { guest3Id: "manual", guest3Name: "", guest3Cpf: "", guest3Phone: "", guest3Email: "" }
-                                      : { guest3Id: "manual" }
-                                    )
-                                  }}
-                                />
-                              )}
-                            </div>
-                          )}
-
-                          {/* Preferências, Veículo e Observações compactas do Flat */}
-                          <div className="flex flex-wrap items-center gap-2 pt-1">
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateExtraPackageFlat(ef.uid, { includeBreakfast: !ef.includeBreakfast })}
-                              className={cn(
-                                "px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-pointer",
-                                ef.includeBreakfast ? "bg-amber-500 text-white border-amber-600" : "bg-background text-muted-foreground border-border"
-                              )}
-                            >
-                              ☕ Café {ef.includeBreakfast ? "Incluso" : "Não"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateExtraPackageFlat(ef.uid, { twinBeds: !ef.twinBeds })}
-                              className={cn(
-                                "px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-pointer",
-                                ef.twinBeds ? "bg-indigo-600 text-white border-indigo-600" : "bg-background text-muted-foreground border-border"
-                              )}
-                            >
-                              🛏️ {ef.twinBeds ? "2 Solteiro" : "1 Casal"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateExtraPackageFlat(ef.uid, { extraMattress: !ef.extraMattress })}
-                              className={cn(
-                                "px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-pointer",
-                                ef.extraMattress ? "bg-purple-600 text-white border-purple-600" : "bg-background text-muted-foreground border-border"
-                              )}
-                            >
-                              ➕ Colchão Extra
-                            </button>
-                          </div>
-
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                            <Input
-                              value={ef.vehiclePlate}
-                              onChange={(e) => handleUpdateExtraPackageFlat(ef.uid, { vehiclePlate: e.target.value.toUpperCase() })}
-                              placeholder="Placa Veículo (ex: ABC-1234)"
-                              maxLength={8}
-                              className="h-7 text-xs font-mono uppercase bg-background"
-                            />
-                            <Input
-                              value={ef.vehicleModel}
-                              onChange={(e) => handleUpdateExtraPackageFlat(ef.uid, { vehicleModel: e.target.value })}
-                              placeholder="Modelo / Cor Veículo"
-                              className="h-7 text-xs bg-background"
-                            />
-                            <Input
-                              value={ef.specialRequests}
-                              onChange={(e) => handleUpdateExtraPackageFlat(ef.uid, { specialRequests: e.target.value })}
-                              placeholder="Obs. Camareira / Flat"
-                              className="h-7 text-xs bg-background"
-                            />
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-              )}
-
-              {/* ABA: Pagamento & Diárias */}
-              {resModalTab === "payments" && (
-                <div className="py-2 space-y-3.5">
                   {/* 1. Cockpit Financeiro: Barra de Indicadores Unificada */}
                   {(() => {
                     const { curTot, curPaid, remaining, cardRemaining, isResPaid } = computeUnifiedReservationTotals();
                     const isPaid = isResPaid || (curTot > 0 && remaining === 0);
-                    const totalNightsAll = formDailyRates.length + (!selectedRes && isMultiFlat ? extraPackageFlats.reduce((s, ef) => s + (ef.dailyRates?.length || 0), 0) : 0);
-                    const totalChargesAll = formCharges.length + (!selectedRes && isMultiFlat ? pkgExtraCharges.length + extraPackageFlats.reduce((s, ef) => s + (ef.charges?.length || 0), 0) : 0);
+                    const totalNightsAll = (!selectedRes && isMultiFlat) ? formFlats.reduce((s, fl) => s + (fl.dailyRates?.length || 0), 0) : formDailyRates.length;
+                    const totalChargesAll = (!selectedRes && isMultiFlat) ? (pkgExtraCharges.length + formFlats.reduce((s, fl) => s + (fl.charges?.length || 0), 0)) : formCharges.length;
 
                     return (
                       <div className="space-y-2.5">
@@ -15758,7 +15988,7 @@ export default function PmsCalendar(props?: {
                         <div className="flex items-center gap-4 sm:gap-6 flex-wrap">
                           <div>
                             <span className="text-[10px] uppercase font-bold text-muted-foreground block tracking-wider">
-                              {!selectedRes && isMultiFlat ? `Total do Pacote (${1 + extraPackageFlats.length} Flats)` : "Total da Estadia"}
+                              {!selectedRes && isMultiFlat ? `Total do Pacote (${formFlats.length} Flats)` : "Total da Estadia"}
                             </span>
                             <span className="text-lg sm:text-xl font-black text-foreground">
                               R$ {curTot.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
@@ -15966,7 +16196,7 @@ export default function PmsCalendar(props?: {
                                 Emitir Boleto Banco Inter Unificado do Pacote imediatamente ao salvar
                               </span>
                               <span className="text-amber-800 dark:text-amber-300">
-                                Gera 1 boleto consolidado para os {1 + extraPackageFlats.length} flats na criação do pacote (se desmarcado, será emitido no check-out).
+                                Gera 1 boleto consolidado para os {formFlats.length} flats na criação do pacote (se desmarcado, será emitido no check-out).
                               </span>
                             </div>
                           </label>
@@ -16498,8 +16728,9 @@ export default function PmsCalendar(props?: {
                             onClick={() => {
                               const origin = typeof window !== "undefined" ? window.location.origin : "https://corpflats.com.br";
                               const pkgCodeLink = selectedRes.packageCode || selectedRes.packageId;
+                              const reqTok = selectedRes.requesterPortalToken ? `?t=${encodeURIComponent(String(selectedRes.requesterPortalToken))}` : "";
                               const link = pkgCodeLink
-                                ? `${origin}/minha-reserva/${encodeURIComponent(String(pkgCodeLink))}?requester=1`
+                                ? `${origin}/solicitante/${encodeURIComponent(String(pkgCodeLink))}${reqTok}`
                                 : `${origin}/minha-reserva/${selectedRes.code || selectedRes.id}`;
                               navigator.clipboard.writeText(link);
                               toast({
@@ -16555,16 +16786,16 @@ export default function PmsCalendar(props?: {
                   <div className="p-3.5 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-3 shadow-2xs">
                     {!selectedRes && isMultiFlat && (() => {
                       const { rawSum, curTot } = computeUnifiedReservationTotals();
-                      const diffPkg = curTot - rawSum;
+                      const diffPkg = round2(curTot - rawSum);
                       return (
                         <div className="p-3 bg-violet-50/90 dark:bg-violet-950/30 border border-violet-300/70 dark:border-violet-800/70 rounded-xl space-y-2">
                           <div className="flex items-center justify-between gap-2 flex-wrap">
                             <span className="text-xs font-bold text-violet-950 dark:text-violet-100">
-                              📦 Precificação Consolidada do Pacote ({1 + extraPackageFlats.length} Flats)
+                              📦 Precificação Consolidada do Pacote ({formFlats.length} Flats)
                             </span>
                             <span className="text-[11px] font-semibold text-violet-800 dark:text-violet-300">
-                              Soma Bruta: R$ {rawSum.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                              {packagePricingMode !== "sum" && ` → Final: R$ ${curTot.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
+                              Soma Base: R$ {rawSum.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                              {packagePricingMode !== "sum" && ` → Rateado: R$ ${curTot.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
                               {diffPkg !== 0 && ` (${diffPkg > 0 ? "+" : ""}${diffPkg.toLocaleString("pt-BR", { minimumFractionDigits: 2 })})`}
                             </span>
                           </div>
@@ -16574,10 +16805,8 @@ export default function PmsCalendar(props?: {
                                 value={packagePricingMode}
                                 onChange={(e) => {
                                   const nextMode = e.target.value as "sum" | "discount_amount" | "discount_pct" | "fixed_total";
-                                  setPackagePricingMode(nextMode);
                                   const nextInput = nextMode === "sum" ? "" : packagePricingInput;
-                                  if (nextMode === "sum") setPackagePricingInput("");
-                                  syncMultiFlatTotalsAndPayments(extraPackageFlats, pkgExtraCharges, nextMode, nextInput);
+                                  handlePackagePricingChange(nextMode, nextInput);
                                 }}
                                 className="w-full h-8 rounded-lg border border-violet-300 dark:border-violet-700 bg-background px-2.5 text-xs font-semibold"
                               >
@@ -16601,14 +16830,12 @@ export default function PmsCalendar(props?: {
                                   onClick={packagePricingMode === "discount_pct" ? undefined : keepCurrencyCursorAtEnd}
                                   onChange={(e) => {
                                     if (packagePricingMode === "discount_pct") {
-                                      const raw = e.target.value.replace(/[^\d.,]/g, "").replace(",", ".");
-                                      setPackagePricingInput(raw);
-                                      syncMultiFlatTotalsAndPayments(extraPackageFlats, pkgExtraCharges, packagePricingMode, raw);
+                                      const rawPct = e.target.value.replace(/[^\d.,]/g, "").replace(",", ".");
+                                      handlePackagePricingChange(packagePricingMode, rawPct);
                                     } else {
                                       const val = parseCentsMaskInput(e.target.value);
                                       const nextStr = val > 0 ? String(val) : "";
-                                      setPackagePricingInput(nextStr);
-                                      syncMultiFlatTotalsAndPayments(extraPackageFlats, pkgExtraCharges, packagePricingMode, nextStr);
+                                      handlePackagePricingChange(packagePricingMode, nextStr);
                                     }
                                   }}
                                   className="h-8 pl-8 pr-2.5 text-xs font-bold text-right bg-background"
@@ -16616,363 +16843,31 @@ export default function PmsCalendar(props?: {
                               </div>
                             )}
                           </div>
+                          {packagePricingMode !== "sum" && (
+                            <p className="text-[10.5px] text-violet-800/90 dark:text-violet-300/90 font-medium">
+                              ✓ Valor rateado automaticamente centavo a centavo nas diárias visíveis dos {formFlats.length} flats (Sobrando ajuste mínimo na última noite do último flat).
+                            </p>
+                          )}
                         </div>
                       );
                     })()}
 
-                    {/* Barra de Rateio Rápido do Pacote Total */}
-                    <div className="p-2.5 bg-primary/5 dark:bg-primary/10 border border-primary/20 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="w-7 h-7 rounded-lg bg-primary/15 text-primary flex items-center justify-center shrink-0">
-                          <Wand2 className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <span className="text-xs font-bold text-foreground block">
-                            {!selectedRes && isMultiFlat ? "Ratear Valor nas Diárias do Flat 1" : "Definir Pacote Total & Ratear"}
-                          </span>
-                          <span className="text-[10.5px] text-muted-foreground block">
-                            {!selectedRes && isMultiFlat
-                              ? "Digite o total negociado para o Flat 1 dividir automaticamente entre as diárias dele"
-                              : "Digite o valor total negociado para dividir automaticamente entre as diárias"}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 w-full sm:w-auto shrink-0">
-                        <div className="relative flex-1 sm:w-32">
-                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-muted-foreground">R$</span>
-                          <Input
-                            type="text"
-                            inputMode="numeric"
-                            placeholder="0,00"
-                            value={formatCentsMaskValue(packageTotalInput)}
-                            onFocus={keepCurrencyCursorAtEnd}
-                            onClick={keepCurrencyCursorAtEnd}
-                            onChange={e => {
-                              const val = parseCentsMaskInput(e.target.value);
-                              setPackageTotalInput(val > 0 ? String(val) : "");
-                            }}
-                            onKeyDown={e => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                const val = Number(packageTotalInput);
-                                if (val > 0) handleDistributeTotalToNights(val);
-                              }
-                            }}
-                            className="h-7 pl-7 pr-2 text-xs font-bold text-right bg-background text-foreground"
-                          />
-                        </div>
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => {
-                            const val = Number(packageTotalInput);
-                            if (val > 0) handleDistributeTotalToNights(val);
-                            else toast({ title: "Informe o valor", description: "Digite o valor total para ratear entre as diárias.", variant: "destructive" });
-                          }}
-                          className="h-7 px-2.5 text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground flex items-center gap-1 shrink-0 shadow-xs cursor-pointer"
-                        >
-                          <Wand2 className="w-3.5 h-3.5" />
-                          <span>Ratear Diárias</span>
-                        </Button>
-                      </div>
-                    </div>
-
-                    {/* Subseção A: Diárias da Hospedagem */}
-                    <div className="space-y-2 pt-1">
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <div className="flex items-center gap-1.5">
-                          <CalendarDays className="w-4 h-4 text-primary shrink-0" />
-                          <span className="text-xs font-bold text-foreground">
-                            {!selectedRes && isMultiFlat
-                              ? `Diárias do Flat 1 (${formFlatId === "auto" ? "Automático" : `Flat ${(data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId}`}) (${formDailyRates.length})`
-                              : `Diárias da Hospedagem (${formDailyRates.length})`}
-                          </span>
-                        </div>
-
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={handleAddExtraNight}
-                            className="h-7 px-2 text-xs font-bold text-primary border-primary/30 hover:bg-primary/10 cursor-pointer"
-                          >
-                            <Plus className="w-3.5 h-3.5 mr-1" /> Diária Extra
-                          </Button>
-
-                              {formDailyRates.length > 1 && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                if (formDailyRates.length > 0) {
-                                  const firstRate = Number(formDailyRates[0].rate) || 250;
-                                  const firstChan = formDailyRates[0].channel || formChannel;
-                                  const nextRates = formDailyRates.map(d => ({ ...d, rate: firstRate, channel: firstChan }));
-                                  setFormDailyRates(nextRates);
-                                  syncCompositeTotalAndPaid(nextRates, formCharges, formChannel);
-                                  toast({ title: "Diárias Equalizadas", description: `Todas as diárias ajustadas para R$ ${firstRate.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.` });
-                                }
-                              }}
-                              className="h-7 px-2 text-[10.5px] text-muted-foreground hover:text-foreground cursor-pointer"
-                              title="Igualar o valor de todas as diárias com a 1ª"
-                            >
-                              Igualar Valores
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="space-y-1.5">
-                        {formDailyRates.map((d, idx) => {
-                          let formattedDate = d.date;
-                          try {
-                            formattedDate = format(parseISO(d.date), "dd/MM/yyyy (EEE)", { locale: ptBR });
-                          } catch {}
-
-                          const handleDeleteNight = () => {
-                            const updatedRates = formDailyRates.filter((_, i) => i !== idx);
-                            if (updatedRates.length > 0) {
-                              const firstDate = updatedRates[0].date;
-                              const lastDate = updatedRates[updatedRates.length - 1].date;
-                              const newCheckout = format(addDays(parseISO(lastDate), 1), "yyyy-MM-dd");
-                              setFormDailyRates(updatedRates);
-                              setFormCheckin(firstDate);
-                              setFormCheckout(newCheckout);
-                              const nextExtras = syncExtraFlatsDatesFromPrimary(firstDate, newCheckout, formChannel);
-                              syncCompositeTotalAndPaid(updatedRates, formCharges, formChannel, undefined, nextExtras);
-                            }
-                          };
-
-                          return (
-                            <div 
-                              key={d.date || idx}
-                              className="p-2.5 bg-background border border-border rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
-                            >
-                              <div className="flex items-center justify-between sm:justify-start gap-1.5 shrink-0">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
-                                    #{idx + 1}
-                                  </span>
-                                  <span className="font-semibold text-foreground text-xs whitespace-nowrap">
-                                    {formattedDate}
-                                  </span>
-                                </div>
-
-                                {formDailyRates.length > 1 && (
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={handleDeleteNight}
-                                    className="h-6 w-6 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer sm:hidden"
-                                    title="Excluir diária"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </Button>
-                                )}
-                              </div>
-
-                              <div className="flex items-center gap-2 w-full sm:w-auto sm:flex-1 sm:justify-end">
-                                <div className="flex-1 sm:flex-initial sm:w-44 min-w-0">
-                                  <Select
-                                    value={d.channel || formChannel || "whatsapp"}
-                                    onValueChange={(val) => {
-                                      setFormDailyRates(prev => {
-                                        const nextRates = prev.map((item, i) => i === idx ? { ...item, channel: val } : item);
-                                        syncCompositeTotalAndPaid(nextRates, formCharges, formChannel);
-                                        return nextRates;
-                                      });
-                                    }}
-                                  >
-                                    <SelectTrigger className="h-8 sm:h-7 text-xs font-medium w-full">
-                                      <SelectValue placeholder="Canal" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="whatsapp">🟢 WhatsApp / Direta</SelectItem>
-                                      <SelectItem value="booking">🔵 Booking.com</SelectItem>
-                                      <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
-                                      <SelectItem value="b2b">🟣 B2B Reservas / Agência</SelectItem>
-                                      <SelectItem value="site">🟠 Site Próprio</SelectItem>
-                                      <SelectItem value="balcao">🏨 Balcão</SelectItem>
-                                      <SelectItem value="empresa">🏢 Empresa (PJ)</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-
-                                <div className="w-28 relative shrink-0">
-                                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground pointer-events-none">
-                                    R$
-                                  </span>
-                                  <Input
-                                    type="text"
-                                    inputMode="numeric"
-                                    placeholder="0,00"
-                                    value={formatCentsMaskValue(d.rate)}
-                                    onFocus={keepCurrencyCursorAtEnd}
-                                    onClick={keepCurrencyCursorAtEnd}
-                                    onChange={(e) => {
-                                      const val = parseCentsMaskInput(e.target.value);
-                                      setFormDailyRates(prev => {
-                                        const nextRates = prev.map((item, i) => i === idx ? { ...item, rate: val } : item);
-                                        syncCompositeTotalAndPaid(nextRates, formCharges, formChannel);
-                                        return nextRates;
-                                      });
-                                    }}
-                                    className="h-8 sm:h-7 pl-7 pr-2 text-xs font-bold text-right w-full"
-                                  />
-                                </div>
-
-                                {formDailyRates.length > 1 && (
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={handleDeleteNight}
-                                    className="hidden sm:inline-flex h-7 w-7 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
-                                    title="Excluir diária"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </Button>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      {!selectedRes && isMultiFlat && extraPackageFlats.map((ef, efIdx) => {
-                        const efFlatLabel = ef.flatId === "auto"
-                          ? "Automático"
-                          : `Flat ${(data.flats || []).find((f: any) => f.id === Number(ef.flatId))?.number || ef.flatId}`;
-                        const efRatesSum = (ef.dailyRates || []).reduce((s, d) => s + (Number(d.rate) || 0), 0);
-                        return (
-                          <div key={ef.uid} className="pt-3 mt-2 border-t border-border/60 space-y-2">
-                            <div className="flex items-center justify-between gap-2 flex-wrap">
-                              <div className="flex items-center gap-1.5">
-                                <CalendarDays className="w-3.5 h-3.5 text-violet-600 shrink-0" />
-                                <span className="text-xs font-bold text-foreground">
-                                  Diárias do Flat {efIdx + 2} ({efFlatLabel}) ({ef.dailyRates.length})
-                                </span>
-                                <span className="text-[11px] font-bold text-violet-700 dark:text-violet-300">
-                                  • R$ {efRatesSum.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                                </span>
-                              </div>
-                              {ef.dailyRates.length > 1 && (
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => {
-                                    const firstRate = Number(ef.dailyRates[0]?.rate) || 250;
-                                    const firstChan = ef.dailyRates[0]?.channel || formChannel;
-                                    const nextRates = ef.dailyRates.map(d => ({ ...d, rate: firstRate, channel: firstChan }));
-                                    handleUpdateExtraPackageFlat(ef.uid, { dailyRates: nextRates, dailyRate: String(firstRate) }, true);
-                                    toast({ title: `Diárias do Flat ${efIdx + 2} Equalizadas`, description: `Ajustadas para R$ ${firstRate.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}.` });
-                                  }}
-                                  className="h-7 px-2 text-[10.5px] text-muted-foreground hover:text-foreground cursor-pointer"
-                                >
-                                  Igualar Valores
-                                </Button>
-                              )}
-                            </div>
-                            <div className="space-y-1.5">
-                              {ef.dailyRates.map((d, nIdx) => {
-                                let formattedDate = d.date;
-                                try {
-                                  formattedDate = format(parseISO(d.date), "dd/MM/yyyy (EEE)", { locale: ptBR });
-                                } catch {}
-                                return (
-                                  <div
-                                    key={`${ef.uid}_${d.date || nIdx}`}
-                                    className="p-2.5 bg-background border border-violet-200/80 dark:border-violet-900/50 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
-                                  >
-                                    <div className="flex items-center gap-1.5 shrink-0">
-                                      <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 shrink-0">
-                                        #{nIdx + 1}
-                                      </span>
-                                      <span className="font-semibold text-foreground text-xs whitespace-nowrap">
-                                        {formattedDate}
-                                      </span>
-                                    </div>
-                                    <div className="flex items-center gap-2 w-full sm:w-auto sm:flex-1 sm:justify-end">
-                                      <div className="flex-1 sm:flex-initial sm:w-44 min-w-0">
-                                        <Select
-                                          value={d.channel || formChannel || "whatsapp"}
-                                          onValueChange={(val) => {
-                                            const nextRates = ef.dailyRates.map((item, i) => i === nIdx ? { ...item, channel: val } : item);
-                                            handleUpdateExtraPackageFlat(ef.uid, { dailyRates: nextRates }, true);
-                                          }}
-                                        >
-                                          <SelectTrigger className="h-8 sm:h-7 text-xs font-medium w-full">
-                                            <SelectValue placeholder="Canal" />
-                                          </SelectTrigger>
-                                          <SelectContent>
-                                            <SelectItem value="whatsapp">🟢 WhatsApp / Direta</SelectItem>
-                                            <SelectItem value="booking">🔵 Booking.com</SelectItem>
-                                            <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
-                                            <SelectItem value="b2b">🟣 B2B Reservas / Agência</SelectItem>
-                                            <SelectItem value="site">🟠 Site Próprio</SelectItem>
-                                            <SelectItem value="balcao">🏨 Balcão</SelectItem>
-                                            <SelectItem value="empresa">🏢 Empresa (PJ)</SelectItem>
-                                          </SelectContent>
-                                        </Select>
-                                      </div>
-                                      <div className="w-28 relative shrink-0">
-                                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground pointer-events-none">
-                                          R$
-                                        </span>
-                                        <Input
-                                          type="text"
-                                          inputMode="numeric"
-                                          placeholder="0,00"
-                                          value={formatCentsMaskValue(d.rate)}
-                                          onFocus={keepCurrencyCursorAtEnd}
-                                          onClick={keepCurrencyCursorAtEnd}
-                                          onChange={(e) => {
-                                            const val = parseCentsMaskInput(e.target.value);
-                                            const nextRates = ef.dailyRates.map((item, i) => i === nIdx ? { ...item, rate: val } : item);
-                                            const avg = nextRates.length > 0 ? Math.round((nextRates.reduce((s, r) => s + (Number(r.rate) || 0), 0) / nextRates.length) * 100) / 100 : (Number(ef.dailyRate) || 0);
-                                            handleUpdateExtraPackageFlat(ef.uid, { dailyRates: nextRates, dailyRate: String(avg) }, true);
-                                          }}
-                                          className="h-8 sm:h-7 pl-7 pr-2 text-xs font-bold text-right w-full"
-                                        />
-                                      </div>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Subseção B: Taxas, Adicionais & Descontos */}
-                    {(() => {
-                      const totalChargesBadgeCount = (!selectedRes && isMultiFlat)
-                        ? pkgExtraCharges.length + formCharges.length + extraPackageFlats.reduce((s, ef) => s + (ef.charges?.length || 0), 0)
-                        : formCharges.length;
-                      const flat1Display = formFlatId === "auto" ? "Auto" : `Flat ${(data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId}`;
-
-                      const renderChargeRow = (charge: ReservationChargeItem, cIdx: number, scope: string, scopeBadge: string | null) => (
+                    {/* Subseção: Taxas Gerais do Pacote (quando Multi-Flat na criação; taxas individuais ficam dentro de cada Flat na Seção 3) */}
+                    {!selectedRes && isMultiFlat && (() => {
+                      const renderPkgChargeRow = (charge: ReservationChargeItem, cIdx: number) => (
                         <div
-                          key={`${scope}_${charge.id || cIdx}`}
+                          key={`pkg_${charge.id || cIdx}`}
                           className="p-2.5 bg-background border border-border rounded-xl grid grid-cols-12 gap-2 items-center text-xs"
                         >
-                          {scopeBadge && (
-                            <div className="col-span-12 flex items-center justify-between -mb-1">
-                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300">
-                                {scopeBadge}
-                              </span>
-                            </div>
-                          )}
+                          <div className="col-span-12 flex items-center justify-between -mb-1">
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300">
+                              📦 Pacote (Geral)
+                            </span>
+                          </div>
                           <div className="col-span-6 sm:col-span-4 sm:order-1 min-w-0">
                             <Select
                               value={charge.type}
-                              onValueChange={(val: any) => handleUpdateCharge(charge.id, "type", val, scope)}
+                              onValueChange={(val: any) => handleUpdateCharge(charge.id, "type", val, "package")}
                             >
                               <SelectTrigger className="h-8 sm:h-7 text-xs font-medium w-full">
                                 <SelectValue />
@@ -17005,7 +16900,7 @@ export default function PmsCalendar(props?: {
                                 onChange={e => {
                                   const rawVal = parseCentsMaskInput(e.target.value, true);
                                   const finalVal = charge.type === "discount" ? -Math.abs(rawVal) : rawVal;
-                                  handleUpdateCharge(charge.id, "amount", finalVal, scope);
+                                  handleUpdateCharge(charge.id, "amount", finalVal, "package");
                                 }}
                                 className={`h-8 sm:h-7 pl-7 pr-2 text-xs font-bold text-right w-full ${charge.amount < 0 ? "text-rose-600 dark:text-rose-400 font-black" : "text-foreground"}`}
                               />
@@ -17015,9 +16910,9 @@ export default function PmsCalendar(props?: {
                               type="button"
                               variant="ghost"
                               size="sm"
-                              onClick={() => handleRemoveCharge(charge.id, scope)}
+                              onClick={() => handleRemoveCharge(charge.id, "package")}
                               className="h-8 w-8 sm:h-7 sm:w-7 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
-                              title="Remover item"
+                              title="Remover item do pacote"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </Button>
@@ -17028,7 +16923,7 @@ export default function PmsCalendar(props?: {
                               type="text"
                               placeholder="Descrição do item..."
                               value={charge.title}
-                              onChange={e => handleUpdateCharge(charge.id, "title", e.target.value, scope)}
+                              onChange={e => handleUpdateCharge(charge.id, "title", e.target.value, "package")}
                               className="h-8 sm:h-7 text-xs font-medium w-full"
                             />
                           </div>
@@ -17036,134 +16931,114 @@ export default function PmsCalendar(props?: {
                       );
 
                       return (
-                    <div className="space-y-2 pt-2 border-t border-border/70">
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
-                          <span className="text-xs font-bold text-foreground">Taxas, Serviços Adicionais & Descontos ({totalChargesBadgeCount})</span>
-                          {!selectedRes && isMultiFlat && (
-                            <select
-                              value={pkgChargeTarget}
-                              onChange={e => setPkgChargeTarget(e.target.value)}
-                              className="h-6 rounded-md border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/40 px-2 text-[10.5px] font-bold text-violet-900 dark:text-violet-200"
-                            >
-                              <option value="package">📦 Alvo: Pacote (Geral)</option>
-                              <option value="flat_0">🏠 Alvo: Flat 1 ({flat1Display})</option>
-                              {extraPackageFlats.map((ef, efIdx) => {
-                                const efDisp = ef.flatId === "auto" ? "Auto" : `Flat ${(data.flats || []).find((f: any) => f.id === Number(ef.flatId))?.number || ef.flatId}`;
-                                return (
-                                  <option key={ef.uid} value={ef.uid}>
-                                    🏠 Alvo: Flat {efIdx + 2} ({efDisp})
-                                  </option>
-                                );
-                              })}
-                            </select>
-                          )}
-                        </div>
+                        <div className="space-y-2 pt-2 border-t border-border/70">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
+                              <span className="text-xs font-bold text-foreground">
+                                Taxas Gerais do Pacote ({pkgExtraCharges.length})
+                              </span>
+                            </div>
 
-                        {/* Botões de Atalho Rápido para Itens Comuns */}
-                        <div className="flex items-center gap-1 flex-wrap">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleAddCharge("cleaning", "Taxa de Limpeza", 50)}
-                            className="h-6 px-1.5 text-[10.5px] font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                          >
-                            🧹 + Limpeza
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleAddCharge("pet", "Taxa Pet", 50)}
-                            className="h-6 px-1.5 text-[10.5px] font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                          >
-                            🐾 + Pet
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleAddCharge("extra_bed", "Cama Extra", 70)}
-                            className="h-6 px-1.5 text-[10.5px] font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                          >
-                            🛏️ + Cama Extra
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleAddCharge("breakfast", "Café da Manhã Avulso", 35)}
-                            className="h-6 px-1.5 text-[10.5px] font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                          >
-                            ☕ + Café
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleAddCharge("garage", "Garagem Adicional", 30)}
-                            className="h-6 px-1.5 text-[10.5px] font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                          >
-                            🚗 + Garagem
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleAddCharge("discount", "Desconto Negociado", -50)}
-                            className="h-6 px-1.5 text-[10.5px] font-semibold text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-900/60 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
-                          >
-                            🏷️ - Desconto
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleAddCharge("other", "Adicional", 50)}
-                            className="h-6 px-1.5 text-[10.5px] font-semibold text-primary border-primary/30 hover:bg-primary/10 cursor-pointer"
-                          >
-                            <Plus className="w-3 h-3 mr-0.5" /> Outro
-                          </Button>
-                        </div>
-                      </div>
+                            <div className="flex items-center gap-1 flex-wrap">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleAddCharge("cleaning", "Taxa de Limpeza (Pacote)", 50, "package")}
+                                className="h-6 px-1.5 text-[10.5px] font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                              >
+                                🧹 + Limpeza
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleAddCharge("pet", "Taxa Pet (Pacote)", 50, "package")}
+                                className="h-6 px-1.5 text-[10.5px] font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                              >
+                                🐾 + Pet
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleAddCharge("extra_bed", "Cama Extra (Pacote)", 70, "package")}
+                                className="h-6 px-1.5 text-[10.5px] font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                              >
+                                🛏️ + Cama Extra
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleAddCharge("breakfast", "Café da Manhã (Pacote)", 35, "package")}
+                                className="h-6 px-1.5 text-[10.5px] font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                              >
+                                ☕ + Café
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleAddCharge("garage", "Garagem Adicional (Pacote)", 30, "package")}
+                                className="h-6 px-1.5 text-[10.5px] font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                              >
+                                🚗 + Garagem
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleAddCharge("discount", "Desconto Negociado (Pacote)", -50, "package")}
+                                className="h-6 px-1.5 text-[10.5px] font-semibold text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-900/60 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                              >
+                                🏷️ - Desconto
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleAddCharge("other", "Adicional do Pacote", 50, "package")}
+                                className="h-6 px-1.5 text-[10.5px] font-semibold text-primary border-primary/30 hover:bg-primary/10 cursor-pointer"
+                              >
+                                <Plus className="w-3 h-3 mr-0.5" /> Outro
+                              </Button>
+                            </div>
+                          </div>
 
-                      {totalChargesBadgeCount === 0 ? (
-                        <div className="p-2.5 rounded-xl border border-dashed text-center text-[11px] text-muted-foreground bg-background/50">
-                          Nenhuma taxa ou adicional configurado. Clique nos botões acima caso queira incluir Taxa de Limpeza, Pet, Cama Extra, Desconto, etc.
-                        </div>
-                      ) : (
-                        <div className="space-y-1.5">
-                          {!selectedRes && isMultiFlat && pkgExtraCharges.map((charge, cIdx) =>
-                            renderChargeRow(charge, cIdx, "package", "📦 Pacote (Geral)")
+                          {pkgExtraCharges.length === 0 ? (
+                            <div className="p-2.5 rounded-xl border border-dashed text-center text-[11px] text-muted-foreground bg-background/50">
+                              Nenhuma taxa geral no pacote. Taxas específicas por apartamento ficam dentro de cada Flat na Seção 3 acima.
+                            </div>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {pkgExtraCharges.map((charge, cIdx) => renderPkgChargeRow(charge, cIdx))}
+                            </div>
                           )}
-                          {formCharges.map((charge, cIdx) =>
-                            renderChargeRow(charge, cIdx, "flat_0", (!selectedRes && isMultiFlat) ? `🏠 Flat 1 (${flat1Display})` : null)
-                          )}
-                          {!selectedRes && isMultiFlat && extraPackageFlats.flatMap((ef, efIdx) => {
-                            const efDisp = ef.flatId === "auto" ? "Auto" : `Flat ${(data.flats || []).find((f: any) => f.id === Number(ef.flatId))?.number || ef.flatId}`;
-                            return (ef.charges || []).map((charge, cIdx) =>
-                              renderChargeRow(charge, cIdx, ef.uid, `🏠 Flat ${efIdx + 2} (${efDisp})`)
-                            );
-                          })}
                         </div>
-                      )}
-                    </div>
                       );
                     })()}
 
                     {/* Resumo da Composição */}
                     {(() => {
                       if (!selectedRes && isMultiFlat) {
-                        const { curTot, rawSum, flat1Sub, extraFlatsSub, pkgChargesSub } = computeUnifiedReservationTotals();
-                        const adjustment = curTot - rawSum;
+                        const { curTot, rawSum, pkgChargesSub } = computeUnifiedReservationTotals();
+                        const adjustment = round2(curTot - rawSum);
                         return (
                           <div className="pt-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-[11px] text-muted-foreground px-1 border-t border-border/60">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span>Flat 1: <strong className="text-foreground">R$ {flat1Sub.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
-                              <span>•</span>
-                              <span>Extras ({extraPackageFlats.length}): <strong className="text-foreground">R$ {extraFlatsSub.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                              {formFlats.map((fl, fIdx) => {
+                                const flSub = getFlatSubtotals(fl).subtotal;
+                                return (
+                                  <Fragment key={fl.uid}>
+                                    {fIdx > 0 && <span>•</span>}
+                                    <span>
+                                      Flat {fIdx + 1}: <strong className="text-foreground">R$ {flSub.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
+                                    </span>
+                                  </Fragment>
+                                );
+                              })}
                               {pkgChargesSub !== 0 && (
                                 <>
                                   <span>•</span>
@@ -17173,7 +17048,7 @@ export default function PmsCalendar(props?: {
                               {adjustment !== 0 && (
                                 <>
                                   <span>•</span>
-                                  <span>Ajuste Pacote: <strong className={adjustment > 0 ? "text-emerald-600" : "text-rose-600"}>{adjustment > 0 ? "+" : ""}R$ {adjustment.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                                  <span>Ajuste vs. Base: <strong className={adjustment > 0 ? "text-emerald-600" : "text-rose-600"}>{adjustment > 0 ? "+" : ""}R$ {adjustment.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
                                 </>
                               )}
                             </div>
@@ -17339,7 +17214,8 @@ export default function PmsCalendar(props?: {
                     )}
                   </div>
                 </div>
-              )}
+              </div>
+              </div>
 
               <DialogFooter className="gap-2 justify-between">
                 {selectedRes ? (
@@ -17355,7 +17231,7 @@ export default function PmsCalendar(props?: {
                   </Button>
                   <Button type="submit" size="sm" disabled={savingRes} className="font-bold text-xs bg-primary hover:bg-primary/90 text-primary-foreground min-w-[100px] shadow-sm">
                     {savingRes ? <RefreshCw className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
-                    {selectedRes ? "Salvar Alterações" : isMultiFlat ? `Criar Pacote (${1 + extraPackageFlats.length} Flats)` : "Criar Reserva"}
+                    {selectedRes ? "Salvar Alterações" : isMultiFlat ? `Criar Pacote (${formFlats.length} Flats)` : "Criar Reserva"}
                   </Button>
                 </div>
               </DialogFooter>
@@ -18340,7 +18216,7 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                       {
                         id: "pagamento",
                         title: "Pagamento & Extrato Único do Pacote (Solicitante)",
-                        url: `${origin}/minha-reserva/${encodeURIComponent(pkgCode)}?requester=1`,
+                        url: `${origin}/solicitante/${encodeURIComponent(pkgCode)}${selectedRes.requesterPortalToken ? `?t=${encodeURIComponent(String(selectedRes.requesterPortalToken))}` : ""}`,
                         desc: `Portal financeiro consolidado do pacote ${pkgCode} para o solicitante/pagador quitar via PIX/Cartão e baixar 1 recibo único.`,
                         icon: CreditCard,
                         badge: `Pacote ${pkgCode}`,

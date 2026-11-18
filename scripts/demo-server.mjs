@@ -140,7 +140,8 @@ import {
   extractPixPayloadAmount,
   isPixPayloadStaleForAmount,
   computeCardAmountFromPix,
-  invokeMaidReviewHookSafe
+  invokeMaidReviewHookSafe,
+  hasPdfAlreadyBeenSentOrInFlight
 } from "./zapi-service.mjs";
 import {
   initMaidAutomationEngine,
@@ -219,6 +220,9 @@ import {
   isFlatGuestCredentialIncomplete,
   applyPackageRateioToDraftFlats,
   computePackageSummary,
+  ensureRequesterPortalToken,
+  verifyWhatsAppPhoneActive,
+  updateGuestPhoneAndResendInstructions,
   syncPackagePixAndPaymentLinks,
   dispatchPackagePreReservationCreated,
   dispatchIndividualFlatGuestInstructions,
@@ -2142,6 +2146,11 @@ let db = {
   minibarDefaultStock: getDefaultMinibarStock(),
   minibarOrders: [],
   minibarInspections: [],
+  minibarPeanutStock: {
+    minAlertThreshold: 30,
+    movements: [],
+    updatedAt: null
+  },
   minibarSettings: getDefaultMinibarSettings(),
   reviews: [],
   reviewInsights: null,
@@ -6389,6 +6398,58 @@ export function reconcileUniversalIntegrity(incomingState = null) {
       }
     }
 
+    // 1.Z2 Estoque Próprio de Amendoim (db.minibarPeanutStock)
+    const deletedPeanutMovementIds = new Set(
+      Array.isArray(db._deletedPeanutMovementIds) ? db._deletedPeanutMovementIds.map(String) : []
+    );
+    if (Array.isArray(incomingState._deletedPeanutMovementIds)) {
+      if (!Array.isArray(db._deletedPeanutMovementIds)) db._deletedPeanutMovementIds = [];
+      incomingState._deletedPeanutMovementIds.forEach(delId => {
+        const s = String(delId || "").trim();
+        if (s && !deletedPeanutMovementIds.has(s)) {
+          deletedPeanutMovementIds.add(s);
+          db._deletedPeanutMovementIds.push(s);
+          changed = true;
+        }
+      });
+    }
+    if (!db.minibarPeanutStock || typeof db.minibarPeanutStock !== "object") {
+      db.minibarPeanutStock = { minAlertThreshold: 30, movements: [], updatedAt: null };
+      changed = true;
+    }
+    if (!Array.isArray(db.minibarPeanutStock.movements)) {
+      db.minibarPeanutStock.movements = [];
+      changed = true;
+    }
+    if (deletedPeanutMovementIds.size > 0) {
+      const beforeMovLen = db.minibarPeanutStock.movements.length;
+      db.minibarPeanutStock.movements = db.minibarPeanutStock.movements.filter(
+        m => m && !deletedPeanutMovementIds.has(String(m.id))
+      );
+      if (db.minibarPeanutStock.movements.length !== beforeMovLen) changed = true;
+    }
+    if (incomingState.minibarPeanutStock && typeof incomingState.minibarPeanutStock === "object") {
+      const incStock = incomingState.minibarPeanutStock;
+      const curUpdatedAt = String(db.minibarPeanutStock.updatedAt || "");
+      const incUpdatedAt = String(incStock.updatedAt || "");
+      if (incStock.minAlertThreshold !== undefined && (!curUpdatedAt || incUpdatedAt > curUpdatedAt)) {
+        db.minibarPeanutStock.minAlertThreshold = Number(incStock.minAlertThreshold) || 30;
+        if (incUpdatedAt) db.minibarPeanutStock.updatedAt = incUpdatedAt;
+        changed = true;
+      }
+      if (Array.isArray(incStock.movements) && incStock.movements.length > 0) {
+        incStock.movements.forEach(incMov => {
+          if (!incMov || !incMov.id) return;
+          if (deletedPeanutMovementIds.has(String(incMov.id))) return;
+          const existingIdx = db.minibarPeanutStock.movements.findIndex(m => m && String(m.id) === String(incMov.id));
+          if (existingIdx === -1) {
+            db.minibarPeanutStock.movements.push({ ...incMov });
+            changed = true;
+          }
+        });
+      }
+    }
+
     // 1.W Boletos Faturados Banco Inter (db.boletos)
     if (Array.isArray(incomingState.boletos) && incomingState.boletos.length > 0) {
       if (!Array.isArray(db.boletos)) db.boletos = [];
@@ -8092,6 +8153,29 @@ function sanitizeReservationFlags() {
       saveDatabase("purge_test_minibar_orders_nov02_v1");
       console.log(
         `[Auto-Fix] Pedidos de teste do frigobar expurgados (${purgeRes.removedOrderIds.length} pedidos, ${purgeRes.removedInspectionIds.length} inspeções).`
+      );
+    } catch (_) {}
+  }
+  if (!db.settings.purgedTestMinibarOrdersRes509_0564V1) {
+    const res509DynamicIds = (db.minibarOrders || [])
+      .filter(
+        o =>
+          o &&
+          (String(o.reservationCode || "").trim().toUpperCase() === "RES-509-0564" ||
+            String(o.reservationCode || "").trim() === "509-0564" ||
+            String(o.reservationId || "") === "564")
+      )
+      .map(o => String(o.id));
+    const purgeRes509 = purgeMinibarOrdersByIds(db, [
+      "ORD-MB-1793369576372-440",
+      "ORD-MB-DIV-1793369974058",
+      ...res509DynamicIds
+    ]);
+    db.settings.purgedTestMinibarOrdersRes509_0564V1 = true;
+    try {
+      saveDatabase("purge_test_minibar_orders_res_509_0564_v1");
+      console.log(
+        `[Auto-Fix] Pedidos de teste do frigobar da reserva RES-509-0564 expurgados (${purgeRes509.removedOrderIds.length} pedidos, ${purgeRes509.removedInspectionIds.length} inspeções).`
       );
     } catch (_) {}
   }
@@ -12422,6 +12506,10 @@ async function _loadDatabaseImpl() {
       if (!db.minibarDefaultStock || !Array.isArray(db.minibarDefaultStock.globalTemplate) || db.minibarDefaultStock.globalTemplate.length < 18 || !db.minibarDefaultStock.globalTemplate.some(t => t.productId === "prod_achocolatado")) db.minibarDefaultStock = getDefaultMinibarStock();
       if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
       if (!Array.isArray(db.minibarInspections)) db.minibarInspections = [];
+      if (!db.minibarPeanutStock || typeof db.minibarPeanutStock !== "object") {
+        db.minibarPeanutStock = { minAlertThreshold: 30, movements: [], updatedAt: null };
+      }
+      if (!Array.isArray(db.minibarPeanutStock.movements)) db.minibarPeanutStock.movements = [];
       if (!Array.isArray(db.boletos)) db.boletos = [];
       if (!db.minibarSettings) db.minibarSettings = getDefaultMinibarSettings();
       else if (db.minibarSettings.pixFeePercent === undefined && (!db.minibarSettings.pixFeeFixed || Number(db.minibarSettings.pixFeeFixed) === 0)) {
@@ -12721,6 +12809,10 @@ async function _loadDatabaseImpl() {
     if (!db.minibarDefaultStock || !Array.isArray(db.minibarDefaultStock.globalTemplate) || db.minibarDefaultStock.globalTemplate.length < 18 || !db.minibarDefaultStock.globalTemplate.some(t => t.productId === "prod_achocolatado")) db.minibarDefaultStock = getDefaultMinibarStock();
     if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
     if (!Array.isArray(db.minibarInspections)) db.minibarInspections = [];
+    if (!db.minibarPeanutStock || typeof db.minibarPeanutStock !== "object") {
+      db.minibarPeanutStock = { minAlertThreshold: 30, movements: [], updatedAt: null };
+    }
+    if (!Array.isArray(db.minibarPeanutStock.movements)) db.minibarPeanutStock.movements = [];
     if (!db.minibarSettings) db.minibarSettings = getDefaultMinibarSettings();
     else if (db.minibarSettings.pixFeePercent === undefined && (!db.minibarSettings.pixFeeFixed || Number(db.minibarSettings.pixFeeFixed) === 0)) {
       db.minibarSettings.pixFeePercent = 0.99;
@@ -19182,6 +19274,26 @@ globalThis.__corpflatsEvaluateZapiChannelPolicy = (opts = {}) =>
   evaluateZapiChannelPolicy(db.zapiConfig, { db, ...opts });
 globalThis.__corpflatsAppendMessageToConversation = (opts = {}) =>
   appendMessageToConversation(db, opts);
+globalThis.__corpflatsCheckZapiPhoneExists = (phone, zapiCfg = null) =>
+  checkZapiPhoneExists(phone, zapiCfg || db?.zapiConfig);
+globalThis.updateGuestPhoneAndResendInstructions = (params = {}) =>
+  updateGuestPhoneAndResendInstructions(db, params, {
+    checkZapiPhoneExists,
+    createNotification,
+    cleanWhatsAppPhone,
+    sendZapiMessage,
+    sendZapiDocument,
+    sendZapiMedia: (cfg, opts) => sendZapiDocument(cfg, opts),
+    hasPdfAlreadyBeenSentOrInFlight,
+    appendMessageToConversation,
+    sendEmailAsync,
+    wrapEmailTemplate,
+    addReservationAuditLog,
+    dispatchCatchUpGuestRulerMessages,
+    scheduleUpcomingReservationTriggers: (d) => scheduleUpcomingReservationTriggers(d, saveDatabase),
+    saveDatabase,
+    baseUrl: "https://corpflats.com.br"
+  });
 globalThis.__corpflatsSyncBidirectionalGuestProfile = (opts = {}) => {
   if (typeof syncBidirectionalGuestProfile === "function") {
     return syncBidirectionalGuestProfile(opts);
@@ -23369,6 +23481,178 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
   return res.status(201).json(newReq);
 });
 
+function syncCleaningCardsForConfirmedReservation(db, r, options = {}) {
+  if (!db || !r) return { synced: false };
+  if (!Array.isArray(db.cleaningRequests)) db.cleaningRequests = [];
+  const st = String(r.status || "").toLowerCase().trim();
+  if (!st || ["pre_reserva", "cancelada", "cancelado", "cancelled", "expirada", "no_show", "pendente"].includes(st)) {
+    return { synced: false, skipped: true, reason: "non_confirmed_status" };
+  }
+
+  const nowIso = new Date().toISOString();
+  const fNum = String(r.flatNumber || (db.flats || []).find(f => f && Number(f.id) === Number(r.flatId))?.number || "").trim();
+  const flatObj = (db.flats || []).find(f => f && ((r.flatId && Number(f.id) === Number(r.flatId)) || (fNum && String(f.number) === fNum))) || null;
+  const targetFlatId = r.flatId || flatObj?.id || null;
+  const isTwin = Boolean(r.twinBeds || r.bedType === "2 Solteiro" || r.bedType === "twin");
+  const isMattress = Boolean(r.extraMattress);
+
+  const isIgnoredNote = (txt) => {
+    const s = String(txt || "").trim();
+    return !s ||
+      s.includes("Limpeza de check-out gerada automaticamente") ||
+      s.includes("Pagamento integral") ||
+      s.includes("Quitação de saldo") ||
+      s.toLowerCase() === "teste";
+  };
+  const cleanSpecial = isIgnoredNote(r.specialRequests) ? "" : String(r.specialRequests).trim();
+  const cleanNotes = isIgnoredNote(r.notes) ? "" : String(r.notes).trim();
+  const autoParts = [];
+  if (isTwin) autoParts.push("Separar as camas, colocar como 2 solteiras");
+  if (isMattress) autoParts.push("Colocar 1 colchão extra");
+  const explicitInstructionNote = cleanSpecial || (autoParts.length > 0 ? autoParts.join(" • ") : null);
+  const cardMaidNote = cleanSpecial || cleanNotes || explicitInstructionNote;
+
+  const isSameFlat = (c) => Boolean(
+    c &&
+    !c.isDeleted &&
+    c.status !== "deleted" &&
+    ((fNum && String(c.flatNumber) === fNum) || (targetFlatId && Number(c.flatId) === Number(targetFlatId)))
+  );
+  const isInstCard = (c) => Boolean(
+    c.isInstructionOnly ||
+    c.source === "manual_instruction" ||
+    c.type === "instruction" ||
+    c.type === "bed_adjustment_only" ||
+    c.isBedAdjustmentOnly
+  );
+
+  let updatedCheckinCard = null;
+  let createdInstructionCard = null;
+  let reactivatedCheckoutCard = null;
+
+  if (r.checkinDate) {
+    const normalCleaningOnCheckin = db.cleaningRequests.find(c =>
+      isSameFlat(c) &&
+      c.requestDate === r.checkinDate &&
+      !isInstCard(c) &&
+      c.source !== "manual"
+    ) || db.cleaningRequests.find(c =>
+      isSameFlat(c) &&
+      c.requestDate === r.checkinDate &&
+      !isInstCard(c)
+    );
+
+    if (normalCleaningOnCheckin) {
+      normalCleaningOnCheckin.autoReservationCode = r.code;
+      normalCleaningOnCheckin.autoReservationId = r.id;
+      if (!normalCleaningOnCheckin.manualTwinBeds) normalCleaningOnCheckin.twinBeds = isTwin;
+      if (!normalCleaningOnCheckin.manualExtraMattress) normalCleaningOnCheckin.extraMattress = isMattress;
+      if (!normalCleaningOnCheckin.manualAdminNote) {
+        const expectedNote = cleanSpecial || cleanNotes || (
+          normalCleaningOnCheckin.twinBeds || normalCleaningOnCheckin.extraMattress
+            ? [
+                normalCleaningOnCheckin.twinBeds ? "Separar as camas, colocar como 2 solteiras" : "",
+                normalCleaningOnCheckin.extraMattress ? "Colocar 1 colchão extra" : ""
+              ].filter(Boolean).join(" • ")
+            : null
+        );
+        if (expectedNote) {
+          normalCleaningOnCheckin.adminNote = expectedNote;
+          normalCleaningOnCheckin.pendingObservation = expectedNote;
+        }
+      }
+      normalCleaningOnCheckin.arrivingGuest = r.guestName || r.title || normalCleaningOnCheckin.arrivingGuest || null;
+      normalCleaningOnCheckin.updatedAt = nowIso;
+      updatedCheckinCard = normalCleaningOnCheckin;
+    } else {
+      const existingInst = db.cleaningRequests.find(c => isSameFlat(c) && c.requestDate === r.checkinDate && isInstCard(c));
+      const needsPrepInstruction = Boolean(isTwin || isMattress || cleanSpecial);
+      if (existingInst) {
+        if (!needsPrepInstruction && existingInst.autoReservationId === r.id) {
+          existingInst.isDeleted = true;
+          existingInst.status = "deleted";
+          existingInst.deletedAt = nowIso;
+          existingInst.deletedBy = "reservation_sync";
+          existingInst.updatedAt = nowIso;
+        } else {
+          existingInst.type = "instruction";
+          existingInst.isInstructionOnly = true;
+          existingInst.isBedAdjustmentOnly = false;
+          existingInst.source = "manual_instruction";
+          existingInst.isPaidCleaning = false;
+          existingInst.twinBeds = isTwin;
+          existingInst.extraMattress = isMattress;
+          existingInst.instructionText = cardMaidNote;
+          existingInst.adminNote = cardMaidNote;
+          existingInst.notes = cardMaidNote;
+          existingInst.pendingObservation = cardMaidNote;
+          existingInst.arrivingGuest = r.guestName || r.title || existingInst.arrivingGuest || null;
+          existingInst.autoReservationId = r.id;
+          existingInst.autoReservationCode = r.code;
+          existingInst.updatedAt = nowIso;
+          updatedCheckinCard = existingInst;
+        }
+      } else if (needsPrepInstruction) {
+        const nextCleanId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(c => Number(c.id) || 0)) + 1 : 1;
+        createdInstructionCard = {
+          id: nextCleanId,
+          flatId: targetFlatId,
+          flatNumber: fNum,
+          requestDate: r.checkinDate,
+          source: "manual_instruction",
+          type: "instruction",
+          isInstructionOnly: true,
+          isBedAdjustmentOnly: false,
+          isPaidCleaning: false,
+          status: "dirty",
+          isVacant: flatObj ? !flatObj.isOccupied : true,
+          twinBeds: isTwin,
+          extraMattress: isMattress,
+          instructionText: cardMaidNote,
+          adminNote: cardMaidNote,
+          notes: cardMaidNote,
+          pendingObservation: cardMaidNote,
+          arrivingGuest: r.guestName || r.title || null,
+          autoReservationId: r.id,
+          autoReservationCode: r.code,
+          createdAt: nowIso,
+          updatedAt: nowIso
+        };
+        db.cleaningRequests.push(createdInstructionCard);
+      }
+    }
+  }
+
+  if (r.checkoutDate) {
+    const deletedOnCheckout = db.cleaningRequests.find(c =>
+      c &&
+      ((fNum && String(c.flatNumber) === fNum) || (targetFlatId && Number(c.flatId) === Number(targetFlatId))) &&
+      c.requestDate === r.checkoutDate &&
+      (c.isDeleted || c.status === "deleted")
+    );
+    if (deletedOnCheckout) {
+      deletedOnCheckout.isDeleted = false;
+      deletedOnCheckout.status = "dirty";
+      deletedOnCheckout.leavingGuest = r.guestName || deletedOnCheckout.leavingGuest || null;
+      deletedOnCheckout.isVacant = false;
+      deletedOnCheckout.isVacantExplicitlySet = false;
+      deletedOnCheckout.vacantSource = null;
+      delete deletedOnCheckout.deletedAt;
+      delete deletedOnCheckout.deletedBy;
+      delete deletedOnCheckout.deletedReservationId;
+      deletedOnCheckout.updatedAt = nowIso;
+      reactivatedCheckoutCard = deletedOnCheckout;
+    }
+  }
+
+  return {
+    synced: true,
+    updatedCheckinCard,
+    createdInstructionCard,
+    reactivatedCheckoutCard
+  };
+}
+
 // ── B2B Housekeeping & Linen Tracking Helpers ───────────────────────────────
 function isB2bReservation(r) {
   if (!r) return false;
@@ -24714,15 +24998,18 @@ app.get("/api/reservations/checkouts", (req, res) => {
     const isInst = Boolean(req_.isInstructionOnly || req_.source === "manual_instruction" || req_.type === "instruction" || req_.type === "bed_adjustment_only" || req_.isBedAdjustmentOnly);
     const isServiceCleaning = Boolean(req_.source === "service_order" || req_.cleaningType === "service_order" || req_.type === "service_cleaning");
     const isPaid = typeof req_.isPaidCleaning === "boolean" ? req_.isPaidCleaning : ((isInst || isServiceCleaning) ? false : true);
-    const instText = req_.instructionText || req_.notes || sanitizeCardNote(req_.adminNote) || cleanPendingObs || (req_.twinBeds ? "Separar as camas, colocar como 2 solteiras" : null);
+    const instAutoParts = [];
+    if (req_.twinBeds) instAutoParts.push("Separar as camas, colocar como 2 solteiras");
+    if (req_.extraMattress) instAutoParts.push("Colocar 1 colchão extra");
+    const instText = req_.instructionText || req_.notes || sanitizeCardNote(req_.adminNote) || cleanPendingObs || (instAutoParts.length > 0 ? instAutoParts.join(" • ") : null);
 
     const setupInfo = isInst ? {
       twinBeds: Boolean(req_.twinBeds),
-      extraMattress: false,
-      prefersHighFloor: false,
+      extraMattress: Boolean(req_.extraMattress),
+      prefersHighFloor: Boolean(req_.prefersHighFloor),
       specialRequests: instText,
       adminNote: instText,
-      guestName: null
+      guestName: req_.arrivingGuest || null
     } : {
       twinBeds: hasTwinBeds,
       extraMattress: hasExtraMattress,
@@ -33558,7 +33845,7 @@ async function handleDirectBookingMultiFlatPackage(req, res) {
     if (!rIn || !rOut || rOut <= rIn) {
       return res.status(400).json({ error: `Datas de check-in e check-out inválidas no Flat ${i + 1}.` });
     }
-    const rAdults = Math.max(1, Number(room.adults ?? room.guestCount) || 2);
+    const rAdults = Math.max(1, Number(room.adults ?? room.guestCount) || 1);
     if (rAdults > maxAllowedAdults) {
       return res.status(400).json({ error: `O Flat ${i + 1} excede o limite de ${maxAllowedAdults} hóspede(s) por flat.` });
     }
@@ -33843,6 +34130,7 @@ async function handleDirectBookingMultiFlatPackage(req, res) {
       companyCnpj: body.companyData?.cnpj || "",
       vehicle: normalizedVehicle,
       vehiclePlate: normalizedVehicle?.plate || "",
+      vehicleBrand: normalizedVehicle?.brand || "",
       vehicleModel: normalizedVehicle?.model || "",
       vehicleColor: normalizedVehicle?.color || "",
       breakfastToken: `bfk_${rId}_${crypto.randomBytes(4).toString("hex")}`,
@@ -33866,7 +34154,14 @@ async function handleDirectBookingMultiFlatPackage(req, res) {
     });
 
     db.reservations.push(resRecord);
+    if (typeof syncCleaningCardsForConfirmedReservation === "function") {
+      syncCleaningCardsForConfirmedReservation(db, resRecord);
+    }
     createdReservations.push(resRecord);
+  }
+
+  if (createdReservations.length > 0) {
+    ensureLocalRequesterPortalToken(db, createdReservations[0]);
   }
 
   const pkgSummary = await syncPackagePixAndPaymentLinks(db, pkgCode, {
@@ -33907,6 +34202,12 @@ async function handleDirectBookingMultiFlatPackage(req, res) {
     computeCardAmountFromPix,
     cleanWhatsAppPhone,
     sendZapiMessage,
+    sendZapiDocument: typeof sendZapiDocument === "function" ? sendZapiDocument : undefined,
+    sendZapiMedia: typeof sendZapiDocument === "function" ? ((cfg, opts) => sendZapiDocument(cfg, opts)) : undefined,
+    hasPdfAlreadyBeenSentOrInFlight: typeof hasPdfAlreadyBeenSentOrInFlight === "function" ? hasPdfAlreadyBeenSentOrInFlight : undefined,
+    checkZapiPhoneExists: typeof checkZapiPhoneExists === "function" ? checkZapiPhoneExists : undefined,
+    createNotification: typeof createNotification === "function" ? createNotification : undefined,
+    scheduleUpcomingReservationTriggers: typeof scheduleUpcomingReservationTriggers === "function" ? ((d) => scheduleUpcomingReservationTriggers(d, saveDatabase)) : undefined,
     appendMessageToConversation,
     sendEmailAsync,
     wrapEmailTemplate,
@@ -38317,6 +38618,21 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
     throw err;
   }
 
+  const wantsAnyEarlyAuth = Boolean(payload.earlyCheckinAuthorized) || packageFlats.some((it) => Boolean(it?.earlyCheckinAuthorized));
+  if (wantsAnyEarlyAuth) {
+    const checkAuthUser = ctx.authUser || null;
+    if (!checkAuthUser) {
+      const err = new Error("Não autenticado. Somente a Administração pode autorizar Early Check-in manualmente.");
+      err.statusCode = 401;
+      throw err;
+    }
+    if (checkAuthUser.role !== "admin" && checkAuthUser.role !== "dev") {
+      const err = new Error("Acesso negado. Somente a Administração pode autorizar Early Check-in manualmente.");
+      err.statusCode = 403;
+      throw err;
+    }
+  }
+
   const safeParseEmails = (raw) => {
     if (typeof parseEmailList === "function") return parseEmailList(raw);
     const items = Array.isArray(raw) ? raw : [raw];
@@ -38732,6 +39048,7 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
       baseTotalAmount = Math.max(0, Math.round((ratesSum + chargesSum) * 100) / 100);
     }
 
+    const rawExtraMattress = item.extraMattress ?? item.extraBed ?? item.hasExtraBed ?? payload.extraMattress ?? payload.extraBed ?? payload.hasExtraBed;
     preparedDrafts.push({
       rawItem: item,
       flat: chosenFlat,
@@ -38741,7 +39058,7 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
       guestCount: occ,
       includeBreakfast: includeBf,
       twinBeds: wantTwin,
-      extraMattress: Boolean(item.extraMattress || occ >= 3),
+      extraMattress: Boolean(rawExtraMattress || occ >= 3),
       charges: itemCharges,
       dailyRates: itemDailyRates,
       dailyRate: nightsCount > 0 ? Math.round((ratesSum / nightsCount) * 100) / 100 : ratesSum,
@@ -38792,7 +39109,8 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
     mode: packagePricingMode,
     discountAmount: packageDiscountAmount,
     discountPct: packageDiscountPct,
-    fixedTotal: packageFixedTotal
+    fixedTotal: packageFixedTotal,
+    ratesAlreadyProrated: Boolean(payload.ratesAlreadyProrated)
   });
 
   const wantsFullPaid =
@@ -38907,6 +39225,7 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
   const creatorRole = authUser?.role || "admin";
 
   const createdReservations = [];
+  const pkgPortalToken = String(payload.requesterPortalToken || `REQ_${crypto.randomBytes(12).toString("hex")}`).trim();
 
   for (let idx = 0; idx < rateioResult.items.length; idx++) {
     const draft = rateioResult.items[idx];
@@ -39138,7 +39457,15 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
       brand: item.vehicleBrand || "",
       model: item.vehicleModel || "",
       color: item.vehicleColor || ""
-    } : null);
+    } : null) ||
+    (idx === 0 && payload.vehicle?.plate ? payload.vehicle : (idx === 0 && payload.vehiclePlate ? {
+      plate: payload.vehiclePlate,
+      brand: payload.vehicleBrand || "",
+      model: payload.vehicleModel || "",
+      color: payload.vehicleColor || ""
+    } : null)) ||
+    (g1Phone && typeof consumePendingVehicleForPhone === "function" ? consumePendingVehicleForPhone(db, g1Phone) : null) ||
+    (idx === 0 && solPhone && typeof consumePendingVehicleForPhone === "function" ? consumePendingVehicleForPhone(db, solPhone) : null);
     const finalVehicle = vInput && vInput.plate
       ? {
           plate: String(vInput.plate).toUpperCase().trim(),
@@ -39232,9 +39559,14 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
       resolvedAgency?.defaultInvoiceRecipient ||
       g1CrmGuest?.preferredInvoiceRecipient ||
       (resolvedCompany ? "company" : (resolvedAgency ? "agency" : (reqIsGuest1 ? "guest" : "requester")));
-    const resolvedNfHideFromGuest = nfHideFromGuest !== null && nfHideFromGuest !== undefined
-      ? Boolean(nfHideFromGuest)
-      : !reqIsGuest1;
+    const explicitItemHide = item.hideFinancialForGuest !== undefined ? item.hideFinancialForGuest : item.nfHideFromGuest;
+    const explicitPkgHide = payload.hideFinancialForGuest !== undefined ? payload.hideFinancialForGuest : nfHideFromGuest;
+    const explicitHideVal = explicitItemHide !== undefined && explicitItemHide !== null
+      ? explicitItemHide
+      : (explicitPkgHide !== undefined && explicitPkgHide !== null ? explicitPkgHide : null);
+    const resolvedNfHideFromGuest = !reqIsGuest1
+      ? true
+      : (explicitHideVal !== null ? Boolean(explicitHideVal) : (isB2b && resolvedInvRecipient !== "guest"));
 
     const rawNfEmailsCandidates = safeParseEmails(nfDeliveryEmails);
     let resolvedNfDeliveryEmails = rawNfEmailsCandidates.length > 0
@@ -39320,6 +39652,7 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
       packageFixedTotal: rateioResult.mode === "fixed_total" ? rateioResult.targetTotal : null,
       proratedDiscountAmount: draft.proratedDiscountAmount || 0,
       requesterIsGuest1: reqIsGuest1,
+      requesterPortalToken: pkgPortalToken,
       informGuestsLater: g1InformLater,
       guest2InformLater: g2InformLater,
       hideFinancialForGuest: resolvedNfHideFromGuest,
@@ -39422,13 +39755,41 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
       twinBeds: draft.twinBeds,
       bedType: draft.twinBeds ? "twin" : "queen",
       extraMattress: draft.extraMattress,
+      prefersHighFloor: Boolean(item.prefersHighFloor ?? payload.prefersHighFloor),
+      earlyCheckinAuthorized: Boolean((item.earlyCheckinAuthorized ?? payload.earlyCheckinAuthorized) && authUser && (authUser.role === "admin" || authUser.role === "dev")),
+      ...(() => {
+        const itemEarlyOk = Boolean((item.earlyCheckinAuthorized ?? payload.earlyCheckinAuthorized) && authUser && (authUser.role === "admin" || authUser.role === "dev"));
+        const rawEt = item.earlyCheckinTime ?? payload.earlyCheckinTime;
+        return (itemEarlyOk && typeof rawEt === "string" && /^\d{2}:\d{2}$/.test(rawEt.trim()))
+          ? { earlyCheckinTime: rawEt.trim() }
+          : {};
+      })(),
+      isFlatLocked: Boolean(item.isFlatLocked ?? item.flatLocked ?? payload.isFlatLocked ?? payload.flatLocked),
+      flatLocked: Boolean(item.isFlatLocked ?? item.flatLocked ?? payload.isFlatLocked ?? payload.flatLocked),
+      flatLockReason: String(item.flatLockReason ?? payload.flatLockReason ?? "").trim() || ((item.isFlatLocked ?? item.flatLocked ?? payload.isFlatLocked ?? payload.flatLocked) ? "Quarto preferencial bloqueado" : ""),
+      docPhotoUrl: item.docPhotoUrl ?? payload.docPhotoUrl ?? g1CrmGuest?.docPhotoUrl ?? null,
+      hasMinor: Boolean(item.hasMinor ?? payload.hasMinor ?? g1CrmGuest?.isMinor),
+      minorAge: item.minorAge ?? payload.minorAge ?? g1CrmGuest?.minorAge ?? null,
+      ...(() => {
+        const rawCamp = item.isCamposResident !== undefined ? item.isCamposResident : payload.isCamposResident;
+        const isCamp = rawCamp !== undefined ? Boolean(rawCamp) : Boolean(g1CrmGuest?.isCamposResident === true);
+        const hasRisk = Boolean(item.riskAttentionAlert ?? payload.riskAttentionAlert ?? isCamp ?? g1CrmGuest?.riskAttentionAlert);
+        const riskReason = String(item.riskAttentionReason ?? payload.riskAttentionReason ?? (isCamp ? "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ" : "")).trim();
+        return { isCamposResident: isCamp, riskAttentionAlert: hasRisk, riskAttentionReason: riskReason };
+      })(),
+      ...(() => {
+        const isMon = Boolean(item.isMonthlyGuest ?? payload.isMonthlyGuest ?? ((item.clientType || payload.clientType) === "mensalista"));
+        const cType = String(item.clientType || payload.clientType || (isMon ? "mensalista" : (isB2b ? "corporativo" : "avulso")));
+        return { isMonthlyGuest: isMon, clientType: cType };
+      })(),
       vehicle: finalVehicle,
       vehiclePlate: finalVehicle?.plate || "",
+      vehicleBrand: finalVehicle?.brand || "",
       vehicleModel: finalVehicle?.model || "",
       vehicleColor: finalVehicle?.color || "",
-      notes: [notes, item.notes].filter(Boolean).join(" | "),
-      receptionNotes: [receptionNotes, item.receptionNotes].filter(Boolean).join(" | "),
-      specialRequests: item.specialRequests || "",
+      notes: String(item.notes ?? "").trim() || String(notes ?? "").trim(),
+      receptionNotes: String(item.receptionNotes ?? "").trim() || String(receptionNotes ?? "").trim(),
+      specialRequests: String(item.specialRequests ?? "").trim() || String(payload.specialRequests ?? "").trim(),
       breakfastToken: `bfk_${rId}_${crypto.randomBytes(4).toString("hex")}`,
       createdBy: {
         userId: authUser?.id || null,
@@ -39449,24 +39810,17 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
       description: `Reserva criada no pacote ${pkgCode} (Flat ${idx + 1} de ${rateioResult.items.length})`
     });
 
-    if (draft.twinBeds) {
-      const nextCleanId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map((c) => Number(c.id) || 0)) + 1 : 1;
-      db.cleaningRequests.push({
-        id: nextCleanId,
-        flatId: flat.id,
-        flatNumber: String(flat.number),
-        requestDate: draft.checkinDate,
-        status: "pending",
-        type: "bed_adjustment_only",
-        isBedAdjustmentOnly: true,
-        isPaidCleaning: false,
-        notes: "🛏️ CONFIGURAR 2 CAMAS DE SOLTEIRO PARA O CHECK-IN",
-        createdAt: nowIso
-      });
-    }
-
     db.reservations.unshift(newRes);
+    if (typeof syncCleaningCardsForConfirmedReservation === "function") {
+      syncCleaningCardsForConfirmedReservation(db, newRes);
+    }
     createdReservations.push(newRes);
+  }
+
+  if (typeof ensureRequesterPortalToken === "function" && createdReservations.length > 0) {
+    try {
+      ensureRequesterPortalToken(db, createdReservations[0]);
+    } catch (_) {}
   }
 
   const baseUrl = String(ctx.baseUrl || "https://corpflats.com.br").replace(/\/+$/, "");
@@ -39504,6 +39858,12 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
       computeCardAmountFromPix,
       cleanWhatsAppPhone,
       sendZapiMessage,
+      sendZapiDocument: typeof sendZapiDocument === "function" ? sendZapiDocument : undefined,
+      sendZapiMedia: typeof sendZapiDocument === "function" ? ((cfg, opts) => sendZapiDocument(cfg, opts)) : undefined,
+      hasPdfAlreadyBeenSentOrInFlight: typeof hasPdfAlreadyBeenSentOrInFlight === "function" ? hasPdfAlreadyBeenSentOrInFlight : undefined,
+      checkZapiPhoneExists: typeof checkZapiPhoneExists === "function" ? checkZapiPhoneExists : undefined,
+      createNotification: typeof createNotification === "function" ? createNotification : undefined,
+      scheduleUpcomingReservationTriggers: typeof scheduleUpcomingReservationTriggers === "function" ? ((targetDb) => scheduleUpcomingReservationTriggers(targetDb, saveDatabase)) : undefined,
       appendMessageToConversation,
       sendEmailAsync,
       wrapEmailTemplate,
@@ -39526,6 +39886,13 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
       if (!createdRes.guestPending && !createdRes.informGuestsLater && !ctx.suppressExternalSend) {
         try {
           await dispatchConfirmedReservationToReceptionAndGarage(createdRes, "package_created_confirmed");
+        } catch (_) {}
+      } else if (!ctx.suppressExternalSend && createdRes.vehicle?.plate && typeof triggerGarageEmailNotification === "function") {
+        try {
+          triggerGarageEmailNotification(db, saveDatabase, createdRes, createdRes.vehicle, {
+            trigger: "package_created_confirmed",
+            source: "PMS Pacote"
+          });
         } catch (_) {}
       }
     }
@@ -39684,6 +40051,12 @@ app.post("/api/pms/packages/:packageId/reactivate", async (req, res) => {
         defaultPixKey: db.settings?.interConfig?.pixKey || DEFAULT_INTER_CONFIG.pixKey || "47964813000165",
         cleanWhatsAppPhone,
         sendZapiMessage,
+        sendZapiDocument: typeof sendZapiDocument === "function" ? sendZapiDocument : undefined,
+        sendZapiMedia: typeof sendZapiDocument === "function" ? ((cfg, opts) => sendZapiDocument(cfg, opts)) : undefined,
+        hasPdfAlreadyBeenSentOrInFlight: typeof hasPdfAlreadyBeenSentOrInFlight === "function" ? hasPdfAlreadyBeenSentOrInFlight : undefined,
+        checkZapiPhoneExists: typeof checkZapiPhoneExists === "function" ? checkZapiPhoneExists : undefined,
+        createNotification: typeof createNotification === "function" ? createNotification : undefined,
+        scheduleUpcomingReservationTriggers: typeof scheduleUpcomingReservationTriggers === "function" ? ((targetDb) => scheduleUpcomingReservationTriggers(targetDb, saveDatabase)) : undefined,
         appendMessageToConversation,
         sendEmailAsync,
         wrapEmailTemplate,
@@ -40320,9 +40693,16 @@ app.post("/api/pms/reservations", async (req, res) => {
       guest.preferredInvoiceRecipient = "guest";
     }
   }
-  const resolvedNfHideFromGuest = nfHideFromGuest !== null && nfHideFromGuest !== undefined
-    ? Boolean(nfHideFromGuest)
-    : (isB2b && resolvedInvRecipient !== "guest");
+  const resolvedRequesterIsGuest1 = req.body.requesterIsGuest1 !== undefined
+    ? Boolean(req.body.requesterIsGuest1)
+    : (requesterType === "guest" && !isB2b);
+  const explicitSingleHideInput = req.body.hideFinancialForGuest !== undefined
+    ? req.body.hideFinancialForGuest
+    : (nfHideFromGuest !== null && nfHideFromGuest !== undefined ? nfHideFromGuest : null);
+  const resolvedNfHideFromGuest = explicitSingleHideInput !== null
+    ? Boolean(explicitSingleHideInput)
+    : (!resolvedRequesterIsGuest1 || (isB2b && resolvedInvRecipient !== "guest"));
+  const singleResPortalToken = String(req.body.requesterPortalToken || `REQ_${crypto.randomBytes(12).toString("hex")}`).trim();
   const parsedExplicitNfEmails = parseEmailList(nfDeliveryEmails);
   let resolvedNfEmails = parsedExplicitNfEmails.length > 0
     ? parsedExplicitNfEmails
@@ -40383,6 +40763,8 @@ app.post("/api/pms/reservations", async (req, res) => {
     guestCount: numGuests,
     guests: preparedGuests,
     requesterType: isB2b ? "agency_b2b" : (requesterType === "agency_b2b" ? "agency_b2b" : requesterType),
+    requesterIsGuest1: resolvedRequesterIsGuest1,
+    requesterPortalToken: singleResPortalToken,
     requesterInfo: finalRequesterInfo || null,
     // 4-Pontas: Agência + Empresa + Hóspede + B2B
     agencyId: resolvedAgency?.id || (agencyId ? Number(agencyId) : null),
@@ -40421,6 +40803,7 @@ app.post("/api/pms/reservations", async (req, res) => {
     nfRecipientType: resolvedInvRecipient,
     invoicingInstructions: req.body.invoicingInstructions ? String(req.body.invoicingInstructions).trim() : "",
     nfDeliveryEmails: resolvedNfEmails,
+    hideFinancialForGuest: resolvedNfHideFromGuest,
     nfHideFromGuest: resolvedNfHideFromGuest,
     invoiceDetails: invoiceDetails || null,
     // Regras de Faturamento a Prazo (Boleto Banco Inter), Responsável Financeiro e Destinatários
@@ -40630,54 +41013,8 @@ app.post("/api/pms/reservations", async (req, res) => {
     ]
   });
 
-  // Sincroniza governança e card de camareira para o check-in desta reserva (apenas se confirmada)
-  if (checkinDate && resolvedStatus !== "cancelada" && resolvedStatus !== "pre_reserva" && resolvedStatus !== "expirada") {
-    try {
-      const targetDate = checkinDate;
-      const fNum = String(flat.number);
-      const isTwin = Boolean(newReservation.twinBeds || newReservation.bedType === "2 Solteiro" || newReservation.bedType === "twin");
-      const isMattress = Boolean(newReservation.extraMattress);
-      const maidNote = (newReservation.specialRequests || "").trim() || (newReservation.notes || "").trim() || null;
-
-      let cleaningReq = (db.cleaningRequests || []).find(c =>
-        (String(c.flatNumber) === fNum || c.flatId === flat.id) && c.requestDate === targetDate
-      );
-
-      if (cleaningReq) {
-        cleaningReq.twinBeds = isTwin;
-        cleaningReq.extraMattress = isMattress;
-        if (maidNote) {
-          cleaningReq.adminNote = maidNote;
-          cleaningReq.pendingObservation = maidNote;
-        }
-        cleaningReq.arrivingGuest = newReservation.guestName;
-        cleaningReq.updatedAt = new Date().toISOString();
-      }
-    } catch (cleanSyncErr) {
-      console.warn("[PMS] Erro ao sincronizar limpeza no checkin:", cleanSyncErr.message);
-    }
-  }
-
-  // Se uma nova reserva ativa foi criada com data de check-out onde havia um card excluído anteriormente, reativa a limpeza para o novo check-out
-  if (checkoutDate && resolvedStatus !== "cancelada" && resolvedStatus !== "pre_reserva" && resolvedStatus !== "expirada") {
-    const deletedOnCheckout = (db.cleaningRequests || []).find(c =>
-      (String(c.flatNumber) === String(flat.number) || c.flatId === flat.id) &&
-      c.requestDate === checkoutDate &&
-      (c.isDeleted || c.status === "deleted")
-    );
-    if (deletedOnCheckout) {
-      deletedOnCheckout.isDeleted = false;
-      deletedOnCheckout.status = "dirty";
-      deletedOnCheckout.leavingGuest = newReservation.guestName;
-      deletedOnCheckout.isVacant = false;
-      deletedOnCheckout.isVacantExplicitlySet = false;
-      deletedOnCheckout.vacantSource = null;
-      delete deletedOnCheckout.deletedAt;
-      delete deletedOnCheckout.deletedBy;
-      delete deletedOnCheckout.deletedReservationId;
-      deletedOnCheckout.updatedAt = new Date().toISOString();
-    }
-  }
+  // Sincroniza governança e card de camareira (limpeza ou instrução sem duplicar e sem criar em pré-reserva)
+  syncCleaningCardsForConfirmedReservation(db, newReservation);
 
   // ── Integração Automática SERPRO FNRH se Modo Gov.br Estiver Ativo ────────
   if (resolvedStatus !== "pre_reserva" && db.settings?.checkinProvider === "gov_fnrh") {
@@ -42091,7 +42428,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     "adults", "children", "notes", "prefersHighFloor", "twinBeds",
     "extraMattress", "specialRequests", "isMonthlyGuest", "clientType", "includeBreakfast",
     "autoEmitInvoice", "earlyCheckinAuthorized", "receptionNotes",
-    "guestCount", "guests", "guestDocument", "guestPhone", "guestEmail", "requesterType", "requesterInfo",
+    "guestCount", "guests", "guestDocument", "guestPhone", "guestEmail", "requesterType", "requesterInfo", "requesterIsGuest1", "hideFinancialForGuest",
     "companyId", "companyName", "companyCnpj", "companyAddress", "companyNumber", "companyComplement", "companyNeighborhood", "companyCep", "companyCity", "companyState", "companyIbgeCode", "costCenter",
     "agencyId", "agencyName", "agencyTradeName", "agencyCorporateName", "agencyCnpj", "agencyPosUnit", "agencyAgentName", "agencyAgentEmail", "agencyAgentPhone",
     "b2bReservationNumber", "externalReservationNumber", "b2bLocatorRloc", "b2bOriginType",
@@ -43282,6 +43619,34 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   if (req.body.invoiceRecipientType !== undefined && req.body.nfRecipientType === undefined) {
     r.nfRecipientType = r.invoiceRecipientType;
   }
+  if (
+    req.body.hideFinancialForGuest !== undefined ||
+    req.body.nfHideFromGuest !== undefined ||
+    req.body.requesterIsGuest1 !== undefined
+  ) {
+    const rawEditHide = req.body.hideFinancialForGuest !== undefined
+      ? Boolean(req.body.hideFinancialForGuest)
+      : (req.body.nfHideFromGuest !== undefined ? Boolean(req.body.nfHideFromGuest) : Boolean(r.hideFinancialForGuest ?? r.nfHideFromGuest));
+    const enforcedEditHide = ((r.packageId || r.packageCode) && !r.requesterIsGuest1) ? true : rawEditHide;
+    r.hideFinancialForGuest = enforcedEditHide;
+    r.nfHideFromGuest = enforcedEditHide;
+    if (
+      (r.packageId || r.packageCode) &&
+      (req.body.hideFinancialForGuest !== undefined || req.body.nfHideFromGuest !== undefined) &&
+      typeof getPackageReservations === "function"
+    ) {
+      for (const sib of getPackageReservations(db, r.packageId || r.packageCode)) {
+        if (!sib || sib.id === r.id) continue;
+        const sibEnforced = !sib.requesterIsGuest1 ? true : enforcedEditHide;
+        sib.hideFinancialForGuest = sibEnforced;
+        sib.nfHideFromGuest = sibEnforced;
+      }
+    }
+  } else if (r.nfHideFromGuest !== undefined && r.hideFinancialForGuest === undefined) {
+    r.hideFinancialForGuest = Boolean(r.nfHideFromGuest);
+  } else if (r.hideFinancialForGuest !== undefined && r.nfHideFromGuest === undefined) {
+    r.nfHideFromGuest = Boolean(r.hideFinancialForGuest);
+  }
   if (r.companyId && db.companies) {
     const linkedCompPut = db.companies.find(c => Number(c.id) === Number(r.companyId));
     if (linkedCompPut) {
@@ -43565,41 +43930,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
   }
 
-  if (r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "expirada" && r.status !== "pre_reserva" && r.checkinDate) {
-    const targetCheckin = r.checkinDate;
-    const targetFlatNum = newFlatNum;
-    const isTwin = Boolean(r.twinBeds || r.bedType === "2 Solteiro" || r.bedType === "twin");
-    const isMattress = Boolean(r.extraMattress);
-    const cleanNote = (r.specialRequests || r.notes || "").trim();
-    const validNote = (cleanNote && !cleanNote.includes("Limpeza de check-out gerada automaticamente") && cleanNote.toLowerCase() !== "teste") ? cleanNote : null;
-
-    const cleanOnCheckin = (db.cleaningRequests || []).find(c =>
-      (String(c.flatNumber) === targetFlatNum || (r.flatId && c.flatId === r.flatId)) &&
-      c.requestDate === targetCheckin &&
-      !c.isInstructionOnly &&
-      c.source !== "manual_instruction" &&
-      c.source !== "manual"
-    );
-    if (cleanOnCheckin) {
-      cleanOnCheckin.autoReservationCode = r.code;
-      cleanOnCheckin.autoReservationId = r.id;
-      if (!cleanOnCheckin.manualTwinBeds) cleanOnCheckin.twinBeds = isTwin;
-      if (!cleanOnCheckin.manualExtraMattress) cleanOnCheckin.extraMattress = isMattress;
-      if (!cleanOnCheckin.manualAdminNote) {
-        let expectedNote = validNote;
-        if (!expectedNote && (cleanOnCheckin.twinBeds || cleanOnCheckin.extraMattress)) {
-          const parts = [];
-          if (cleanOnCheckin.twinBeds) parts.push("Separar as camas, colocar como 2 solteiras");
-          if (cleanOnCheckin.extraMattress) parts.push("Colocar 1 colchão extra");
-          expectedNote = parts.join(" • ");
-        }
-        cleanOnCheckin.adminNote = expectedNote;
-        cleanOnCheckin.pendingObservation = expectedNote;
-      }
-      cleanOnCheckin.arrivingGuest = r.guestName || r.title;
-      cleanOnCheckin.updatedAt = new Date().toISOString();
-    }
-  }
+  syncCleaningCardsForConfirmedReservation(db, r);
 
   // Sincronização automática de pedidos de café da manhã caso a reserva seja cancelada ou check-out antecipado/estendido
   // Sincronização automática de pedidos de café da manhã caso o flat da reserva seja alterado
@@ -43879,6 +44210,25 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     });
   }
   if (wasGuestPhoneJustAdded || newlyAddedCompanionIndices.length > 0) {
+    const updatedGuestIndices = new Set([
+      ...(wasGuestPhoneJustAdded ? [1] : []),
+      ...newlyAddedCompanionIndices
+    ]);
+    if (Array.isArray(r.guestPhoneCorrectionRequests)) {
+      const resolvedAtIso = new Date().toISOString();
+      for (const corrReq of r.guestPhoneCorrectionRequests) {
+        if (!corrReq || corrReq.status === "resolved") continue;
+        const gIdxMatch = Number(corrReq.guestIndex) || 1;
+        if (updatedGuestIndices.has(gIdxMatch)) {
+          corrReq.status = "resolved";
+          corrReq.resolvedAt = resolvedAtIso;
+          corrReq.resolvedSource = "pms_edit";
+        }
+      }
+      if (!r.guestPhoneCorrectionRequests.some(c => c && (c.status === "awaiting_reply" || c.status === "pending"))) {
+        r.guestPhoneInvalid = false;
+      }
+    }
     r.guestPhoneUpdatedAt = new Date().toISOString();
   }
 
@@ -44274,11 +44624,20 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       }
     } else if (wasGuestPhoneJustAdded && !hasGuestPhoneReceivedConfirmation && !isPreReservationBlocked(r)) {
       if (r.packageId || r.packageCode) {
-        console.log(`[WhatsApp Package Guest] Telefone inserido no item de pacote ${r.code} (${r.guestName}). Enviando instruções exclusivas sem valores.`);
+        const pkgTargetsForEdit = newlyAddedCompanionIndices.length > 0 ? [1, ...newlyAddedCompanionIndices] : [1];
+        console.log(`[WhatsApp Package Guest] Telefone inserido no item de pacote ${r.code} (${r.guestName}). Enviando instruções exclusivas sem valores para [${pkgTargetsForEdit.join(", ")}].`);
         dispatchIndividualFlatGuestInstructions(db, [r], editBaseUrl, {
+          onlyGuestIndices: pkgTargetsForEdit,
           cleanWhatsAppPhone,
           sendZapiMessage,
-          appendMessageToConversation
+          sendZapiDocument: typeof sendZapiDocument === "function" ? sendZapiDocument : undefined,
+          sendZapiMedia: typeof sendZapiDocument === "function" ? ((cfg, opts) => sendZapiDocument(cfg, opts)) : undefined,
+          hasPdfAlreadyBeenSentOrInFlight: typeof hasPdfAlreadyBeenSentOrInFlight === "function" ? hasPdfAlreadyBeenSentOrInFlight : undefined,
+          checkZapiPhoneExists: typeof checkZapiPhoneExists === "function" ? checkZapiPhoneExists : undefined,
+          createNotification: typeof createNotification === "function" ? createNotification : undefined,
+          scheduleUpcomingReservationTriggers: typeof scheduleUpcomingReservationTriggers === "function" ? ((d) => scheduleUpcomingReservationTriggers(d, saveDatabase)) : undefined,
+          appendMessageToConversation,
+          saveDatabase
         }).catch(err => {
           console.warn(`[WhatsApp Package Guest] Erro ao enviar instruções sem valores para ${r.code}:`, err?.message || err);
         });
@@ -44611,13 +44970,32 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       r.status !== "cancelled" &&
       r.status !== "cancelado"
     ) {
-      console.log(`[WhatsApp Companion Catch-Up] Telefone de acompanhante(s) [${newlyAddedCompanionIndices.map(i => `guest_${i}`).join(", ")}] inserido/atualizado na reserva ${r.code}. Disparando instruções individuais exclusivamente para o(s) acompanhante(s).`);
-      dispatchCatchUpGuestRulerMessages(db, saveDatabase, r, {
-        baseUrl: editBaseUrl,
-        onlyGuestIndices: newlyAddedCompanionIndices
-      }).catch(err => {
-        console.warn(`[WhatsApp Companion Catch-Up] Erro ao disparar régua para acompanhante(s) em ${r.code}:`, err.message);
-      });
+      if (r.packageId || r.packageCode) {
+        console.log(`[WhatsApp Package Companion] Telefone de acompanhante(s) [${newlyAddedCompanionIndices.map(i => `guest_${i}`).join(", ")}] inserido/atualizado no pacote ${r.code}. Disparando instruções sem valores.`);
+        dispatchIndividualFlatGuestInstructions(db, [r], editBaseUrl, {
+          onlyGuestIndices: newlyAddedCompanionIndices,
+          cleanWhatsAppPhone,
+          sendZapiMessage,
+          sendZapiDocument: typeof sendZapiDocument === "function" ? sendZapiDocument : undefined,
+          sendZapiMedia: typeof sendZapiDocument === "function" ? ((cfg, opts) => sendZapiDocument(cfg, opts)) : undefined,
+          hasPdfAlreadyBeenSentOrInFlight: typeof hasPdfAlreadyBeenSentOrInFlight === "function" ? hasPdfAlreadyBeenSentOrInFlight : undefined,
+          checkZapiPhoneExists: typeof checkZapiPhoneExists === "function" ? checkZapiPhoneExists : undefined,
+          createNotification: typeof createNotification === "function" ? createNotification : undefined,
+          scheduleUpcomingReservationTriggers: typeof scheduleUpcomingReservationTriggers === "function" ? ((d) => scheduleUpcomingReservationTriggers(d, saveDatabase)) : undefined,
+          appendMessageToConversation,
+          saveDatabase
+        }).catch(err => {
+          console.warn(`[WhatsApp Package Companion] Erro ao disparar instruções para acompanhante(s) em ${r.code}:`, err?.message || err);
+        });
+      } else {
+        console.log(`[WhatsApp Companion Catch-Up] Telefone de acompanhante(s) [${newlyAddedCompanionIndices.map(i => `guest_${i}`).join(", ")}] inserido/atualizado na reserva ${r.code}. Disparando instruções individuais exclusivamente para o(s) acompanhante(s).`);
+        dispatchCatchUpGuestRulerMessages(db, saveDatabase, r, {
+          baseUrl: editBaseUrl,
+          onlyGuestIndices: newlyAddedCompanionIndices
+        }).catch(err => {
+          console.warn(`[WhatsApp Companion Catch-Up] Erro ao disparar régua para acompanhante(s) em ${r.code}:`, err.message);
+        });
+      }
     }
   }
 
@@ -44632,33 +45010,8 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   }
 
   // Sincroniza governança e card de camareira para o check-in desta reserva na edição
-  if (r.checkinDate) {
-    try {
-      const targetDate = r.checkinDate;
-      const fNum = String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || ""));
-      const isTwin = Boolean(r.twinBeds || r.bedType === "2 Solteiro" || r.bedType === "twin");
-      const isMattress = Boolean(r.extraMattress);
-      const maidNote = (r.specialRequests || "").trim() || (r.notes || "").trim() || null;
-
-      let cleaningReq = (db.cleaningRequests || []).find(c =>
-        (String(c.flatNumber) === fNum || c.flatId === r.flatId) && c.requestDate === targetDate
-      );
-
-      if (cleaningReq) {
-        cleaningReq.twinBeds = isTwin;
-        cleaningReq.extraMattress = isMattress;
-        if (maidNote) {
-          cleaningReq.adminNote = maidNote;
-          cleaningReq.pendingObservation = maidNote;
-        }
-        cleaningReq.arrivingGuest = r.guestName;
-        cleaningReq.updatedAt = new Date().toISOString();
-      }
-      saveDatabase();
-    } catch (cleanSyncErr) {
-      console.warn("[PMS] Erro ao sincronizar limpeza no checkin na edição:", cleanSyncErr.message);
-    }
-  }
+  syncCleaningCardsForConfirmedReservation(db, r);
+  saveDatabase();
 
   // ── WBP Canonical Conflict Warning (Non-blocking) ───────────────────────────
   try {
@@ -45048,6 +45401,262 @@ function enrichReservationPayments(r) {
   });
 }
 
+function ensureLocalRequesterPortalToken(dbInstance, targetResOrPkg) {
+  if (typeof ensureRequesterPortalToken === "function") {
+    return ensureRequesterPortalToken(dbInstance, targetResOrPkg);
+  }
+  if (!targetResOrPkg) return "";
+  const existing = String(targetResOrPkg.requesterPortalToken || "").trim();
+  const pkgId = typeof targetResOrPkg === "string"
+    ? (isPackageCode(targetResOrPkg) ? targetResOrPkg.trim().toUpperCase() : null)
+    : (targetResOrPkg.packageId || targetResOrPkg.packageCode || null);
+  const pkgList = pkgId && typeof getPackageReservations === "function" ? getPackageReservations(dbInstance, pkgId) : [];
+  const inherited = pkgList.map((x) => String(x?.requesterPortalToken || "").trim()).find(Boolean);
+  const tok = existing || inherited || `REQ_${crypto.randomBytes(12).toString("hex")}`;
+  if (typeof targetResOrPkg === "object" && !targetResOrPkg.requesterPortalToken) {
+    targetResOrPkg.requesterPortalToken = tok;
+  }
+  for (const sib of pkgList) {
+    if (sib && !sib.requesterPortalToken) sib.requesterPortalToken = tok;
+  }
+  return tok;
+}
+
+function isValidRequesterTokenOrStaff(r, req) {
+  if (!r) return false;
+  const authU = typeof getAuthUser === "function" ? getAuthUser(req) : null;
+  if (authU && ["admin", "dev", "reception", "recepcao"].includes(String(authU.role || "").toLowerCase())) {
+    return true;
+  }
+  const reqTok = String(
+    req?.query?.t ||
+    req?.query?.token ||
+    req?.body?.requesterPortalToken ||
+    req?.body?.t ||
+    req?.headers?.["x-requester-token"] ||
+    ""
+  ).trim();
+  const storedTok = String(r.requesterPortalToken || "").trim();
+  return Boolean(storedTok && reqTok && reqTok === storedTok);
+}
+
+app.get("/api/pms/requester-portal/:code", async (req, res) => {
+  try {
+    const code = String(req.params.code || "").trim();
+    if (!db.reservations) db.reservations = [];
+    sweepExpiredPreReservations(db, saveDatabase);
+
+    const isPkgLookup = isPackageCode(code);
+    const r = isPkgLookup
+      ? getPrimaryPackageReservation(db, code)
+      : findReservationByLocatorOrContact(code);
+    if (!r) {
+      return res.status(404).json({ success: false, error: "Reserva ou pacote não encontrado." });
+    }
+
+    const hadTokenBefore = Boolean(r.requesterPortalToken);
+    const requesterPortalToken = ensureLocalRequesterPortalToken(db, r);
+    const isStaffAuth = (() => {
+      const authU = typeof getAuthUser === "function" ? getAuthUser(req) : null;
+      return Boolean(authU && ["admin", "dev", "reception", "recepcao"].includes(String(authU.role || "").toLowerCase()));
+    })();
+    const providedToken = String(req.query?.t || req.query?.token || req.headers?.["x-requester-token"] || "").trim();
+    const hasTokenMatch = Boolean(requesterPortalToken && providedToken && providedToken === requesterPortalToken);
+
+    if (!isPkgLookup && !hasTokenMatch && !isStaffAuth) {
+      return res.status(403).json({
+        success: false,
+        error: "REQUESTER_TOKEN_REQUIRED",
+        message: "Link exclusivo do solicitante necessário para acessar os dados financeiros e operacionais desta reserva."
+      });
+    }
+
+    const baseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
+    const isPackage = Boolean(isPkgLookup || r.packageId || r.packageCode);
+    const pkgKey = isPackage ? (r.packageId || r.packageCode || code.toUpperCase()) : null;
+
+    if (isPackage && pkgKey) {
+      await syncPackagePixAndPaymentLinks(db, pkgKey, {
+        baseUrl,
+        createInterPixCob,
+        generateStaticPixPayload,
+        computeCardAmountFromPix,
+        defaultPixKey: db.settings?.interConfig?.pixKey || DEFAULT_INTER_CONFIG.pixKey || "47964813000165",
+        saveDatabase
+      }).catch(() => {});
+    } else if (!hadTokenBefore) {
+      saveDatabase();
+    }
+
+    const pkgSummary = isPackage && pkgKey
+      ? computePackageSummary(db, pkgKey, { baseUrl, computeCardAmountFromPix })
+      : null;
+
+    const recips = getReservationRecipients(r, db);
+    const isB2b = isB2bReservation(r);
+    const reqName = String(
+      pkgSummary?.requesterName ||
+      recips.requester?.name ||
+      r.requesterInfo?.name ||
+      r.requesterName ||
+      r.agencyAgentName ||
+      r.agencyTradeName ||
+      r.agencyName ||
+      r.companyName ||
+      r.guestName ||
+      ""
+    ).trim();
+    const reqPhone = String(
+      pkgSummary?.requesterPhone ||
+      recips.requester?.phone ||
+      r.requesterInfo?.whatsapp ||
+      r.requesterInfo?.phone ||
+      r.requesterPhone ||
+      r.agencyAgentPhone ||
+      ""
+    ).trim();
+    const reqEmail = String(
+      pkgSummary?.requesterEmail ||
+      recips.requester?.email ||
+      r.requesterInfo?.email ||
+      r.requesterEmail ||
+      r.agencyAgentEmail ||
+      ""
+    ).trim();
+    const reqDocument = String(
+      r.requesterInfo?.cpf ||
+      r.requesterInfo?.document ||
+      r.companyCnpj ||
+      r.agencyCnpj ||
+      (r.requesterIsGuest1 ? r.guestDocument : "") ||
+      ""
+    ).trim();
+
+    ensureReservationCompositeTotal(r);
+    const singlePendingAmount = Math.max(0, (Number(r.totalAmount) || 0) - (Number(r.paidAmount) || 0));
+    const nfseInvoices = (db.fiscalInvoices || []).filter((nf) =>
+      nf && (
+        nf.reservationId === r.id ||
+        nf.reservationCode === r.code ||
+        (pkgKey && (nf.packageCode === pkgKey || nf.packageId === pkgKey))
+      )
+    );
+    const boletos = (db.boletos || []).filter((b) =>
+      b && (
+        b.reservationId === r.id ||
+        b.reservationCode === r.code ||
+        (pkgKey && (b.packageCode === pkgKey || b.packageId === pkgKey))
+      )
+    );
+
+    const buildOpStatus = (itemRes) => {
+      const stLower = String(itemRes.status || "").toLowerCase();
+      if (stLower === "cancelada" || stLower === "cancelled" || stLower === "cancelado") {
+        return { operationalStatus: "cancelled", operationalStatusLabel: "Cancelado" };
+      }
+      if (isPreReservationBlocked(itemRes) || stLower === "pre_reserva" || stLower === "expirada") {
+        return { operationalStatus: "awaiting_payment", operationalStatusLabel: stLower === "expirada" ? "Expirado" : "Aguardando Pagamento" };
+      }
+      if (itemRes.checkoutDone || stLower === "completed" || stLower === "checked_out" || stLower === "checkout") {
+        return { operationalStatus: "checked_out", operationalStatusLabel: "Check-out Realizado" };
+      }
+      if (itemRes.checkedInAt || itemRes.actualCheckinAt || stLower === "in_house" || stLower === "checkin") {
+        return { operationalStatus: "in_house", operationalStatusLabel: "Hospedado" };
+      }
+      const credIncomp = (itemRes.packageId || itemRes.packageCode)
+        ? isFlatGuestCredentialIncomplete(itemRes)
+        : isMissingGuestDataForCredential(itemRes, db);
+      if (credIncomp || !(itemRes.preCheckinCompleted || itemRes.fnhrCompleted)) {
+        return { operationalStatus: "pending_pre_checkin", operationalStatusLabel: "Pré-Check-in Pendente" };
+      }
+      return { operationalStatus: "ready_for_checkin", operationalStatusLabel: "Pronto para Check-in" };
+    };
+
+    const singleOp = buildOpStatus(r);
+    const singleNights = r.checkinDate && r.checkoutDate
+      ? Math.max(1, Math.round((new Date(`${r.checkoutDate}T12:00:00Z`) - new Date(`${r.checkinDate}T12:00:00Z`)) / 86400000))
+      : 1;
+    const singleCardTotal = Number(r.cardTotalAmount) || computeCardAmountFromPix(Number(r.totalAmount) || 0);
+    const singleCardPending = computeCardAmountFromPix(singlePendingAmount);
+    const singleIsPaid = Boolean(
+      !isPreReservationBlocked(r) &&
+      (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0))
+    );
+
+    return res.json({
+      success: true,
+      isPackage,
+      locatorCode: isPackage && pkgSummary ? pkgSummary.packageCode : r.code,
+      requesterPortalToken,
+      requester: {
+        name: reqName || "Solicitante",
+        phone: reqPhone,
+        email: reqEmail,
+        document: reqDocument,
+        companyName: r.companyName || "",
+        agencyName: r.agencyTradeName || r.agencyName || "",
+        type: r.requesterType || (isB2b ? "agency_b2b" : (r.companyName ? "company" : (r.requesterIsGuest1 ? "guest" : "other_person"))),
+        requesterIsGuest1: Boolean(r.requesterIsGuest1),
+        isB2b
+      },
+      packageSummary: pkgSummary,
+      nfseInvoices,
+      boletos,
+      reservation: isPackage ? null : {
+        id: r.id,
+        code: r.code,
+        flatId: r.flatId,
+        flatNumber: String(r.flatNumber || ""),
+        checkinDate: r.checkinDate,
+        checkoutDate: r.checkoutDate,
+        checkinTime: r.checkinTime || "14:00",
+        checkoutTime: r.checkoutTime || "12:00",
+        nights: singleNights,
+        guestCount: Math.min(3, Math.max(1, Number(r.guestCount || r.adults) || 1)),
+        guestName: r.guestName || "",
+        guestPhone: r.guestPhone || "",
+        guestEmail: r.guestEmail || "",
+        guestCpf: r.guestDocument || "",
+        guests: Array.isArray(r.guests) ? r.guests : [],
+        requesterIsGuest1: Boolean(r.requesterIsGuest1),
+        informGuestsLater: Boolean(r.informGuestsLater || r.guestPending),
+        missingFields: isMissingGuestDataForCredential(r, db) ? ["guest_data"] : [],
+        guestPhoneInvalid: Array.isArray(r.guestPhoneCorrectionRequests) && r.guestPhoneCorrectionRequests.some(c => c && c.status !== "resolved"),
+        includeBreakfast: Boolean(r.includeBreakfast || r.hasBreakfast),
+        twinBeds: Boolean(r.twinBeds || r.bedType === "twin" || r.bedType === "2 Solteiro"),
+        extraMattress: Boolean(r.extraMattress),
+        vehicle: r.vehicle || null,
+        totalAmount: Number(r.totalAmount) || 0,
+        paidAmount: Number(r.paidAmount) || 0,
+        pendingAmount: singlePendingAmount,
+        cardTotalAmount: singleCardTotal,
+        cardPendingAmount: singleCardPending,
+        paymentStatus: r.paymentStatus || "pendente",
+        paymentMethod: r.paymentMethod || "pix",
+        isPaid: singleIsPaid,
+        isFaturadoBoleto: isFaturadoBoletoReservation(r),
+        status: r.status || "confirmada",
+        expiresAt: r.expiresAt || null,
+        expiredAt: r.expiredAt || null,
+        pixCopiaECola: r.pixCopiaECola || null,
+        pixTxId: r.pixTxId || null,
+        mpInitPoint: r.mpInitPoint || null,
+        operationalStatus: singleOp.operationalStatus,
+        operationalStatusLabel: singleOp.operationalStatusLabel,
+        preCheckinCompleted: Boolean(r.preCheckinCompleted || r.fnhrCompleted),
+        checkedInAt: r.checkedInAt || r.actualCheckinAt || null,
+        checkedOutAt: r.checkoutAt || r.checkedOutAt || null,
+        guestPortalUrl: `/minha-reserva/${r.code}`,
+        preCheckinUrl: `/pre-checkin/${r.code}`,
+        breakfastUrl: `/cafe/${r.code}`
+      }
+    });
+  } catch (err) {
+    console.error("[Requester Portal] Erro:", err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const code = (req.params.code || "").trim();
   if (!db.reservations) db.reservations = [];
@@ -45408,21 +46017,33 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   }
 
   const portalRecips = getReservationRecipients(r, db);
-  const isSeparateRequester = Boolean(portalRecips.requester?.isDifferentFromGuest || isB2b || (hasPkgPortal && !r.requesterIsGuest1));
+  const isExplicitPrivacyHidden = Boolean(r.hideFinancialForGuest || r.nfHideFromGuest);
+  const isSeparateRequester = Boolean(
+    portalRecips.requester?.isDifferentFromGuest ||
+    isB2b ||
+    (r.requesterType && r.requesterType !== "guest" && !r.requesterIsGuest1) ||
+    (hasPkgPortal && !r.requesterIsGuest1)
+  );
   const guestQueryVal = String(req.query?.guest || req.query?.guestIndex || req.query?.hospede || "").trim();
   const isCompanionGuestParam = guestQueryVal === "2" || guestQueryVal === "3";
+  const hasValidTokenOrStaff = typeof isValidRequesterTokenOrStaff === "function"
+    ? isValidRequesterTokenOrStaff(r, req)
+    : (() => {
+        const tok = String(req?.query?.t || req?.query?.token || req?.headers?.["x-requester-token"] || "").trim();
+        return Boolean(r.requesterPortalToken && tok && tok === String(r.requesterPortalToken).trim());
+      })();
   const isRequesterView = Boolean(
-    isPkgCodeAccess ||
-    req.query?.requester === "1" ||
-    req.query?.view === "requester" ||
-    (hasPkgPortal && r.requesterIsGuest1 && !isCompanionGuestParam)
+    !isCompanionGuestParam && (
+      isPkgCodeAccess ||
+      hasValidTokenOrStaff ||
+      (hasPkgPortal && r.requesterIsGuest1 && !isExplicitPrivacyHidden)
+    )
   );
-  // Hóspedes 1/2 não-solicitantes e acompanhantes nunca visualizam valores financeiros do pacote/reserva
+  // Hóspedes 1/2/3 não-solicitantes nunca visualizam valores financeiros, nem com ?requester=1 sem token válido
   const hideFinancialForGuest = Boolean(
     isB2b ||
     isCompanionGuestParam ||
-    (r.hideFinancialForGuest && !isRequesterView) ||
-    (isSeparateRequester && !isRequesterView)
+    ((isExplicitPrivacyHidden || isSeparateRequester) && !isRequesterView)
   );
 
   const showPackageFinancials = Boolean(pkgPortalSummary && isRequesterView && !hideFinancialForGuest);
@@ -46432,6 +47053,8 @@ function serializeReservationForAgencyCredential(r, opts) {
   const guestCount = Math.max(1, Number(r.guestCount || r.adults) || 1);
   const g2Obj = guestsArr[1] || null;
   const g2Pending = Boolean(guestCount >= 2 && (r.guest2InformLater || g2Obj?.informLater || !String(g2Obj?.name || "").trim()));
+  const g3Obj = guestsArr[2] || null;
+  const g3Pending = Boolean(guestCount >= 3 && (r.guest3InformLater || g3Obj?.informLater || !String(g3Obj?.name || "").trim()));
 
   return {
     id: r.id,
@@ -46482,6 +47105,15 @@ function serializeReservationForAgencyCredential(r, opts) {
       phone: String(g2Obj?.phone || g2Obj?.whatsapp || "").trim(),
       email: String(g2Obj?.email || "").trim(),
       informLater: g2Pending
+    } : null,
+    guest3InformLater: g3Pending,
+    guest3: guestCount >= 3 ? {
+      name: g3Pending ? "" : String(g3Obj?.name || "").trim(),
+      document: String(g3Obj?.cpf || g3Obj?.document || "").trim(),
+      docType: g3Obj?.docType || null,
+      phone: String(g3Obj?.phone || g3Obj?.whatsapp || "").trim(),
+      email: String(g3Obj?.email || "").trim(),
+      informLater: g3Pending
     } : null,
     hasDocPhoto: Boolean(r.docPhotoUrl || linkedGuest?.docPhotoUrl || (r.guests && r.guests[0]?.docPhotoUrl)),
     docPhotoUrl: r.docPhotoUrl || linkedGuest?.docPhotoUrl || (r.guests && r.guests[0]?.docPhotoUrl) || null,
@@ -46556,7 +47188,7 @@ app.get(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credential
   const isGuestSelfQuery = String(req.query?.mode || req.query?.sourceMode || "").toLowerCase() === "guest";
   return res.json({
     reservation: serializeReservationForAgencyCredential(r, {
-      includeRequesterPii: !isGuestSelfQuery && (Boolean(r.packageId || r.packageCode) || req.query?.requester === "1" || !r.hideFinancialForGuest || !r.packageIndex || Number(r.packageIndex) === 1),
+      includeRequesterPii: !isGuestSelfQuery && (Boolean(r.packageId || r.packageCode) || isValidRequesterTokenOrStaff(r, req) || !r.hideFinancialForGuest || (Boolean(r.requesterIsGuest1) && (!r.packageIndex || Number(r.packageIndex) === 1))),
       isGuestSelfMode: isGuestSelfQuery
     })
   });
@@ -46687,14 +47319,65 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       }
     }
 
-    // Verifica se o telefone possui conta ativa no WhatsApp via Z-API
+    const g3PayloadPre = req.body?.guest3 && typeof req.body.guest3 === "object" ? req.body.guest3 : {};
+    const rawG3NamePre = String(req.body?.guest3Name ?? g3PayloadPre.name ?? r.guests?.[2]?.name ?? "").trim();
+    const rawG3PhonePre = String(req.body?.guest3Phone ?? g3PayloadPre.phone ?? g3PayloadPre.whatsapp ?? r.guests?.[2]?.phone ?? "").trim();
+    const rawG3DocPre = String(req.body?.guest3Document ?? g3PayloadPre.document ?? g3PayloadPre.cpf ?? r.guests?.[2]?.cpf ?? "").trim();
+    const g3ExplicitLaterPre = Boolean(req.body?.guest3InformLater || g3PayloadPre.informLater);
+
+    if (requestedOccPreview >= 3 && !g3ExplicitLaterPre) {
+      if (!rawG3NamePre || isPendingGuestName(rawG3NamePre) || rawG3NamePre.split(/\s+/).filter(Boolean).length < 2) {
+        return res.status(400).json({
+          error: "O nome completo (nome e sobrenome) do Hóspede 3 é obrigatório para reserva com 3 hóspedes, ou marque 'Informar Hóspede 3 depois'.",
+          missingGuest3Name: true
+        });
+      }
+      const isIntlG3Pre = rawG3PhonePre.startsWith("+") && !rawG3PhonePre.slice(1).replace(/\D/g, "").startsWith("55");
+      const g3PhoneDigitsPre = rawG3PhonePre.replace(/\D/g, "");
+      if (!g3PhoneDigitsPre || g3PhoneDigitsPre.length < (isIntlG3Pre ? 8 : 10)) {
+        return res.status(400).json({
+          error: "O WhatsApp com DDD do Hóspede 3 é obrigatório, ou marque 'Informar Hóspede 3 depois'.",
+          missingGuest3Phone: true
+        });
+      }
+      if (rawG3DocPre) {
+        const isPassG3Pre = /[a-zA-Z]/.test(rawG3DocPre);
+        const cleanDocG3Pre = isPassG3Pre ? rawG3DocPre.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 20) : rawG3DocPre.replace(/\D/g, "");
+        if (!isPassG3Pre && !isValidBrazilianCpf(cleanDocG3Pre)) {
+          return res.status(400).json({ error: "O CPF do Hóspede 3 é inválido. Verifique os 11 dígitos ou deixe em branco." });
+        }
+      }
+    }
+
+    // Verifica se os telefones dos hóspedes 1, 2 e 3 possuem conta ativa no WhatsApp via Z-API
     try {
       const waCheck = await checkZapiPhoneExists(cleanPhone, db?.zapiConfig);
       if (waCheck && waCheck.checked && waCheck.exists === false) {
         return res.status(400).json({
-          error: "O telefone informado não possui conta ativa no WhatsApp. Por favor, informe um número que possua WhatsApp para receber as informações de acesso ao flat.",
-          invalidWhatsApp: true
+          error: "O telefone informado para o Hóspede 1 não possui conta ativa no WhatsApp. Por favor, informe um número que possua WhatsApp para receber as informações de acesso ao flat.",
+          invalidWhatsApp: true,
+          guestIndex: 1
         });
+      }
+      if (requestedOccPreview >= 2 && !g2ExplicitLaterPre && rawG2PhonePre) {
+        const g2WaCheck = await checkZapiPhoneExists(rawG2PhonePre, db?.zapiConfig);
+        if (g2WaCheck && g2WaCheck.checked && g2WaCheck.exists === false) {
+          return res.status(400).json({
+            error: "O telefone informado para o Hóspede 2 não possui conta ativa no WhatsApp. Verifique o número informado.",
+            invalidWhatsApp: true,
+            guestIndex: 2
+          });
+        }
+      }
+      if (requestedOccPreview >= 3 && !g3ExplicitLaterPre && rawG3PhonePre) {
+        const g3WaCheck = await checkZapiPhoneExists(rawG3PhonePre, db?.zapiConfig);
+        if (g3WaCheck && g3WaCheck.checked && g3WaCheck.exists === false) {
+          return res.status(400).json({
+            error: "O telefone informado para o Hóspede 3 não possui conta ativa no WhatsApp. Verifique o número informado.",
+            invalidWhatsApp: true,
+            guestIndex: 3
+          });
+        }
       }
     } catch (waErr) {
       console.warn("[AgencyGuestCredential] Falha ao consultar phone-exists na Z-API (prosseguindo):", waErr?.message);
@@ -46738,7 +47421,12 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       r.requesterIsGuest1 = true;
       r.hideFinancialForGuest = false;
       r.nfHideFromGuest = false;
-    } else if (requesterIsGuest1 === false && (r.packageId || r.packageCode)) {
+    } else if (
+      requesterIsGuest1 === false ||
+      r.requesterIsGuest1 === false ||
+      ((r.packageId || r.packageCode) && !r.requesterIsGuest1) ||
+      (r.requesterType && r.requesterType !== "guest" && !r.requesterIsGuest1)
+    ) {
       r.requesterIsGuest1 = false;
       r.hideFinancialForGuest = true;
       r.nfHideFromGuest = true;
@@ -46863,6 +47551,103 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       r.guest2InformLater = false;
     }
 
+    // Suporte completo ao Hóspede 3 (quando ocupação === 3)
+    const g3Payload = req.body?.guest3 && typeof req.body.guest3 === "object" ? req.body.guest3 : {};
+    const rawG3Name = String(req.body?.guest3Name ?? g3Payload.name ?? r.guests?.[2]?.name ?? "").trim();
+    const rawG3Phone = String(req.body?.guest3Phone ?? g3Payload.phone ?? g3Payload.whatsapp ?? r.guests?.[2]?.phone ?? "").trim();
+    const rawG3Doc = String(req.body?.guest3Document ?? g3Payload.document ?? g3Payload.cpf ?? r.guests?.[2]?.cpf ?? "").trim();
+    const rawG3Email = String(req.body?.guest3Email ?? g3Payload.email ?? r.guests?.[2]?.email ?? "").trim().toLowerCase();
+    const g3ExplicitLater = Boolean(req.body?.guest3InformLater || g3Payload.informLater);
+
+    if (effectiveOcc >= 3) {
+      if (!g3ExplicitLater && rawG3Name) {
+        const isPassG3 = /[a-zA-Z]/.test(rawG3Doc);
+        const cleanDocG3 = rawG3Doc ? (isPassG3 ? rawG3Doc.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 20) : rawG3Doc.replace(/\D/g, "")) : "";
+        if (cleanDocG3 && !isPassG3 && !isValidBrazilianCpf(cleanDocG3)) {
+          return res.status(400).json({ error: "O CPF do Hóspede 3 é inválido. Verifique os 11 dígitos ou deixe em branco." });
+        }
+        const cleanPhoneG3 = rawG3Phone.startsWith("+") && !rawG3Phone.slice(1).replace(/\D/g, "").startsWith("55")
+          ? `+${rawG3Phone.slice(1).replace(/\D/g, "")}`
+          : rawG3Phone.replace(/\D/g, "");
+        r.guest3InformLater = false;
+        r.guests[2] = {
+          ...(r.guests[2] || {}),
+          index: 3,
+          isMain: false,
+          name: rawG3Name,
+          cpf: cleanDocG3,
+          document: cleanDocG3,
+          docType: isPassG3 ? "Passaporte" : "CPF",
+          phone: cleanPhoneG3,
+          email: rawG3Email,
+          informLater: false,
+          hasCompletedCheckin: Boolean(cleanDocG3 && cleanPhoneG3)
+        };
+        if (!db.guests) db.guests = [];
+        if (cleanPhoneG3.replace(/\D/g, "").length >= 10 || cleanDocG3) {
+          const existingG3 = db.guests.find((g) =>
+            areGuestNamesCompatible(rawG3Name, g.fullName || g.name) && (
+              (cleanDocG3 && String(g.cpf || g.document || "").replace(/\D/g, "") === cleanDocG3) ||
+              (cleanPhoneG3 && String(g.phone || "").replace(/\D/g, "") === cleanPhoneG3.replace(/\D/g, ""))
+            )
+          );
+          if (!existingG3) {
+            const nextG3Id = db.guests.length > 0 ? Math.max(...db.guests.map((g) => Number(g.id) || 0)) + 1 : 1;
+            db.guests.push({
+              id: nextG3Id,
+              guestCode: `HOSP-${String(nextG3Id).padStart(5, "0")}`,
+              name: rawG3Name,
+              fullName: rawG3Name,
+              cpf: cleanDocG3,
+              document: cleanDocG3,
+              docType: isPassG3 ? "Passaporte" : "CPF",
+              phone: cleanPhoneG3,
+              whatsapp: cleanPhoneG3,
+              email: rawG3Email,
+              createdAt: nowCredIso,
+              updatedAt: nowCredIso
+            });
+          }
+        }
+      } else {
+        r.guest3InformLater = true;
+        r.guests[2] = {
+          ...(r.guests[2] || {}),
+          index: 3,
+          isMain: false,
+          name: "",
+          phone: "",
+          cpf: "",
+          document: "",
+          email: "",
+          informLater: true
+        };
+      }
+    } else {
+      if (r.guests.length > effectiveOcc) {
+        r.guests = r.guests.slice(0, effectiveOcc);
+      }
+      r.guest3InformLater = false;
+    }
+
+    if (Array.isArray(r.guestPhoneCorrectionRequests)) {
+      const resolvedIndicesSet = new Set([1]);
+      if (effectiveOcc >= 2 && !r.guest2InformLater && r.guests?.[1]?.phone) resolvedIndicesSet.add(2);
+      if (effectiveOcc >= 3 && !r.guest3InformLater && r.guests?.[2]?.phone) resolvedIndicesSet.add(3);
+      for (const corrReq of r.guestPhoneCorrectionRequests) {
+        if (!corrReq || corrReq.status === "resolved") continue;
+        const gIdxMatch = Number(corrReq.guestIndex) || 1;
+        if (resolvedIndicesSet.has(gIdxMatch)) {
+          corrReq.status = "resolved";
+          corrReq.resolvedAt = nowCredIso;
+          corrReq.resolvedSource = "agency_guest_credential";
+        }
+      }
+      if (!r.guestPhoneCorrectionRequests.some(c => c && (c.status === "awaiting_reply" || c.status === "pending"))) {
+        r.guestPhoneInvalid = false;
+      }
+    }
+
     const credIncompleteAfter = (r.packageId || r.packageCode || effectiveOcc >= 2)
       ? isFlatGuestCredentialIncomplete(r)
       : isMissingGuestDataForCredential(r, db);
@@ -46971,7 +47756,14 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
           const sentPkgGuests = await dispatchIndividualFlatGuestInstructions(db, [r], baseUrl, {
             cleanWhatsAppPhone,
             sendZapiMessage,
-            appendMessageToConversation
+            sendZapiDocument: typeof sendZapiDocument === "function" ? sendZapiDocument : undefined,
+            sendZapiMedia: typeof sendZapiDocument === "function" ? ((cfg, opts) => sendZapiDocument(cfg, opts)) : undefined,
+            hasPdfAlreadyBeenSentOrInFlight: typeof hasPdfAlreadyBeenSentOrInFlight === "function" ? hasPdfAlreadyBeenSentOrInFlight : undefined,
+            checkZapiPhoneExists: typeof checkZapiPhoneExists === "function" ? checkZapiPhoneExists : undefined,
+            createNotification: typeof createNotification === "function" ? createNotification : undefined,
+            scheduleUpcomingReservationTriggers: typeof scheduleUpcomingReservationTriggers === "function" ? ((d) => scheduleUpcomingReservationTriggers(d, saveDatabase)) : undefined,
+            appendMessageToConversation,
+            saveDatabase
           });
           catchUpResult = { dispatchedStages: sentPkgGuests.map(g => `package_guest_${g.guestIndex}_instructions`) };
           try {
@@ -47010,6 +47802,7 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       ok: true,
       success: true,
       guest2Pending: Boolean(r.guest2InformLater),
+      guest3Pending: Boolean(r.guest3InformLater),
       isCredentialComplete: !credIncompleteAfter,
       dispatchedStages: catchUpResult.dispatchedStages || [],
       message: r.guest2InformLater
@@ -47573,17 +48366,24 @@ function isGuestPortalRequesterAuthorized(r, code, req) {
   if (!r) return false;
   const gParam = String(req?.query?.guest || req?.query?.guestIndex || req?.query?.hospede || "").trim();
   if (gParam === "2" || gParam === "3") return false;
-  if (isB2bReservation(r) && !isPackageCode(code) && req?.query?.requester !== "1") return false;
+  const isPkgLookup = isPackageCode(code);
+  const hasValidTokenOrStaff = typeof isValidRequesterTokenOrStaff === "function"
+    ? isValidRequesterTokenOrStaff(r, req)
+    : (() => {
+        const tok = String(req?.query?.t || req?.query?.token || req?.body?.requesterPortalToken || req?.body?.t || "").trim();
+        return Boolean(r.requesterPortalToken && tok && tok === String(r.requesterPortalToken).trim());
+      })();
+  if (isB2bReservation(r) && !isPkgLookup && !hasValidTokenOrStaff) return false;
   if (r.packageId || r.packageCode) {
-    const pkgNorm = String(r.packageId || r.packageCode || "").trim().toUpperCase();
-    const bodyPkg = String(req?.body?.packageCode || req?.query?.packageCode || "").trim().toUpperCase();
-    const isReq =
-      isPackageCode(code) ||
-      req?.query?.requester === "1" ||
-      req?.query?.view === "requester" ||
-      (bodyPkg && bodyPkg === pkgNorm) ||
-      Boolean(r.requesterIsGuest1);
-    if (!isReq && r.hideFinancialForGuest) return false;
+    const isExplicitHide = Boolean(r.hideFinancialForGuest || r.nfHideFromGuest);
+    const isReq = Boolean(
+      isPkgLookup ||
+      hasValidTokenOrStaff ||
+      (r.requesterIsGuest1 && !isExplicitHide)
+    );
+    if (!isReq) return false;
+  } else if ((r.hideFinancialForGuest || r.nfHideFromGuest) && !hasValidTokenOrStaff) {
+    return false;
   }
   return true;
 }
@@ -47687,6 +48487,12 @@ app.post("/api/pms/guest-portal/:code/cancel", async (req, res) => {
     const pkgSiblings = getPackageReservations(db, pkgIdNorm);
     const cancelWholePkg = Boolean(isPackageCode(code) ? req.body?.cancelWholePackage !== false : req.body?.cancelWholePackage);
 
+    if (!isGuestPortalRequesterAuthorized(r, code, req)) {
+      return res.status(403).json({
+        error: "Apenas o solicitante responsável pelo pacote pode cancelar apartamentos. Entre em contato com o responsável pela reserva."
+      });
+    }
+
     let targetForPkgCancel = r;
     if (req.body?.reservationId !== undefined && req.body?.reservationId !== null && String(req.body.reservationId).trim() !== "") {
       const matchedInPkg = pkgSiblings.find(
@@ -47696,17 +48502,6 @@ app.post("/api/pms/guest-portal/:code/cancel", async (req, res) => {
         return res.status(403).json({ error: "A reserva informada não pertence a este pacote." });
       }
       targetForPkgCancel = matchedInPkg;
-    }
-
-    const callerKnowsPackageCode =
-      isPackageCode(code) ||
-      (req.body?.packageCode && String(req.body.packageCode).trim().toUpperCase() === pkgIdNorm) ||
-      Boolean(r.requesterIsGuest1 && req.query?.guest !== "2" && req.query?.guest !== "3");
-
-    if (!callerKnowsPackageCode && r.hideFinancialForGuest) {
-      return res.status(403).json({
-        error: "Apenas o solicitante responsável pelo pacote pode cancelar apartamentos. Entre em contato com o responsável pela reserva."
-      });
     }
 
     if (!cancelWholePkg && (targetForPkgCancel.status === "cancelada" || targetForPkgCancel.status === "cancelled" || targetForPkgCancel.status === "CANCELLED")) {
@@ -48732,7 +49527,7 @@ app.post("/api/pms/guest-portal/:code/modify-checkout", async (req, res) => {
   try {
     const code = (req.params.code || "").trim();
     if (!db.reservations) db.reservations = [];
-    const r = findReservationByLocatorOrContact(code) || (db.reservations || []).find(x => x.code === code || String(x.id) === code);
+    let r = findReservationByLocatorOrContact(code) || (db.reservations || []).find(x => x.code === code || String(x.id) === code);
     if (!r) {
       return res.status(404).json({ error: "Reserva não encontrada." });
     }
@@ -48741,6 +49536,17 @@ app.post("/api/pms/guest-portal/:code/modify-checkout", async (req, res) => {
       return res.status(403).json({
         error: "Apenas o solicitante responsável pelo pacote pode solicitar alteração de datas ou ocupação."
       });
+    }
+
+    if ((r.packageId || r.packageCode) && req.body?.reservationId !== undefined && req.body?.reservationId !== null && String(req.body.reservationId).trim() !== "") {
+      const pkgIdNormCk = String(r.packageId || r.packageCode || "").trim().toUpperCase();
+      const matchedCk = getPackageReservations(db, pkgIdNormCk).find(
+        x => String(x.id) === String(req.body.reservationId) || String(x.code || "").toUpperCase() === String(req.body.reservationId).toUpperCase()
+      );
+      if (!matchedCk) {
+        return res.status(403).json({ error: "A reserva informada não pertence a este pacote." });
+      }
+      r = matchedCk;
     }
 
     if (r.status === "cancelada" || r.status === "CANCELLED" || r.status === "expirada") {
@@ -49009,7 +49815,7 @@ app.get("/api/pms/guest-portal/:code/modify-status", async (req, res) => {
     const pendingId = (req.query.pendingId || "").trim();
 
     if (!db.reservations) db.reservations = [];
-    const r = findReservationByLocatorOrContact(code) || (db.reservations || []).find(x => x.code === code || String(x.id) === code);
+    let r = findReservationByLocatorOrContact(code) || (db.reservations || []).find(x => x.code === code || String(x.id) === code);
     if (!r) {
       return res.status(404).json({ success: false, error: "Reserva não encontrada." });
     }
@@ -49019,6 +49825,18 @@ app.get("/api/pms/guest-portal/:code/modify-status", async (req, res) => {
         success: false,
         error: "Apenas o solicitante responsável pelo pacote pode consultar ou cancelar alterações."
       });
+    }
+
+    const reqResIdStatus = req.query?.reservationId;
+    if ((r.packageId || r.packageCode) && reqResIdStatus !== undefined && reqResIdStatus !== null && String(reqResIdStatus).trim() !== "") {
+      const pkgIdNormSt = String(r.packageId || r.packageCode || "").trim().toUpperCase();
+      const matchedSt = getPackageReservations(db, pkgIdNormSt).find(
+        x => String(x.id) === String(reqResIdStatus) || String(x.code || "").toUpperCase() === String(reqResIdStatus).toUpperCase()
+      );
+      if (!matchedSt) {
+        return res.status(403).json({ success: false, error: "A reserva informada não pertence a este pacote." });
+      }
+      r = matchedSt;
     }
 
     const reservationCode = r.code;
@@ -49283,7 +50101,7 @@ app.post("/api/pms/guest-portal/:code/modify-cancel-pending", (req, res) => {
     const { pendingId } = req.body || {};
 
     if (!db.reservations) db.reservations = [];
-    const r = findReservationByLocatorOrContact(code) || (db.reservations || []).find(x => x.code === code || String(x.id) === code);
+    let r = findReservationByLocatorOrContact(code) || (db.reservations || []).find(x => x.code === code || String(x.id) === code);
     if (!r) {
       return res.status(404).json({ success: false, error: "Reserva não encontrada." });
     }
@@ -49293,6 +50111,18 @@ app.post("/api/pms/guest-portal/:code/modify-cancel-pending", (req, res) => {
         success: false,
         error: "Apenas o solicitante responsável pelo pacote pode consultar ou cancelar alterações."
       });
+    }
+
+    const reqResIdCancelPend = req.body?.reservationId ?? req.query?.reservationId;
+    if ((r.packageId || r.packageCode) && reqResIdCancelPend !== undefined && reqResIdCancelPend !== null && String(reqResIdCancelPend).trim() !== "") {
+      const pkgIdNormCp = String(r.packageId || r.packageCode || "").trim().toUpperCase();
+      const matchedCp = getPackageReservations(db, pkgIdNormCp).find(
+        x => String(x.id) === String(reqResIdCancelPend) || String(x.code || "").toUpperCase() === String(reqResIdCancelPend).toUpperCase()
+      );
+      if (!matchedCp) {
+        return res.status(403).json({ success: false, error: "A reserva informada não pertence a este pacote." });
+      }
+      r = matchedCp;
     }
 
     if (!r.pendingModification) {
@@ -71156,15 +71986,86 @@ app.get("/api/breakfast/reservation-context", (req, res) => {
     req.query.id ||
     ""
   ).trim();
-  if (!resParam || ["undefined", "null", "none"].includes(resParam.toLowerCase())) {
+  const roomParam = String(req.query.room || req.query.flatNumber || req.query.flat || "").trim();
+  const isResParamInvalid = !resParam || ["undefined", "null", "none"].includes(resParam.toLowerCase());
+  if (isResParamInvalid && (!roomParam || ["undefined", "null", "none"].includes(roomParam.toLowerCase()))) {
     return res.status(400).json({ error: "Parâmetro de reserva não informado." });
   }
 
   if (!db.reservations) db.reservations = [];
   const nowBrl = getBrasiliaNow();
   const todayStr = nowBrl.date;
+  const tomorrowStr = getOffsetDateStr(1);
 
-  let r = findReservationByLocatorOrContact(resParam);
+  const isHasBreakfastFlag = (resObj) => Boolean(
+    resObj && (
+      resObj.includeBreakfast ||
+      resObj.hasBreakfast ||
+      resObj.ratePlan === "with_breakfast" ||
+      resObj.notes?.toLowerCase().includes("café") ||
+      resObj.notes?.toLowerCase().includes("cafe")
+    )
+  );
+  const isResCancelled = (resObj) => Boolean(resObj && (resObj.status === "cancelada" || resObj.status === "cancelado" || resObj.status === "cancelled"));
+
+  let isPackageContext = false;
+  let packageCodeCtx = null;
+  let packageFlatsList = null;
+  let r = null;
+
+  if (!isResParamInvalid && isPackageCode(resParam)) {
+    isPackageContext = true;
+    packageCodeCtx = resParam.trim().toUpperCase();
+    const pkgItems = getPackageReservations(db, packageCodeCtx);
+    if (pkgItems.length > 0) {
+      packageFlatsList = pkgItems.map((itemRes) => {
+        const itemFlatObj = (db.flats || []).find(f => f.id === itemRes.flatId || String(f.number) === String(itemRes.flatNumber));
+        const itemFlatNum = String(itemRes.flatNumber || itemFlatObj?.number || "").trim();
+        const itemHasBf = isHasBreakfastFlag(itemRes);
+        const itemCanc = isResCancelled(itemRes);
+        const itemPre = isPreReservationBlocked(itemRes);
+        return {
+          id: itemRes.id,
+          code: itemRes.code || itemRes.reservationCode,
+          flatId: itemRes.flatId,
+          flatNumber: itemFlatNum,
+          guestName: itemRes.guestName || "Hóspede",
+          guestCount: Math.min(3, Math.max(1, Number(itemRes.guestCount || itemRes.adults) || 1)),
+          checkinDate: itemRes.checkinDate,
+          checkoutDate: itemRes.checkoutDate,
+          status: itemRes.status,
+          includeBreakfast: itemHasBf,
+          hasBreakfast: itemHasBf,
+          isCancelled: itemCanc,
+          isPreReservation: itemPre,
+          isEligible: Boolean(!itemCanc && !itemPre && itemHasBf),
+          breakfastToken: itemRes.breakfastToken || `bfk_${itemRes.id}`
+        };
+      });
+      const requestedFlatNorm = String(req.query.flat || req.query.flatNumber || "").trim();
+      r = (requestedFlatNorm ? pkgItems.find(x => String(x.flatNumber) === requestedFlatNorm || String(x.code || "").toUpperCase() === requestedFlatNorm.toUpperCase()) : null) ||
+          pkgItems.find(x => !isResCancelled(x) && !isPreReservationBlocked(x) && isHasBreakfastFlag(x)) ||
+          pkgItems.find(x => !isResCancelled(x)) ||
+          pkgItems[0];
+    }
+  } else if (!isResParamInvalid) {
+    r = findReservationByLocatorOrContact(resParam);
+  } else if (roomParam) {
+    const cleanRoom = roomParam.replace(/^flat\s*/i, "").trim();
+    const matchingRoomRes = (db.reservations || []).filter(resObj => {
+      if (!resObj) return false;
+      const flatMatch = String(resObj.flatNumber || "").trim() === cleanRoom;
+      if (!flatMatch) return false;
+      return !isResCancelled(resObj) && String(resObj.status || "").toLowerCase() !== "expirada";
+    });
+    const inStayTargetDate = nowBrl.hour >= 5 ? tomorrowStr : todayStr;
+    r = matchingRoomRes.find(x => !isPreReservationBlocked(x) && x.checkinDate <= inStayTargetDate && x.checkoutDate >= inStayTargetDate && isHasBreakfastFlag(x)) ||
+        matchingRoomRes.find(x => !isPreReservationBlocked(x) && x.checkinDate <= tomorrowStr && x.checkoutDate >= todayStr && isHasBreakfastFlag(x)) ||
+        matchingRoomRes.find(x => !isPreReservationBlocked(x) && x.checkoutDate >= todayStr) ||
+        matchingRoomRes.find(x => x.checkoutDate >= todayStr) ||
+        matchingRoomRes[0] ||
+        null;
+  }
 
   // Fallback para o código oficial de pré-visualização/teste do painel de Automação WhatsApp e Café (RES-113-0034)
   if (!r && resParam.toUpperCase() === "RES-113-0034") {
@@ -71195,18 +72096,12 @@ app.get("/api/breakfast/reservation-context", (req, res) => {
   }
 
   // Check if cancelled or unconfirmed pre-reservation
-  const isCancelled = r.status === "cancelada" || r.status === "cancelado" || r.status === "cancelled";
+  const isCancelled = isResCancelled(r);
   const isPreReservation = isPreReservationBlocked(r);
   const isExpiredPreReservation = String(r.status || "").toLowerCase() === "expirada";
 
   // Check if breakfast is included
-  const hasBreakfast = Boolean(
-    r.includeBreakfast ||
-    r.hasBreakfast ||
-    r.ratePlan === "with_breakfast" ||
-    r.notes?.toLowerCase().includes("café") ||
-    r.notes?.toLowerCase().includes("cafe")
-  );
+  const hasBreakfast = isHasBreakfastFlag(r);
 
   // Ensure breakfastToken exists
   if (!r.breakfastToken && !r._isSimulatedTest) {
@@ -71302,14 +72197,21 @@ app.get("/api/breakfast/reservation-context", (req, res) => {
     };
   });
 
+  const strictContractedGuestCount = Math.min(3, Math.max(1, Number(r.guestCount || r.adults) || 1));
+
   res.json({
+    isPackage: isPackageContext,
+    packageCode: packageCodeCtx,
+    packageFlats: packageFlatsList || [],
+    eligibleFlats: Array.isArray(packageFlatsList) ? packageFlatsList.filter(f => f.isEligible) : [],
     reservation: {
       id: r.id,
       code: resolvedCode,
+      packageCode: r.packageCode || r.packageId || null,
       breakfastToken: r.breakfastToken || `bfk_${r.id}`,
       guestName: r.guestName,
       guestPhone: r.guestPhone,
-      guestCount: r.guestCount || r.adults || (Array.isArray(r.guests) && r.guests.length > 0 ? r.guests.length : 1),
+      guestCount: strictContractedGuestCount,
       guests: Array.isArray(r.guests) ? r.guests : [],
       flatId: r.flatId,
       flatNumber: resolvedFlatNum,
@@ -73247,7 +74149,21 @@ app.post("/api/breakfast/orders", (req, res) => {
     }
   }
 
-  const gCount = Math.min(Math.max(Number(guestCount) || 1, 1), 3); // 1, 2 ou 3 apenas
+  let maxAllowedBreakfastGuests = 3;
+  if (activeRes) {
+    maxAllowedBreakfastGuests = Math.min(3, Math.max(1, Number(activeRes.guestCount || activeRes.adults) || 1));
+    const reqCountNum = Number(guestCount) || 1;
+    const choicesLen = Array.isArray(guestChoices) ? guestChoices.length : 0;
+    const ordersLen = Array.isArray(guestOrders) ? guestOrders.length : 0;
+    if (reqCountNum > maxAllowedBreakfastGuests || choicesLen > maxAllowedBreakfastGuests || ordersLen > maxAllowedBreakfastGuests) {
+      return res.status(400).json({
+        error: `Esta reserva permite café da manhã para no máximo ${maxAllowedBreakfastGuests} hóspede(s).`,
+        maxGuests: maxAllowedBreakfastGuests
+      });
+    }
+  }
+
+  const gCount = Math.min(Math.max(Number(guestCount) || 1, 1), maxAllowedBreakfastGuests); // limitado à ocupação da reserva (1 a 3)
   const proposedMinutes = timeToMinutes(deliveryTime || guestOrders?.[0]?.deliveryTime);
 
   // Validar se o horário respeita 7 minutos de intervalo de outros pedidos em cada data solicitada
@@ -73610,6 +74526,17 @@ app.post("/api/breakfast/orders/repeat", (req, res) => {
       return res.status(403).json({
         error: "Esta reserva ainda está como pré-reserva aguardando confirmação do pagamento. O pedido de café da manhã só é liberado após a confirmação da reserva.",
         preReservationBlocked: true
+      });
+    }
+    const maxGuestsRepeat = Math.min(3, Math.max(1, Number(repeatRes.guestCount || repeatRes.adults) || 1));
+    const origCount = Number(original.guestCount) || 1;
+    const origChoicesLen = Array.isArray(original.guestChoices) ? original.guestChoices.length : 0;
+    const origOrdersLen = Array.isArray(original.guestOrders) ? original.guestOrders.length : 0;
+    const reqCountRepeat = Number(req.body?.guestCount) || 0;
+    if (reqCountRepeat > maxGuestsRepeat || origCount > maxGuestsRepeat || origChoicesLen > maxGuestsRepeat || origOrdersLen > maxGuestsRepeat) {
+      return res.status(400).json({
+        error: `Esta reserva permite café da manhã para no máximo ${maxGuestsRepeat} hóspede(s).`,
+        maxGuests: maxGuestsRepeat
       });
     }
   }
@@ -77405,15 +78332,17 @@ app.get("/api/live-ops/metrics", (req, res) => {
     });
 
     // 5. Cafés da Manhã de Hoje (Sem dados de garagem)
-    const breakfastOrdersToday = todayCleanings.filter(r =>
-      r.hasBreakfast || r.breakfastOrder
-    ).map(r => ({
-      flatNumber: r.flatNumber,
-      deliveryTime: r.breakfastOrder?.deliveryTime || "07:30",
-      guestName: r.arrivingGuest || r.leavingGuest || "Hóspede",
-      items: r.breakfastOrder?.items || ["Café", "Pães", "Frutas", "Suco"],
-      status: r.breakfastDelivered ? "Entregue" : "Preparando"
-    }));
+    const breakfastOrdersToday = (db.breakfastOrders || [])
+      .filter(o => o && o.date === todayStr && o.status !== "cancelled")
+      .map(o => ({
+        id: o.id,
+        flatNumber: String(o.roomNumber || o.flatNumber || ""),
+        deliveryTime: o.deliveryTime || "07:30",
+        guestName: o.clientName || "Hóspede",
+        guestCount: Math.min(3, Math.max(1, Number(o.guestCount) || 1)),
+        items: Array.isArray(o.items) && o.items.length > 0 ? o.items : ["Café", "Pães", "Frutas", "Suco"],
+        status: o.status === "delivered" ? "Entregue" : "Preparando"
+      }));
 
     // 6. Financeiro Hoje, Mês & Canais
     const todayRevenue = occupiedReservationsToday.reduce((acc, r) => acc + (Number(r.dailyRate) || 250), 0);
@@ -81701,10 +82630,16 @@ async function confirmReservationPayment(r, {
         computeCardAmountFromPix,
         cleanWhatsAppPhone,
         sendZapiMessage,
+        sendZapiDocument: typeof sendZapiDocument === "function" ? sendZapiDocument : undefined,
+        sendZapiMedia: typeof sendZapiDocument === "function" ? ((cfg, opts) => sendZapiDocument(cfg, opts)) : undefined,
+        hasPdfAlreadyBeenSentOrInFlight: typeof hasPdfAlreadyBeenSentOrInFlight === "function" ? hasPdfAlreadyBeenSentOrInFlight : undefined,
+        checkZapiPhoneExists: typeof checkZapiPhoneExists === "function" ? checkZapiPhoneExists : undefined,
+        createNotification: typeof createNotification === "function" ? createNotification : undefined,
+        syncCleaningCardsForConfirmedReservation: typeof syncCleaningCardsForConfirmedReservation === "function" ? syncCleaningCardsForConfirmedReservation : undefined,
         appendMessageToConversation,
         sendEmailAsync,
         wrapEmailTemplate,
-        scheduleUpcomingReservationTriggers: (targetDb) => scheduleUpcomingReservationTriggers(targetDb, saveDatabase),
+        scheduleUpcomingReservationTriggers: typeof scheduleUpcomingReservationTriggers === "function" ? ((targetDb) => scheduleUpcomingReservationTriggers(targetDb, saveDatabase)) : undefined,
         saveDatabase,
         suppressExternalSend
       }
@@ -81713,6 +82648,11 @@ async function confirmReservationPayment(r, {
     if (settledPkg && Array.isArray(settledPkg.settledReservations) && settledPkg.settledReservations.length > 0) {
       const settledList = settledPkg.settledReservations;
       const settledPrimary = settledList[0];
+      for (const flatRes of settledList) {
+        if (typeof syncCleaningCardsForConfirmedReservation === "function") {
+          syncCleaningCardsForConfirmedReservation(db, flatRes);
+        }
+      }
       const effectivePkgValue = Number(amount) || Number(settledPkg.summary?.totalAmount) || Number(pkgSumBefore.pendingAmount) || 0;
 
       createNotification({
@@ -82032,17 +82972,46 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
 
     const statusGuestParam = String(req.query?.guest || req.query?.guestIndex || req.query?.hospede || "").trim();
     const isStatusCompanion = statusGuestParam === "2" || statusGuestParam === "3";
+    const hasValidStatusTokenOrStaff = typeof isValidRequesterTokenOrStaff === "function"
+      ? isValidRequesterTokenOrStaff(r, req)
+      : (() => {
+          const tok = String(req?.query?.t || req?.query?.token || req?.headers?.["x-requester-token"] || "").trim();
+          return Boolean(r.requesterPortalToken && tok && tok === String(r.requesterPortalToken).trim());
+        })();
     const isRequesterStatusView = Boolean(
-      isPkgLookup ||
-      req.query?.requester === "1" ||
-      req.query?.view === "requester" ||
-      (r.requesterIsGuest1 && !isStatusCompanion)
+      !isStatusCompanion && (
+        isPkgLookup ||
+        hasValidStatusTokenOrStaff ||
+        (r.requesterIsGuest1 && !(r.hideFinancialForGuest || r.nfHideFromGuest))
+      )
     );
     const hideFinancialStatus = Boolean(
       isB2bReservation(r) ||
       isStatusCompanion ||
-      ((r.hideFinancialForGuest || ((r.packageId || r.packageCode) && !r.requesterIsGuest1)) && !isRequesterStatusView)
+      ((r.hideFinancialForGuest || r.nfHideFromGuest || ((r.packageId || r.packageCode) && !r.requesterIsGuest1)) && !isRequesterStatusView)
     );
+    const sanitizePaymentStatusPayload = (payloadObj) => {
+      if (!hideFinancialStatus) return payloadObj;
+      return {
+        ...payloadObj,
+        hideFinancialForGuest: true,
+        isPackage: false,
+        packageSummary: null,
+        paidAmount: 0,
+        totalAmount: 0,
+        cardTotalAmount: 0,
+        cardPendingAmount: 0,
+        dailyRates: [],
+        pendingStayExtension: null,
+        expiredStayExtension: null,
+        pixTxId: null,
+        pixCopiaECola: null,
+        pixEndToEndId: null,
+        mpPaymentId: null,
+        mpPreferenceId: null,
+        mpInitPoint: null
+      };
+    };
 
     if (r.packageId || r.packageCode) {
       const baseUrlPkg = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
@@ -82177,7 +83146,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
       }
     }
     if (r.status === "expirada") {
-      return res.json({
+      return res.json(sanitizePaymentStatusPayload({
         code: r.code,
         paid: false,
         status: "expirada",
@@ -82186,7 +83155,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
         expiresAt: r.expiresAt || null,
         pixCopiaECola: null,
         mpInitPoint: null
-      });
+      }));
     }
     ensureReservationCompositeTotal(r);
 
@@ -82200,7 +83169,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
         r.pixChargedAmount = 0;
         saveDatabase();
       }
-      return res.json({
+      return res.json(sanitizePaymentStatusPayload({
         code: r.code,
         paid: false,
         isFaturadoBoleto: true,
@@ -82213,7 +83182,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
         pixCopiaECola: null,
         mpInitPoint: null,
         mpPreferenceId: null
-      });
+      }));
     }
     const hasPendingDirectBalance = (r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial" || r.paymentStatus === "pendente") &&
       Number(r.totalAmount) > 0 &&
@@ -82242,7 +83211,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
         if (!r.paymentMethod || r.paymentMethod === "pix") r.paymentMethod = "cartao_credito";
         saveDatabase();
       }
-      return res.json({
+      return res.json(sanitizePaymentStatusPayload({
         code: r.code,
         paid: true,
         paymentStatus: "pago_total",
@@ -82259,7 +83228,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
         pixTxId: isSettledByCard ? null : (r.pixTxId || null),
         pixEndToEndId: r.pixEndToEndId || null,
         mpPaymentId: r.mpPaymentId || null
-      });
+      }));
     }
 
     const prefersCard = Boolean(
@@ -82278,7 +83247,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
           source: "Mercado Pago"
         });
 
-        return res.json({
+        return res.json(sanitizePaymentStatusPayload({
           code: r.code,
           paid: true,
           paymentStatus: "pago_total",
@@ -82289,7 +83258,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
           pixTxId: null,
           pixEndToEndId: null,
           mpPaymentId: r.mpPaymentId
-        });
+        }));
       }
     }
 
@@ -82306,7 +83275,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
           source: "Banco Inter Cobrança"
         });
 
-        return res.json({
+        return res.json(sanitizePaymentStatusPayload({
           code: r.code,
           paid: true,
           paymentStatus: "pago_total",
@@ -82317,7 +83286,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
           pixTxId: r.pixTxId,
           pixEndToEndId: r.pixEndToEndId || null,
           mpPaymentId: r.mpPaymentId || null
-        });
+        }));
       }
     }
 
@@ -82333,7 +83302,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
         source: "Banco Inter Extrato"
       });
 
-      return res.json({
+      return res.json(sanitizePaymentStatusPayload({
         code: r.code,
         paid: true,
         paymentStatus: "pago_total",
@@ -82344,7 +83313,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
         pixTxId: r.pixTxId,
         pixEndToEndId: r.pixEndToEndId || null,
         mpPaymentId: r.mpPaymentId || null
-      });
+      }));
     }
 
     // Se não liquidou pelo Inter, verifica no Mercado Pago (Cartão de Crédito)
@@ -82360,7 +83329,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
           source: "Mercado Pago"
         });
 
-        return res.json({
+        return res.json(sanitizePaymentStatusPayload({
           code: r.code,
           paid: true,
           paymentStatus: "pago_total",
@@ -82371,7 +83340,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
           pixTxId: null,
           pixEndToEndId: null,
           mpPaymentId: r.mpPaymentId
-        });
+        }));
       }
     }
 
@@ -82402,7 +83371,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
       saveDatabase();
     }
 
-    res.json({
+    res.json(sanitizePaymentStatusPayload({
       code: r.code,
       paid: false,
       paymentStatus: r.paymentStatus || "aguardando_pagamento",
@@ -82420,7 +83389,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
       pixCopiaECola: r.pixCopiaECola || null,
       mpInitPoint: r.mpInitPoint || null,
       mpPreferenceId: r.mpPreferenceId || null
-    });
+    }));
   } catch (err) {
     console.error("[Payment Status Check] Erro:", err.message);
     res.status(500).json({ error: err.message });
@@ -87624,7 +88593,40 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
     )
   );
 
-  const guestName = String(pkgCopySummary?.requesterName || r?.guestName || req.query.guest || "Hóspede").trim();
+  const copyRecips = r ? getReservationRecipients(r, db) : null;
+  const hasSeparateRequester = Boolean(
+    pkgCopySummary ||
+    copyRecips?.requester?.isDifferentFromGuest ||
+    (r && (
+      (r.requesterType && r.requesterType !== "guest" && !r.requesterIsGuest1) ||
+      Boolean(r.packageId || r.packageCode) ||
+      isB2bReservation(r) ||
+      r.requesterIsGuest1 === false
+    ))
+  );
+  const requesterDisplayName = String(
+    pkgCopySummary?.requesterName ||
+    copyRecips?.requester?.name ||
+    r?.requesterInfo?.name ||
+    r?.requesterName ||
+    r?.companyName ||
+    r?.agencyTradeName ||
+    r?.agencyName ||
+    r?.guestName ||
+    req.query.guest ||
+    "Solicitante"
+  ).trim();
+  const guestName = hasSeparateRequester
+    ? requesterDisplayName
+    : String(r?.guestName || req.query.guest || "Hóspede").trim();
+  const packageGuestsSummary = pkgCopySummary
+    ? pkgCopySummary.items
+        .filter(x => x && x.isActive)
+        .map(x => `Flat ${x.flatNumber}: ${x.guestPending || isPendingGuestName(x.guestName) ? "A Definir" : x.guestName}`)
+        .join(" • ")
+    : (hasSeparateRequester && r?.guestName && !isPendingGuestName(r.guestName)
+        ? `Flat ${r.flatNumber || ""}: ${r.guestName}`.trim()
+        : "");
   const flatNumber = pkgCopySummary
     ? pkgCopySummary.items.filter(x => x.isActive).map(x => x.flatNumber).join(", ")
     : String(r?.flatNumber || r?.flatId || req.query.flat || "").trim();
@@ -87683,7 +88685,16 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
   const formattedCardValue = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cardPendingAmount);
   const formattedUpsellNormalValue = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(upsellNormalDailyRate);
   const qrCodeUrl = pixCode ? `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(pixCode)}` : "";
-  const portalUrl = rawCode ? `/minha-reserva/${encodeURIComponent(rawCode)}` : "/minha-reserva";
+  const requesterPortalLocator = String(
+    pkgCopySummary?.packageCode ||
+    (isPkgCopyLookup ? rawCode.toUpperCase() : r?.code) ||
+    rawCode ||
+    ""
+  ).trim();
+  const requesterPortalToken = r ? ensureLocalRequesterPortalToken(db, r) : String(req.query.t || "").trim();
+  const portalUrl = hasSeparateRequester && requesterPortalLocator
+    ? `/solicitante/${encodeURIComponent(requesterPortalLocator)}${requesterPortalToken ? `?t=${encodeURIComponent(requesterPortalToken)}` : ""}`
+    : (rawCode ? `/minha-reserva/${encodeURIComponent(rawCode)}` : "/minha-reserva");
   const adminWhatsApp = db.settings?.adminWhatsApp || "5522997124021";
   const whatsappUrl = isSundayUpsellExpired
     ? `https://wa.me/${adminWhatsApp}?text=${encodeURIComponent(`Olá! Estou no Flat ${flatNumber || ""} (${rawCode}) e gostaria de reativar o link da Oferta de Domingo Sem Pressa!`)}`
@@ -87783,9 +88794,14 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
         <span class="detail-val">Flat ${flatNumber}</span>
       </div>` : ""}
       <div class="detail-row">
-        <span class="detail-label">Hóspede:</span>
-        <span class="detail-val">${guestName}</span>
+        <span class="detail-label">${hasSeparateRequester ? "Solicitante:" : "Hóspede:"}</span>
+        <span class="detail-val">${escapeOgHtmlAttr(guestName)}</span>
       </div>
+      ${packageGuestsSummary ? `
+      <div class="detail-row" style="font-size: 12px; opacity: 0.86; align-items: flex-start;">
+        <span class="detail-label">Hóspedes:</span>
+        <span class="detail-val" style="font-size: 12px; color: #cbd5e1; text-align: right; max-width: 68%;">${escapeOgHtmlAttr(packageGuestsSummary)}</span>
+      </div>` : ""}
       ${isSundayUpsell ? `
       <div class="detail-row" style="border-top: 1px solid #334155; margin-top: 6px; padding-top: 8px;">
         <span class="detail-label">Tarifa Normal da Diária:</span>
@@ -87844,7 +88860,7 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
 
     ${!isSundayUpsell ? `
     <a href="${portalUrl}" class="btn-sec">
-      🏨 Acessar Portal da Minha Reserva
+      ${hasSeparateRequester ? "📋 Acessar Portal do Solicitante" : "🏨 Acessar Portal da Minha Reserva"}
     </a>` : ""}
 
     <a href="${whatsappUrl}" class="btn-sec" style="background: #1e3a2b; border: 1px solid #065f46; color: #6ee7b7;">
@@ -87895,10 +88911,12 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
     window.addEventListener('DOMContentLoaded', () => {
       copyPix();
       const resCode = ${JSON.stringify(rawCode || "")};
+      const pollToken = ${JSON.stringify(hasSeparateRequester ? (requesterPortalToken || "") : "")};
       if (resCode) {
         const pollTimer = setInterval(async () => {
           try {
-            const resp = await fetch('/api/pms/reservations/' + encodeURIComponent(resCode) + '/payment-status');
+            const pollUrl = '/api/pms/reservations/' + encodeURIComponent(resCode) + '/payment-status' + (pollToken ? ('?t=' + encodeURIComponent(pollToken)) : '');
+            const resp = await fetch(pollUrl);
             if (!resp.ok) return;
             const data = await resp.json();
             if (data && data.paid) {
@@ -91386,11 +92404,29 @@ app.patch("/api/minibar/products/:id", (req, res) => {
       return res.status(404).json({ success: false, error: "Produto não encontrado." });
     }
 
-    const fields = ["name", "category", "price", "cost", "imageUrl", "description", "active", "isCourtesy", "courtesyLimitPerStay", "extraPaidProductId", "sortOrder", "defaultQuantity"];
+    const fields = ["name", "category", "price", "cost", "ownCost", "supplierOrigin", "imageUrl", "description", "active", "isCourtesy", "courtesyLimitPerStay", "extraPaidProductId", "sortOrder", "defaultQuantity"];
     for (const f of fields) {
       if (req.body?.[f] !== undefined) {
         prod[f] = req.body[f];
       }
+    }
+    if (prod.id === "prod_amendoim_mendorato") {
+      prod.supplierOrigin = "hotel_proprio";
+      if (req.body?.ownCost !== undefined) {
+        const parsed = Number(req.body.ownCost);
+        prod.ownCost = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+        prod.cost = prod.ownCost;
+      } else if (req.body?.cost !== undefined) {
+        const parsed = Number(req.body.cost);
+        prod.cost = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+        prod.ownCost = prod.cost;
+      } else {
+        const parsed = Number(prod.ownCost ?? prod.cost ?? 0);
+        prod.ownCost = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+        prod.cost = prod.ownCost;
+      }
+    } else if (prod.id === "prod_agua_mineral_copo") {
+      prod.supplierOrigin = "anserve";
     }
     prod.updatedAt = new Date().toISOString();
     saveDatabase("minibar_product_updated");
@@ -97344,6 +98380,318 @@ app.get("/api/minibar/invoices/hub", (req, res) => {
   }
 });
 
+function computeMinibarPeanutStockReport(targetDb = db, { startDate, endDate } = {}) {
+  const stockObj =
+    targetDb && targetDb.minibarPeanutStock && typeof targetDb.minibarPeanutStock === "object"
+      ? targetDb.minibarPeanutStock
+      : { minAlertThreshold: 30, movements: [], updatedAt: null };
+  const peanutProd = (targetDb?.minibarProducts || []).find(p => p && p.id === "prod_amendoim_mendorato");
+  const ownUnitCost = Number(peanutProd?.ownCost ?? peanutProd?.cost ?? 0) || 0;
+
+  let allTimeGuestConsumed = 0;
+  let allTimeInternalConsumed = 0;
+  let periodGuestConsumed = 0;
+  let periodInternalConsumed = 0;
+  const byFlatMap = {};
+  const recentConsumptions = [];
+
+  for (const insp of targetDb?.minibarInspections || []) {
+    if (!insp || insp.isSkipMark || insp.status === "nq" || insp.status === "np") continue;
+    const pQty = Math.max(
+      0,
+      Number(insp.welcomeKitConsumption?.mendoratoPeanuts ?? insp.welcomeKitConsumption?.peanutsConsumed) || 0
+    );
+    if (pQty <= 0) continue;
+
+    const isInternal = isUnlinkedInternalMinibarInspection(insp);
+    if (isInternal) {
+      allTimeInternalConsumed += pQty;
+    } else {
+      allTimeGuestConsumed += pQty;
+    }
+
+    const d = String(insp.inspectedAt || insp.createdAt || "").split("T")[0];
+    if (startDate && d < startDate) continue;
+    if (endDate && d > endDate) continue;
+
+    if (isInternal) {
+      periodInternalConsumed += pQty;
+    } else {
+      periodGuestConsumed += pQty;
+    }
+
+    const flatStr = String(insp.flatNumber || "S/N").trim() || "S/N";
+    if (!byFlatMap[flatStr]) {
+      byFlatMap[flatStr] = {
+        flatNumber: flatStr,
+        guestConsumed: 0,
+        internalConsumed: 0,
+        totalConsumed: 0
+      };
+    }
+    if (isInternal) {
+      byFlatMap[flatStr].internalConsumed += pQty;
+    } else {
+      byFlatMap[flatStr].guestConsumed += pQty;
+    }
+    byFlatMap[flatStr].totalConsumed += pQty;
+
+    recentConsumptions.push({
+      id: insp.id,
+      date: insp.inspectedAt || insp.createdAt || null,
+      flatNumber: flatStr,
+      reservationCode: insp.reservationCode || null,
+      inspectorName: insp.inspectorName || "Repositora Anserve",
+      quantity: pQty,
+      isInternal
+    });
+  }
+
+  const allTimeAutoConsumed = allTimeGuestConsumed + allTimeInternalConsumed;
+  const movements = Array.isArray(stockObj.movements) ? [...stockObj.movements] : [];
+
+  let netManualDelta = 0;
+  let totalEntriesQty = 0;
+  let totalManualOutQty = 0;
+  let periodEntriesQty = 0;
+  let periodManualOutQty = 0;
+
+  for (const m of movements) {
+    if (!m) continue;
+    const mDelta = Number(m.delta) || 0;
+    const mQty = Number(m.quantity) || 0;
+    netManualDelta += mDelta;
+    if (m.type === "entry") totalEntriesQty += mQty;
+    else if (m.type === "manual_out") totalManualOutQty += mQty;
+
+    const md = String(m.createdAt || "").split("T")[0];
+    const inPeriod = (!startDate || md >= startDate) && (!endDate || md <= endDate);
+    if (inPeriod) {
+      if (m.type === "entry") periodEntriesQty += mQty;
+      else if (m.type === "manual_out") periodManualOutQty += mQty;
+    }
+  }
+
+  const hasStockConfigured = movements.length > 0;
+  const currentBalance = hasStockConfigured ? netManualDelta - allTimeAutoConsumed : 0;
+  const minAlertThreshold = Number(stockObj.minAlertThreshold ?? 30);
+  const lowStockAlert = Boolean(hasStockConfigured && currentBalance <= minAlertThreshold);
+  const periodTotalOut = periodGuestConsumed + periodInternalConsumed + periodManualOutQty;
+
+  return {
+    productId: "prod_amendoim_mendorato",
+    productName: peanutProd?.name || "Amendoim Mendorato 27g",
+    supplier: "hotel_proprio",
+    anserveReimbursement: 0.00,
+    hasStockConfigured,
+    currentBalance,
+    minAlertThreshold,
+    lowStockAlert,
+    ownUnitCost: Number(ownUnitCost.toFixed(2)),
+    netManualDelta,
+    allTimeGuestConsumed,
+    allTimeInternalConsumed,
+    allTimeAutoConsumed,
+    totalEntriesQty,
+    totalManualOutQty,
+    periodGuestConsumed,
+    periodInternalConsumed,
+    periodEntriesQty,
+    periodManualOutQty,
+    periodTotalOut,
+    periodOwnCostTotal: Number((periodTotalOut * ownUnitCost).toFixed(2)),
+    updatedAt: stockObj.updatedAt || null,
+    byFlat: Object.values(byFlatMap).sort(
+      (a, b) => b.totalConsumed - a.totalConsumed || a.flatNumber.localeCompare(b.flatNumber)
+    ),
+    recentConsumptions: recentConsumptions
+      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+      .slice(0, 50),
+    movements: movements.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+  };
+}
+
+app.get("/api/minibar/peanut-stock", (req, res) => {
+  try {
+    const userAuth = getAuthUser(req);
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+    if (!isTestBypass && !isMinibarAdmin(userAuth)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito à supervisão e administração." });
+    }
+    res.json({
+      success: true,
+      peanutStock: computeMinibarPeanutStockReport(db, req.query || {})
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/minibar/peanut-stock/movements", (req, res) => {
+  try {
+    const userAuth = getAuthUser(req);
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+    if (!isTestBypass && (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev"))) {
+      return res.status(403).json({ success: false, error: "Acesso restrito à administração CorpFlats." });
+    }
+
+    const { type, quantity, unitCost, notes, minAlertThreshold } = req.body || {};
+    if (!["entry", "manual_out", "set_balance"].includes(type)) {
+      return res.status(400).json({ success: false, error: "Tipo de movimentação inválido." });
+    }
+
+    const qty = Math.round(Number(quantity));
+    if (type === "set_balance") {
+      if (!Number.isFinite(qty) || qty < 0) {
+        return res.status(400).json({ success: false, error: "Saldo informado inválido." });
+      }
+    } else if (!Number.isFinite(qty) || qty <= 0) {
+      return res.status(400).json({ success: false, error: "Quantidade deve ser maior que zero." });
+    }
+
+    if (!db.minibarPeanutStock || typeof db.minibarPeanutStock !== "object") {
+      db.minibarPeanutStock = { minAlertThreshold: 30, movements: [], updatedAt: null };
+    }
+    if (!Array.isArray(db.minibarPeanutStock.movements)) {
+      db.minibarPeanutStock.movements = [];
+    }
+
+    const beforeReport = computeMinibarPeanutStockReport(db);
+    let delta = 0;
+    if (type === "entry") delta = qty;
+    else if (type === "manual_out") delta = -qty;
+    else if (type === "set_balance") {
+      delta = qty - (beforeReport.netManualDelta - beforeReport.allTimeAutoConsumed);
+    }
+
+    if (
+      minAlertThreshold !== undefined &&
+      minAlertThreshold !== "" &&
+      Number.isFinite(Number(minAlertThreshold)) &&
+      Number(minAlertThreshold) >= 0
+    ) {
+      db.minibarPeanutStock.minAlertThreshold = Math.round(Number(minAlertThreshold));
+    }
+
+    let resolvedOwnCost = beforeReport.ownUnitCost;
+    if (unitCost !== undefined && unitCost !== "" && Number.isFinite(Number(unitCost)) && Number(unitCost) >= 0) {
+      resolvedOwnCost = Number(Number(unitCost).toFixed(2));
+      const peanutProd = (db.minibarProducts || []).find(p => p && p.id === "prod_amendoim_mendorato");
+      if (peanutProd) {
+        peanutProd.ownCost = resolvedOwnCost;
+        peanutProd.cost = resolvedOwnCost;
+        peanutProd.supplierOrigin = "hotel_proprio";
+        peanutProd.updatedAt = new Date().toISOString();
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+    const movement = {
+      id: `STK-AMEND-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      type,
+      quantity: qty,
+      delta,
+      unitCost: resolvedOwnCost,
+      notes: String(notes || "").trim(),
+      createdAt: nowIso,
+      createdBy: userAuth?.name || userAuth?.username || "Admin CorpFlats"
+    };
+
+    db.minibarPeanutStock.movements.push(movement);
+    db.minibarPeanutStock.updatedAt = nowIso;
+    saveDatabase("minibar_peanut_stock_movement");
+
+    res.json({
+      success: true,
+      movement,
+      peanutStock: computeMinibarPeanutStockReport(db, req.query || {})
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.patch("/api/minibar/peanut-stock/settings", (req, res) => {
+  try {
+    const userAuth = getAuthUser(req);
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+    if (!isTestBypass && (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev"))) {
+      return res.status(403).json({ success: false, error: "Acesso restrito à administração CorpFlats." });
+    }
+
+    const { minAlertThreshold, ownUnitCost } = req.body || {};
+    if (!db.minibarPeanutStock || typeof db.minibarPeanutStock !== "object") {
+      db.minibarPeanutStock = { minAlertThreshold: 30, movements: [], updatedAt: null };
+    }
+    if (
+      minAlertThreshold !== undefined &&
+      minAlertThreshold !== "" &&
+      Number.isFinite(Number(minAlertThreshold)) &&
+      Number(minAlertThreshold) >= 0
+    ) {
+      db.minibarPeanutStock.minAlertThreshold = Math.round(Number(minAlertThreshold));
+    }
+    if (
+      ownUnitCost !== undefined &&
+      ownUnitCost !== "" &&
+      Number.isFinite(Number(ownUnitCost)) &&
+      Number(ownUnitCost) >= 0
+    ) {
+      const parsedCost = Number(Number(ownUnitCost).toFixed(2));
+      const peanutProd = (db.minibarProducts || []).find(p => p && p.id === "prod_amendoim_mendorato");
+      if (peanutProd) {
+        peanutProd.ownCost = parsedCost;
+        peanutProd.cost = parsedCost;
+        peanutProd.supplierOrigin = "hotel_proprio";
+        peanutProd.updatedAt = new Date().toISOString();
+      }
+    }
+    db.minibarPeanutStock.updatedAt = new Date().toISOString();
+    saveDatabase("minibar_peanut_stock_settings");
+
+    res.json({
+      success: true,
+      peanutStock: computeMinibarPeanutStockReport(db, req.query || {})
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete("/api/minibar/peanut-stock/movements/:id", (req, res) => {
+  try {
+    const userAuth = getAuthUser(req);
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+    if (!isTestBypass && (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev"))) {
+      return res.status(403).json({ success: false, error: "Acesso restrito à administração CorpFlats." });
+    }
+
+    const movId = String(req.params.id || "").trim();
+    if (!movId) {
+      return res.status(400).json({ success: false, error: "ID da movimentação inválido." });
+    }
+    if (!db.minibarPeanutStock || !Array.isArray(db.minibarPeanutStock.movements)) {
+      return res.status(404).json({ success: false, error: "Movimentação não encontrada." });
+    }
+    const idx = db.minibarPeanutStock.movements.findIndex(m => m && String(m.id) === movId);
+    if (idx === -1) {
+      return res.status(404).json({ success: false, error: "Movimentação não encontrada." });
+    }
+    db.minibarPeanutStock.movements.splice(idx, 1);
+    if (!Array.isArray(db._deletedPeanutMovementIds)) db._deletedPeanutMovementIds = [];
+    if (!db._deletedPeanutMovementIds.includes(movId)) db._deletedPeanutMovementIds.push(movId);
+    db.minibarPeanutStock.updatedAt = new Date().toISOString();
+    saveDatabase("minibar_peanut_stock_movement_deleted");
+
+    res.json({
+      success: true,
+      peanutStock: computeMinibarPeanutStockReport(db, req.query || {})
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ── F10: Extrato de Fechamento & Repasse Financeiro CorpFlats ↔ Anserve ───────
 app.get("/api/minibar/settlement", (req, res) => {
   try {
@@ -97398,6 +98746,7 @@ app.get("/api/minibar/settlement", (req, res) => {
     let courtesyRestockCost = 0;
     let totalCourtesyWaterCups = 0;
     let totalCourtesyMendoratoPeanuts = 0;
+    let internalCourtesyMendoratoPeanuts = 0;
     let internalAdjustmentInspectionsCount = 0;
     const courtesyWaterUnitCost = Number((db.minibarProducts || []).find(p => p.id === "prod_agua_mineral_copo")?.cost ?? 2.00);
 
@@ -97407,9 +98756,25 @@ app.get("/api/minibar/settlement", (req, res) => {
         if (insp.hasInternalAdjustment || insp.status === "ocorrencia_interna") {
           internalAdjustmentInspectionsCount += 1;
         }
+        if (insp.welcomeKitConsumption) {
+          internalCourtesyMendoratoPeanuts += Math.max(
+            0,
+            Number(insp.welcomeKitConsumption.mendoratoPeanuts ?? insp.welcomeKitConsumption.peanutsConsumed) || 0
+          );
+        }
         continue;
       }
-      courtesyRestockCost += Number(insp.restockedCourtesyTotalCost) || 0;
+      if (Array.isArray(insp.restockedItems) && insp.restockedItems.length > 0) {
+        const nonPeanutCourtesyCost = insp.restockedItems.reduce((s, rIt) => {
+          if (!rIt || !rIt.isCourtesy) return s;
+          const pid = String(rIt.productId || "").toLowerCase();
+          if (pid === "prod_amendoim_mendorato" || pid.includes("mendorato")) return s;
+          return s + (Number(rIt.totalCost) || (Number(rIt.quantity) || 0) * (Number(rIt.unitCost) || 0));
+        }, 0);
+        courtesyRestockCost += nonPeanutCourtesyCost;
+      } else {
+        courtesyRestockCost += Number(insp.restockedCourtesyTotalCost) || 0;
+      }
       if (insp.welcomeKitConsumption) {
         totalCourtesyWaterCups += Math.max(
           0,
@@ -97422,7 +98787,7 @@ app.get("/api/minibar/settlement", (req, res) => {
       }
     }
 
-    // R6: Copos d'Água são fornecidos pela Anserve (reembolso ao custo contratual de R$ 2,00/un)
+    // R6: Copos d'Água são fornecidos pela Anserve (reembolso ao valor de custo cadastrado no produto)
     // Amendoim Mendorato é de fornecimento próprio CorpFlats/Hotel (repasse R$ 0,00 à Anserve)
     const courtesyWaterTotalCost = Number((totalCourtesyWaterCups * courtesyWaterUnitCost).toFixed(2));
     const totalCourtesyReimbursement = Number((courtesyRestockCost + courtesyWaterTotalCost).toFixed(2));
@@ -97433,6 +98798,7 @@ app.get("/api/minibar/settlement", (req, res) => {
     // Líquido a Repassar para a Anserve
     const netPayableToAnserve = totalOrdersAmount - cardFees - pixFees - commissionCorpFlats + netCourtesyCredit;
     const operationalFilteredInspections = filteredInspections.filter(i => i && !i.isCourtesyCorrectionOnly);
+    const peanutStockSummary = computeMinibarPeanutStockReport(db, { startDate, endDate });
 
     res.json({
       success: true,
@@ -97458,6 +98824,7 @@ app.get("/api/minibar/settlement", (req, res) => {
         courtesyWaterUnitCost,
         courtesyWaterTotalCost,
         totalCourtesyMendoratoPeanuts,
+        internalCourtesyMendoratoPeanuts,
         courtesyMendoratoUnitCost: 0.00,
         courtesyMendoratoTotalCost: 0.00,
         waterSupplier: "anserve",
@@ -97465,6 +98832,7 @@ app.get("/api/minibar/settlement", (req, res) => {
         legacyCourtesyRestockCost: Number(courtesyRestockCost.toFixed(2)),
         totalCourtesyReimbursement
       },
+      peanutStockSummary,
       netPayableToAnserve: Number(netPayableToAnserve.toFixed(2)),
       inspectionsCount: operationalFilteredInspections.length,
       breakdowns: {
@@ -98531,7 +99899,10 @@ app.get("/api/minibar/anserve-reports", (req, res) => {
         const prod = productsCatalog.find(p => p.id === it.productId);
         const qty = Number(it.quantity) || 0;
         const uPrice = Number(it.unitPrice ?? prod?.price) || 0;
-        const uCost = Number(prod?.cost) || 0;
+        const uCost =
+          prod?.id === "prod_amendoim_mendorato" || prod?.supplierOrigin === "hotel_proprio"
+            ? 0
+            : Number(prod?.cost) || 0;
         const itemRevenue = Number(it.totalPrice) || (qty * uPrice);
         const itemCost = qty * uCost;
 
@@ -98637,11 +100008,20 @@ app.get("/api/minibar/anserve-reports", (req, res) => {
 
     let totalCourtesyWaterCups = 0;
     let totalCourtesyMendoratoPeanuts = 0;
+    let internalCourtesyMendoratoPeanuts = 0;
     const courtesyWaterUnitCost = Number(productsCatalog.find(p => p.id === "prod_agua_mineral_copo")?.cost ?? 2.00);
 
     for (const insp of filteredInspections) {
       if (!insp || insp.isSkipMark || insp.status === "nq" || insp.status === "np") continue;
-      if (isUnlinkedInternalMinibarInspection(insp)) continue;
+      if (isUnlinkedInternalMinibarInspection(insp)) {
+        if (insp.welcomeKitConsumption) {
+          internalCourtesyMendoratoPeanuts += Math.max(
+            0,
+            Number(insp.welcomeKitConsumption.mendoratoPeanuts ?? insp.welcomeKitConsumption.peanutsConsumed) || 0
+          );
+        }
+        continue;
+      }
       if (insp.welcomeKitConsumption) {
         totalCourtesyWaterCups += Math.max(
           0,
@@ -98659,16 +100039,46 @@ app.get("/api/minibar/anserve-reports", (req, res) => {
       courtesyWaterUnitCost,
       courtesyWaterTotalCost,
       totalCourtesyMendoratoPeanuts,
+      internalCourtesyMendoratoPeanuts,
       courtesyMendoratoUnitCost: 0.00,
       courtesyMendoratoTotalCost: 0.00,
       waterSupplier: "anserve",
       mendoratoSupplier: "hotel_proprio"
     };
+    const courtesyReportItems = [
+      {
+        productId: "prod_agua_mineral_copo",
+        productName: "Água Mineral Copo 200ml (Cortesia Kit Boas-Vindas)",
+        category: "Kit de Boas-Vindas",
+        supplier: "anserve",
+        supplierLabel: "Estoque Anserve (Repasse a Custo)",
+        unitsConsumed: totalCourtesyWaterCups,
+        guestPrice: 0.00,
+        reimbursementUnitCost: courtesyWaterUnitCost,
+        totalReimbursementToAnserve: courtesyWaterTotalCost
+      },
+      {
+        productId: "prod_amendoim_mendorato",
+        productName: "Amendoim Mendorato 27g (Cortesia Kit Boas-Vindas)",
+        category: "Kit de Boas-Vindas",
+        supplier: "hotel_proprio",
+        supplierLabel: "Fornecimento Próprio CorpFlats (Sem Repasse)",
+        unitsConsumed: totalCourtesyMendoratoPeanuts + internalCourtesyMendoratoPeanuts,
+        guestConsumed: totalCourtesyMendoratoPeanuts,
+        internalConsumed: internalCourtesyMendoratoPeanuts,
+        guestPrice: 0.00,
+        reimbursementUnitCost: 0.00,
+        totalReimbursementToAnserve: 0.00
+      }
+    ];
+    const peanutStock = computeMinibarPeanutStockReport(db, { startDate, endDate });
 
     res.json({
       success: true,
       period: { startDate: startDate || null, endDate: endDate || null },
       courtesySummary,
+      courtesyReportItems,
+      peanutStock,
       salesSummary: {
         totalPaidRevenue: Number(totalPaidRevenue.toFixed(2)),
         totalPaidCost: Number(totalPaidCost.toFixed(2)),
@@ -98683,6 +100093,7 @@ app.get("/api/minibar/anserve-reports", (req, res) => {
           pendente: Number(byPaymentMethod.pendente.toFixed(2))
         },
         courtesySummary,
+        courtesyReportItems,
         byProduct: Object.values(byProductMap)
           .map(p => ({
             ...p,
@@ -99130,6 +100541,9 @@ app.get("/api/minibar/analytics/insights-360", (req, res) => {
     // Processa Inspeções para Flats, Divergências e Cortesias (exclui ajustes internos sem hóspede do custo/unidades de cortesia)
     let totalCourtesyCost = 0;
     let totalCourtesyUnits = 0;
+    let courtesyWaterCups360 = 0;
+    let courtesyWaterCost360 = 0;
+    let courtesyPeanuts360 = 0;
     const courtesyWaterUnitCost360 = Number(
       productsCatalog.find(p => p.id === "prod_agua_mineral_copo")?.cost ?? 2.00
     );
@@ -99156,13 +100570,24 @@ app.get("/api/minibar/analytics/insights-360", (req, res) => {
           ) || 0
         );
         const kitWaterCost = Number((kitW * courtesyWaterUnitCost360).toFixed(2));
-        const legacyCourtesyCost = Number(insp.restockedCourtesyTotalCost) || 0;
+        const legacyCourtesyCost =
+          Array.isArray(insp.restockedItems) && insp.restockedItems.length > 0
+            ? insp.restockedItems.reduce((s, rIt) => {
+                if (!rIt || !rIt.isCourtesy) return s;
+                const pid = String(rIt.productId || "").toLowerCase();
+                if (pid === "prod_amendoim_mendorato" || pid.includes("mendorato")) return s;
+                return s + (Number(rIt.totalCost) || (Number(rIt.quantity) || 0) * (Number(rIt.unitCost) || 0));
+              }, 0)
+            : Number(insp.restockedCourtesyTotalCost) || 0;
         const inspCourtesyCost = kitWaterCost + legacyCourtesyCost;
 
         if (fNum && flatMap[fNum]) {
           flatMap[fNum].courtesyCost += inspCourtesyCost;
         }
         totalCourtesyCost += inspCourtesyCost;
+        courtesyWaterCups360 += kitW;
+        courtesyWaterCost360 += kitWaterCost;
+        courtesyPeanuts360 += kitP;
         totalCourtesyUnits += kitW + kitP;
         for (const rIt of insp.restockedItems || []) {
           if (rIt.isCourtesy) {
@@ -99460,6 +100885,14 @@ app.get("/api/minibar/analytics/insights-360", (req, res) => {
       byFlat: byFlatList,
       productMatrix,
       marketBasketPairs,
+      courtesyBreakdown: {
+        waterCupsConsumed: courtesyWaterCups360,
+        waterUnitCost: courtesyWaterUnitCost360,
+        waterAnserveReimbursementTotal: Number(courtesyWaterCost360.toFixed(2)),
+        peanutsConsumed: courtesyPeanuts360,
+        peanutsAnserveReimbursementTotal: 0.00
+      },
+      peanutStock: computeMinibarPeanutStockReport(db, { startDate, endDate }),
       lossAndRecovery: {
         spontaneousOrdersCount: spontaneousOrders.length,
         discrepancyOrdersCount: discrepancyOrders.length,

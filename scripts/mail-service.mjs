@@ -5340,11 +5340,13 @@ function buildReceptionSummaryFromReservationAndMeta(comm, reservation = null, d
     lines.push(`• *Período:* ${checkinBr} (entrada ${ciTime}) a ${checkoutBr} (saída ${coTime})`);
   }
 
-  const plate = String(reservation?.vehiclePlate || reservation?.carPlate || reservation?.licensePlate || "").trim();
-  const model = [reservation?.vehicleModel || reservation?.carModel, reservation?.vehicleColor || reservation?.carColor]
-    .map(v => String(v || "").trim())
-    .filter(Boolean)
-    .join(" ");
+  const vehicleObj = reservation?.vehicle && typeof reservation.vehicle === "object" ? reservation.vehicle : null;
+  const plate = String(vehicleObj?.plate || reservation?.vehiclePlate || reservation?.carPlate || reservation?.licensePlate || "").trim();
+  const brand = String(vehicleObj?.brand || reservation?.vehicleBrand || reservation?.carBrand || "").trim();
+  const modelName = String(vehicleObj?.model || reservation?.vehicleModel || reservation?.carModel || "").trim();
+  const color = String(vehicleObj?.color || reservation?.vehicleColor || reservation?.carColor || "").trim();
+  const brandPrefix = brand && (!modelName || !modelName.toLowerCase().includes(brand.toLowerCase())) ? brand : "";
+  const model = [brandPrefix, modelName, color].filter(Boolean).join(" ");
   if (plate || model) {
     lines.push(`• *Veículo:* ${[model, plate ? `Placa *${plate.toUpperCase()}*` : ""].filter(Boolean).join(" — ")}`);
   }

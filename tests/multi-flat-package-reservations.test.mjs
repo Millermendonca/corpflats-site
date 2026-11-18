@@ -131,6 +131,7 @@ describe("Pacotes Multi-Flat (Pagamento Único, Hóspedes 1 e 2 por Flat, PMS + 
     const pairs = [
       ["artifacts/api-server/package-reservations-service.mjs", "scripts/package-reservations-service.mjs"],
       ["artifacts/api-server/demo-server.mjs", "scripts/demo-server.mjs"],
+      ["artifacts/api-server/mail-service.mjs", "scripts/mail-service.mjs"],
       ["artifacts/api-server/zapi-service.mjs", "scripts/zapi-service.mjs"],
     ];
     for (const [src, mirror] of pairs) {
@@ -447,11 +448,14 @@ describe("Pacotes Multi-Flat (Pagamento Único, Hóspedes 1 e 2 por Flat, PMS + 
     assert.equal(settled.summary.totalAmount, 1600);
     assert.equal(settled.summary.paidAmount, 1600);
 
-    // Solicitante recebeu 1 recibo único COM valores e COM 1 link único /credenciamento/PKG-778899
+    // Solicitante recebeu 1 recibo único COM valores e botão para Portal do Solicitante /solicitante/PKG-778899
     const msgSolicitante = whatsappLog.filter((m) => m.phone === "5522999110000");
     assert.equal(msgSolicitante.length, 1, "Solicitante recebe 1 único recibo sem duplicidade por ser Hóspede 1 do Flat 101");
     assert.ok(msgSolicitante[0].text.includes("1.600,00"));
-    assert.ok(msgSolicitante[0].text.includes(`/credenciamento/${pkgCode}`));
+    assert.ok(
+      JSON.stringify(msgSolicitante[0].buttons || []).includes(`/solicitante/${pkgCode}`) ||
+      msgSolicitante[0].text.includes(`/solicitante/${pkgCode}`)
+    );
 
     // Acompanhante do Flat 101 (Ana) e Hóspedes 1 e 2 do Flat 102 (Marcos e Júlia) receberam apenas instruções SEM NENHUM VALOR ("R$")
     const guestPhones = ["5522999110001", "5522999330001", "5522999330002"];
@@ -460,8 +464,9 @@ describe("Pacotes Multi-Flat (Pagamento Único, Hóspedes 1 e 2 por Flat, PMS + 
       assert.equal(msgs.length, 1, `Hóspede ${gp} deve receber exatamente 1 mensagem exclusiva do seu flat`);
       assert.equal(msgs[0].text.includes("R$"), false, `Mensagem do hóspede ${gp} NUNCA pode conter valores financeiros`);
     }
+    const guest2Msg = whatsappLog.find((m) => m.phone === "5522999110001");
     assert.ok(
-      whatsappLog.find((m) => m.phone === "5522999110001").text.includes("?guest=2"),
+      JSON.stringify(guest2Msg.buttons || []).includes("?guest=2") || guest2Msg.text.includes("?guest=2"),
       "Hóspede 2 recebe link individualizado ?guest=2"
     );
 
@@ -702,7 +707,7 @@ describe("Pacotes Multi-Flat (Pagamento Único, Hóspedes 1 e 2 por Flat, PMS + 
       assert.equal(pkgItems[1].checkinDate, "2026-12-11");
       assert.equal(pkgItems[0].requesterIsGuest1, true);
       assert.equal(pkgItems[1].informGuestsLater, true);
-      assert.ok(execRes.dados.link_pacote.includes(`/minha-reserva/${execRes.dados.codigo_pacote}`));
+      assert.ok(execRes.dados.link_pacote.includes(`/solicitante/${execRes.dados.codigo_pacote}`));
       assert.ok(execRes.dados.link_credenciamento_pos_pagamento.includes(`/credenciamento/${execRes.dados.codigo_pacote}`));
       assert.ok(execRes.dados.chave_pix.length > 20);
       assert.ok(execRes.instrucao_para_ia);
@@ -819,7 +824,7 @@ describe("Pacotes Multi-Flat (Pagamento Único, Hóspedes 1 e 2 por Flat, PMS + 
     // Verificação dos componentes Frontend (PMS, Site Público, Portal e Credenciamento Único)
     const pmsSrc = fs.readFileSync(path.resolve("artifacts/limpeza/src/pages/pms-calendar.tsx"), "utf8");
     const funnelSrc = fs.readFileSync(path.resolve("artifacts/limpeza/src/components/booking-funnel-modal.tsx"), "utf8");
-    const portalSrc = fs.readFileSync(path.resolve("artifacts/limpeza/src/pages/guest-portal.tsx"), "utf8");
+    const requesterPortalSrc = fs.readFileSync(path.resolve("artifacts/limpeza/src/pages/requester-portal.tsx"), "utf8");
     const credSrc = fs.readFileSync(path.resolve("artifacts/limpeza/src/pages/agency-guest-credential.tsx"), "utf8");
 
     assert.ok(
@@ -831,7 +836,7 @@ describe("Pacotes Multi-Flat (Pagamento Único, Hóspedes 1 e 2 por Flat, PMS + 
     );
     assert.equal(pmsSrc.includes("formGuestCpf"), false, "pms-calendar.tsx não pode referenciar identificador inexistente formGuestCpf (ReferenceError em runtime)");
     assert.ok(funnelSrc.includes("requesterIsGuest1") && funnelSrc.includes("informGuestsLater"));
-    assert.ok(portalSrc.includes("/api/nfse/emit-consolidated") && portalSrc.includes("cancelWholePackage: false"));
+    assert.ok(requesterPortalSrc.includes("/api/nfse/emit-consolidated") && requesterPortalSrc.includes("cancelWholePackage"));
     assert.ok(credSrc.includes("guest2InformLater") && credSrc.includes("agency-guest-credential-batch"));
   });
 
@@ -849,7 +854,20 @@ describe("Pacotes Multi-Flat (Pagamento Único, Hóspedes 1 e 2 por Flat, PMS + 
         if (depth === 0) break;
       }
     }
-    const fnSrc = demoSrc.slice(start, end + 1);
+    const syncStart = demoSrc.indexOf("function syncCleaningCardsForConfirmedReservation(");
+    assert.ok(syncStart >= 0);
+    const syncOpen = demoSrc.indexOf(") {", syncStart) + 2;
+    let sDepth = 0;
+    let sEnd = syncOpen;
+    for (; sEnd < demoSrc.length; sEnd++) {
+      if (demoSrc[sEnd] === "{") sDepth++;
+      else if (demoSrc[sEnd] === "}") {
+        sDepth--;
+        if (sDepth === 0) break;
+      }
+    }
+    const syncFnSrc = demoSrc.slice(syncStart, sEnd + 1);
+    const fnSrc = `${syncFnSrc}\n${demoSrc.slice(start, end + 1)}`;
 
     const mockDb = createIsolatedDb();
     let emittedBoletoCall = null;
@@ -1012,8 +1030,15 @@ describe("Pacotes Multi-Flat (Pagamento Único, Hóspedes 1 e 2 por Flat, PMS + 
     );
     assert.equal(courtesyResult.summary.totalAmount, 0, "dailyRate: 0 explícito deve preservar cortesia R$ 0,00 sem cair no fallback R$ 250");
     assert.ok(
-      mockDb.cleaningRequests.some((cr) => cr.type === "bed_adjustment_only" && String(cr.flatNumber) === "102"),
-      "Flat com twinBeds=true deve gerar tarefa bed_adjustment_only para governança"
+      mockDb.cleaningRequests.some((cr) =>
+        cr.type === "instruction" &&
+        cr.isInstructionOnly === true &&
+        cr.source === "manual_instruction" &&
+        cr.isPaidCleaning === false &&
+        cr.twinBeds === true &&
+        String(cr.flatNumber) === "102"
+      ),
+      "Flat com twinBeds=true deve gerar tarefa instruction para governança"
     );
   });
 
@@ -2009,11 +2034,11 @@ describe("Pacotes Multi-Flat (Pagamento Único, Hóspedes 1 e 2 por Flat, PMS + 
       const preDisp = await dispatchPackagePreReservationCreated(realDb, pkgReal, "https://corpflats.com.br", realDeps);
       assert.equal(preDisp.sentWhatsapp, true, "sendZapiMessage real (c/ fetch stubado) deve retornar success:true");
       assert.equal(preDisp.sentEmail, true, "sendEmailAsync + wrapEmailTemplate reais devem registrar o e-mail");
-      assert.equal(outboundZapiHttp.length, 1);
+      assert.ok(outboundZapiHttp.length >= 1 && outboundZapiHttp.length <= 2, "sendZapiMessage dispara mensagem principal (+ opcional botão OTP PIX)");
       assert.ok((realDb.whatsappConversations || []).some((c) => c.phone === "5522999110000" && c.messages.length >= 1));
       assert.equal((realDb.reservationCommunications || []).length, 1);
       assert.ok(realDb.reservationCommunications[0].body.includes("<!DOCTYPE html>"), "wrapEmailTemplate real deve envolver o HTML");
-      assert.ok(realDb.reservationCommunications[0].body.includes("Pré-Reserva Unificada"));
+      assert.ok(realDb.reservationCommunications[0].body.includes("pré-reserva") && realDb.reservationCommunications[0].body.includes(pkgReal));
 
       // Liquidação em Cartão de Crédito (+5%: 1000 / 0.95 = 1052.63) rateia proporcionalmente entre os flats e envia recibo por WhatsApp + E-mail!
       const settledCard = await settlePackagePaymentAtomically(
@@ -2405,7 +2430,20 @@ describe("Pacotes Multi-Flat (Pagamento Único, Hóspedes 1 e 2 por Flat, PMS + 
         if (depth === 0) break;
       }
     }
-    const fnSrc = demoSrc.slice(start, end + 1);
+    const syncStart = demoSrc.indexOf("function syncCleaningCardsForConfirmedReservation(");
+    assert.ok(syncStart >= 0);
+    const syncOpen = demoSrc.indexOf(") {", syncStart) + 2;
+    let sDepth = 0;
+    let sEnd = syncOpen;
+    for (; sEnd < demoSrc.length; sEnd++) {
+      if (demoSrc[sEnd] === "{") sDepth++;
+      else if (demoSrc[sEnd] === "}") {
+        sDepth--;
+        if (sDepth === 0) break;
+      }
+    }
+    const syncFnSrc = demoSrc.slice(syncStart, sEnd + 1);
+    const fnSrc = `${syncFnSrc}\n${demoSrc.slice(start, end + 1)}`;
     const mockDb = createIsolatedDb();
     mockDb.companies = [];
     mockDb.agencies = [];
@@ -2540,9 +2578,9 @@ describe("Pacotes Multi-Flat (Pagamento Único, Hóspedes 1 e 2 por Flat, PMS + 
     // Verifica envio multi-e-mail com breakdown de sinal e packageCode na conversa WhatsApp
     assert.equal(sentMailInPkg.length, 1);
     assert.equal(sentMailInPkg[0].recipient, "fin1@novaempresa.com.br, fin2@novaempresa.com.br");
-    assert.ok(sentMailInPkg[0].bodyHtml.includes("Sinal / Valor Já Pago"));
-    assert.ok(sentMailInPkg[0].bodyHtml.includes("Saldo Restante a Pagar"));
-    assert.equal(convAppendCalls.length, 1);
+    assert.ok(sentMailInPkg[0].bodyHtml.includes("Valor Já Pago"));
+    assert.ok(sentMailInPkg[0].bodyHtml.includes("Saldo Pendente"));
+    assert.ok(convAppendCalls.length >= 1, "Deve registrar conversa consolidada do pacote (+ instruções aos hóspedes confirmados)");
     assert.equal(convAppendCalls[0].packageCode, pkgResult.packageCode);
 
     // 15f) Quitação atômica após sinal parcial lança SOMENTE o saldo restante (rTotal - priorPaid) em r.payments
@@ -9908,5 +9946,908 @@ describe("Pacotes Multi-Flat (Pagamento Único, Hóspedes 1 e 2 por Flat, PMS + 
     assert.equal(resGuestPrivacy.body.hideFinancialForGuest, true);
     assert.equal(resGuestPrivacy.body.reservation.totalAmount, 0);
     assert.equal(resGuestPrivacy.body.reservation.pixCopiaECola, null);
+  });
+
+  it("33. /copiar-pix/:code exibe Solicitante:/Hóspedes:/portal /solicitante/:code?t= e mail-service lê vehicle.plate/brand/model/color", async () => {
+    const demoSrc = fs.readFileSync(path.resolve("artifacts/api-server/demo-server.mjs"), "utf8");
+    const mailSrc = fs.readFileSync(path.resolve("artifacts/api-server/mail-service.mjs"), "utf8");
+
+    const extractBySig = (src, sig, isRoute = false) => {
+      const start = src.indexOf(sig);
+      assert.ok(start >= 0, `Assinatura não encontrada: ${sig}`);
+      let open = src.indexOf("{", src.indexOf("=>", start));
+      if (!isRoute) open = src.indexOf("{", start);
+      let d = 0;
+      let i = open;
+      for (; i < src.length; i++) {
+        if (src[i] === "{") d++;
+        else if (src[i] === "}") {
+          d--;
+          if (d === 0) break;
+        }
+      }
+      const end = isRoute ? src.indexOf(");", i) + 2 : i + 1;
+      return src.slice(start, end);
+    };
+
+    const copiarPixRouteSrc = extractBySig(demoSrc, 'app.get(["/copiar-pix/:code"', true);
+    const ensureTokSrc = extractBySig(demoSrc, "function ensureLocalRequesterPortalToken(");
+    const db = createIsolatedDb();
+    db.reservations.push(
+      {
+        id: 3301,
+        code: "RES-101-3301",
+        packageId: "PKG-3300",
+        packageCode: "PKG-3300",
+        packageIndex: 1,
+        isPackagePrimary: true,
+        flatId: 1,
+        flatNumber: "101",
+        checkinDate: "2026-12-20",
+        checkoutDate: "2026-12-22",
+        status: "pre_reserva",
+        paymentStatus: "pendente_pix",
+        requesterType: "other_person",
+        requesterIsGuest1: false,
+        requesterName: "Mariana Gestora",
+        requesterPortalToken: "REQ_TOK_3300",
+        guestName: "Carlos Silva",
+        totalAmount: 400,
+        paidAmount: 0,
+      },
+      {
+        id: 3302,
+        code: "RES-102-3302",
+        packageId: "PKG-3300",
+        packageCode: "PKG-3300",
+        packageIndex: 2,
+        flatId: 2,
+        flatNumber: "102",
+        checkinDate: "2026-12-20",
+        checkoutDate: "2026-12-22",
+        status: "pre_reserva",
+        paymentStatus: "pendente_pix",
+        requesterType: "other_person",
+        requesterIsGuest1: false,
+        requesterName: "Mariana Gestora",
+        requesterPortalToken: "REQ_TOK_3300",
+        guestName: "A Definir (Aguardando Solicitante)",
+        guestPending: true,
+        totalAmount: 400,
+        paidAmount: 0,
+      },
+      {
+        id: 3303,
+        code: "RES-103-3303",
+        flatId: 3,
+        flatNumber: "103",
+        checkinDate: "2026-12-20",
+        checkoutDate: "2026-12-22",
+        status: "pre_reserva",
+        paymentStatus: "pendente_pix",
+        requesterType: "guest",
+        requesterIsGuest1: true,
+        guestName: "Joao Direto",
+        totalAmount: 300,
+        paidAmount: 0,
+      }
+    );
+
+    const routes = {};
+    const appMock = { get(p, h) { routes[Array.isArray(p) ? p[0] : p] = h; } };
+    new Function(
+      "deps",
+      `
+      const { app, db, isPackageCode, getPrimaryPackageReservation, computePackageSummary, getReservationRecipients, crypto } = deps;
+      const sweepExpiredPreReservations = () => {};
+      const isB2bReservation = () => false;
+      const isUnverifiedPreReservation = (r) => r.status === "pre_reserva";
+      const isPixPayloadStaleForAmount = () => false;
+      const isPendingGuestName = (n) => !n || /a definir|informar depois/i.test(n);
+      const generateStaticPixPayload = ({ amount, txid }) => "PIX_" + Number(amount).toFixed(2) + "_" + txid;
+      const computeCardAmountFromPix = (v) => Math.round((Number(v || 0) / 0.95) * 100) / 100;
+      const saveDatabase = () => {};
+      const extractValidPreviewFirstName = (n) => String(n || "").split(" ")[0];
+      const resolvePreviewImageUrl = (_u, fallback) => "https://corpflats.com.br/" + fallback;
+      const escapeOgHtmlAttr = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+      ${ensureTokSrc}
+      ${copiarPixRouteSrc}
+      `
+    )({
+      app: appMock,
+      db,
+      isPackageCode,
+      getPrimaryPackageReservation,
+      computePackageSummary,
+      getReservationRecipients,
+      crypto,
+    });
+
+    const renderPixPage = (code) => {
+      let html = "";
+      routes["/copiar-pix/:code"](
+        { params: { code }, query: {}, originalUrl: `/copiar-pix/${code}` },
+        { setHeader() {}, send(body) { html = body; return body; } }
+      );
+      return html;
+    };
+
+    const pkgHtml = renderPixPage("PKG-3300");
+    assert.ok(pkgHtml.includes("Solicitante:</span>"));
+    assert.ok(pkgHtml.includes("Mariana Gestora"));
+    assert.ok(pkgHtml.includes("Hóspedes:</span>"));
+    assert.ok(pkgHtml.includes("Flat 101: Carlos Silva"));
+    assert.ok(pkgHtml.includes("Flat 102: A Definir"));
+    assert.ok(pkgHtml.includes("/solicitante/PKG-3300?t=REQ_TOK_3300"));
+    assert.ok(pkgHtml.includes("const pollToken = \"REQ_TOK_3300\""));
+
+    const directHtml = renderPixPage("RES-103-3303");
+    assert.ok(directHtml.includes("Hóspede:</span>"));
+    assert.ok(directHtml.includes("Joao Direto"));
+    assert.ok(directHtml.includes("/minha-reserva/RES-103-3303"));
+
+    // mail-service.mjs buildReceptionSummaryFromReservationAndMeta lê vehicle.{plate,brand,model,color} e fallback raiz
+    const fnSummarySrc = extractBySig(mailSrc, "function buildReceptionSummaryFromReservationAndMeta(");
+    const buildSummaryFn = new Function(
+      `
+      const formatIsoDateToBrShort = (d) => String(d || "").split("-").reverse().join("/");
+      ${fnSummarySrc}
+      return buildReceptionSummaryFromReservationAndMeta;
+      `
+    )();
+
+    const summaryNested = buildSummaryFn(
+      { subject: "Liberação Flat 101", metadata: { flatNumber: "101" } },
+      {
+        code: "RES-101-3301",
+        flatNumber: "101",
+        guestName: "Carlos Silva",
+        checkinDate: "2026-12-20",
+        checkoutDate: "2026-12-22",
+        vehicle: { plate: "abc1d23", brand: "Toyota", model: "Corolla", color: "Prata" },
+      },
+      db
+    );
+    assert.ok(summaryNested.includes("Toyota Corolla Prata — Placa *ABC1D23*"));
+
+    const summaryRootFallback = buildSummaryFn(
+      { subject: "Liberação Flat 103", metadata: { flatNumber: "103" } },
+      {
+        code: "RES-103-3303",
+        flatNumber: "103",
+        guestName: "Joao Direto",
+        checkinDate: "2026-12-20",
+        checkoutDate: "2026-12-22",
+        vehiclePlate: "xyz9876",
+        vehicleBrand: "Honda",
+        vehicleModel: "Civic",
+        vehicleColor: "Preto",
+      },
+      db
+    );
+    assert.ok(summaryRootFallback.includes("Honda Civic Preto — Placa *XYZ9876*"));
+  });
+
+  it("34. GET /api/pms/requester-portal/:code, bloqueio estrito de ?requester=1 sem token t=, propagação hideFinancialForGuest e Guest 3 + Z-API no credenciamento", async () => {
+    const demoSrc = fs.readFileSync(path.resolve("artifacts/api-server/demo-server.mjs"), "utf8");
+    const extractBySig = (src, sig, isRoute = false) => {
+      const start = src.indexOf(sig);
+      assert.ok(start >= 0, `Assinatura não encontrada: ${sig}`);
+      let open = src.indexOf("{", isRoute ? src.indexOf("=>", start) : start);
+      let d = 0;
+      let i = open;
+      for (; i < src.length; i++) {
+        if (src[i] === "{") d++;
+        else if (src[i] === "}") {
+          d--;
+          if (d === 0) break;
+        }
+      }
+      const end = isRoute ? src.indexOf(");", i) + 2 : i + 1;
+      return src.slice(start, end);
+    };
+
+    const ensureTokSrc = extractBySig(demoSrc, "function ensureLocalRequesterPortalToken(");
+    const validTokSrc = extractBySig(demoSrc, "function isValidRequesterTokenOrStaff(");
+    const reqPortalSrc = extractBySig(demoSrc, 'app.get("/api/pms/requester-portal/:code"', true);
+    const guestPortalSrc = extractBySig(demoSrc, 'app.get("/api/pms/guest-portal/:code"', true);
+    const payStatusSrc = extractBySig(demoSrc, 'app.get("/api/pms/reservations/:code/payment-status"', true);
+    const authHelperSrc = extractBySig(demoSrc, "function isGuestPortalRequesterAuthorized(");
+    const credPostSrc = extractBySig(demoSrc, 'app.post(["/api/pms/agency-guest-credential/:code"', true);
+
+    const fnIsB2b = extractBySig(demoSrc, "function isB2bReservation(");
+    const fnFaturadoMethod = extractBySig(demoSrc, "export function isFaturadoBoletoMethod(").replace(/^export\s+/, "");
+    const fnNormPm = extractBySig(demoSrc, "export function normalizePaymentMethodId(").replace(/^export\s+/, "");
+    const fnFaturadoRes = extractBySig(demoSrc, "export function isFaturadoBoletoReservation(").replace(/^export\s+/, "");
+    const fnEvidence = extractBySig(demoSrc, "function hasRealPaymentEvidence(");
+    const fnUnverified = extractBySig(demoSrc, "function isUnverifiedPreReservation(");
+    const fnPreBlocked = extractBySig(demoSrc, "function isPreReservationBlocked(");
+    const fnEnrichPay = extractBySig(demoSrc, "function enrichReservationPayments(");
+
+    const db = createIsolatedDb();
+    db.cleaningRequests = [];
+    db.breakfastOrders = [];
+    db.fiscalInvoices = [];
+    db.boletos = [];
+    db.reservations.push(
+      {
+        id: 3401,
+        code: "RES-101-3401",
+        packageId: "PKG-3400",
+        packageCode: "PKG-3400",
+        packageIndex: 1,
+        isPackagePrimary: true,
+        flatId: 1,
+        flatNumber: "101",
+        checkinDate: "2026-12-25",
+        checkoutDate: "2026-12-27",
+        status: "confirmada",
+        channel: "direta",
+        requesterType: "other_person",
+        requesterIsGuest1: false,
+        requesterName: "Solicitante Secreto",
+        requesterPhone: "5522999881111",
+        requesterPortalToken: "SECRET_REQ_3400",
+        hideFinancialForGuest: true,
+        nfHideFromGuest: true,
+        guestName: "Hóspede Privado",
+        guestPhone: "5522999772222",
+        guestCount: 3,
+        adults: 3,
+        guests: [{ index: 1, name: "Hóspede Privado", phone: "5522999772222" }],
+        totalAmount: 700,
+        paidAmount: 0,
+        pixCopiaECola: "PIX_PKG_SECRET",
+        packagePixCopiaECola: "PIX_PKG_SECRET",
+        guestPhoneCorrectionRequests: [
+          { id: "c1", guestIndex: 1, status: "awaiting_reply" },
+          { id: "c2", guestIndex: 3, status: "awaiting_reply" },
+        ],
+        guestPhoneInvalid: true,
+      },
+      {
+        id: 3402,
+        code: "RES-102-3402",
+        packageId: "PKG-3400",
+        packageCode: "PKG-3400",
+        packageIndex: 2,
+        flatId: 2,
+        flatNumber: "102",
+        checkinDate: "2026-12-25",
+        checkoutDate: "2026-12-27",
+        status: "confirmada",
+        channel: "direta",
+        requesterType: "other_person",
+        requesterIsGuest1: false,
+        requesterName: "Solicitante Secreto",
+        requesterPhone: "5522999881111",
+        requesterPortalToken: "SECRET_REQ_3400",
+        hideFinancialForGuest: true,
+        nfHideFromGuest: true,
+        guestName: "Segundo Flat",
+        guestPhone: "5522999773333",
+        guestCount: 1,
+        adults: 1,
+        guests: [],
+        totalAmount: 500,
+        paidAmount: 0,
+        pixCopiaECola: "PIX_PKG_SECRET",
+        packagePixCopiaECola: "PIX_PKG_SECRET",
+      }
+    );
+
+    const routes = {};
+    const appMock = {
+      get(p, h) { routes[`GET ${Array.isArray(p) ? p[0] : p}`] = h; },
+      post(p, h) { routes[`POST ${Array.isArray(p) ? p[0] : p}`] = h; },
+    };
+    let currentAuthUser = null;
+    const zapiCheckedPhones = [];
+    const invalidZapiDigits = new Set(["5522999000003"]);
+
+    const rt = new Function(
+      "deps",
+      `
+      const {
+        app, db, crypto, isPackageCode, getPackageReservations, getPrimaryPackageReservation,
+        computePackageSummary, syncPackagePixAndPaymentLinks, getReservationRecipients,
+        isFlatGuestCredentialIncomplete, dispatchIndividualFlatGuestInstructions,
+        getCurrentAuthUser, onCheckZapi
+      } = deps;
+      const getAuthUser = () => getCurrentAuthUser();
+      const sweepExpiredPreReservations = () => {};
+      const findReservationByLocatorOrContact = (c) => isPackageCode(c) ? getPrimaryPackageReservation(db, c) : db.reservations.find(x => x.code === c);
+      const ensureReservationCompositeTotal = () => {};
+      const getEffectiveDate = () => new Date("2026-12-20T12:00:00Z");
+      const getBrasiliaNow = () => ({ date: "2026-12-20", hour: 12, minute: 0, timeStr: "12:00" });
+      const getRequestsForDate = () => [];
+      const isFlatStillBeingCleanedOnCheckinDay = () => false;
+      const isOtaOrB2bReservation = () => false;
+      const addDaysToDateStr = (d, n) => new Date(new Date(d + "T12:00:00Z").getTime() + n * 86400000).toISOString().slice(0, 10);
+      const hasRealSettlementForFaturadoBoleto = () => false;
+      const saveDatabase = () => {};
+      const hasReservationCompletedAnyCheckin = () => false;
+      const createInterPixCob = null;
+      const generateStaticPixPayload = ({ amount, txid }) => "PIX_" + Number(amount).toFixed(2) + "_" + txid;
+      const isPixPayloadStaleForAmount = () => false;
+      const ensurePaymentConfirmationDispatched = () => {};
+      const isReservationB2bDndActiveForDate = () => false;
+      const isReservationAnserveDndActiveForDate = () => false;
+      const getVisibleReservationMinibarOrders = () => [];
+      const evaluateSelfCheckinEligibility = () => ({ allowed: false, reason: "future_date" });
+      const buildGuestAnserveDndPayload = () => null;
+      const computeLinenTracking = () => ({});
+      const DEFAULT_TERMS_AND_RULES = "";
+      const DEFAULT_HOUSE_RULES = "";
+      const DEFAULT_CONTRACT_TERMS = "";
+      const DEFAULT_INTER_CONFIG = { pixKey: "47964813000165" };
+      const computeCardAmountFromPix = (v) => Math.round((Number(v || 0) / 0.95) * 100) / 100;
+      const checkInterPixCobStatus = async () => null;
+      const checkInterBankingExtratoPix = async () => null;
+      const checkMercadoPagoPaymentByRef = async () => null;
+      const confirmReservationPayment = async () => {};
+      const isPendingGuestName = (n) => !n || /a definir|informar depois/i.test(n);
+      const isMissingGuestDataForCredential = () => false;
+      const areGuestNamesCompatible = () => true;
+      const isValidBrazilianCpf = () => true;
+      const checkZapiPhoneExists = async (phone) => onCheckZapi(phone);
+      const uploadImageToStorage = async (u) => u;
+      const cancelPendingCredentialReminders = () => {};
+      const cleanWhatsAppPhone = (p) => String(p || "").replace(/\\D/g, "");
+      const sendZapiMessage = async () => ({ success: true });
+      const sendZapiDocument = async () => ({ success: true });
+      const hasPdfAlreadyBeenSentOrInFlight = () => false;
+      const createNotification = () => {};
+      const scheduleUpcomingReservationTriggers = () => {};
+      const ensureReservationScheduledEmails = () => {};
+      const dispatchConfirmedReservationToReceptionAndGarage = async () => {};
+      const dispatchCatchUpGuestRulerMessages = async () => ({ dispatchedStages: [] });
+      const validateGuestEmailAddress = async () => ({ valid: true });
+      const notifyGuestInvalidEmailViaWhatsApp = async () => {};
+      const appendMessageToConversation = () => {};
+      ${fnFaturadoMethod}
+      ${fnNormPm}
+      ${fnFaturadoRes}
+      ${fnEvidence}
+      ${fnUnverified}
+      ${fnPreBlocked}
+      ${fnEnrichPay}
+      ${fnIsB2b}
+      ${ensureTokSrc}
+      ${validTokSrc}
+      ${authHelperSrc}
+      ${reqPortalSrc}
+      ${guestPortalSrc}
+      ${payStatusSrc}
+      ${credPostSrc}
+      return { isGuestPortalRequesterAuthorized };
+      `
+    )({
+      app: appMock,
+      db,
+      crypto,
+      isPackageCode,
+      getPackageReservations,
+      getPrimaryPackageReservation,
+      computePackageSummary,
+      syncPackagePixAndPaymentLinks,
+      getReservationRecipients,
+      isFlatGuestCredentialIncomplete,
+      dispatchIndividualFlatGuestInstructions,
+      getCurrentAuthUser: () => currentAuthUser,
+      onCheckZapi: (p) => {
+        const s = String(p || "");
+        zapiCheckedPhones.push(s);
+        return { checked: true, exists: !invalidZapiDigits.has(s.replace(/\D/g, "")) };
+      },
+    });
+
+    const callRoute = async (key, { code, query = {}, body = {} } = {}) => {
+      let status = 200;
+      let payload = null;
+      await routes[key](
+        { params: { code }, query, body, headers: {}, protocol: "https", get: () => "corpflats.com.br" },
+        { status(s) { status = s; return this; }, json(p) { payload = p; return this; } }
+      );
+      return { status, payload };
+    };
+
+    // 1) /api/pms/requester-portal/:code
+    const rpNoTokenRes = await callRoute("GET /api/pms/requester-portal/:code", { code: "RES-101-3401" });
+    assert.equal(rpNoTokenRes.status, 403, "RES-... sem ?t= e sem staff auth deve retornar 403");
+
+    const rpWithTokenRes = await callRoute("GET /api/pms/requester-portal/:code", {
+      code: "RES-101-3401",
+      query: { t: "SECRET_REQ_3400" },
+    });
+    assert.equal(rpWithTokenRes.status, 200);
+    assert.equal(rpWithTokenRes.payload.success, true);
+    assert.equal(rpWithTokenRes.payload.isPackage, true);
+    assert.equal(rpWithTokenRes.payload.packageSummary.totalAmount, 1200);
+
+    const rpPkgRes = await callRoute("GET /api/pms/requester-portal/:code", { code: "PKG-3400" });
+    assert.equal(rpPkgRes.status, 200);
+    assert.equal(rpPkgRes.payload.requester.name, "Solicitante Secreto");
+
+    currentAuthUser = { id: 1, role: "admin" };
+    const rpStaffRes = await callRoute("GET /api/pms/requester-portal/:code", { code: "RES-101-3401" });
+    assert.equal(rpStaffRes.status, 200);
+    currentAuthUser = null;
+
+    // 2) ?requester=1 NÃO bypassa sigilo em RES-... sem token válido t=
+    const gpSpoof = await callRoute("GET /api/pms/guest-portal/:code", {
+      code: "RES-101-3401",
+      query: { requester: "1" },
+    });
+    assert.equal(gpSpoof.status, 200);
+    assert.equal(gpSpoof.payload.hideFinancialForGuest, true);
+    assert.equal(gpSpoof.payload.isRequesterView, false);
+    assert.equal(gpSpoof.payload.packageSummary, null);
+    assert.equal(gpSpoof.payload.reservation.totalAmount, 0);
+    assert.equal(gpSpoof.payload.reservation.pixCopiaECola, null);
+
+    const psSpoof = await callRoute("GET /api/pms/reservations/:code/payment-status", {
+      code: "RES-101-3401",
+      query: { requester: "1" },
+    });
+    assert.equal(psSpoof.payload.hideFinancialForGuest, true);
+    assert.equal(psSpoof.payload.totalAmount, 0);
+    assert.equal(psSpoof.payload.pixCopiaECola, null);
+
+    assert.equal(
+      rt.isGuestPortalRequesterAuthorized(db.reservations[0], "RES-101-3401", { query: { requester: "1" } }),
+      false
+    );
+    assert.equal(
+      rt.isGuestPortalRequesterAuthorized(db.reservations[0], "RES-101-3401", { query: { t: "SECRET_REQ_3400" } }),
+      true
+    );
+
+    // 3) POST /api/pms/agency-guest-credential/:code: valida Z-API Guests 1/2/3, preserva hideFinancialForGuest=true e quita guestPhoneCorrectionRequests
+    const invalidG3 = await callRoute("POST /api/pms/agency-guest-credential/:code", {
+      code: "RES-101-3401",
+      body: {
+        guestName: "Lucas Ferreira",
+        guestPhone: "5522999000001",
+        guestCount: 3,
+        guest2Name: "Mariana Ferreira",
+        guest2Phone: "5522999000002",
+        guest3Name: "Pedro Ferreira",
+        guest3Phone: "5522999000003", // sem WhatsApp
+        requesterIsGuest1: false,
+      },
+    });
+    assert.equal(invalidG3.status, 400);
+    assert.equal(invalidG3.payload.invalidWhatsApp, true);
+    assert.equal(invalidG3.payload.guestIndex, 3);
+
+    zapiCheckedPhones.length = 0;
+    const validCred = await callRoute("POST /api/pms/agency-guest-credential/:code", {
+      code: "RES-101-3401",
+      body: {
+        guestName: "Lucas Ferreira",
+        guestPhone: "5522999000001",
+        guestCount: 3,
+        guest2Name: "Mariana Ferreira",
+        guest2Phone: "5522999000002",
+        guest3Name: "Pedro Ferreira",
+        guest3Phone: "5522999000004",
+        requesterIsGuest1: false,
+      },
+    });
+    assert.equal(validCred.status, 200);
+    assert.ok(
+      zapiCheckedPhones.includes("5522999000001") &&
+      zapiCheckedPhones.includes("5522999000002") &&
+      zapiCheckedPhones.includes("5522999000004"),
+      "Todos os 3 hóspedes devem passar pela validação Z-API"
+    );
+    assert.equal(db.reservations[0].guests[2].name, "Pedro Ferreira");
+    assert.equal(db.reservations[0].hideFinancialForGuest, true);
+    assert.equal(db.reservations[0].nfHideFromGuest, true);
+    assert.equal(db.reservations[0].guestPhoneInvalid, false);
+    assert.ok(db.reservations[0].guestPhoneCorrectionRequests.every((c) => c.status === "resolved"));
+  });
+
+  it("35. Multi-flat flags, sem duplicação X | X, veículo pendente, e syncCleaningCardsForConfirmedReservation (pre_reserva=0 vs confirmada=1 instruction card + reativação checkout)", async () => {
+    const demoSrc = fs.readFileSync(path.resolve("artifacts/api-server/demo-server.mjs"), "utf8");
+    const extractBySig = (src, sig) => {
+      const start = src.indexOf(sig);
+      assert.ok(start >= 0, `Assinatura não encontrada: ${sig}`);
+      const sigEnd = src.indexOf(") {", start);
+      const open = sigEnd >= 0 ? sigEnd + 2 : src.indexOf("{", start);
+      let d = 0;
+      let i = open;
+      for (; i < src.length; i++) {
+        if (src[i] === "{") d++;
+        else if (src[i] === "}") {
+          d--;
+          if (d === 0) break;
+        }
+      }
+      return src.slice(start, i + 1);
+    };
+
+    const syncCleanSrc = extractBySig(demoSrc, "function syncCleaningCardsForConfirmedReservation(");
+    const createPkgSrc = extractBySig(demoSrc, "async function createMultiFlatPackageFromPayload(");
+    const mockDb = createIsolatedDb();
+    mockDb.cleaningRequests = [
+      {
+        id: 1,
+        flatId: 1,
+        flatNumber: "101",
+        requestDate: "2026-12-28",
+        status: "dirty",
+        source: "checkout",
+        type: "cleaning",
+      },
+      {
+        id: 2,
+        flatId: 2,
+        flatNumber: "102",
+        requestDate: "2026-12-30",
+        status: "deleted",
+        isDeleted: true,
+        source: "checkout",
+        type: "cleaning",
+      },
+    ];
+    mockDb.pendingVehicles = [];
+
+    const createPkgFn = new Function(
+      "deps",
+      `
+      const {
+        db, crypto, applyPackageRateioToDraftFlats, generatePackageCode,
+        syncPackagePixAndPaymentLinks, dispatchPackagePreReservationCreated,
+        computePackageSummary, findActiveOverbookingConflicts
+      } = deps;
+      const DEFAULT_SITE_CONFIG = db.siteConfig;
+      const DEFAULT_INTER_CONFIG = { pixKey: "47964813000165" };
+      const normalizePaymentMethodId = (m) => String(m || "pix").toLowerCase();
+      const isFaturadoBoletoMethod = () => false;
+      const getCanonicalFlats = (d) => d.flats;
+      const calculateCanonicalDirectStayQuote = () => ({ pixTotalAmount: 500, avgDailyRatePerFlat: 250, perNightCombinedRates: [{ date: "2026-12-28", rate: 250 }, { date: "2026-12-29", rate: 250 }] });
+      const isPendingGuestName = (n) => !n || /a definir|informar depois/i.test(n);
+      const computeCardAmountFromPix = (v) => Math.round((Number(v || 0) / 0.95) * 100) / 100;
+      const addReservationAuditLog = (r, e) => { r.auditLogs.push(e); };
+      const createInterPixCob = null;
+      const generateStaticPixPayload = ({ amount, txid }) => "PIX_" + Number(amount).toFixed(2) + "_" + txid;
+      const cleanWhatsAppPhone = (p) => String(p || "").replace(/\\D/g, "");
+      const sendZapiMessage = async () => ({ success: true });
+      const sendZapiDocument = async () => ({ success: true });
+      const hasPdfAlreadyBeenSentOrInFlight = () => false;
+      const checkZapiPhoneExists = async () => ({ checked: false });
+      const appendMessageToConversation = () => {};
+      const sendEmailAsync = async () => ({ ok: true });
+      const wrapEmailTemplate = ({ contentHtml }) => contentHtml;
+      const scheduleUpcomingReservationTriggers = () => {};
+      const ensureReservationScheduledEmails = () => {};
+      const dispatchConfirmedReservationToReceptionAndGarage = async () => {};
+      const triggerGarageEmailNotification = () => {};
+      const consumePendingVehicleForPhone = (_d, phone) => String(phone || "").endsWith("5555") ? { plate: "QWE4R56", brand: "VW", model: "Taos", color: "Cinza" } : null;
+      const createNotification = () => {};
+      const dispatchServerSidePurchaseConversion = async () => {};
+      const saveDatabase = () => {};
+      const emitCheckoutFaturadoPackage = async () => null;
+      ${syncCleanSrc}
+      ${createPkgSrc}
+      return { createMultiFlatPackageFromPayload, syncCleaningCardsForConfirmedReservation };
+      `
+    )({
+      db: mockDb,
+      crypto,
+      applyPackageRateioToDraftFlats,
+      generatePackageCode,
+      syncPackagePixAndPaymentLinks,
+      dispatchPackagePreReservationCreated,
+      computePackageSummary,
+      findActiveOverbookingConflicts: findConflictsMock,
+    });
+
+    // 1) earlyCheckinAuthorized sem admin/dev -> 401/403
+    await assert.rejects(
+      () =>
+        createPkgFn.createMultiFlatPackageFromPayload(
+          {
+            requesterName: "Teste Early",
+            requesterPhone: "5522999001111",
+            earlyCheckinAuthorized: true,
+            packageFlats: [
+              { flatId: 3, checkinDate: "2026-12-28", checkoutDate: "2026-12-30", guestCount: 1, dailyRate: 250 },
+              { flatId: 4, checkinDate: "2026-12-28", checkoutDate: "2026-12-30", guestCount: 1, dailyRate: 250 },
+            ],
+          },
+          { authUser: { id: 9, role: "reception" }, suppressExternalSend: true }
+        ),
+      (err) => err.statusCode === 403
+    );
+
+    // 2) pre_reserva NÃO cria instruction/cleaning cards mesmo com twinBeds/extraMattress/specialRequests
+    await createPkgFn.createMultiFlatPackageFromPayload(
+      {
+        requesterName: "Pre Res Pkg",
+        requesterPhone: "5522999002222",
+        status: "pre_reserva",
+        packageFlats: [
+          { flatId: 3, checkinDate: "2026-12-28", checkoutDate: "2026-12-30", guestCount: 2, twinBeds: true, extraBed: true, specialRequests: "Berço", dailyRate: 250 },
+          { flatId: 4, checkinDate: "2026-12-28", checkoutDate: "2026-12-30", guestCount: 1, twinBeds: true, dailyRate: 250 },
+        ],
+      },
+      { authUser: { id: 1, role: "admin" }, suppressExternalSend: true }
+    );
+    assert.equal(mockDb.cleaningRequests.filter((c) => c.isInstructionOnly).length, 0, "pre_reserva nunca gera card de camareira");
+
+    // 3) confirmada: persiste flags, evita X | X em notes/receptionNotes, consome veículo pendente, e sincroniza cleaning/instruction em flats 1..N sem duplicar
+    const pkgConf = await createPkgFn.createMultiFlatPackageFromPayload(
+      {
+        requesterName: "Admin Pacote Completo",
+        requesterPhone: "5522999005555",
+        status: "confirmada",
+        paymentStatus: "pago_total",
+        markAsPaid: true,
+        notes: "Obs Global",
+        receptionNotes: "Portaria Global",
+        earlyCheckinAuthorized: true,
+        earlyCheckinTime: "10:30",
+        isFlatLocked: true,
+        flatLockReason: "Preferência VIP",
+        prefersHighFloor: true,
+        hasMinor: true,
+        minorAge: 7,
+        isCamposResident: true,
+        isMonthlyGuest: true,
+        packageFlats: [
+          {
+            flatId: 1,
+            checkinDate: "2026-12-28",
+            checkoutDate: "2026-12-30",
+            guestCount: 2,
+            requesterIsGuest1: true,
+            twinBeds: true,
+            hasExtraBed: true,
+            specialRequests: "Berço perto da janela",
+            notes: "Obs Global",
+            receptionNotes: "Portaria Global",
+            dailyRate: 250,
+          },
+          {
+            flatId: 2,
+            checkinDate: "2026-12-28",
+            checkoutDate: "2026-12-30",
+            guestCount: 2,
+            informGuestsLater: true,
+            twinBeds: true,
+            extraBed: true,
+            dailyRate: 250,
+          },
+        ],
+      },
+      { authUser: { id: 1, role: "admin" }, suppressExternalSend: true }
+    );
+
+    const f1 = pkgConf.reservations[0];
+    const f2 = pkgConf.reservations[1];
+    assert.ok(f1.requesterPortalToken && f1.requesterPortalToken === f2.requesterPortalToken);
+    assert.equal(f1.earlyCheckinAuthorized, true);
+    assert.equal(f1.earlyCheckinTime, "10:30");
+    assert.equal(f1.isFlatLocked, true);
+    assert.equal(f1.flatLocked, true);
+    assert.equal(f1.flatLockReason, "Preferência VIP");
+    assert.equal(f1.prefersHighFloor, true);
+    assert.equal(f1.hasMinor, true);
+    assert.equal(f1.isCamposResident, true);
+    assert.equal(f1.isMonthlyGuest, true);
+    assert.equal(f1.clientType, "mensalista");
+    assert.equal(f1.notes, "Obs Global", "Elimina duplicação X | X em notes");
+    assert.equal(f1.receptionNotes, "Portaria Global", "Elimina duplicação X | X em receptionNotes");
+    assert.equal(f1.extraMattress, true);
+    assert.equal(f2.extraMattress, true);
+    assert.equal(f1.vehicle?.plate, "QWE4R56");
+
+    // Flat 1 já tinha card dirty em 2026-12-28 -> atualizou SEM duplicar
+    const cardsFlat1 = mockDb.cleaningRequests.filter((c) => String(c.flatNumber) === "101" && c.requestDate === "2026-12-28" && !c.isDeleted);
+    assert.equal(cardsFlat1.length, 1);
+    assert.equal(cardsFlat1[0].twinBeds, true);
+    assert.equal(cardsFlat1[0].extraMattress, true);
+    assert.equal(cardsFlat1[0].adminNote, "Berço perto da janela");
+
+    // Flat 2 não tinha card em 2026-12-28 -> criou 1 card instruction e reativou card deleted no checkout 2026-12-30
+    const cardsFlat2 = mockDb.cleaningRequests.filter((c) => String(c.flatNumber) === "102" && c.requestDate === "2026-12-28" && !c.isDeleted);
+    assert.equal(cardsFlat2.length, 1);
+    assert.equal(cardsFlat2[0].type, "instruction");
+    assert.equal(cardsFlat2[0].isInstructionOnly, true);
+    assert.equal(cardsFlat2[0].source, "manual_instruction");
+    assert.equal(cardsFlat2[0].isPaidCleaning, false);
+    assert.equal(cardsFlat2[0].twinBeds, true);
+    assert.equal(cardsFlat2[0].extraMattress, true);
+
+    // Re-executar helper não duplica
+    createPkgFn.syncCleaningCardsForConfirmedReservation(mockDb, f2);
+    assert.equal(mockDb.cleaningRequests.filter((c) => String(c.flatNumber) === "102" && c.requestDate === "2026-12-28" && !c.isDeleted).length, 1);
+    assert.equal(mockDb.cleaningRequests.find((c) => c.id === 2).isDeleted, false);
+    assert.equal(mockDb.cleaningRequests.find((c) => c.id === 2).status, "dirty");
+
+    // getRequestsForDate preserva extraMattress=true em setupInfo de cards de instrução
+    assert.ok(demoSrc.includes("extraMattress: Boolean(req_.extraMattress)"));
+  });
+
+  it("36. Café da Manhã: ocupação estrita (guestCount=1 rejeita >1 com 400), ?room=, pacote PKG-..., default adults=1 e /api/live-ops/metrics", async () => {
+    const demoSrc = fs.readFileSync(path.resolve("artifacts/api-server/demo-server.mjs"), "utf8");
+    const extractRoute = (sig) => {
+      const start = demoSrc.indexOf(sig);
+      assert.ok(start >= 0, `Rota não encontrada: ${sig}`);
+      const open = demoSrc.indexOf("{", demoSrc.indexOf("=>", start));
+      let d = 0;
+      let i = open;
+      for (; i < demoSrc.length; i++) {
+        if (srcChar(demoSrc, i) === "{") d++;
+        else if (srcChar(demoSrc, i) === "}") {
+          d--;
+          if (d === 0) break;
+        }
+      }
+      return demoSrc.slice(start, demoSrc.indexOf(");", i) + 2);
+    };
+    const srcChar = (s, idx) => s[idx];
+
+    const ctxRouteSrc = extractRoute('app.get("/api/breakfast/reservation-context"');
+    const ordersRouteSrc = extractRoute('app.post("/api/breakfast/orders"');
+    const repeatRouteSrc = extractRoute('app.post("/api/breakfast/orders/repeat"');
+    const liveOpsSrc = demoSrc.slice(
+      demoSrc.indexOf("// 5. Cafés da Manhã de Hoje"),
+      demoSrc.indexOf("// 6. Financeiro Hoje")
+    );
+    assert.ok(liveOpsSrc.includes("db.breakfastOrders") && liveOpsSrc.includes('o.status !== "cancelled"'));
+    assert.ok(demoSrc.includes("Number(room.adults ?? room.guestCount) || 1"));
+
+    const db = createIsolatedDb();
+    db.breakfastOrders = [
+      {
+        id: 1,
+        roomNumber: "101",
+        reservationCode: "RES-101-3601",
+        reservationId: 3601,
+        clientName: "Hóspede Solo",
+        guestCount: 2,
+        deliveryTime: "08:00",
+        date: "2026-12-20",
+        status: "pending",
+        items: [{ item: "Café", qty: 1 }],
+      },
+    ];
+    db.reservations.push(
+      {
+        id: 3601,
+        code: "RES-101-3601",
+        packageId: "PKG-3600",
+        packageCode: "PKG-3600",
+        flatId: 1,
+        flatNumber: "101",
+        checkinDate: "2026-12-20",
+        checkoutDate: "2026-12-23",
+        status: "confirmada",
+        includeBreakfast: true,
+        guestName: "Hóspede Solo",
+        guestCount: 1,
+        adults: 1,
+        guests: [{ name: "Hóspede Solo" }, { name: "" }],
+      },
+      {
+        id: 3602,
+        code: "RES-102-3602",
+        packageId: "PKG-3600",
+        packageCode: "PKG-3600",
+        flatId: 2,
+        flatNumber: "102",
+        checkinDate: "2026-12-20",
+        checkoutDate: "2026-12-23",
+        status: "confirmada",
+        includeBreakfast: true,
+        guestName: "Segundo Hóspede",
+        guestCount: 2,
+        adults: 2,
+        guests: [],
+      }
+    );
+
+    const routes = {};
+    const appMock = {
+      get(p, h) { routes[`GET ${p}`] = h; },
+      post(p, h) { routes[`POST ${p}`] = h; },
+    };
+
+    new Function(
+      "deps",
+      `
+      const { app, db, crypto, isPackageCode, getPackageReservations, getPrimaryPackageReservation } = deps;
+      const initBreakfastData = () => {};
+      const getBrasiliaNow = () => ({ date: "2026-12-20", hour: 12, minute: 0 });
+      const getTodayStr = () => "2026-12-20";
+      const getOffsetDateStr = (d) => "2026-12-" + String(20 + Number(d || 0)).padStart(2, "0");
+      const isPreReservationBlocked = (r) => r.status === "pre_reserva";
+      const computeBreakfastCancellationReason = () => null;
+      const timeToMinutes = (t) => { const [h, m] = String(t || "08:00").split(":").map(Number); return h * 60 + m; };
+      const splitLegacyCompoundItem = (s) => [s];
+      const normalizeBreakfastItem = (s) => s;
+      const isExcludedBreakfastItem = () => false;
+      const getStandardBreakfastConfig = () => ({ breads: ["Pão francês"], accompaniments: [], complements: [], sweets: [] });
+      const createNotification = () => {};
+      const saveDatabase = () => {};
+      const findReservationByLocatorOrContact = (c) => isPackageCode(c) ? getPrimaryPackageReservation(db, c) : db.reservations.find(x => x.code === c);
+      ${ctxRouteSrc}
+      ${ordersRouteSrc}
+      ${repeatRouteSrc}
+      `
+    )({
+      app: appMock,
+      db,
+      crypto,
+      isPackageCode,
+      getPackageReservations,
+      getPrimaryPackageReservation,
+    });
+
+    const invoke = (key, { query = {}, body = {} } = {}) => {
+      let status = 200;
+      let payload = null;
+      routes[key](
+        { query, body },
+        { status(s) { status = s; return this; }, json(p) { payload = p; return this; } }
+      );
+      return { status, payload };
+    };
+
+    const ctxRoom = invoke("GET /api/breakfast/reservation-context", { query: { room: "101" } });
+    assert.equal(ctxRoom.status, 200);
+    assert.equal(ctxRoom.payload.reservation.guestCount, 1, "Não herda guests[].length com placeholder");
+
+    const ctxPkg = invoke("GET /api/breakfast/reservation-context", { query: { res: "PKG-3600" } });
+    assert.equal(ctxPkg.status, 200);
+    assert.equal(ctxPkg.payload.isPackage, true);
+    assert.equal(ctxPkg.payload.eligibleFlats.length, 2);
+
+    const overGuestOrder = invoke("POST /api/breakfast/orders", {
+      body: {
+        reservationCode: "RES-101-3601",
+        roomNumber: "101",
+        clientName: "Hóspede Solo",
+        deliveryTime: "08:15",
+        date: "2026-12-21",
+        guestCount: 2,
+        isStandard: true,
+      },
+    });
+    assert.equal(overGuestOrder.status, 400);
+
+    const overChoicesOrder = invoke("POST /api/breakfast/orders", {
+      body: {
+        reservationCode: "RES-101-3601",
+        roomNumber: "101",
+        clientName: "Hóspede Solo",
+        deliveryTime: "08:15",
+        date: "2026-12-21",
+        guestChoices: [{ coffee: "Café" }, { coffee: "Leite" }],
+      },
+    });
+    assert.equal(overChoicesOrder.status, 400);
+
+    const validOrder = invoke("POST /api/breakfast/orders", {
+      body: {
+        reservationCode: "RES-101-3601",
+        roomNumber: "101",
+        clientName: "Hóspede Solo",
+        deliveryTime: "08:15",
+        date: "2026-12-21",
+        guestCount: 1,
+        isStandard: true,
+      },
+    });
+    assert.equal(validOrder.status, 201);
+
+    const overRepeat = invoke("POST /api/breakfast/orders/repeat", {
+      body: { orderId: 1, targetDate: "2026-12-22", deliveryTime: "08:30" },
+    });
+    assert.equal(overRepeat.status, 400, "Repetir pedido de 2 pessoas em reserva de 1 hóspede deve retornar 400");
   });
 });

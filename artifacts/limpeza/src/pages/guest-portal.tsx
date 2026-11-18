@@ -25,7 +25,6 @@ import { DirectBookingPerkCard } from "@/components/direct-booking-perk-card"
 import { generateLodgingJsonLd } from "@/lib/calendar-helper"
 import { calculateCancellationPolicy } from "@/lib/cancellation-helper"
 import { FrozenSlot, useStableCallback } from "@/lib/render-freeze"
-import { validateEmailList, parseEmailList, getPrimaryEmail } from "@/lib/email-utils"
 
 const HoldCountdownBadge = memo(function HoldCountdownBadge({
   expiresAt,
@@ -505,6 +504,31 @@ export default function GuestPortal() {
     setModPollingActive(false)
   })
 
+  const getRequesterTokenFromUrl = () => {
+    if (typeof window === "undefined") return ""
+    const sp = new URLSearchParams(window.location.search)
+    return (sp.get("t") || sp.get("token") || "").trim()
+  }
+
+  const buildPortalAuthQuery = (extra?: Record<string, string>) => {
+    const sp = new URLSearchParams()
+    const tParam = getRequesterTokenFromUrl()
+    if (tParam) sp.set("t", tParam)
+    if (typeof window !== "undefined") {
+      const urlSp = new URLSearchParams(window.location.search)
+      if ((urlSp.get("requester") === "1" || urlSp.get("view") === "requester") && tParam) {
+        sp.set("requester", "1")
+      }
+    }
+    if (extra) {
+      Object.entries(extra).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== "") sp.set(k, v)
+      })
+    }
+    const str = sp.toString()
+    return str ? `?${str}` : ""
+  }
+
   // Polling em segundo plano para detecção automática de pagamento (/modify-status)
   useEffect(() => {
     if (!modPollingActive || !checkoutData?.pendingId || !modifyModalOpen) return
@@ -515,18 +539,14 @@ export default function GuestPortal() {
       data?.reservation?.primaryReservationCode ||
       data?.reservation?.code ||
       code
-    const pkgCodeForPoll = data?.packageSummary?.packageCode || data?.reservation?.packageCode || ""
     const portalReloadCode =
-      code || pkgCodeForPoll || data?.reservation?.code || targetModCode
-    const authAmp =
-      data?.isRequesterView || data?.isPackageView || Boolean(pkgCodeForPoll)
-        ? `&requester=1${pkgCodeForPoll ? `&packageCode=${encodeURIComponent(pkgCodeForPoll)}` : ""}`
-        : ""
+      code || data?.reservation?.code || targetModCode
+    const statusQs = buildPortalAuthQuery({ pendingId: String(pendingId) })
 
     const pollInterval = setInterval(async () => {
       try {
         const res = await fetch(
-          `/api/pms/guest-portal/${encodeURIComponent(targetModCode)}/modify-status?pendingId=${encodeURIComponent(pendingId)}${authAmp}`
+          `/api/pms/guest-portal/${encodeURIComponent(targetModCode)}/modify-status${statusQs}`
         )
         if (!res.ok) return
         const json = await res.json()
@@ -563,10 +583,6 @@ export default function GuestPortal() {
     modTargetFlat?.flatNumber,
     data?.reservation?.primaryReservationCode,
     data?.reservation?.code,
-    data?.reservation?.packageCode,
-    data?.packageSummary?.packageCode,
-    data?.isRequesterView,
-    data?.isPackageView,
     code,
   ])
 
@@ -594,84 +610,6 @@ export default function GuestPortal() {
   const [selfCheckinPendingMessage, setSelfCheckinPendingMessage] = useState<string | null>(null)
   const [confirmingSelfCheckin, setConfirmingSelfCheckin] = useState(false)
   const [copiedGuestLinkIndex, setCopiedGuestLinkIndex] = useState<number | null>(null)
-  const [copiedPkgCredLink, setCopiedPkgCredLink] = useState(false)
-  const [copiedPkgFlatCode, setCopiedPkgFlatCode] = useState<string | null>(null)
-  const [pkgNfseOpen, setPkgNfseOpen] = useState(false)
-  const [pkgNfseDoc, setPkgNfseDoc] = useState("")
-  const [pkgNfseName, setPkgNfseName] = useState("")
-  const [pkgNfseEmail, setPkgNfseEmail] = useState("")
-  const [emittingPkgNfse, setEmittingPkgNfse] = useState(false)
-  const [pkgNfseMessage, setPkgNfseMessage] = useState<string | null>(null)
-  const [removingPkgItemId, setRemovingPkgItemId] = useState<number | null>(null)
-
-  const handleEmitPackageConsolidatedNfse = async (pkgCode: string) => {
-    const cleanDoc = pkgNfseDoc.replace(/\D/g, "")
-    if (cleanDoc.length !== 11 && cleanDoc.length !== 14) {
-      setPkgNfseMessage("Informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido para emitir a NFS-e única.")
-      return
-    }
-    const emailValidation = validateEmailList(pkgNfseEmail)
-    if (!emailValidation.valid) {
-      setPkgNfseMessage(
-        `E-mail inválido (${emailValidation.invalidTokens.join(", ")}). Para múltiplos destinatários, separe por ";".`
-      )
-      return
-    }
-    const primaryEmail = getPrimaryEmail(pkgNfseEmail)
-    const deliveryEmails = parseEmailList(pkgNfseEmail)
-    setEmittingPkgNfse(true)
-    setPkgNfseMessage(null)
-    try {
-      const res = await fetch("/api/nfse/emit-consolidated", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          packageId: pkgCode,
-          tomadorCpfCnpj: cleanDoc,
-          tomadorNome: pkgNfseName.trim() || undefined,
-          tomadorEmail: primaryEmail || undefined,
-          nfDeliveryEmails: deliveryEmails.length > 0 ? deliveryEmails : undefined
-        })
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        setPkgNfseMessage(json.error || "Não foi possível emitir a NFS-e única.")
-      } else {
-        setPkgNfseMessage(`✓ NFS-e Única Nº ${json.numeroNfse} emitida com sucesso para todo o pacote!`)
-        setPkgNfseOpen(false)
-        fetchPortalData(code || pkgCode, true)
-      }
-    } catch {
-      setPkgNfseMessage("Erro de conexão ao solicitar NFS-e.")
-    } finally {
-      setEmittingPkgNfse(false)
-    }
-  }
-
-  const handleCancelSingleFlatInPortal = async (item: any, pkgCode: string) => {
-    if (!confirm(`Deseja cancelar apenas o Flat ${item.flatNumber} (${item.code}) mantendo os demais apartamentos do pacote ativos?`)) {
-      return
-    }
-    setRemovingPkgItemId(item.id)
-    try {
-      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(pkgCode || item.code)}/cancel`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cancelWholePackage: false,
-          packageCode: pkgCode,
-          reservationId: item.id,
-          reason: "Cancelamento parcial de 1 flat pelo solicitante no Portal do Pacote"
-        })
-      })
-      if (res.ok) {
-        fetchPortalData(code || pkgCode, true)
-      }
-    } catch {}
-    finally {
-      setRemovingPkgItemId(null)
-    }
-  }
 
   const handleSaveEstimatedArrival = async () => {
     const timeVal = selectedArrivalTime || customArrivalTime.trim()
@@ -754,6 +692,10 @@ export default function GuestPortal() {
       const qsParams = new URLSearchParams()
       if (typeof window !== "undefined") {
         const sp = new URLSearchParams(window.location.search)
+        const tParam = sp.get("t") || sp.get("token")
+        if (tParam) {
+          qsParams.set("t", tParam.trim())
+        }
         if (sp.get("requester") === "1" || sp.get("view") === "requester") {
           qsParams.set("requester", "1")
         }
@@ -909,35 +851,17 @@ export default function GuestPortal() {
     }
   }
 
-  // Abertura do Modal e Inicialização (suporta modificação por flat específico em pacotes multi-flat)
-  const handleOpenModifyModal = (targetPkgItem?: any) => {
+  // Abertura do Modal e Inicialização (escopo estritamente individual da estadia)
+  const handleOpenModifyModal = () => {
     if (!data?.reservation) return
     const r = data.reservation
-    const pkgActiveItems = Array.isArray(data?.packageSummary?.items)
-      ? data.packageSummary.items.filter((it: any) => it && !it.isCancelled && !it.isExpired)
-      : []
-    const chosenItem =
-      targetPkgItem && targetPkgItem.code
-        ? targetPkgItem
-        : pkgActiveItems.length > 0
-          ? pkgActiveItems[0]
-          : null
-
-    const initTarget = chosenItem
-      ? {
-          code: String(chosenItem.code),
-          flatNumber: String(chosenItem.flatNumber || r.flatNumber || ""),
-          checkinDate: String(chosenItem.checkinDate || r.checkinDate || ""),
-          checkoutDate: String(chosenItem.checkoutDate || r.checkoutDate || ""),
-          guestCount: Math.max(1, Number(chosenItem.guestCount || r.guestCount) || 1),
-        }
-      : {
-          code: String(r.primaryReservationCode || r.code || code || ""),
-          flatNumber: String(r.flatNumber || ""),
-          checkinDate: String(r.checkinDate || ""),
-          checkoutDate: String(r.checkoutDate || ""),
-          guestCount: Math.max(1, Number(r.guestCount) || 1),
-        }
+    const initTarget = {
+      code: String(r.primaryReservationCode || r.code || code || ""),
+      flatNumber: String(r.flatNumber || ""),
+      checkinDate: String(r.checkinDate || ""),
+      checkoutDate: String(r.checkoutDate || ""),
+      guestCount: Math.max(1, Number(r.guestCount) || 1),
+    }
 
     setModTargetFlat(initTarget)
     setModStep("preview")
@@ -953,7 +877,6 @@ export default function GuestPortal() {
     setModifySuccessInfo(null)
     setModifyModalOpen(true)
 
-    // Dispara a primeira simulação com os dados do flat selecionado
     if (initTarget.checkinDate && initTarget.checkoutDate) {
       handleRunPreview(initTarget.checkinDate, initTarget.checkoutDate, initTarget.guestCount, initTarget.code)
     }
@@ -973,8 +896,7 @@ export default function GuestPortal() {
       data.reservation.primaryReservationCode ||
       data.reservation.code ||
       code
-    const pkgCodeForMod = data?.packageSummary?.packageCode || data.reservation.packageCode || undefined
-    const modAuthQs = data?.isRequesterView || data?.isPackageView || pkgCodeForMod ? "?requester=1" : ""
+    const modAuthQs = buildPortalAuthQuery()
 
     if (checkout <= checkin) {
       setPreviewError("A data de check-out deve ser posterior à data de check-in.")
@@ -996,7 +918,6 @@ export default function GuestPortal() {
             newCheckoutDate: checkout,
             newGuestCount: guests,
             reason: modReason,
-            ...(pkgCodeForMod ? { packageCode: pkgCodeForMod } : {}),
           })
         }
       )
@@ -1029,8 +950,7 @@ export default function GuestPortal() {
       data.reservation.primaryReservationCode ||
       data.reservation.code ||
       code
-    const pkgCodeForMod = data?.packageSummary?.packageCode || data.reservation.packageCode || undefined
-    const modAuthQs = data?.isRequesterView || data?.isPackageView || pkgCodeForMod ? "?requester=1" : ""
+    const modAuthQs = buildPortalAuthQuery()
 
     setCheckoutLoading(true)
     setCheckoutError(null)
@@ -1047,7 +967,6 @@ export default function GuestPortal() {
             newGuestCount: modGuestCount,
             paymentMethod: modPaymentMethod === "card" ? "credit_card" : "pix",
             reason: modReason,
-            ...(pkgCodeForMod ? { packageCode: pkgCodeForMod } : {}),
           })
         }
       )
@@ -1076,9 +995,8 @@ export default function GuestPortal() {
       data.reservation.primaryReservationCode ||
       data.reservation.code ||
       code
-    const pkgCodeForMod = data?.packageSummary?.packageCode || data.reservation.packageCode || undefined
-    const modAuthQs = data?.isRequesterView || data?.isPackageView || pkgCodeForMod ? "?requester=1" : ""
-    const portalReloadCode = code || pkgCodeForMod || data.reservation.code
+    const modAuthQs = buildPortalAuthQuery()
+    const portalReloadCode = code || data.reservation.code
 
     setCancellingHold(true)
     try {
@@ -1089,7 +1007,6 @@ export default function GuestPortal() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             pendingId: checkoutData.pendingId,
-            ...(pkgCodeForMod ? { packageCode: pkgCodeForMod } : {}),
           })
         }
       )
@@ -1114,9 +1031,8 @@ export default function GuestPortal() {
       data.reservation.primaryReservationCode ||
       data.reservation.code ||
       code
-    const pkgCodeForMod = data?.packageSummary?.packageCode || data.reservation.packageCode || undefined
-    const modAuthQs = data?.isRequesterView || data?.isPackageView || pkgCodeForMod ? "?requester=1" : ""
-    const portalReloadCode = code || pkgCodeForMod || data.reservation.code
+    const modAuthQs = buildPortalAuthQuery()
+    const portalReloadCode = code || data.reservation.code
 
     setCheckoutLoading(true)
     setPreviewError(null)
@@ -1132,7 +1048,6 @@ export default function GuestPortal() {
             newCheckoutDate: modCheckoutDate,
             newGuestCount: modGuestCount,
             reason: modReason,
-            ...(pkgCodeForMod ? { packageCode: pkgCodeForMod } : {}),
           })
         }
       )
@@ -1148,11 +1063,6 @@ export default function GuestPortal() {
           needsReSignature: Boolean(json.needsReSignature),
           reSignatureUrl: json.reSignatureUrl || `/pre-checkin/${encodeURIComponent(targetModCode)}?resign=1`
         })
-        if (json.packageSummary) {
-          setData((prev: any) =>
-            prev ? { ...prev, packageSummary: json.packageSummary } : prev
-          )
-        }
         setModStep("success")
         fetchPortalData(portalReloadCode, true)
       } else {
@@ -1481,24 +1391,17 @@ export default function GuestPortal() {
         ))
     const isRequesterView =
       !isCompanionView &&
-      Boolean(
-        data?.isRequesterView ||
-          data?.isPackageView ||
-          (typeof window !== "undefined" &&
-            (new URLSearchParams(window.location.search).get("requester") === "1" ||
-              new URLSearchParams(window.location.search).get("view") === "requester"))
-      )
+      !isB2b &&
+      Boolean(data?.isRequesterView && !data?.hideFinancialForGuest)
     const hideFinancial = Boolean(
       isB2b ||
       isCompanionView ||
+      data?.hideFinancialForGuest ||
       (!isRequesterView &&
-        (data?.hideFinancialForGuest ||
-          reservation?.hideFinancialForGuest ||
+        (reservation?.hideFinancialForGuest ||
           reservation?.nfHideFromGuest))
     )
-    const pkgSum = !hideFinancial && data?.packageSummary && Array.isArray(data.packageSummary.items)
-      ? data.packageSummary
-      : null
+    const pkgSum = null as any
     const dailyRatesArr = (reservation as any)?.dailyRates
     const ratesSub = pkgSum
       ? 0
@@ -1668,7 +1571,7 @@ export default function GuestPortal() {
     if (!reservation?.code || portalFinancialSummary.hideFinancialForGuest || isPaid || isFaturadoBoleto || isCancelled || isExpiredPreReservation) return
     const interval = setInterval(async () => {
       try {
-        const pollQs = portalFinancialSummary.isRequesterPortalView ? "?requester=1" : ""
+        const pollQs = buildPortalAuthQuery()
         const res = await fetch(`/api/pms/reservations/${encodeURIComponent(reservation.code)}/payment-status${pollQs}`)
         if (res.ok) {
           const json = await res.json()
@@ -2007,18 +1910,14 @@ export default function GuestPortal() {
     setTimeout(() => setCopiedCafeLink(false), 2500)
   }
 
-  const pkgReceiptSummary = !hideFinancialForGuest && data?.packageSummary ? data.packageSummary : null
-  const pkgActiveReceiptItems = pkgReceiptSummary && Array.isArray(pkgReceiptSummary.items)
-    ? pkgReceiptSummary.items.filter((it: any) => !it.isCancelled)
-    : []
-  const receiptLocatorCode = pkgReceiptSummary?.packageCode || reservation.code
-  const receiptHolderLabel = pkgReceiptSummary ? "Solicitante / Pagador" : "Hóspede Titular"
-  const receiptHolderName = pkgReceiptSummary?.requesterName || guestName
-  const receiptHolderDoc = pkgReceiptSummary?.requesterDocument || reservation.guestDocument || ""
-  const receiptHolderPhone = pkgReceiptSummary?.requesterPhone || reservation.guestPhone || ""
-  const receiptUnitsLabel = pkgActiveReceiptItems.length > 1
-    ? `Pacote Multi-Flat (${pkgActiveReceiptItems.map((it: any) => `Flat ${it.flatNumber}`).join(", ")})`
-    : `Apartamento ${reservation.flatNumber} (${reservation.roomCategory || "Studio Executivo"})`
+  const pkgReceiptSummary: any = null
+  const pkgActiveReceiptItems: any[] = []
+  const receiptLocatorCode = reservation.code
+  const receiptHolderLabel = "Hóspede Titular"
+  const receiptHolderName = guestName
+  const receiptHolderDoc = reservation.guestDocument || ""
+  const receiptHolderPhone = reservation.guestPhone || ""
+  const receiptUnitsLabel = `Apartamento ${reservation.flatNumber} (${reservation.roomCategory || "Studio Executivo"})`
 
   const handleCopyReceipt = () => {
     const packages = stayPackages
@@ -2688,13 +2587,12 @@ export default function GuestPortal() {
     setPaymentMethodTab(newMethod)
     setChangingMethod(true)
     try {
-      const methodQs = isRequesterPortalView ? "?requester=1" : ""
+      const methodQs = buildPortalAuthQuery()
       const res = await fetch(`/api/pms/reservations/${encodeURIComponent(reservation.code)}/change-payment-method${methodQs}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           method: newMethod,
-          ...(data?.packageSummary?.packageCode ? { packageCode: data.packageSummary.packageCode } : {}),
         })
       })
       const json = await res.json()
@@ -2720,7 +2618,7 @@ export default function GuestPortal() {
     setPaymentPendingFeedback(false)
     try {
       const targetLocator = code || reservation.code
-      const statusQs = isRequesterPortalView ? "?requester=1" : ""
+      const statusQs = buildPortalAuthQuery()
       const res = await fetch(`/api/pms/reservations/${encodeURIComponent(targetLocator)}/payment-status${statusQs}`)
       if (res.ok) {
         const json = await res.json()
@@ -2790,7 +2688,7 @@ export default function GuestPortal() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           templateId: "tpl_payment_confirmed",
-          reservationCode: data?.packageSummary?.packageCode || reservation.code
+          reservationCode: reservation.code
         })
       })
       const json = await res.json()
@@ -2847,15 +2745,6 @@ export default function GuestPortal() {
           selfCheckinNotice,
           confirmingSelfCheckin,
           copiedGuestLinkIndex,
-          copiedPkgCredLink,
-          copiedPkgFlatCode,
-          pkgNfseOpen,
-          pkgNfseDoc,
-          pkgNfseName,
-          pkgNfseEmail,
-          emittingPkgNfse,
-          pkgNfseMessage,
-          removingPkgItemId,
         ]}
         render={() => (
           <>
@@ -2880,7 +2769,7 @@ export default function GuestPortal() {
                 ) : isPaid ? (
                   <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200/90 text-[9.5px] sm:text-[10px] font-bold py-0.5 px-1.5 sm:px-2 shrink-0 whitespace-nowrap">
                     ✓ <span className="hidden sm:inline">{hideFinancialForGuest ? "Reserva Confirmada" : (isOta ? (channelLower.includes("booking") ? "Pago via Booking" : "Pago via Airbnb") : "Reserva Confirmada & Paga")}</span>
-                    <span className="sm:hidden">Pago</span>
+                    <span className="sm:hidden">{hideFinancialForGuest ? "Confirmada" : "Pago"}</span>
                   </Badge>
                 ) : isFaturadoBoleto ? (
                   <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200/90 text-[9.5px] sm:text-[10px] font-bold py-0.5 px-1.5 sm:px-2 shrink-0 whitespace-nowrap">
@@ -3826,24 +3715,6 @@ export default function GuestPortal() {
             </div>
           </div>
 
-          {Boolean(data?.isPackageView && data?.packageSummary?.items?.length) && (
-            <div className="p-3 rounded-2xl bg-indigo-50/80 border border-indigo-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-indigo-950">
-              <span>
-                Os atalhos individuais acima (<strong>Pré-Check-in</strong> e <strong>Check-out</strong>) abrem o <strong>Flat {reservation.flatNumber}</strong> (<span className="font-mono">{individualStayCode}</span>). Para links individuais s/ valores, cadastro único ou alteração por flat, veja o painel do pacote abaixo.
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  const el = document.getElementById("painel-pacote-multiflat")
-                  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" })
-                }}
-                className="shrink-0 font-black text-indigo-700 hover:text-indigo-900 underline underline-offset-2 text-left sm:text-right"
-              >
-                Ver todos os flats do pacote ↓
-              </button>
-            </div>
-          )}
-
           {/* Ações da Reserva (Modificação de Datas e Hóspedes) */}
           {(() => {
             const directChannels = ["whatsapp", "site", "site_direto", "direto", "balcao"]
@@ -3878,258 +3749,6 @@ export default function GuestPortal() {
           })()}
         </Card>
 
-        {/* ── 1.4 Painel Consolidado do Pacote Multi-Flat (exclusivo do Solicitante) ── */}
-        {!hideFinancialForGuest && data?.packageSummary && Array.isArray(data.packageSummary.items) && (
-          <Card id="painel-pacote-multiflat" className="bg-white rounded-3xl border border-indigo-200/90 shadow-md p-5 sm:p-7 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 pb-3">
-              <div>
-                <span className="text-[10px] font-black uppercase tracking-widest text-indigo-600 block">
-                  Pacote Multi-Flat • Pagamento & Recibo Único
-                </span>
-                <h2 className="text-base sm:text-lg font-black text-slate-900">
-                  Pacote {data.packageSummary.packageCode} ({data.packageSummary.activeFlatsCount} {data.packageSummary.activeFlatsCount === 1 ? "Flat Ativo" : "Flats Ativos"})
-                </h2>
-              </div>
-              <Badge className={data.packageSummary.isPaid ? "bg-emerald-600 text-white font-bold text-xs" : "bg-indigo-600 text-white font-bold text-xs"}>
-                {data.packageSummary.isPaid ? "✓ Pacote Quitado" : `Total PIX: R$ ${Number(data.packageSummary.pendingAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
-              </Badge>
-            </div>
-
-            <div className="space-y-2.5">
-              {data.packageSummary.items.map((it: any) => {
-                const canModifyPkgFlat =
-                  !it.isCancelled &&
-                  !it.isExpired &&
-                  ["whatsapp", "site", "site_direto", "direto", "balcao"].includes((reservation.channel || "").toLowerCase())
-                const fmtIso = (iso: string) => {
-                  const s = String(iso || "").slice(0, 10)
-                  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s.split("-").reverse().join("/") : s
-                }
-                const itemStatusConfirmed = Boolean(it.isPaid || data.packageSummary.isPaid)
-                return (
-                  <div
-                    key={it.id}
-                    className={`p-3.5 rounded-2xl border text-xs flex flex-col gap-3 ${
-                      it.isCancelled ? "bg-rose-50/50 border-rose-200 opacity-75" : "bg-slate-50/90 border-slate-200"
-                    }`}
-                  >
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-black text-slate-900 text-sm">Flat {it.flatNumber}</span>
-                          <span className="font-mono text-[11px] text-slate-500">({it.code})</span>
-                          <Badge
-                            variant="outline"
-                            className={
-                              it.isCancelled
-                                ? "text-[10px] border-rose-300 text-rose-700 bg-rose-50 font-bold"
-                                : itemStatusConfirmed
-                                  ? "text-[10px] border-emerald-300 text-emerald-700 bg-emerald-50 font-bold"
-                                  : "text-[10px] border-amber-300 text-amber-800 bg-amber-50 font-bold"
-                            }
-                          >
-                            {it.isCancelled ? "Cancelado" : itemStatusConfirmed ? "Confirmado" : "Pré-Reserva"}
-                          </Badge>
-                        </div>
-                        <div className="text-slate-600">
-                          Período: <strong>{fmtIso(it.checkinDate)}</strong> a <strong>{fmtIso(it.checkoutDate)}</strong> • {it.guestCount} pax • {it.includeBreakfast ? "Com Café" : "Sem Café"} • {it.twinBeds ? "2 Solteiros" : "Casal"}
-                        </div>
-                        <div className="text-slate-500">
-                          Hóspede 1: <strong>{it.informGuestsLater ? "Informar pelo link único" : it.guestName}</strong>
-                          {it.guestCount >= 2 && (
-                            <> • Hóspede 2: <strong>{it.guest2Name || "A informar"}</strong></>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2 shrink-0">
-                        <span className="font-mono font-bold text-slate-900">
-                          R$ {Number(it.totalAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                        </span>
-                        {canModifyPkgFlat && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleOpenModifyModal(it)}
-                            className="h-8 text-[11px] border-sky-300 bg-sky-50/70 text-sky-800 hover:bg-sky-100 font-bold gap-1"
-                          >
-                            <Calendar className="w-3.5 h-3.5 text-sky-600 shrink-0" />
-                            <span>Alterar Datas</span>
-                          </Button>
-                        )}
-                        {!it.isCancelled && data.packageSummary.activeFlatsCount > 1 && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            disabled={removingPkgItemId === it.id}
-                            onClick={() => handleCancelSingleFlatInPortal(it, data.packageSummary.packageCode)}
-                            className="h-8 text-[11px] border-rose-200 text-rose-700 hover:bg-rose-50"
-                          >
-                            {removingPkgItemId === it.id ? "Removendo..." : (itemStatusConfirmed ? "Cancelar Flat" : "Remover Flat")}
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-
-                    {!it.isCancelled && (
-                      <div className="pt-2 border-t border-slate-200/70 flex flex-wrap items-center gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            const flatPortalUrl = `${window.location.origin}/minha-reserva/${encodeURIComponent(it.code)}`
-                            navigator.clipboard?.writeText(flatPortalUrl)
-                            setCopiedPkgFlatCode(String(it.code))
-                            setTimeout(() => setCopiedPkgFlatCode((prev) => (prev === String(it.code) ? null : prev)), 2500)
-                          }}
-                          className="h-8 text-[11px] rounded-xl border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-semibold gap-1.5"
-                        >
-                          {copiedPkgFlatCode === String(it.code) ? (
-                            <>
-                              <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                              <span className="text-emerald-700 font-bold">✓ Portal Copiado!</span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                              <span>Copiar Portal Individual do Flat (s/ valores)</span>
-                            </>
-                          )}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setLocation(`/pre-checkin/${encodeURIComponent(it.code)}`)}
-                          className="h-8 text-[11px] rounded-xl text-indigo-700 hover:bg-indigo-50 font-semibold gap-1"
-                        >
-                          <FileText className="w-3.5 h-3.5 shrink-0" />
-                          <span>Pré-Check-in Flat {it.flatNumber}</span>
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-
-            <div className="pt-2 border-t border-slate-100 flex flex-wrap gap-2.5">
-              <Button
-                type="button"
-                onClick={() => setLocation(data.packageSummary.batchCredentialPath)}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl h-10 px-4"
-              >
-                Cadastrar / Editar Hóspede 1 e 2 de Cada Flat (Link Único)
-              </Button>
-
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  const credPath = data.packageSummary.batchCredentialPath || `/credenciamento/${encodeURIComponent(data.packageSummary.packageCode)}`
-                  const fullCredUrl = `${window.location.origin}${credPath.startsWith("/") ? credPath : `/${credPath}`}`
-                  navigator.clipboard?.writeText(fullCredUrl)
-                  setCopiedPkgCredLink(true)
-                  setTimeout(() => setCopiedPkgCredLink(false), 2500)
-                }}
-                className="border-indigo-200 bg-indigo-50/60 hover:bg-indigo-100 text-indigo-900 font-bold text-xs rounded-xl h-10 px-4 inline-flex items-center gap-1.5"
-              >
-                {copiedPkgCredLink ? (
-                  <>
-                    <Check className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span className="text-emerald-700">✓ Link Único Copiado!</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-4 h-4 text-indigo-600 shrink-0" />
-                    <span>Copiar Link Único de Cadastro (/credenciamento/{data.packageSummary.packageCode})</span>
-                  </>
-                )}
-              </Button>
-
-              {data.packageSummary.isPaid && (
-                data.packageSummary.consolidatedNfseNumber ? (
-                  <a
-                    href={`/api/nfse/danfse/${data.packageSummary.consolidatedInvoiceId}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center justify-center px-4 h-10 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs"
-                  >
-                    Baixar NFS-e Única Nº {data.packageSummary.consolidatedNfseNumber}
-                  </a>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      setPkgNfseDoc(data.packageSummary.requesterDocument || "")
-                      setPkgNfseName(data.packageSummary.requesterName || "")
-                      setPkgNfseEmail(data.packageSummary.requesterEmail || "")
-                      setPkgNfseMessage(null)
-                      setPkgNfseOpen(!pkgNfseOpen)
-                    }}
-                    className="border-emerald-300 text-emerald-900 hover:bg-emerald-50 font-bold text-xs rounded-xl h-10 px-4"
-                  >
-                    Emitir 1 NFS-e Única do Pacote (CPF ou CNPJ)
-                  </Button>
-                )
-              )}
-            </div>
-
-            {pkgNfseMessage && (
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-800">
-                {pkgNfseMessage}
-              </div>
-            )}
-
-            {pkgNfseOpen && (
-              <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200 space-y-3">
-                <div className="text-xs font-bold text-emerald-950">
-                  Emitir 1 Nota Fiscal de Serviço (NFS-e) Única consolidando todos os flats ativos do pacote (aceita CPF ou CNPJ):
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                  <Input
-                    value={pkgNfseDoc}
-                    onChange={(e) => { setPkgNfseDoc(e.target.value); setPkgNfseMessage(null) }}
-                    placeholder="CPF (11 díg.) ou CNPJ (14 díg.)"
-                    autoCorrect="off"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                    className="bg-white text-xs h-9 font-mono"
-                  />
-                  <Input
-                    value={pkgNfseName}
-                    onChange={(e) => setPkgNfseName(e.target.value)}
-                    placeholder="Nome Completo ou Razão Social"
-                    className="bg-white text-xs h-9"
-                  />
-                  <Input
-                    type="text"
-                    inputMode="email"
-                    autoCorrect="off"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                    value={pkgNfseEmail}
-                    onChange={(e) => { setPkgNfseEmail(e.target.value); setPkgNfseMessage(null) }}
-                    placeholder="E-mail(s) para envio da NFS-e (separe por ;)"
-                    className="bg-white text-xs h-9"
-                  />
-                </div>
-                <Button
-                  type="button"
-                  disabled={emittingPkgNfse}
-                  onClick={() => handleEmitPackageConsolidatedNfse(data.packageSummary.packageCode)}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 px-4 rounded-xl"
-                >
-                  {emittingPkgNfse ? "Emitindo NFS-e Única..." : "Confirmar e Emitir 1 NFS-e Única"}
-                </Button>
-              </div>
-            )}
-          </Card>
-        )}
-
         {/* ── 1.5 Card de Pagamento & Confirmação Financeira ───────────────── */}
         {isCancelled ? (
           <Card className="bg-white rounded-3xl border border-rose-200/90 shadow-md p-5 sm:p-7 space-y-4">
@@ -4140,10 +3759,10 @@ export default function GuestPortal() {
                 </div>
                 <div>
                   <h2 className="text-base sm:text-lg font-black text-slate-900">
-                    Encerramento Financeiro
+                    {hideFinancialForGuest ? "Reserva Cancelada" : "Encerramento Financeiro"}
                   </h2>
                   <span className="text-xs text-slate-500">
-                    Reserva cancelada • Cobranças e serviços suspensos
+                    Reserva cancelada • Serviços e acessos suspensos
                   </span>
                 </div>
               </div>
@@ -4153,11 +3772,13 @@ export default function GuestPortal() {
             </div>
             <div className="p-4 bg-rose-50/70 rounded-2xl border border-rose-200 text-xs text-rose-900 space-y-1">
               <p className="font-bold">
-                {Number(reservation.refundAmount) > 0
-                  ? `Estorno integral de R$ ${Number(reservation.refundAmount).toFixed(2)} processado com sucesso.`
-                  : (reservation.refundStatus === "estorno_100%_solicitado"
-                      ? "Solicitação de estorno em processamento financeiro."
-                      : "Cancelamento efetuado sem estorno conforme as políticas da tarifa contratada.")}
+                {hideFinancialForGuest
+                  ? "Esta hospedagem foi cancelada. Para mais informações, contate o solicitante responsável pela reserva."
+                  : (Number(reservation.refundAmount) > 0
+                      ? `Estorno integral de R$ ${Number(reservation.refundAmount).toFixed(2)} processado com sucesso.`
+                      : (reservation.refundStatus === "estorno_100%_solicitado"
+                          ? "Solicitação de estorno em processamento financeiro."
+                          : "Cancelamento efetuado sem estorno conforme as políticas da tarifa contratada."))}
               </p>
               {reservation.cancellationReason && (
                 <p className="text-rose-700 text-[11px]">
@@ -4175,10 +3796,12 @@ export default function GuestPortal() {
                 </div>
                 <div>
                   <h2 className="text-base sm:text-lg font-black text-slate-900">
-                    Prazo de Pagamento Expirado
+                    {hideFinancialForGuest ? "Pré-Reserva Expirada" : "Prazo de Pagamento Expirado"}
                   </h2>
                   <span className="text-xs text-slate-500">
-                    A validade desta pré-reserva encerrou e o link de pagamento foi suspenso
+                    {hideFinancialForGuest
+                      ? "A validade desta pré-reserva encerrou."
+                      : "A validade desta pré-reserva encerrou e o link de pagamento foi suspenso"}
                   </span>
                 </div>
               </div>
@@ -4188,16 +3811,18 @@ export default function GuestPortal() {
             </div>
             <div className="p-4 bg-amber-50/80 rounded-2xl border border-amber-200 text-xs text-amber-950 space-y-3">
               <p className="leading-relaxed">
-                Caso você ainda deseje se hospedar conosco neste período, clique no botão abaixo para falar com nossa equipe no WhatsApp. Vamos <strong>consultar a disponibilidade e os valores novamente</strong> e reativar sua pré-reserva em instantes!
+                {hideFinancialForGuest
+                  ? "A validade desta pré-reserva encerrou. Caso precise de novas datas, entre em contato com o solicitante responsável ou fale conosco no WhatsApp."
+                  : <>Caso você ainda deseje se hospedar conosco neste período, clique no botão abaixo para falar com nossa equipe no WhatsApp. Vamos <strong>consultar a disponibilidade e os valores novamente</strong> e reativar sua pré-reserva em instantes!</>}
               </p>
               <a
-                href={`https://wa.me/${finalWaNumber}?text=${encodeURIComponent(`Olá! Minha pré-reserva (${reservation.code}) para o Flat ${reservation.flatNumber} expirou, mas ainda tenho interesse. Poderiam consultar a disponibilidade e reativar meu link de pagamento?`)}`}
+                href={`https://wa.me/${finalWaNumber}?text=${encodeURIComponent(`Olá! Minha pré-reserva (${reservation.code}) para o Flat ${reservation.flatNumber} expirou, mas ainda tenho interesse.`)}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold shadow-sm transition-colors"
               >
                 <WhatsAppIcon className="w-4 h-4" />
-                <span>Falar no WhatsApp e Reativar Pré-Reserva</span>
+                <span>Falar no WhatsApp</span>
               </a>
             </div>
           </Card>
@@ -4223,7 +3848,9 @@ export default function GuestPortal() {
                 <span className="text-xs text-slate-500">
                   {(isPaid || isFaturadoBoleto)
                     ? "Sua hospedagem está 100% garantida e o acesso ao condomínio liberado." 
-                    : "Escolha como deseja pagar para confirmar e garantir a sua estadia."}
+                    : (hideFinancialForGuest
+                        ? "Confirmação em andamento junto ao solicitante responsável pela reserva."
+                        : "Escolha como deseja pagar para confirmar e garantir a sua estadia.")}
                 </span>
               </div>
             </div>
@@ -4246,30 +3873,46 @@ export default function GuestPortal() {
             </div>
           )}
 
-          {/* Se PAGO mas SEM VALOR PREENCHIDO: Mostra somente "Pago" */}
-          {isPaid && !hasAmount && (
-            <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-emerald-900">
+          {/* Se PAGO mas SEM VALOR PREENCHIDO (ou em modo sigilo): Mostra somente status não-financeiro */}
+          {((isPaid && !hasAmount) || hideFinancialForGuest) && (
+            <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs ${
+              (isPaid || isFaturadoBoleto)
+                ? "bg-emerald-50 border-emerald-200 text-emerald-900"
+                : "bg-amber-50 border-amber-200 text-amber-900"
+            }`}>
               <div className="flex items-center gap-2.5">
-                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                {(isPaid || isFaturadoBoleto) ? (
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                ) : (
+                  <Clock className="w-5 h-5 text-amber-600 shrink-0" />
+                )}
                 <div>
-                  <span className="font-bold block text-sm">{hideFinancialForGuest ? "Reserva 100% Confirmada" : "Status: Pago"}</span>
-                  <span className="text-emerald-800 text-xs">
-                    {isOta 
-                      ? (channelLower.includes("booking") 
-                          ? "Reserva e pagamento confirmados via Booking.com." 
-                          : "Reserva e pagamento confirmados via Airbnb.")
-                      : (hideFinancialForGuest ? (requesterName ? `Reserva gerenciada por ${requesterName}.` : "Reserva gerenciada pelo solicitante responsável.") : "Pagamento registrado e confirmado pela administração CorpFlats.")}
+                  <span className="font-bold block text-sm">
+                    {hideFinancialForGuest
+                      ? ((isPaid || isFaturadoBoleto) ? "Reserva 100% Confirmada" : "Aguardando Confirmação")
+                      : "Status: Pago"}
+                  </span>
+                  <span className={`text-xs ${(isPaid || isFaturadoBoleto) ? "text-emerald-800" : "text-amber-800"}`}>
+                    {hideFinancialForGuest
+                      ? (requesterName ? `Reserva gerenciada por ${requesterName}.` : "Reserva gerenciada pelo solicitante responsável.")
+                      : channelLower.includes("booking")
+                        ? "Reserva e pagamento confirmados via Booking.com."
+                        : channelLower.includes("airbnb")
+                          ? "Reserva e pagamento confirmados via Airbnb."
+                          : "Pagamento registrado e confirmado pela administração CorpFlats."}
                   </span>
                 </div>
               </div>
-              <Badge className="bg-emerald-600 text-white font-bold text-xs py-1 px-3 shrink-0">
-                ✓ Pago
+              <Badge className={`${(isPaid || isFaturadoBoleto) ? "bg-emerald-600" : "bg-amber-600"} text-white font-bold text-xs py-1 px-3 shrink-0`}>
+                {hideFinancialForGuest
+                  ? ((isPaid || isFaturadoBoleto) ? "✓ Confirmada" : "⏳ Em Confirmação")
+                  : "✓ Pago"}
               </Badge>
             </div>
           )}
 
-          {/* Se PAGO COM VALOR PREENCHIDO: Exibe os valores normalmente */}
-          {isPaid && hasAmount && (
+          {/* Se PAGO COM VALOR PREENCHIDO (e sem sigilo): Exibe os valores normalmente */}
+          {isPaid && hasAmount && !hideFinancialForGuest && (
             <>
               <div className="grid grid-cols-2 gap-2.5 text-xs">
                 <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
@@ -6124,59 +5767,6 @@ export default function GuestPortal() {
           ══════════════════════════════════════════════════════════════════ */}
           {modStep === "preview" && (
             <div className="space-y-4 py-2 text-xs">
-              {(() => {
-                const pkgActiveItems = Array.isArray(data?.packageSummary?.items)
-                  ? data.packageSummary.items.filter((it: any) => it && !it.isCancelled && !it.isExpired)
-                  : []
-                if (pkgActiveItems.length < 2) return null
-                return (
-                  <div className="p-3 rounded-2xl bg-indigo-50/70 border border-indigo-200/80 space-y-2">
-                    <Label className="text-indigo-950 font-black text-[11px] block">
-                      Qual flat do pacote deseja alterar?
-                    </Label>
-                    <div className="flex flex-wrap gap-2">
-                      {pkgActiveItems.map((it: any) => {
-                        const isSelected = String(modTargetFlat?.code || "") === String(it.code)
-                        return (
-                          <button
-                            key={it.id || it.code}
-                            type="button"
-                            onClick={() => {
-                              const nextTarget = {
-                                code: String(it.code),
-                                flatNumber: String(it.flatNumber || ""),
-                                checkinDate: String(it.checkinDate || ""),
-                                checkoutDate: String(it.checkoutDate || ""),
-                                guestCount: Math.max(1, Number(it.guestCount) || 1),
-                              }
-                              setModTargetFlat(nextTarget)
-                              setModCheckinDate(nextTarget.checkinDate)
-                              setModCheckoutDate(nextTarget.checkoutDate)
-                              setModGuestCount(nextTarget.guestCount)
-                              setPreviewData(null)
-                              setPreviewError(null)
-                              if (nextTarget.checkinDate && nextTarget.checkoutDate) {
-                                handleRunPreview(nextTarget.checkinDate, nextTarget.checkoutDate, nextTarget.guestCount, nextTarget.code)
-                              }
-                            }}
-                            className={`px-3 py-1.5 rounded-xl border text-left transition-all ${
-                              isSelected
-                                ? "bg-indigo-600 border-indigo-600 text-white font-bold shadow-xs"
-                                : "bg-white border-indigo-200 text-slate-700 hover:bg-indigo-100/60 font-semibold"
-                            }`}
-                          >
-                            <span className="block text-xs">Flat {it.flatNumber}</span>
-                            <span className={`block font-mono text-[10px] ${isSelected ? "text-indigo-100" : "text-slate-500"}`}>
-                              {it.code}
-                            </span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )
-              })()}
-
               {previewError && (
                 <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
@@ -6768,15 +6358,14 @@ export default function GuestPortal() {
                     onClick={async () => {
                       setCancelling(true)
                       try {
-                        const cancelLocator = code || reservation.code
-                        const cancelQs = isRequesterPortalView ? "?requester=1" : ""
+                        const cancelLocator = reservation.primaryReservationCode || reservation.code || code
+                        const cancelQs = buildPortalAuthQuery()
                         const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(cancelLocator)}/cancel${cancelQs}`, {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
                           body: JSON.stringify({
                             reason: cancelReason,
-                            cancelWholePackage: Boolean(data?.isPackageView),
-                            ...(data?.packageSummary?.packageCode ? { packageCode: data.packageSummary.packageCode } : {}),
+                            cancelWholePackage: false,
                           })
                         })
                         const json = await res.json()

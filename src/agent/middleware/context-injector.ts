@@ -1,6 +1,7 @@
 // src/agent/middleware/context-injector.ts
 
 import {
+  AlertaTelefoneHospedeInvalidoSessao,
   ContextoSessaoInjetado,
   EstadoSessao,
   PerfilRemetente,
@@ -147,7 +148,12 @@ function buildPackageSummaryForSession(db: any, sourceRes: any, baseUrl: string)
     activeCodes.length > 0
       ? `/credenciamento/${encodeURIComponent(pkgCode)}?codes=${encodeURIComponent(activeCodes.join(','))}`
       : `/credenciamento/${encodeURIComponent(pkgCode)}`;
-  const packagePortalUrl = `${cleanBase}/minha-reserva/${encodeURIComponent(pkgCode)}?requester=1`;
+  const reqPortalToken = String(
+    primary?.requesterPortalToken ||
+      all.find((r: any) => r?.requesterPortalToken)?.requesterPortalToken ||
+      ''
+  ).trim();
+  const packagePortalUrl = `${cleanBase}/solicitante/${encodeURIComponent(pkgCode)}${reqPortalToken ? `?t=${encodeURIComponent(reqPortalToken)}` : ''}`;
   const batchCredentialUrl = `${cleanBase}${batchCredentialPath}`;
 
   const sharedPix = !isAllPaid && activeItems.length > 0
@@ -556,6 +562,64 @@ export function injectSessionContext(
     }
   }
 
+  // Varre TODAS as reservas ativas não expiradas onde o remetente é Solicitante para expor alertas de WhatsApp inválido de hóspedes
+  const alertasTelefoneHospedeInvalido: AlertaTelefoneHospedeInvalidoSessao[] = [];
+  const seenPhoneAlertKeys = new Set<string>();
+  if (cleanPhone && cleanPhone.length >= 8) {
+    for (const r of reservations) {
+      if (!r) continue;
+      const st = String(r.status || '').toLowerCase().trim();
+      if (['cancelada', 'cancelado', 'cancelled', 'expirada', 'expired', 'no_show', 'concluida', 'checked_out'].includes(st)) continue;
+      if (r.checkoutCompleted) continue;
+      const paySt = String(r.paymentStatus || '').toLowerCase().trim();
+      const isPaidIt = ['paid', 'pago', 'pago_total', 'pago_integralmente', 'confirmado'].includes(paySt);
+      const holdExp = r.expiresAt || r.holdExpiresAt;
+      if ((st === 'pre_reserva' || st === 'pendente' || r.isPreReservation) && !isPaidIt && holdExp) {
+        const expMs = new Date(holdExp).getTime();
+        if (Number.isFinite(expMs) && expMs <= nowMs) continue;
+      }
+
+      const reqPhoneCand = r.requesterInfo?.whatsapp || r.requesterInfo?.phone || r.requesterPhone || '';
+      const isReqMatch = Boolean(
+        phonesMatch(reqPhoneCand, cleanPhone) ||
+        (r.requesterIsGuest1 && phonesMatch(r.guestPhone || r.phone, cleanPhone))
+      );
+      if (!isReqMatch) continue;
+
+      const reqList: any[] = Array.isArray(r.guestPhoneCorrectionRequests) ? r.guestPhoneCorrectionRequests : [];
+      for (const reqItem of reqList) {
+        if (!reqItem || reqItem.status !== 'awaiting_reply') continue;
+        const gIdx = Math.max(1, Number(reqItem.guestIndex) || 1);
+        const rCodeItem = String(r.code || r.reservationCode || `RES-${r.flatNumber}-${r.id}`).trim();
+        const dedupKey = `${rCodeItem}:${gIdx}`;
+        if (seenPhoneAlertKeys.has(dedupKey)) continue;
+        seenPhoneAlertKeys.add(dedupKey);
+
+        const gName = String(
+          reqItem.guestName ||
+          (gIdx === 1 ? r.guestName : r.guests?.[gIdx - 1]?.name) ||
+          `Hóspede ${gIdx}`
+        ).trim();
+
+        alertasTelefoneHospedeInvalido.push({
+          codigo_reserva: rCodeItem,
+          codigo_pacote: r.packageCode || r.packageId || null,
+          flat: String(r.flatNumber || ''),
+          indice_hospede: gIdx,
+          nome_hospede: gName,
+          telefone_invalido: String(reqItem.invalidPhone || ''),
+          motivo: String(reqItem.reason || 'no_whatsapp_account'),
+          solicitado_em: reqItem.notifiedAt || null,
+          status: 'AGUARDANDO_CORRECAO',
+        });
+      }
+    }
+  }
+
+  if (reservaSessao && alertasTelefoneHospedeInvalido.length > 0) {
+    reservaSessao.alertas_telefone_hospede_invalido = alertasTelefoneHospedeInvalido;
+  }
+
   return {
     data_hora_atual: isoNow,
     telefone_remetente: cleanPhone ? `+${cleanPhone}` : String(phone || ''),
@@ -565,6 +629,7 @@ export function injectSessionContext(
     dados_hospede: dadosHospede,
     reserva_ativa: reservaSessao,
     reserva_atual: reservaSessao,
+    ...(alertasTelefoneHospedeInvalido.length > 0 ? { alertas_telefone_hospede_invalido: alertasTelefoneHospedeInvalido } : {}),
     runtime: {
       db,
       ...runtime,
@@ -600,6 +665,9 @@ export function buildContextoSessaoJson(context: ContextoSessaoInjetado): string
       estado_atual: context.estado_atual,
       dados_hospede: context.dados_hospede || context.hospede || null,
       reserva_atual: sanitizedRes,
+      ...(Array.isArray(context.alertas_telefone_hospede_invalido) && context.alertas_telefone_hospede_invalido.length > 0
+        ? { alertas_telefone_hospede_invalido: context.alertas_telefone_hospede_invalido }
+        : {}),
     },
   };
   return JSON.stringify(payload, null, 2);

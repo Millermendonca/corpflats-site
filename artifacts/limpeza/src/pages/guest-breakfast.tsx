@@ -61,7 +61,7 @@ export default function GuestBreakfast() {
   // Step 1: Identificação do Quarto e Agendamento Geral
   const [roomNumber, setRoomNumber] = useState("")
   const [phone, setPhone] = useState("")
-  const [guestCount, setGuestCount] = useState<1 | 2 | 3>(2)
+  const [guestCount, setGuestCount] = useState<1 | 2 | 3>(1)
   const [deliveryDate, setDeliveryDate] = useState(format(addDays(new Date(), 1), "yyyy-MM-dd"))
   const [deliveryTime, setDeliveryTime] = useState("08:00")
   const [notes, setNotes] = useState("")
@@ -149,12 +149,22 @@ export default function GuestBreakfast() {
   const [orderSuccess, setOrderSuccess] = useState<any | null>(null)
   const [loadedFromReservation, setLoadedFromReservation] = useState(false)
   const [reservationData, setReservationData] = useState<any | null>(null)
+  const [packageFlats, setPackageFlats] = useState<any[]>([])
+  const [packageCodeContext, setPackageCodeContext] = useState<string>("")
+  const [manualLookupStatus, setManualLookupStatus] = useState<"idle" | "loading" | "matched" | "not_found">("idle")
+  const [manualAutoFilled, setManualAutoFilled] = useState<{ guestName: string; phone: string }>({ guestName: "", phone: "" })
   const [breakfastDays, setBreakfastDays] = useState<any[]>([])
   const [nowBrasilia, setNowBrasilia] = useState<any>(null)
   const [selectedRepeatDates, setSelectedRepeatDates] = useState<string[]>([])
   const [repeatAllDays, setRepeatAllDays] = useState(false)
   const [loadingContext, setLoadingContext] = useState(() => Boolean(resolveCurrentResCode()))
   const [contextError, setContextError] = useState<string | null>(null)
+
+  const maxAllowedGuests: 1 | 2 | 3 | null = (() => {
+    const raw = Number(reservationData?.guestCount || 0)
+    if (!Number.isFinite(raw) || raw < 1) return null
+    return Math.min(3, Math.max(1, raw)) as 1 | 2 | 3
+  })()
 
   const formatDateDisplay = (dateStr: string) => {
     try {
@@ -237,7 +247,7 @@ export default function GuestBreakfast() {
     return { ...defaultGuestPref }
   }
 
-  const applyExistingOrderToForm = (order: any) => {
+  const applyExistingOrderToForm = (order: any, maxGuestsOverride?: number) => {
     if (!order || order.status === "cancelled") return
 
     if (order.deliveryTime) {
@@ -245,12 +255,13 @@ export default function GuestBreakfast() {
     }
     setNotes(order.notes || "")
 
-    if (order.guestCount) {
-      const count = Math.min(3, Math.max(1, Number(order.guestCount || 1))) as 1 | 2 | 3
-      setGuestCount(count)
-    }
+    const cap = maxGuestsOverride
+      ?? (reservationData?.guestCount ? (Math.min(3, Math.max(1, Number(reservationData.guestCount) || 1)) as 1 | 2 | 3) : 3)
+    const rawOrderCount = Number(order.guestCount || guestCount || 1)
+    const clampedCount = Math.min(cap, Math.max(1, Number.isFinite(rawOrderCount) ? rawOrderCount : 1)) as 1 | 2 | 3
+    setGuestCount(clampedCount)
 
-    const isInd = order.orderMode === "individual"
+    const isInd = order.orderMode === "individual" && clampedCount > 1
     setOrderDistribution(isInd ? "individual" : "same_for_all")
 
     const isStdOrder = Boolean(order.isStandard || order.orderType === "standard")
@@ -265,14 +276,14 @@ export default function GuestBreakfast() {
         setGuest1Type(c1Std ? "standard" : "custom")
         if (!c1Std) setGuest1Pref(normalizeSavedPref(c1, order.items))
       }
-      const c2 = choices[1]
+      const c2 = clampedCount >= 2 ? choices[1] : null
       if (c2) {
         if (c2.guestName) setGuest2Name(c2.guestName)
         const c2Std = isInd ? Boolean(c2.isStandard) : isStdOrder
         setGuest2Type(c2Std ? "standard" : "custom")
         if (!c2Std) setGuest2Pref(normalizeSavedPref(c2, order.items))
       }
-      const c3 = choices[2]
+      const c3 = clampedCount >= 3 ? choices[2] : null
       if (c3) {
         if (c3.guestName) setGuest3Name(c3.guestName)
         const c3Std = isInd ? Boolean(c3.isStandard) : isStdOrder
@@ -295,29 +306,85 @@ export default function GuestBreakfast() {
     setActiveGuestTab(1)
   }
 
-  const loadReservationContext = async (code: string, preferredDate?: string) => {
+  const loadReservationContext = async (codeOrRoom: string, preferredDate?: string, isRoomQuery = false) => {
     setLoadingContext(true)
+    setContextError(null)
     try {
-      const res = await fetch(`/api/breakfast/reservation-context?res=${encodeURIComponent(code)}`)
+      const queryKey = isRoomQuery ? "room" : "res"
+      const res = await fetch(`/api/breakfast/reservation-context?${queryKey}=${encodeURIComponent(codeOrRoom)}`)
       const data = await res.json()
+
+      const rawEligibleFlats = Array.isArray(data?.eligibleFlats)
+        ? data.eligibleFlats
+        : Array.isArray(data?.flats)
+          ? data.flats
+          : Array.isArray(data?.packageFlats)
+            ? data.packageFlats
+            : Array.isArray(data?.items)
+              ? data.items
+              : Array.isArray(data?.packageSummary?.items)
+                ? data.packageSummary.items
+                : []
+      const eligibleFlats = Array.isArray(data?.eligibleFlats)
+        ? data.eligibleFlats
+        : rawEligibleFlats.filter((it: any) => it && it.status !== "cancelada" && it.includeBreakfast !== false)
+
+      const isPkgResponse = Boolean(
+        !isRoomQuery &&
+        (data?.isPackage || String(codeOrRoom || "").trim().toUpperCase().startsWith("PKG-"))
+      )
+
+      if (res.ok && isPkgResponse) {
+        const pkgLabel = String(data?.packageCode || data?.locatorCode || codeOrRoom || "").trim()
+        if (pkgLabel) setPackageCodeContext(pkgLabel)
+
+        if (eligibleFlats.length > 1) {
+          setPackageFlats(eligibleFlats)
+          setReservationData(null)
+          setLoadedFromReservation(false)
+          setBreakfastDays([])
+          return
+        }
+
+        if (eligibleFlats.length === 1 && !data?.reservation) {
+          setPackageFlats(eligibleFlats)
+          const singleCode = String(eligibleFlats[0]?.code || eligibleFlats[0]?.reservationCode || "").trim()
+          if (singleCode) {
+            await loadReservationContext(singleCode, preferredDate, false)
+            return
+          }
+        }
+
+        if (eligibleFlats.length === 0 && !data?.reservation) {
+          setPackageFlats([])
+          setReservationData(null)
+          setLoadedFromReservation(false)
+          setBreakfastDays([])
+          setContextError(data?.error || data?.message || "Nenhuma hospedagem deste pacote possui café da manhã ativo no momento.")
+          return
+        }
+      }
+
       if (res.ok && data?.reservation) {
         const r = data.reservation
-        setReservationData(r)
+        const clampedGuests = Math.min(3, Math.max(1, Number(r.guestCount || 1))) as 1 | 2 | 3
+        setReservationData({ ...r, guestCount: clampedGuests })
         setLoadedFromReservation(true)
         setBreakfastDays(data.breakfastDates || [])
         setNowBrasilia(data.nowBrasilia || null)
+        setGuestCount(clampedGuests)
+        if (clampedGuests === 1) {
+          setOrderDistribution("same_for_all")
+          setActiveGuestTab(1)
+        }
 
         if (r.flatNumber || r.flatId) setRoomNumber(String(r.flatNumber || r.flatId))
         if (r.guestName) setGuest1Name(r.guestName)
         if (r.guestPhone) setPhone(r.guestPhone)
-        if (r.guestCount) {
-          const count = Math.min(3, Math.max(1, Number(r.guestCount || 1))) as 1 | 2 | 3
-          setGuestCount(count)
-        }
         if (r.guests && Array.isArray(r.guests)) {
           if (r.guests[0]?.name) setGuest1Name(r.guests[0].name)
-          if (r.guests[1]?.name) setGuest2Name(r.guests[1].name)
-          if (r.guests[2]?.name) setGuest3Name(r.guests[2].name)
+          if (clampedGuests >= 2 && r.guests[1]?.name) setGuest2Name(r.guests[1].name)
+          if (clampedGuests >= 3 && r.guests[2]?.name) setGuest3Name(r.guests[2].name)
         }
 
         const dates: any[] = data.breakfastDates || []
@@ -330,7 +397,7 @@ export default function GuestBreakfast() {
         if (chosenDay?.date) {
           setDeliveryDate(chosenDay.date)
           if (chosenDay.status === "scheduled" && chosenDay.existingOrder) {
-            applyExistingOrderToForm(chosenDay.existingOrder)
+            applyExistingOrderToForm(chosenDay.existingOrder, clampedGuests)
           }
         }
       } else if (data?.error) {
@@ -340,6 +407,61 @@ export default function GuestBreakfast() {
       console.error("Falha ao carregar contexto da reserva:", err)
     } finally {
       setLoadingContext(false)
+    }
+  }
+
+  const lookupManualRoomContext = async (rawRoom: string) => {
+    const trimmed = String(rawRoom || "").trim()
+    if (!trimmed) {
+      setReservationData(null)
+      setBreakfastDays([])
+      setManualLookupStatus("idle")
+      return
+    }
+    setManualLookupStatus("loading")
+    try {
+      const dateQuery = deliveryDate ? `&date=${encodeURIComponent(deliveryDate)}` : ""
+      const res = await fetch(`/api/breakfast/reservation-context?room=${encodeURIComponent(trimmed)}${dateQuery}`)
+      const data = await res.json().catch(() => null)
+      if (res.ok && data?.reservation) {
+        const r = data.reservation
+        const maxGuests = Math.min(3, Math.max(1, Number(r.guestCount || 1))) as 1 | 2 | 3
+        setReservationData({ ...r, guestCount: maxGuests })
+        setBreakfastDays(data.breakfastDates || [])
+        setNowBrasilia(data.nowBrasilia || null)
+        setGuestCount(maxGuests)
+        if (maxGuests === 1) {
+          setOrderDistribution("same_for_all")
+          setActiveGuestTab(1)
+        }
+
+        const nextAutoName = String(r.guests?.[0]?.name || r.guestName || "").trim()
+        if (nextAutoName && (!guest1Name.trim() || guest1Name === manualAutoFilled.guestName)) {
+          setGuest1Name(nextAutoName)
+          setManualAutoFilled(prev => ({ ...prev, guestName: nextAutoName }))
+        }
+        if (maxGuests >= 2 && r.guests?.[1]?.name) setGuest2Name(r.guests[1].name)
+        if (maxGuests >= 3 && r.guests?.[2]?.name) setGuest3Name(r.guests[2].name)
+
+        const nextAutoPhone = String(r.guestPhone || "").trim()
+        if (nextAutoPhone && (!phone.trim() || phone === manualAutoFilled.phone)) {
+          setPhone(nextAutoPhone)
+          setManualAutoFilled(prev => ({ ...prev, phone: nextAutoPhone }))
+        }
+
+        const dates: any[] = data.breakfastDates || []
+        const matchedDay = dates.find(d => d.date === deliveryDate)
+        if (matchedDay?.status === "scheduled" && matchedDay.existingOrder) {
+          applyExistingOrderToForm(matchedDay.existingOrder, maxGuests)
+        }
+        setManualLookupStatus("matched")
+      } else {
+        setReservationData(null)
+        setBreakfastDays([])
+        setManualLookupStatus("not_found")
+      }
+    } catch {
+      setManualLookupStatus("not_found")
     }
   }
 
@@ -373,11 +495,39 @@ export default function GuestBreakfast() {
     } else if (roomParam) {
       setRoomNumber(roomParam)
       if (nameParam) setGuest1Name(nameParam)
-      loadReservationContext(roomParam)
+      loadReservationContext(roomParam, undefined, true)
     } else {
       if (nameParam) setGuest1Name(nameParam)
     }
   }, [paramsMinhaReserva?.code, paramsMinhaReservaAlt?.code, paramsPortal?.code, paramsGuest?.code, paramsCafeCode?.code, paramsCafeDaManhaCode?.code, paramsBreakfastCode?.code])
+
+  useEffect(() => {
+    if (maxAllowedGuests === null) return
+    if (guestCount > maxAllowedGuests) {
+      setGuestCount(maxAllowedGuests)
+    }
+    if (maxAllowedGuests === 1) {
+      if (orderDistribution !== "same_for_all") setOrderDistribution("same_for_all")
+      if (activeGuestTab !== 1) setActiveGuestTab(1)
+    } else if (activeGuestTab > maxAllowedGuests) {
+      setActiveGuestTab(1)
+    }
+  }, [maxAllowedGuests, guestCount, orderDistribution, activeGuestTab])
+
+  useEffect(() => {
+    if (loadedFromReservation || packageFlats.length > 0) return
+    const trimmed = roomNumber.trim()
+    if (!trimmed) {
+      setReservationData(null)
+      setBreakfastDays([])
+      setManualLookupStatus("idle")
+      return
+    }
+    const timer = window.setTimeout(() => {
+      lookupManualRoomContext(trimmed)
+    }, 450)
+    return () => window.clearTimeout(timer)
+  }, [roomNumber, loadedFromReservation, packageFlats.length])
 
   // Gera horários padrão das 05:00 às 09:30 a cada 7 minutos
   const generateDefaultSlots = () => {
@@ -512,9 +662,13 @@ export default function GuestBreakfast() {
         fruit: "Fruta do dia" 
       }
 
-      const isUnified = orderDistribution === "same_for_all" || guestCount === 1
+      const maxAllowed = reservationData?.guestCount
+        ? (Math.min(3, Math.max(1, Number(reservationData.guestCount) || 1)) as 1 | 2 | 3)
+        : 3
+      const effectiveGuestCount = Math.min(maxAllowed, Math.max(1, Number(guestCount) || 1)) as 1 | 2 | 3
+      const isUnified = orderDistribution === "same_for_all" || effectiveGuestCount === 1
 
-      const guestChoices = [
+      const rawChoices = [
         { 
           guestIndex: 1, 
           guestName: g1, 
@@ -524,8 +678,8 @@ export default function GuestBreakfast() {
         }
       ]
 
-      if (guestCount >= 2) {
-        guestChoices.push({ 
+      if (effectiveGuestCount >= 2) {
+        rawChoices.push({ 
           guestIndex: 2, 
           guestName: g2 || "2º Hóspede", 
           deliveryTime,
@@ -534,8 +688,8 @@ export default function GuestBreakfast() {
         })
       }
 
-      if (guestCount === 3) {
-        guestChoices.push({ 
+      if (effectiveGuestCount === 3) {
+        rawChoices.push({ 
           guestIndex: 3, 
           guestName: g3 || "Hóspede 3", 
           deliveryTime,
@@ -544,6 +698,7 @@ export default function GuestBreakfast() {
         })
       }
 
+      const guestChoices = rawChoices.slice(0, effectiveGuestCount)
       const allDatesToSubmit = Array.from(new Set([deliveryDate, ...selectedRepeatDates])).filter(Boolean)
 
       const res = await fetch("/api/breakfast/orders", {
@@ -554,7 +709,7 @@ export default function GuestBreakfast() {
           clientName: g1,
           phone,
           reservationCode: reservationData?.code || undefined,
-          guestCount,
+          guestCount: effectiveGuestCount,
           deliveryDates: allDatesToSubmit,
           deliveryDate,
           deliveryTime,
@@ -570,13 +725,15 @@ export default function GuestBreakfast() {
       const json = await res.json()
       if (res.ok) {
         const wasEditingCurrent = Boolean(breakfastDays.find(d => d.date === deliveryDate)?.status === "scheduled")
-        if (reservationData?.code) {
+        if (loadedFromReservation && reservationData?.code) {
           loadReservationContext(reservationData.code, deliveryDate)
+        } else if (roomNumber.trim()) {
+          lookupManualRoomContext(roomNumber)
         }
         setOrderSuccess({
           roomNumber,
           clientName: g1,
-          guestCount,
+          guestCount: effectiveGuestCount,
           deliveryDates: allDatesToSubmit,
           deliveryDate,
           deliveryTime,
@@ -607,9 +764,12 @@ export default function GuestBreakfast() {
       return
     }
 
+    const effectiveCount = maxAllowedGuests
+      ? (Math.min(maxAllowedGuests, Math.max(1, Number(guestCount) || 1)) as 1 | 2 | 3)
+      : guestCount
     const g1 = guest1Name.trim()
-    const g2 = guest2Name.trim() || (guestCount >= 2 ? "2º Hóspede" : "")
-    const g3 = guest3Name.trim() || (guestCount === 3 ? "3º Hóspede" : "")
+    const g2 = effectiveCount >= 2 ? (guest2Name.trim() || "2º Hóspede") : ""
+    const g3 = effectiveCount === 3 ? (guest3Name.trim() || "3º Hóspede") : ""
 
     const stdItemPref: GuestPreference = { 
       ...defaultGuestPref, 
@@ -628,7 +788,7 @@ export default function GuestBreakfast() {
     let p2 = sanitizePref(guest2Pref)
     let p3 = sanitizePref(guest3Pref)
 
-    if (orderDistribution === "same_for_all" || guestCount === 1) {
+    if (orderDistribution === "same_for_all" || effectiveCount === 1) {
       if (breakfastType === "standard") {
         isOverallStandard = true
         p1 = stdItemPref
@@ -641,7 +801,7 @@ export default function GuestBreakfast() {
         p3 = sanitizePref(guest1Pref)
       }
     } else {
-      isOverallStandard = (guest1Type === "standard" && guest2Type === "standard" && (guestCount < 3 || guest3Type === "standard"))
+      isOverallStandard = (guest1Type === "standard" && guest2Type === "standard" && (effectiveCount < 3 || guest3Type === "standard"))
       p1 = guest1Type === "standard" ? stdItemPref : sanitizePref(guest1Pref)
       p2 = guest2Type === "standard" ? stdItemPref : sanitizePref(guest2Pref)
       p3 = guest3Type === "standard" ? stdItemPref : sanitizePref(guest3Pref)
@@ -988,6 +1148,13 @@ export default function GuestBreakfast() {
       {/* ── Main Form Container ─────────────────────────────────────────── */}
       <main className="max-w-3xl w-full mx-auto px-4 -mt-5 sm:-mt-6 z-20 space-y-4 pb-16">
         
+        {contextError && !loadedFromReservation && packageFlats.length === 0 && (
+          <Card className="bg-amber-50 border border-amber-200 rounded-2xl p-4 shadow-sm flex items-start gap-2.5 text-xs text-amber-900">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <span>{contextError}</span>
+          </Card>
+        )}
+
         {/* Quando acessado com link de reserva: Card de Identificação + Datas Integrados */}
         {loadingContext && !loadedFromReservation ? (
           <Card className="bg-white border border-slate-200/80 rounded-2xl p-6 sm:p-8 shadow-sm text-center space-y-3">
@@ -995,6 +1162,66 @@ export default function GuestBreakfast() {
               <Coffee className="w-5 h-5" />
             </div>
             <p className="text-sm font-bold text-slate-800">Carregando dados da reserva...</p>
+          </Card>
+        ) : packageFlats.length > 0 && !reservationData ? (
+          <Card className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <Badge className="bg-[#0F3D4C]/10 text-[#0F3D4C] border border-[#C5A059]/30 font-bold text-[11px]">
+                    <Layers className="w-3 h-3 mr-1" />
+                    Pacote {packageCodeContext || "Multi-Flat"}
+                  </Badge>
+                </div>
+                <h2 className="text-base sm:text-lg font-bold text-slate-900">
+                  Escolha o apartamento para pedir o café
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Este pacote possui {packageFlats.length} flats com café da manhã liberado. Selecione um flat abaixo.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {packageFlats.map((flat: any, idx: number) => {
+                const flatCode = String(flat?.code || flat?.reservationCode || `flat-${idx}`)
+                const flatLabel = flat?.flatNumber || flat?.flatId || idx + 1
+                const guestLabel = flat?.guests?.[0]?.name || flat?.guestName || "Hóspede"
+                const flatGuests = Math.min(3, Math.max(1, Number(flat?.guestCount || 1)))
+                const fmtDate = (v?: string) => (v ? String(v).slice(0, 10).split("-").reverse().join("/") : "")
+                const ci = fmtDate(flat?.checkinDate)
+                const co = fmtDate(flat?.checkoutDate)
+                return (
+                  <button
+                    key={flatCode}
+                    type="button"
+                    onClick={() => {
+                      setContextError(null)
+                      loadReservationContext(flatCode)
+                    }}
+                    className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50/70 hover:bg-[#0F3D4C]/[0.05] hover:border-[#0F3D4C] transition-all text-left flex items-center justify-between gap-3 group"
+                  >
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-[#0F3D4C] text-white text-xs font-bold">
+                          Flat {flatLabel}
+                        </span>
+                        <span className="text-[11px] font-semibold text-slate-600">
+                          {flatGuests} {flatGuests === 1 ? "Hóspede" : "Hóspedes"}
+                        </span>
+                      </div>
+                      <p className="text-xs font-bold text-slate-900 truncate">{guestLabel}</p>
+                      {ci && co && (
+                        <p className="text-[11px] text-slate-500">
+                          {ci} → {co}
+                        </p>
+                      )}
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-[#0F3D4C] shrink-0" />
+                  </button>
+                )
+              })}
+            </div>
           </Card>
         ) : loadedFromReservation && reservationData ? (
           <Card className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
@@ -1005,6 +1232,21 @@ export default function GuestBreakfast() {
               </h2>
 
               <div className="flex flex-wrap items-center gap-1.5">
+                {packageFlats.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoadedFromReservation(false)
+                      setReservationData(null)
+                      setBreakfastDays([])
+                      setContextError(null)
+                    }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition-colors"
+                  >
+                    <ArrowLeft className="w-3 h-3" />
+                    <span>Trocar Flat</span>
+                  </button>
+                )}
                 <span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-[#0F3D4C]/8 text-[#0F3D4C] border border-[#C5A059]/25 font-bold text-xs">
                   Flat {roomNumber}
                 </span>
@@ -1038,7 +1280,7 @@ export default function GuestBreakfast() {
                         setDeliveryDate(d.date)
                         setSelectedRepeatDates(selectedRepeatDates.filter(x => x !== d.date))
                         if (d.status === "scheduled" && d.existingOrder) {
-                          applyExistingOrderToForm(d.existingOrder)
+                          applyExistingOrderToForm(d.existingOrder, maxAllowedGuests ?? undefined)
                         }
                       }}
                       className={`p-3.5 rounded-2xl border text-left transition-all relative flex flex-col justify-between gap-1.5 ${
@@ -1186,36 +1428,63 @@ export default function GuestBreakfast() {
                 </Label>
                 <Input 
                   value={roomNumber} 
-                  onChange={e => setRoomNumber(e.target.value)} 
+                  onChange={e => setRoomNumber(e.target.value)}
+                  onBlur={() => {
+                    if (roomNumber.trim()) lookupManualRoomContext(roomNumber)
+                  }}
                   placeholder="Ex: 1304" 
                   required 
                   className="bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-400 text-sm font-bold h-10 rounded-xl" 
                 />
+                {manualLookupStatus === "matched" && reservationData && (
+                  <p className="text-[11px] font-semibold text-[#0F3D4C]">
+                    Reserva localizada ({reservationData.code}) • {maxAllowedGuests} {maxAllowedGuests === 1 ? "hóspede" : "hóspedes"}
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-slate-700">
                   Quantidade de Pessoas *
                 </Label>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {([1, 2, 3] as const).map(n => (
-                    <button
-                      type="button"
-                      key={n}
-                      onClick={() => {
-                        setGuestCount(n)
-                        if (activeGuestTab > n) setActiveGuestTab(1)
-                      }}
-                      className={`h-10 rounded-xl font-bold text-xs border transition-all flex items-center justify-center ${
-                        guestCount === n 
-                          ? "bg-[#0F3D4C] text-white border-[#0F3D4C] shadow-xs" 
-                          : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
-                      }`}
-                    >
-                      <span>{n} {n === 1 ? 'Pessoa' : 'Pessoas'}</span>
-                    </button>
-                  ))}
-                </div>
+                {(() => {
+                  const allowedOptions = ([1, 2, 3] as const).filter(n => !maxAllowedGuests || n <= maxAllowedGuests)
+                  const gridCols = allowedOptions.length === 1 ? "grid-cols-1" : allowedOptions.length === 2 ? "grid-cols-2" : "grid-cols-3"
+                  return (
+                    <>
+                      <div className={`grid ${gridCols} gap-1.5`}>
+                        {allowedOptions.map(n => (
+                          <button
+                            type="button"
+                            key={n}
+                            onClick={() => {
+                              const clamped = (maxAllowedGuests ? Math.min(maxAllowedGuests, n) : n) as 1 | 2 | 3
+                              setGuestCount(clamped)
+                              if (clamped === 1) {
+                                setOrderDistribution("same_for_all")
+                                setActiveGuestTab(1)
+                              } else if (activeGuestTab > clamped) {
+                                setActiveGuestTab(1)
+                              }
+                            }}
+                            className={`h-10 rounded-xl font-bold text-xs border transition-all flex items-center justify-center ${
+                              guestCount === n 
+                                ? "bg-[#0F3D4C] text-white border-[#0F3D4C] shadow-xs" 
+                                : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                            }`}
+                          >
+                            <span>{n} {n === 1 ? 'Pessoa' : 'Pessoas'}</span>
+                          </button>
+                        ))}
+                      </div>
+                      {maxAllowedGuests !== null && (
+                        <p className="text-[11px] font-medium text-slate-500">
+                          Reserva para no máximo {maxAllowedGuests} {maxAllowedGuests === 1 ? "pessoa" : "pessoas"}.
+                        </p>
+                      )}
+                    </>
+                  )
+                })()}
               </div>
             </div>
 

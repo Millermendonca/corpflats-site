@@ -77,8 +77,14 @@ interface BatchDraftItem {
   guest2Document: string;
   guest2Phone: string;
   guest2Email: string;
+  guest3InformLater: boolean;
+  guest3Name: string;
+  guest3Document: string;
+  guest3Phone: string;
+  guest3Email: string;
   whatsappStatus: "idle" | "checking" | "valid" | "invalid";
   guest2WhatsappStatus: "idle" | "checking" | "valid" | "invalid";
+  guest3WhatsappStatus: "idle" | "checking" | "valid" | "invalid";
   saving: boolean;
   saved: boolean;
   guest1SavedPartial: boolean;
@@ -142,6 +148,11 @@ export default function AgencyGuestCredential() {
   const [guest2Document, setGuest2Document] = useState("");
   const [guest2Phone, setGuest2Phone] = useState("");
   const [guest2Email, setGuest2Email] = useState("");
+  const [guest3InformLater, setGuest3InformLater] = useState<boolean>(false);
+  const [guest3Name, setGuest3Name] = useState("");
+  const [guest3Document, setGuest3Document] = useState("");
+  const [guest3Phone, setGuest3Phone] = useState("");
+  const [guest3Email, setGuest3Email] = useState("");
   const [docPhotoBase64, setDocPhotoBase64] = useState<string | null>(null);
   const [docFileName, setDocFileName] = useState("");
   const [docIsPdf, setDocIsPdf] = useState(false);
@@ -151,6 +162,8 @@ export default function AgencyGuestCredential() {
   const [whatsappCheckedPhone, setWhatsappCheckedPhone] = useState("");
   const [guest2WhatsappStatus, setGuest2WhatsappStatus] = useState<"idle" | "checking" | "valid" | "invalid">("idle");
   const [guest2WhatsappCheckedPhone, setGuest2WhatsappCheckedPhone] = useState("");
+  const [guest3WhatsappStatus, setGuest3WhatsappStatus] = useState<"idle" | "checking" | "valid" | "invalid">("idle");
+  const [guest3WhatsappCheckedPhone, setGuest3WhatsappCheckedPhone] = useState("");
 
   const cleanDocDigits = guestDocument.replace(/\D/g, "");
   const cpfIsComplete = docType === "cpf" && cleanDocDigits.length === 11;
@@ -177,8 +190,10 @@ export default function AgencyGuestCredential() {
       String(r.guestDocType || "").toLowerCase().includes("pass") ||
       /[a-zA-Z]/.test(loadedDoc);
     const gCount = Math.max(1, Number(r.guestCount) || 1);
-    const g2 = r.guest2 || {};
-    const g2Missing = gCount >= 2 && (Boolean(r.guest2InformLater) || !String(g2.name || "").trim());
+    const g2 = r.guest2 || (Array.isArray(r.guests) ? r.guests[1] : null) || {};
+    const g3 = r.guest3 || (Array.isArray(r.guests) ? r.guests[2] : null) || {};
+    const g2Missing = gCount >= 2 && (Boolean(r.guest2InformLater || g2.informLater) || !String(g2.name || "").trim());
+    const g3Missing = gCount >= 3 && (Boolean(r.guest3InformLater || g3.informLater) || !String(g3.name || "").trim());
     const hasGuest1Saved = Boolean(
       !r.guestPending &&
       !r.informGuestsLater &&
@@ -187,9 +202,10 @@ export default function AgencyGuestCredential() {
     );
     const isFullySaved = Boolean(
       !g2Missing &&
+      !g3Missing &&
       (r.isCredentialComplete || (r.credentialCompletedAt && hasGuest1Saved))
     );
-    const isPartialGuest1Only = !isFullySaved && hasGuest1Saved && g2Missing;
+    const isPartialGuest1Only = !isFullySaved && hasGuest1Saved && (g2Missing || g3Missing);
 
     return {
       reservation: r,
@@ -204,13 +220,19 @@ export default function AgencyGuestCredential() {
         : "",
       guestPhone: r.guestPhone ? formatPhoneMask(r.guestPhone) : "",
       guestEmail: r.guestEmail || "",
-      guest2InformLater: Boolean(r.guest2InformLater && !g2.name),
+      guest2InformLater: Boolean((r.guest2InformLater || g2.informLater) && !g2.name),
       guest2Name: g2.name || "",
-      guest2Document: g2.document ? formatCpfMask(g2.document) : "",
+      guest2Document: (g2.document || g2.cpf) ? formatCpfMask(g2.document || g2.cpf) : "",
       guest2Phone: g2.phone ? formatPhoneMask(g2.phone) : "",
       guest2Email: g2.email || "",
+      guest3InformLater: Boolean((r.guest3InformLater || g3.informLater) && !g3.name),
+      guest3Name: g3.name || "",
+      guest3Document: (g3.document || g3.cpf) ? formatCpfMask(g3.document || g3.cpf) : "",
+      guest3Phone: g3.phone ? formatPhoneMask(g3.phone) : "",
+      guest3Email: g3.email || "",
       whatsappStatus: isFullySaved || isPartialGuest1Only ? "valid" : "idle",
       guest2WhatsappStatus: isFullySaved && gCount >= 2 ? "valid" : "idle",
+      guest3WhatsappStatus: isFullySaved && gCount >= 3 ? "valid" : "idle",
       saving: false,
       saved: isFullySaved,
       guest1SavedPartial: isPartialGuest1Only
@@ -269,6 +291,32 @@ export default function AgencyGuestCredential() {
     }
   };
 
+  const verifyGuest3WhatsAppNumber = async (rawPhone: string): Promise<boolean> => {
+    const queryPhone = formatPhoneForWhatsAppCheck(rawPhone);
+    if (!queryPhone) {
+      setGuest3WhatsappStatus("idle");
+      return false;
+    }
+    if (guest3WhatsappCheckedPhone === queryPhone && (guest3WhatsappStatus === "valid" || guest3WhatsappStatus === "invalid")) {
+      return guest3WhatsappStatus === "valid";
+    }
+    setGuest3WhatsappStatus("checking");
+    try {
+      const res = await fetch(`/api/whatsapp/phone-exists/${encodeURIComponent(queryPhone)}`);
+      const data = await res.json();
+      setGuest3WhatsappCheckedPhone(queryPhone);
+      if (data && data.checked && data.exists === false) {
+        setGuest3WhatsappStatus("invalid");
+        return false;
+      }
+      setGuest3WhatsappStatus("valid");
+      return true;
+    } catch {
+      setGuest3WhatsappStatus("valid");
+      return true;
+    }
+  };
+
   const fetchReservation = async (targetCode: string) => {
     const trimmed = String(targetCode || "").trim();
     if (!trimmed) {
@@ -310,16 +358,24 @@ export default function AgencyGuestCredential() {
         setGuestPhone(r.guestPhone ? formatPhoneMask(r.guestPhone) : "");
         setGuestSecondaryPhone(r.guestSecondaryPhone ? formatPhoneMask(r.guestSecondaryPhone) : "");
         setGuestEmail(r.guestEmail || "");
-        const g2 = r.guest2 || {};
-        setGuest2InformLater(Boolean(r.guest2InformLater && !g2.name));
+        const g2 = r.guest2 || (Array.isArray(r.guests) ? r.guests[1] : null) || {};
+        setGuest2InformLater(Boolean((r.guest2InformLater || g2.informLater) && !g2.name));
         setGuest2Name(g2.name || "");
-        setGuest2Document(g2.document ? formatCpfMask(g2.document) : "");
+        setGuest2Document((g2.document || g2.cpf) ? formatCpfMask(g2.document || g2.cpf) : "");
         setGuest2Phone(g2.phone ? formatPhoneMask(g2.phone) : "");
         setGuest2Email(g2.email || "");
+        const g3 = r.guest3 || (Array.isArray(r.guests) ? r.guests[2] : null) || {};
+        setGuest3InformLater(Boolean((r.guest3InformLater || g3.informLater) && !g3.name));
+        setGuest3Name(g3.name || "");
+        setGuest3Document((g3.document || g3.cpf) ? formatCpfMask(g3.document || g3.cpf) : "");
+        setGuest3Phone(g3.phone ? formatPhoneMask(g3.phone) : "");
+        setGuest3Email(g3.email || "");
         setWhatsappStatus("idle");
         setWhatsappCheckedPhone("");
         setGuest2WhatsappStatus("idle");
         setGuest2WhatsappCheckedPhone("");
+        setGuest3WhatsappStatus("idle");
+        setGuest3WhatsappCheckedPhone("");
         if (r.guestPhone && String(r.guestPhone).replace(/\D/g, "").length >= 8) {
           verifyWhatsAppNumber(r.guestPhone);
         }
@@ -465,6 +521,28 @@ export default function AgencyGuestCredential() {
     }
   };
 
+  const checkBatchGuest3WhatsApp = async (idx: number, rawPhone: string): Promise<boolean> => {
+    const queryPhone = formatPhoneForWhatsAppCheck(rawPhone);
+    if (!queryPhone) {
+      updateBatchItem(idx, { guest3WhatsappStatus: "idle" });
+      return false;
+    }
+    updateBatchItem(idx, { guest3WhatsappStatus: "checking" });
+    try {
+      const res = await fetch(`/api/whatsapp/phone-exists/${encodeURIComponent(queryPhone)}`);
+      const data = await res.json();
+      if (data && data.checked && data.exists === false) {
+        updateBatchItem(idx, { guest3WhatsappStatus: "invalid" });
+        return false;
+      }
+      updateBatchItem(idx, { guest3WhatsappStatus: "valid" });
+      return true;
+    } catch {
+      updateBatchItem(idx, { guest3WhatsappStatus: "valid" });
+      return true;
+    }
+  };
+
   const saveSingleBatchCard = async (idx: number, silentSuccess = false): Promise<boolean> => {
     const item = batchItems[idx];
     if (!item) return false;
@@ -558,6 +636,40 @@ export default function AgencyGuestCredential() {
       }
     }
 
+    let finalGuest3PhonePayload = "";
+    if (item.guestCount >= 3 && !item.guest3InformLater) {
+      const g3Parts = item.guest3Name.trim().split(/\s+/).filter(Boolean);
+      if (g3Parts.length < 2) {
+        toast({
+          title: `Nome do Hóspede 3 obrigatório (${refLabel})`,
+          description: "Informe nome e sobrenome do Hóspede 3, ou marque 'Informar Hóspede 3 depois'.",
+          variant: "destructive"
+        });
+        return false;
+      }
+      const trimmedG3Phone = item.guest3Phone.trim();
+      const cleanG3Digits = trimmedG3Phone.replace(/\D/g, "");
+      const isIntlG3 = trimmedG3Phone.startsWith("+") && !cleanG3Digits.startsWith("55");
+      if (cleanG3Digits.length < (isIntlG3 ? 8 : 10)) {
+        toast({
+          title: `WhatsApp do Hóspede 3 obrigatório (${refLabel})`,
+          description: "Informe um WhatsApp válido com DDD para o Hóspede 3, ou marque 'Informar Hóspede 3 depois'.",
+          variant: "destructive"
+        });
+        return false;
+      }
+      finalGuest3PhonePayload = isIntlG3 ? `+${cleanG3Digits}` : cleanG3Digits;
+      const g3DocDigits = item.guest3Document.replace(/\D/g, "");
+      if (g3DocDigits.length > 0 && !isValidBrazilianCpf(g3DocDigits)) {
+        toast({
+          title: `CPF do Hóspede 3 inválido (${refLabel})`,
+          description: "Corrija os 11 dígitos do CPF do Hóspede 3 ou deixe em branco.",
+          variant: "destructive"
+        });
+        return false;
+      }
+    }
+
     updateBatchItem(idx, { saving: true });
     try {
       const hasWa = await checkBatchItemWhatsApp(idx, finalPhonePayload);
@@ -584,8 +696,24 @@ export default function AgencyGuestCredential() {
         }
       }
 
+      if (item.guestCount >= 3 && !item.guest3InformLater && finalGuest3PhonePayload) {
+        const hasWaG3 = await checkBatchGuest3WhatsApp(idx, finalGuest3PhonePayload);
+        if (!hasWaG3) {
+          toast({
+            title: `Hóspede 3 sem WhatsApp ativo (${refLabel})`,
+            description: "O telefone informado para o Hóspede 3 não possui conta ativa no WhatsApp.",
+            variant: "destructive"
+          });
+          updateBatchItem(idx, { saving: false });
+          return false;
+        }
+      }
+
       const isFlat1EligibleForRequester =
         idx === 0 && (!item.reservation.packageIndex || Number(item.reservation.packageIndex) === 1);
+
+      const g3Active = item.guestCount >= 3 && !item.guest3InformLater && Boolean(item.guest3Name.trim());
+      const g3DocClean = item.guest3Document.replace(/\D/g, "");
 
       const res = await fetch(
         `/api/pms/agency-guest-credential/${encodeURIComponent(item.reservation.code)}`,
@@ -609,6 +737,19 @@ export default function AgencyGuestCredential() {
                   email: item.guest2Email.trim()
                 }
               : null,
+            guest3InformLater: item.guestCount >= 3 ? item.guest3InformLater : false,
+            guest3: g3Active
+              ? {
+                  name: item.guest3Name.trim(),
+                  document: g3DocClean,
+                  phone: finalGuest3PhonePayload,
+                  email: item.guest3Email.trim()
+                }
+              : null,
+            guest3Name: g3Active ? item.guest3Name.trim() : "",
+            guest3Document: g3Active ? g3DocClean : "",
+            guest3Phone: g3Active ? finalGuest3PhonePayload : "",
+            guest3Email: g3Active ? item.guest3Email.trim() : "",
             sourceMode: "agency"
           })
         }
@@ -626,20 +767,23 @@ export default function AgencyGuestCredential() {
       }
 
       const missingGuest2AfterSave = item.guestCount >= 2 && item.guest2InformLater;
+      const missingGuest3AfterSave = item.guestCount >= 3 && item.guest3InformLater;
+      const hasMissingCompanion = missingGuest2AfterSave || missingGuest3AfterSave;
       updateBatchItem(idx, {
         saving: false,
-        saved: !missingGuest2AfterSave,
-        guest1SavedPartial: missingGuest2AfterSave,
+        saved: !hasMissingCompanion,
+        guest1SavedPartial: hasMissingCompanion,
         whatsappStatus: "valid",
-        ...(item.guestCount >= 2 && !item.guest2InformLater ? { guest2WhatsappStatus: "valid" as const } : {})
+        ...(item.guestCount >= 2 && !item.guest2InformLater ? { guest2WhatsappStatus: "valid" as const } : {}),
+        ...(item.guestCount >= 3 && !item.guest3InformLater ? { guest3WhatsappStatus: "valid" as const } : {})
       });
       if (!silentSuccess) {
         toast({
-          title: missingGuest2AfterSave
-            ? `Hóspede 1 salvo (${refLabel}) • Falta Hóspede 2`
+          title: hasMissingCompanion
+            ? `Hóspede 1 salvo (${refLabel}) • Falta Acompanhante`
             : `Reserva ${refLabel} credenciada!`,
-          description: missingGuest2AfterSave
-            ? "Os dados do Hóspede 1 foram salvos. Lembre-se de cadastrar o Hóspede 2 neste mesmo link antes do check-in."
+          description: hasMissingCompanion
+            ? "Os dados informados foram salvos. Lembre-se de cadastrar os demais hóspedes neste mesmo link antes do check-in."
             : "Lembretes encerrados para esta reserva e Pré-Check-in enviado ao WhatsApp do(s) hóspede(s)."
         });
       }
@@ -661,7 +805,7 @@ export default function AgencyGuestCredential() {
       .filter(
         ({ it }) =>
           !it.saved &&
-          (!it.guest1SavedPartial || !it.guest2InformLater) &&
+          (!it.guest1SavedPartial || !it.guest2InformLater || !it.guest3InformLater) &&
           it.guestName.trim().length > 0 &&
           it.guestPhone.replace(/\D/g, "").length >= 8
       )
@@ -822,6 +966,40 @@ export default function AgencyGuestCredential() {
       }
     }
 
+    let finalSingleG3PhonePayload = "";
+    if (guestCountSingle >= 3 && !guest3InformLater) {
+      const g3Parts = guest3Name.trim().split(/\s+/).filter(Boolean);
+      if (g3Parts.length < 2) {
+        toast({
+          title: "Nome Completo do Hóspede 3 obrigatório",
+          description: "Informe o nome e sobrenome do Hóspede 3, ou marque 'Informar Hóspede 3 depois'.",
+          variant: "destructive"
+        });
+        return;
+      }
+      const trimmedG3Phone = guest3Phone.trim();
+      const cleanG3Digits = trimmedG3Phone.replace(/\D/g, "");
+      const isIntlG3 = trimmedG3Phone.startsWith("+") && !cleanG3Digits.startsWith("55");
+      if (cleanG3Digits.length < (isIntlG3 ? 8 : 10)) {
+        toast({
+          title: "WhatsApp do Hóspede 3 obrigatório",
+          description: "Informe um WhatsApp válido com DDD para o Hóspede 3, ou marque 'Informar Hóspede 3 depois'.",
+          variant: "destructive"
+        });
+        return;
+      }
+      finalSingleG3PhonePayload = isIntlG3 ? `+${cleanG3Digits}` : cleanG3Digits;
+      const g3DocDigits = guest3Document.replace(/\D/g, "");
+      if (g3DocDigits.length > 0 && !isValidBrazilianCpf(g3DocDigits)) {
+        toast({
+          title: "CPF do Hóspede 3 inválido",
+          description: "Corrija os 11 dígitos do CPF do Hóspede 3 ou deixe em branco.",
+          variant: "destructive"
+        });
+        return;
+      }
+    }
+
     setSubmitting(true);
     try {
       const hasWa = await verifyWhatsAppNumber(finalPhonePayload);
@@ -848,6 +1026,19 @@ export default function AgencyGuestCredential() {
         }
       }
 
+      if (guestCountSingle >= 3 && !guest3InformLater && finalSingleG3PhonePayload) {
+        const hasWaG3 = await verifyGuest3WhatsAppNumber(finalSingleG3PhonePayload);
+        if (!hasWaG3) {
+          toast({
+            title: "Hóspede 3 sem WhatsApp ativo",
+            description: "O telefone informado para o Hóspede 3 não possui conta ativa no WhatsApp.",
+            variant: "destructive"
+          });
+          setSubmitting(false);
+          return;
+        }
+      }
+
       if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
         toast({
           title: "E-mail inválido",
@@ -859,6 +1050,8 @@ export default function AgencyGuestCredential() {
       }
 
       const isSingleFlat1Eligible = !reservation.packageIndex || Number(reservation.packageIndex) === 1;
+      const g3SingleActive = guestCountSingle >= 3 && !guest3InformLater && Boolean(guest3Name.trim());
+      const g3SingleDocClean = guest3Document.replace(/\D/g, "");
 
       const res = await fetch(`/api/pms/agency-guest-credential/${encodeURIComponent(reservation.code)}`, {
         method: "POST",
@@ -883,6 +1076,19 @@ export default function AgencyGuestCredential() {
                 email: guest2Email.trim()
               }
             : null,
+          guest3InformLater: guestCountSingle >= 3 ? guest3InformLater : false,
+          guest3: g3SingleActive
+            ? {
+                name: guest3Name.trim(),
+                document: g3SingleDocClean,
+                phone: finalSingleG3PhonePayload,
+                email: guest3Email.trim()
+              }
+            : null,
+          guest3Name: g3SingleActive ? guest3Name.trim() : "",
+          guest3Document: g3SingleActive ? g3SingleDocClean : "",
+          guest3Phone: g3SingleActive ? finalSingleG3PhonePayload : "",
+          guest3Email: g3SingleActive ? guest3Email.trim() : "",
           docPhotoBase64,
           notes: notes.trim(),
           sourceMode: isGuestSelfIdentifyMode ? "guest" : "agency"
@@ -898,13 +1104,15 @@ export default function AgencyGuestCredential() {
         });
       } else {
         const missingG2Single = guestCountSingle >= 2 && guest2InformLater;
+        const missingG3Single = guestCountSingle >= 3 && guest3InformLater;
+        const missingCompanionSingle = missingG2Single || missingG3Single;
         setCompleted(true);
         toast({
-          title: missingG2Single
-            ? "Hóspede 1 salvo • Falta Hóspede 2"
+          title: missingCompanionSingle
+            ? "Hóspede 1 salvo • Falta Acompanhante"
             : (isGuestSelfIdentifyMode ? "Reserva Identificada e Liberada!" : "Credenciamento Concluído!"),
-          description: missingG2Single
-            ? "Os dados do Hóspede 1 foram registrados e enviados ao WhatsApp. Falta informar o Hóspede 2 antes do check-in."
+          description: missingCompanionSingle
+            ? "Os dados informados foram registrados e enviados ao WhatsApp. Falta informar o(s) acompanhante(s) antes do check-in."
             : "Os dados foram liberados na portaria 24h e as orientações de acesso foram enviadas para o WhatsApp informado."
         });
       }
@@ -1031,13 +1239,13 @@ export default function AgencyGuestCredential() {
                   </span>
                   {batchItems.some((i) => i.guest1SavedPartial) && (
                     <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/35">
-                      {batchItems.filter((i) => i.guest1SavedPartial).length} aguardando Hóspede 2
+                      {batchItems.filter((i) => i.guest1SavedPartial).length} aguardando acompanhante(s)
                     </span>
                   )}
                 </div>
               </div>
               <p className="text-xs text-slate-300 leading-relaxed">
-                Preencha o <strong>Hóspede 1</strong> e, quando o flat for para 2 pessoas, o <strong>Hóspede 2</strong> conforme a ocupação de cada apartamento. Cada hóspede receberá no WhatsApp apenas as instruções de acesso do seu próprio flat (sem nenhum valor financeiro).
+                Preencha o <strong>Hóspede 1</strong> e, quando o flat for para 2 ou 3 pessoas, os respectivos <strong>Hóspedes 2 e 3</strong> conforme a ocupação de cada apartamento. Cada hóspede receberá no WhatsApp apenas as instruções de acesso do seu próprio flat (sem nenhum valor financeiro).
               </p>
             </div>
 
@@ -1052,14 +1260,17 @@ export default function AgencyGuestCredential() {
                 idx === 0 &&
                 (!r.packageIndex || Number(r.packageIndex) === 1) &&
                 Boolean(r.packageCode || r.requesterName);
+              const missingG2 = item.guestCount >= 2 && item.guest2InformLater;
+              const missingG3 = item.guestCount >= 3 && item.guest3InformLater;
+              const hasPendingComp = missingG2 || missingG3;
 
               return (
                 <div
                   key={r.code || idx}
                   className={`rounded-2xl bg-slate-900 border p-5 space-y-4 transition-colors ${
-                    item.saved
+                    item.saved && !hasPendingComp
                       ? "border-emerald-500/45"
-                      : item.guest1SavedPartial
+                      : item.guest1SavedPartial || (item.saved && hasPendingComp)
                         ? "border-amber-500/45"
                         : "border-slate-800"
                   }`}
@@ -1073,14 +1284,15 @@ export default function AgencyGuestCredential() {
                         <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-800 text-teal-300 border border-slate-700">
                           Flat {r.flatNumber || "Definido"}
                         </span>
-                        {item.saved && !(item.guestCount >= 2 && item.guest2InformLater) && (
+                        {item.saved && !hasPendingComp && (
                           <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
                             <CheckCircle2 className="w-3 h-3" /> ✓ Credenciada
                           </span>
                         )}
-                        {(item.guest1SavedPartial || (item.saved && item.guestCount >= 2 && item.guest2InformLater)) && (
+                        {(item.guest1SavedPartial || (item.saved && hasPendingComp)) && (
                           <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
-                            ⏳ Hóspede 1 salvo • Falta Hóspede 2
+                            ⏳ Hóspede 1 salvo • Falta{" "}
+                            {[missingG2 ? "Hóspede 2" : "", missingG3 ? "Hóspede 3" : ""].filter(Boolean).join(" e ")}
                           </span>
                         )}
                       </div>
@@ -1235,10 +1447,10 @@ export default function AgencyGuestCredential() {
                     </div>
                   </div>
 
-                  {/* Ocupação do Flat (conforme contratado na reserva) + Hóspede 2 */}
+                  {/* Ocupação do Flat (conforme contratado na reserva) + Hóspede 2 e 3 */}
                   <fieldset className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5 space-y-3">
                     <legend className="px-2 text-[11px] font-bold uppercase tracking-wider text-teal-400">
-                      Ocupação Contratada deste Flat & Hóspede 2
+                      Ocupação Contratada deste Flat & Acompanhantes
                     </legend>
                     <div className="flex items-center justify-between flex-wrap gap-2">
                       {r.packageCode || r.isPackageReservation ? (
@@ -1260,36 +1472,65 @@ export default function AgencyGuestCredential() {
                             type="button"
                             onClick={() => updateBatchItem(idx, { guestCount: 2, saved: false, guest1SavedPartial: false })}
                             className={`px-3 py-1 rounded-md font-bold transition-colors ${
-                              item.guestCount >= 2 ? "bg-teal-600 text-white" : "text-slate-400 hover:text-slate-200"
+                              item.guestCount === 2 ? "bg-teal-600 text-white" : "text-slate-400 hover:text-slate-200"
                             }`}
                           >
                             2 Hóspedes
                           </button>
+                          <button
+                            type="button"
+                            onClick={() => updateBatchItem(idx, { guestCount: 3, saved: false, guest1SavedPartial: false })}
+                            className={`px-3 py-1 rounded-md font-bold transition-colors ${
+                              item.guestCount >= 3 ? "bg-teal-600 text-white" : "text-slate-400 hover:text-slate-200"
+                            }`}
+                          >
+                            3 Hóspedes
+                          </button>
                         </div>
                       )}
 
-                      {item.guestCount >= 2 && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            updateBatchItem(idx, {
-                              guest2InformLater: !item.guest2InformLater,
-                              saved: false
-                            })
-                          }
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
-                            item.guest2InformLater
-                              ? "bg-amber-500/15 border-amber-500/40 text-amber-300"
-                              : "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
-                          }`}
-                        >
-                          {item.guest2InformLater ? "⏳ Hóspede 2 marcado p/ informar depois" : "Informar Hóspede 2 depois"}
-                        </button>
-                      )}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {item.guestCount >= 2 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateBatchItem(idx, {
+                                guest2InformLater: !item.guest2InformLater,
+                                saved: false
+                              })
+                            }
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
+                              item.guest2InformLater
+                                ? "bg-amber-500/15 border-amber-500/40 text-amber-300"
+                                : "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
+                            }`}
+                          >
+                            {item.guest2InformLater ? "⏳ Hóspede 2 marcado p/ informar depois" : "Informar Hóspede 2 depois"}
+                          </button>
+                        )}
+                        {item.guestCount >= 3 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateBatchItem(idx, {
+                                guest3InformLater: !item.guest3InformLater,
+                                saved: false
+                              })
+                            }
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
+                              item.guest3InformLater
+                                ? "bg-amber-500/15 border-amber-500/40 text-amber-300"
+                                : "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
+                            }`}
+                          >
+                            {item.guest3InformLater ? "⏳ Hóspede 3 marcado p/ informar depois" : "Informar Hóspede 3 depois"}
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     {item.guestCount >= 2 && !item.guest2InformLater && (
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                         <div className="space-y-1">
                           <Label className="text-xs text-slate-300">Nome Completo do Hóspede 2 *</Label>
                           <Input
@@ -1352,6 +1593,93 @@ export default function AgencyGuestCredential() {
                             className="bg-slate-950 border-slate-700 text-white font-mono"
                           />
                         </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs text-slate-400">E-mail do Hóspede 2 (Opcional)</Label>
+                          <Input
+                            type="email"
+                            value={item.guest2Email}
+                            onChange={(e) => updateBatchItem(idx, { guest2Email: e.target.value, saved: false })}
+                            placeholder="hospede2@empresa.com.br"
+                            className="bg-slate-950 border-slate-700 text-white"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {item.guestCount >= 3 && !item.guest3InformLater && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-slate-800/80">
+                        <div className="space-y-1">
+                          <Label className="text-xs text-slate-300">Nome Completo do Hóspede 3 *</Label>
+                          <Input
+                            value={item.guest3Name}
+                            onChange={(e) => updateBatchItem(idx, { guest3Name: e.target.value, saved: false })}
+                            placeholder="Nome e sobrenome do 3º hóspede"
+                            className="bg-slate-950 border-slate-700 text-white"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between gap-1">
+                            <Label className="text-xs text-slate-300">WhatsApp do Hóspede 3 *</Label>
+                            {item.guest3WhatsappStatus === "checking" && (
+                              <span className="text-[10px] text-sky-400 flex items-center gap-1">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              </span>
+                            )}
+                            {item.guest3WhatsappStatus === "valid" && (
+                              <span className="text-[10px] font-bold text-emerald-400">✓ Ativo</span>
+                            )}
+                            {item.guest3WhatsappStatus === "invalid" && (
+                              <span className="text-[10px] font-bold text-rose-400">❌ Sem Whats</span>
+                            )}
+                          </div>
+                          <Input
+                            type="tel"
+                            inputMode="tel"
+                            value={item.guest3Phone}
+                            onChange={(e) =>
+                              updateBatchItem(idx, {
+                                guest3Phone: formatPhoneMask(e.target.value),
+                                guest3WhatsappStatus: "idle",
+                                saved: false
+                              })
+                            }
+                            onBlur={() => {
+                              if (item.guest3Phone.replace(/\D/g, "").length >= 8) {
+                                checkBatchGuest3WhatsApp(idx, item.guest3Phone);
+                              }
+                            }}
+                            placeholder="(22) 99999-9999"
+                            className={`bg-slate-950 text-white ${
+                              item.guest3WhatsappStatus === "valid"
+                                ? "border-emerald-500/60"
+                                : item.guest3WhatsappStatus === "invalid"
+                                  ? "border-rose-500/70"
+                                  : "border-slate-700"
+                            }`}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs text-slate-400">CPF do Hóspede 3 (Opcional)</Label>
+                          <Input
+                            value={item.guest3Document}
+                            onChange={(e) => updateBatchItem(idx, { guest3Document: formatCpfMask(e.target.value), saved: false })}
+                            placeholder="000.000.000-00"
+                            autoCorrect="off"
+                            autoCapitalize="none"
+                            spellCheck={false}
+                            className="bg-slate-950 border-slate-700 text-white font-mono"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs text-slate-400">E-mail do Hóspede 3 (Opcional)</Label>
+                          <Input
+                            type="email"
+                            value={item.guest3Email}
+                            onChange={(e) => updateBatchItem(idx, { guest3Email: e.target.value, saved: false })}
+                            placeholder="hospede3@empresa.com.br"
+                            className="bg-slate-950 border-slate-700 text-white"
+                          />
+                        </div>
                       </div>
                     )}
                   </fieldset>
@@ -1380,10 +1708,10 @@ export default function AgencyGuestCredential() {
                           <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
                           Atualizar Dados desta Reserva
                         </>
-                      ) : item.guest1SavedPartial && !item.guest2InformLater ? (
-                        "Salvar Hóspede 2 e Concluir Flat"
+                      ) : item.guest1SavedPartial && !hasPendingComp ? (
+                        "Salvar Acompanhantes e Concluir Flat"
                       ) : item.guest1SavedPartial ? (
-                        "Atualizar Hóspede 1 (Falta Hóspede 2)"
+                        "Atualizar Hóspede 1 (Falta Acompanhante)"
                       ) : (
                         "Salvar Apenas Esta Reserva"
                       )}
@@ -1736,10 +2064,10 @@ export default function AgencyGuestCredential() {
                   />
                 </div>
 
-                {/* Hóspede 2 quando flat tiver 2 pessoas */}
+                {/* Hóspedes 2 e 3 quando flat tiver 2 ou 3 pessoas */}
                 <fieldset className="sm:col-span-2 rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-3">
                   <legend className="px-2 text-[11px] font-bold uppercase tracking-wider text-teal-400">
-                    Ocupação Contratada do Flat & Hóspede 2
+                    Ocupação Contratada do Flat & Acompanhantes
                   </legend>
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     {reservation.packageCode || reservation.isPackageReservation ? (
@@ -1761,29 +2089,53 @@ export default function AgencyGuestCredential() {
                           type="button"
                           onClick={() => setGuestCountSingle(2)}
                           className={`px-3 py-1 rounded-md font-bold transition-colors ${
-                            guestCountSingle >= 2 ? "bg-teal-600 text-white" : "text-slate-400 hover:text-slate-200"
+                            guestCountSingle === 2 ? "bg-teal-600 text-white" : "text-slate-400 hover:text-slate-200"
                           }`}
                         >
                           2 Hóspedes
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => setGuestCountSingle(3)}
+                          className={`px-3 py-1 rounded-md font-bold transition-colors ${
+                            guestCountSingle >= 3 ? "bg-teal-600 text-white" : "text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          3 Hóspedes
+                        </button>
                       </div>
                     )}
-                    {guestCountSingle >= 2 && (
-                      <button
-                        type="button"
-                        onClick={() => setGuest2InformLater(!guest2InformLater)}
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
-                          guest2InformLater
-                            ? "bg-amber-500/15 border-amber-500/40 text-amber-300"
-                            : "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
-                        }`}
-                      >
-                        {guest2InformLater ? "⏳ Hóspede 2 será informado depois" : "Informar Hóspede 2 depois"}
-                      </button>
-                    )}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {guestCountSingle >= 2 && (
+                        <button
+                          type="button"
+                          onClick={() => setGuest2InformLater(!guest2InformLater)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
+                            guest2InformLater
+                              ? "bg-amber-500/15 border-amber-500/40 text-amber-300"
+                              : "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
+                          }`}
+                        >
+                          {guest2InformLater ? "⏳ Hóspede 2 será informado depois" : "Informar Hóspede 2 depois"}
+                        </button>
+                      )}
+                      {guestCountSingle >= 3 && (
+                        <button
+                          type="button"
+                          onClick={() => setGuest3InformLater(!guest3InformLater)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
+                            guest3InformLater
+                              ? "bg-amber-500/15 border-amber-500/40 text-amber-300"
+                              : "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
+                          }`}
+                        >
+                          {guest3InformLater ? "⏳ Hóspede 3 será informado depois" : "Informar Hóspede 3 depois"}
+                        </button>
+                      )}
+                    </div>
                   </div>
                   {guestCountSingle >= 2 && !guest2InformLater && (
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                       <div className="space-y-1">
                         <Label className="text-xs text-slate-300">Nome Completo do Hóspede 2 *</Label>
                         <Input
@@ -1841,6 +2193,89 @@ export default function AgencyGuestCredential() {
                           autoCapitalize="none"
                           spellCheck={false}
                           className="bg-slate-950 border-slate-700 text-white font-mono"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs text-slate-400">E-mail do Hóspede 2 (Opcional)</Label>
+                        <Input
+                          type="email"
+                          value={guest2Email}
+                          onChange={(e) => setGuest2Email(e.target.value)}
+                          placeholder="hospede2@empresa.com.br"
+                          className="bg-slate-950 border-slate-700 text-white"
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {guestCountSingle >= 3 && !guest3InformLater && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-slate-800/80">
+                      <div className="space-y-1">
+                        <Label className="text-xs text-slate-300">Nome Completo do Hóspede 3 *</Label>
+                        <Input
+                          value={guest3Name}
+                          onChange={(e) => setGuest3Name(e.target.value)}
+                          placeholder="Nome e sobrenome"
+                          className="bg-slate-950 border-slate-700 text-white"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between gap-1">
+                          <Label className="text-xs text-slate-300">WhatsApp do Hóspede 3 *</Label>
+                          {guest3WhatsappStatus === "checking" && (
+                            <span className="text-[10px] text-sky-400 flex items-center gap-1">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            </span>
+                          )}
+                          {guest3WhatsappStatus === "valid" && (
+                            <span className="text-[10px] font-bold text-emerald-400">✓ Ativo</span>
+                          )}
+                          {guest3WhatsappStatus === "invalid" && (
+                            <span className="text-[10px] font-bold text-rose-400">❌ Sem Whats</span>
+                          )}
+                        </div>
+                        <Input
+                          type="tel"
+                          inputMode="tel"
+                          value={guest3Phone}
+                          onChange={(e) => {
+                            setGuest3Phone(formatPhoneMask(e.target.value));
+                            if (guest3WhatsappStatus !== "idle") setGuest3WhatsappStatus("idle");
+                          }}
+                          onBlur={() => {
+                            if (guest3Phone.replace(/\D/g, "").length >= 8) {
+                              verifyGuest3WhatsAppNumber(guest3Phone);
+                            }
+                          }}
+                          placeholder="(22) 99999-9999"
+                          className={`bg-slate-950 text-white ${
+                            guest3WhatsappStatus === "valid"
+                              ? "border-emerald-500/60"
+                              : guest3WhatsappStatus === "invalid"
+                                ? "border-rose-500/70"
+                                : "border-slate-700"
+                          }`}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs text-slate-400">CPF do Hóspede 3 (Opcional)</Label>
+                        <Input
+                          value={guest3Document}
+                          onChange={(e) => setGuest3Document(formatCpfMask(e.target.value))}
+                          placeholder="000.000.000-00"
+                          autoCorrect="off"
+                          autoCapitalize="none"
+                          spellCheck={false}
+                          className="bg-slate-950 border-slate-700 text-white font-mono"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs text-slate-400">E-mail do Hóspede 3 (Opcional)</Label>
+                        <Input
+                          type="email"
+                          value={guest3Email}
+                          onChange={(e) => setGuest3Email(e.target.value)}
+                          placeholder="hospede3@empresa.com.br"
+                          className="bg-slate-950 border-slate-700 text-white"
                         />
                       </div>
                     </div>
@@ -1959,27 +2394,32 @@ export default function AgencyGuestCredential() {
           </>
         )}
 
-        {completed && reservation && (
+        {completed && reservation && (() => {
+          const pendingG2 = guestCountSingle >= 2 && guest2InformLater;
+          const pendingG3 = guestCountSingle >= 3 && guest3InformLater;
+          const hasPendingAny = pendingG2 || pendingG3;
+          const pendingLabel = [pendingG2 ? "Hóspede 2" : "", pendingG3 ? "Hóspede 3" : ""].filter(Boolean).join(" e ");
+          return (
           <div
             className={`rounded-2xl border p-8 text-center space-y-4 shadow-xl ${
-              guestCountSingle >= 2 && guest2InformLater
+              hasPendingAny
                 ? "bg-amber-950/35 border-amber-500/45"
                 : "bg-emerald-950/40 border-emerald-500/40"
             }`}
           >
             <CheckCircle2
               className={`w-12 h-12 mx-auto ${
-                guestCountSingle >= 2 && guest2InformLater ? "text-amber-400" : "text-emerald-400"
+                hasPendingAny ? "text-amber-400" : "text-emerald-400"
               }`}
             />
-            {guestCountSingle >= 2 && guest2InformLater && (
+            {hasPendingAny && (
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                ⏳ Hóspede 1 salvo • Falta Hóspede 2
+                ⏳ Hóspede 1 salvo • Falta {pendingLabel}
               </span>
             )}
             <h2 className="text-xl font-extrabold text-white">
-              {guestCountSingle >= 2 && guest2InformLater
-                ? "Hóspede 1 Salvo • Falta Informar o Hóspede 2"
+              {hasPendingAny
+                ? `Hóspede 1 Salvo • Falta Informar ${pendingLabel}`
                 : isGuestSelfIdentifyMode
                   ? "Reserva Identificada e Liberada com Sucesso!"
                   : "Credenciamento Concluído com Sucesso!"}
@@ -1987,8 +2427,8 @@ export default function AgencyGuestCredential() {
             <p className="text-sm text-slate-200 max-w-lg mx-auto leading-relaxed">
               Os dados de <strong>{guestName}</strong> para o <strong>Flat {reservation.flatNumber}</strong> já foram registrados para a recepção 24h do Edifício Soho e acabamos de enviar as instruções da estadia para o WhatsApp{" "}
               <strong>{guestPhone}</strong>.
-              {guestCountSingle >= 2 && guest2InformLater && (
-                <> Lembre-se de retornar a este link antes do check-in para cadastrar os dados do <strong>Hóspede 2</strong>.</>
+              {hasPendingAny && (
+                <> Lembre-se de retornar a este link antes do check-in para cadastrar os dados de <strong>{pendingLabel}</strong>.</>
               )}
             </p>
             <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
@@ -2010,7 +2450,8 @@ export default function AgencyGuestCredential() {
               </Button>
             </div>
           </div>
-        )}
+          );
+        })()}
       </div>
     </div>
   );

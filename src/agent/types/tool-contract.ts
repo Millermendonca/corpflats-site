@@ -32,6 +32,18 @@ export interface OfertaDomingoSemPressaSessao {
   codigo_pix_copia_e_cola?: string;
 }
 
+export interface AlertaTelefoneHospedeInvalidoSessao {
+  codigo_reserva: string;
+  codigo_pacote?: string | null;
+  flat: string;
+  indice_hospede: number;
+  nome_hospede: string;
+  telefone_invalido: string;
+  motivo?: string;
+  solicitado_em?: string | null;
+  status: 'AGUARDANDO_CORRECAO';
+}
+
 export interface ReservaAtivaSessao {
   id: string;
   reserva_id?: string;
@@ -55,6 +67,7 @@ export interface ReservaAtivaSessao {
     email_sugerido?: string | null;
     solicitado_em?: string | null;
   } | null;
+  alertas_telefone_hospede_invalido?: AlertaTelefoneHospedeInvalidoSessao[];
   oferta_domingo_sem_pressa?: OfertaDomingoSemPressaSessao;
 }
 
@@ -67,6 +80,7 @@ export interface ContextoSessaoInjetado {
   dados_hospede?: DadosHospedeSessao;
   reserva_ativa?: ReservaAtivaSessao;
   reserva_atual?: ReservaAtivaSessao;
+  alertas_telefone_hospede_invalido?: AlertaTelefoneHospedeInvalidoSessao[];
   /**
    * Referência opcional de runtime ao banco e serviços para execução real no backend
    */
@@ -76,6 +90,11 @@ export interface ContextoSessaoInjetado {
     sendZapiMessage?: (phone: string, text: string, options?: any) => Promise<any>;
     createNotification?: (notif: any) => void | Promise<void>;
     triggerImmediateWhatsApp?: (...args: any[]) => Promise<any>;
+    checkZapiPhoneExists?: (phone: string, config?: any) => Promise<any>;
+    appendMessageToConversation?: (db: any, msg: any) => any;
+    dispatchCatchUpGuestRulerMessages?: (...args: any[]) => Promise<any>;
+    scheduleUpcomingReservationTriggers?: (...args: any[]) => any;
+    suppressExternalSend?: boolean;
     conversation?: any;
   };
 }

@@ -526,7 +526,10 @@ export const gerarLinkReservaTool: AgentToolDefinition<GerarLinkReservaArgs> = {
           }
         }
 
-        const portalPkgUrl = `${baseUrl}/minha-reserva/${encodeURIComponent(pkgCodeFallback)}?requester=1`;
+        const pkgTokFb = String(
+          (Array.isArray(db?.reservations) && db.reservations.find((r: any) => String(r?.packageCode || '').toUpperCase() === pkgCodeFallback)?.requesterPortalToken) || ''
+        ).trim();
+        const portalPkgUrl = `${baseUrl}/solicitante/${encodeURIComponent(pkgCodeFallback)}${pkgTokFb ? `?t=${encodeURIComponent(pkgTokFb)}` : ''}`;
         const credPkgUrl = `${baseUrl}/credenciamento/${encodeURIComponent(pkgCodeFallback)}`;
         const msgFallback =
           `Confirme com entusiasmo que o pacote *${pkgCodeFallback}* com *${normalizedPackageFlats.length} flats* foi bloqueado por 30 minutos para *${solNome}*!\n` +

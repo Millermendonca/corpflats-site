@@ -1,8 +1,133 @@
 import crypto from "crypto";
 import { parseEmailList } from "./mail-service.mjs";
 
+const inFlightInvalidGuestPhoneAlerts = new Set();
+
 function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+function cleanPhoneLocal(rawPhone) {
+  if (!rawPhone) return "";
+  const str = String(rawPhone).trim();
+  const hasExplicitPlus = str.startsWith("+");
+  let digits = str.replace(/\D/g, "");
+  if (!digits) return "";
+  const hadInternationalDoubleZero = digits.startsWith("00");
+  while (digits.startsWith("0")) {
+    digits = digits.substring(1);
+  }
+  if (!digits) return "";
+  if (digits.length === 13 && digits.startsWith("551") && digits[4] !== "9") {
+    digits = digits.substring(2);
+  }
+  if ((hasExplicitPlus || hadInternationalDoubleZero) && !digits.startsWith("55")) {
+    return digits;
+  }
+  if (digits.length === 10 && /^[1-9][1-9]\d{8}$/.test(digits)) {
+    return "55" + digits;
+  }
+  if (digits.length === 11 && /^[1-9][1-9]9\d{8}$/.test(digits)) {
+    return "55" + digits;
+  }
+  return digits;
+}
+
+function normalizePhoneDigitsSimple(phone) {
+  return String(phone || "").replace(/\D+/g, "");
+}
+
+function phonesEndMatch(phoneA, phoneB) {
+  const a = normalizePhoneDigitsSimple(phoneA);
+  const b = normalizePhoneDigitsSimple(phoneB);
+  if (!a || !b || a.length < 8 || b.length < 8) return false;
+  return a.endsWith(b.slice(-8)) || b.endsWith(a.slice(-8));
+}
+
+function areGuestNamesRoughlyCompatible(nameA, nameB) {
+  const norm = (s) =>
+    String(s || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+  const a = norm(nameA);
+  const b = norm(nameB);
+  if (a.length === 0 || b.length === 0) return false;
+  return a[0] === b[0];
+}
+
+function diffNightsSimple(checkinDate, checkoutDate) {
+  const ci = String(checkinDate || "").slice(0, 10);
+  const co = String(checkoutDate || "").slice(0, 10);
+  if (!ci || !co) return 1;
+  const ms = new Date(`${co}T12:00:00Z`).getTime() - new Date(`${ci}T12:00:00Z`).getTime();
+  if (!Number.isFinite(ms)) return 1;
+  return Math.max(1, Math.round(ms / 86400000));
+}
+
+function getBrasiliaDateStrNow(nowOverride = null) {
+  const now = nowOverride instanceof Date ? nowOverride : (nowOverride ? new Date(nowOverride) : new Date());
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).formatToParts(now);
+    const map = {};
+    for (const p of parts) map[p.type] = p.value;
+    return `${map.year}-${map.month}-${map.day}`;
+  } catch {
+    return now.toISOString().slice(0, 10);
+  }
+}
+
+export function ensureRequesterPortalToken(db, resOrPkg) {
+  if (!resOrPkg) return "";
+  let targets = [];
+  if (typeof resOrPkg === "string") {
+    const raw = resOrPkg.trim();
+    if (!raw) return "";
+    if (isPackageCode(raw)) {
+      targets = getPackageReservations(db, raw);
+    } else if (Array.isArray(db?.reservations)) {
+      const upper = raw.toUpperCase();
+      const found = db.reservations.find(
+        (r) => r && (String(r.code || "").toUpperCase() === upper || String(r.reservationCode || "").toUpperCase() === upper || String(r.id) === raw)
+      );
+      if (found) {
+        targets = (found.packageCode || found.packageId)
+          ? getPackageReservations(db, found)
+          : [found];
+      }
+    }
+  } else if (typeof resOrPkg === "object") {
+    const pkgRef = getPackageIdFromTarget(resOrPkg);
+    if (pkgRef && Array.isArray(db?.reservations)) {
+      targets = getPackageReservations(db, pkgRef);
+    }
+    if (!targets.includes(resOrPkg)) {
+      targets.push(resOrPkg);
+    }
+  }
+
+  if (targets.length === 0) return "";
+  let token =
+    targets.find((r) => r && typeof r.requesterPortalToken === "string" && r.requesterPortalToken.trim().length >= 8)
+      ?.requesterPortalToken.trim() || "";
+  if (!token) {
+    token = crypto.randomBytes(16).toString("hex");
+  }
+  for (const r of targets) {
+    if (r && typeof r === "object") {
+      r.requesterPortalToken = token;
+    }
+  }
+  return token;
 }
 
 export function isPackageCode(code) {
@@ -102,12 +227,20 @@ export function isFlatGuestCredentialIncomplete(r) {
       return true;
     }
   }
+  if (guestCount >= 3) {
+    const g3 = guestsArr[2] || null;
+    const g3Name = String(g3?.name || "").trim();
+    if (r.guest3InformLater || g3?.informLater || isPlaceholder(g3Name)) {
+      return true;
+    }
+  }
   return false;
 }
 
 /**
  * Rateio automático do pacote (soma normal, desconto em R$, desconto em % ou valor fechado)
  * mantendo soma exata até o centavo e ajustando `dailyRates` para coerência contábil.
+ * Quando `pricingConfig.ratesAlreadyProrated === true`, preserva as `dailyRates[]` já rateadas pela UI sem aplicar desconto em dobro.
  */
 export function applyPackageRateioToDraftFlats(flatDrafts = [], pricingConfig = {}) {
   if (!Array.isArray(flatDrafts) || flatDrafts.length === 0) {
@@ -124,6 +257,80 @@ export function applyPackageRateioToDraftFlats(flatDrafts = [], pricingConfig = 
   const mode = ["sum", "discount_amount", "discount_pct", "fixed_total"].includes(modeRaw)
     ? modeRaw
     : "sum";
+
+  if (pricingConfig?.ratesAlreadyProrated === true || pricingConfig?.alreadyProrated === true) {
+    const adjusted = flatDrafts.map((draft) => {
+      const nightsCount = Math.max(1, Number(draft?.nightsCount) || 1);
+      const rawCharges = Array.isArray(draft?.charges) ? draft.charges.map((c) => ({ ...c })) : [];
+      const chargesSum = round2(rawCharges.reduce((s, c) => s + (Number(c?.amount) || 0), 0));
+
+      const existingDailyRates = Array.isArray(draft?.dailyRates)
+        ? draft.dailyRates.map((cur) => ({
+            ...cur,
+            rate: Math.max(0, round2(Number(cur?.rate ?? cur?.amount) || 0))
+          }))
+        : [];
+
+      let preservedTotal = round2(Number(draft?.totalAmount ?? draft?.baseTotalAmount) || 0);
+      let finalDailyRates = existingDailyRates;
+
+      if (finalDailyRates.length > 0) {
+        const ratesSum = round2(finalDailyRates.reduce((s, r) => s + (Number(r?.rate) || 0), 0));
+        if (preservedTotal <= 0 && (ratesSum > 0 || chargesSum > 0)) {
+          preservedTotal = round2(ratesSum + chargesSum);
+        }
+      } else {
+        const targetAccom = Math.max(0, round2(preservedTotal - chargesSum));
+        const baseDaily = round2(Math.floor((targetAccom / nightsCount) * 100) / 100);
+        const rem = round2(targetAccom - baseDaily * nightsCount);
+        const startMs = draft?.checkinDate
+          ? new Date(`${draft.checkinDate}T12:00:00Z`).getTime()
+          : Date.now();
+        finalDailyRates = [];
+        for (let i = 0; i < nightsCount; i++) {
+          finalDailyRates.push({
+            date: new Date(startMs + i * 86400000).toISOString().slice(0, 10),
+            rate: i === nightsCount - 1 ? Math.max(0, round2(baseDaily + rem)) : baseDaily,
+            channel: draft?.channel || "direto"
+          });
+        }
+      }
+
+      const finalRatesSum = round2(finalDailyRates.reduce((s, r) => s + (Number(r?.rate) || 0), 0));
+      const avgDailyRate = nightsCount > 0 ? round2(finalRatesSum / nightsCount) : finalRatesSum;
+      const origBase = draft?.originalBaseTotalAmount != null
+        ? round2(Number(draft.originalBaseTotalAmount) || 0)
+        : preservedTotal;
+
+      return {
+        ...draft,
+        originalBaseTotalAmount: origBase,
+        totalAmount: preservedTotal,
+        dailyRate: avgDailyRate,
+        dailyRates: finalDailyRates,
+        charges: rawCharges,
+        proratedDiscountAmount: round2(Math.max(0, origBase - preservedTotal))
+      };
+    });
+
+    const targetTotal = round2(adjusted.reduce((acc, it) => acc + (Number(it.totalAmount) || 0), 0));
+    let rawSum = targetTotal;
+    if (adjusted.some((it) => Number(it.originalBaseTotalAmount) > Number(it.totalAmount))) {
+      rawSum = round2(adjusted.reduce((acc, it) => acc + (Number(it.originalBaseTotalAmount) || 0), 0));
+    } else if (mode === "discount_amount" && Number(pricingConfig?.discountAmount) > 0) {
+      rawSum = round2(targetTotal + Math.max(0, Number(pricingConfig.discountAmount) || 0));
+    } else if (mode === "discount_pct" && Number(pricingConfig?.discountPct) > 0 && Number(pricingConfig?.discountPct) < 100) {
+      rawSum = round2(targetTotal / (1 - Number(pricingConfig.discountPct) / 100));
+    }
+
+    return {
+      mode,
+      rawSum,
+      targetTotal,
+      discountApplied: round2(Math.max(0, rawSum - targetTotal)),
+      items: adjusted
+    };
+  }
 
   const rawSum = round2(
     flatDrafts.reduce((acc, item) => acc + (Number(item?.baseTotalAmount) || 0), 0)
@@ -253,6 +460,11 @@ export function computePackageSummary(db, packageIdOrRes, opts = {}) {
   const cancelledItems = all.filter((r) => isPackageItemCancelled(r));
 
   const primary = getPrimaryPackageReservation(db, pkgCode) || all[0];
+  const requesterPortalToken = ensureRequesterPortalToken(db, pkgCode || primary);
+  const packagePortalPath = requesterPortalToken
+    ? `/solicitante/${encodeURIComponent(pkgCode)}?t=${encodeURIComponent(requesterPortalToken)}`
+    : `/solicitante/${encodeURIComponent(pkgCode)}`;
+  const todayBr = getBrasiliaDateStrNow();
 
   let totalAmount = 0;
   let paidAmount = 0;
@@ -367,17 +579,172 @@ export function computePackageSummary(db, packageIdOrRes, opts = {}) {
     missingCredentialCodes,
     batchCredentialPath,
     batchCredentialUrl: `${baseUrl}${batchCredentialPath}`,
-    packagePortalPath: `/minha-reserva/${encodeURIComponent(pkgCode)}?requester=1`,
-    packagePortalUrl: `${baseUrl}/minha-reserva/${encodeURIComponent(pkgCode)}?requester=1`,
+    requesterPortalToken,
+    packagePortalPath,
+    packagePortalUrl: `${baseUrl}${packagePortalPath}`,
     packageCopyPixUrl: `${baseUrl}/copiar-pix/${encodeURIComponent(pkgCode)}`,
     consolidatedInvoiceId: consolidatedInvoice?.consolidatedInvoiceId || consolidatedInvoice?.invoiceId || null,
     consolidatedNfseNumber: consolidatedInvoice?.numeroNfse || consolidatedInvoice?.nfseNumber || null,
     consolidatedBoletoId,
     items: all.map((r, i) => {
       const gArr = Array.isArray(r.guests) ? r.guests : [];
+      const occ = Math.max(1, Math.min(3, Number(r.guestCount || r.adults) || 1));
       const rTot = round2(Number(r.totalAmount) || 0);
       const rSettled = isReservationSettledInPackage(r);
       const rPaid = rSettled ? rTot : round2(Math.min(rTot, Number(r.paidAmount) || 0));
+      const isPlaceholderNm = (nm) => !nm || /a definir|informar depois|pendente|^h[oó]spede\s*\d*$/i.test(String(nm).trim());
+
+      const g1RawName = String(r.guestName || gArr[0]?.name || "").trim();
+      const g1NameClean = isPlaceholderNm(g1RawName) ? "" : g1RawName;
+      const g1Phone = String(r.guestPhone || gArr[0]?.phone || gArr[0]?.whatsapp || "").trim();
+      const g1Doc = String(r.guestCpf || r.guestDocument || gArr[0]?.cpf || gArr[0]?.document || "").trim();
+      const g1Email = String(r.guestEmail || gArr[0]?.email || "").trim();
+
+      const g2Obj = gArr[1] || {};
+      const g2Name = isPlaceholderNm(g2Obj.name) ? "" : String(g2Obj.name || "").trim();
+      const g2Phone = String(g2Obj.phone || g2Obj.whatsapp || "").trim();
+      const g2Doc = String(g2Obj.cpf || g2Obj.document || "").trim();
+      const g2Email = String(g2Obj.email || "").trim();
+
+      const g3Obj = gArr[2] || {};
+      const g3Name = isPlaceholderNm(g3Obj.name) ? "" : String(g3Obj.name || "").trim();
+      const g3Phone = String(g3Obj.phone || g3Obj.whatsapp || "").trim();
+      const g3Doc = String(g3Obj.cpf || g3Obj.document || "").trim();
+      const g3Email = String(g3Obj.email || "").trim();
+
+      const guestsNormalized = [
+        {
+          index: 1,
+          isMain: true,
+          name: g1NameClean,
+          phone: g1Phone,
+          email: g1Email,
+          cpf: g1Doc,
+          document: g1Doc,
+          docType: gArr[0]?.docType || r.guestDocType || "CPF",
+          informLater: Boolean(r.informGuestsLater || r.guestPending || gArr[0]?.informLater),
+          hasCompletedCheckin: Boolean(gArr[0]?.hasCompletedCheckin || r.preCheckinCompleted || r.fnhrCompleted)
+        }
+      ];
+      if (occ >= 2 || g2Name || g2Phone) {
+        guestsNormalized.push({
+          index: 2,
+          isMain: false,
+          name: g2Name,
+          phone: g2Phone,
+          email: g2Email,
+          cpf: g2Doc,
+          document: g2Doc,
+          docType: g2Obj.docType || "CPF",
+          informLater: Boolean(r.guest2InformLater || g2Obj.informLater),
+          hasCompletedCheckin: Boolean(g2Obj.hasCompletedCheckin)
+        });
+      }
+      if (occ >= 3 || g3Name || g3Phone) {
+        guestsNormalized.push({
+          index: 3,
+          isMain: false,
+          name: g3Name,
+          phone: g3Phone,
+          email: g3Email,
+          cpf: g3Doc,
+          document: g3Doc,
+          docType: g3Obj.docType || "CPF",
+          informLater: Boolean(r.guest3InformLater || g3Obj.informLater),
+          hasCompletedCheckin: Boolean(g3Obj.hasCompletedCheckin)
+        });
+      }
+
+      const missingFields = [];
+      if (!g1NameClean || r.informGuestsLater || r.guestPending) missingFields.push("Nome do Hóspede 1");
+      if (g1Phone.replace(/\D/g, "").length < 10) missingFields.push("WhatsApp do Hóspede 1");
+      if (!g1Doc) missingFields.push("CPF do Hóspede 1");
+      if (!g1Email) missingFields.push("E-mail do Hóspede 1");
+      if (occ >= 2) {
+        if (!g2Name || r.guest2InformLater || g2Obj.informLater) missingFields.push("Nome do Hóspede 2");
+        if (g2Phone.replace(/\D/g, "").length < 10) missingFields.push("WhatsApp do Hóspede 2");
+      }
+      if (occ >= 3) {
+        if (!g3Name || r.guest3InformLater || g3Obj.informLater) missingFields.push("Nome do Hóspede 3");
+        if (g3Phone.replace(/\D/g, "").length < 10) missingFields.push("WhatsApp do Hóspede 3");
+      }
+
+      const activePhoneAlerts = Array.isArray(r.guestPhoneCorrectionRequests)
+        ? r.guestPhoneCorrectionRequests.filter((req) => req && req.status === "awaiting_reply")
+        : [];
+      const guestPhoneInvalid = Boolean(r.guestPhoneInvalid || activePhoneAlerts.length > 0);
+
+      const preCheckinCompleted = Boolean(
+        r.preCheckinCompleted ||
+        r.fnhrCompleted ||
+        r.hasPreCheckin ||
+        (gArr.length > 0 && gArr.some((g) => g?.hasCompletedCheckin || g?.status === "CHECKED_IN"))
+      );
+      const checkedInAt = r.actualCheckinAt || r.checkedInAt || null;
+      const checkedOutAt = r.actualCheckoutAt || r.checkoutCompletedAt || r.checkedOutAt || null;
+
+      const stLower = String(r.status || "").toLowerCase().trim();
+      const flatCleanObj = Array.isArray(db?.flats)
+        ? db.flats.find((fl) => Number(fl.id) === Number(r.flatId) || String(fl.number) === String(r.flatNumber))
+        : null;
+      const isFlatEmPrep =
+        flatCleanObj?.status === "dirty" ||
+        flatCleanObj?.status === "cleaning_now" ||
+        (Array.isArray(db?.cleaningRequests) &&
+          db.cleaningRequests.some(
+            (c) =>
+              c &&
+              !c.isDeleted &&
+              !c.isInstructionOnly &&
+              !c.isBedAdjustmentOnly &&
+              String(c.flatNumber) === String(r.flatNumber) &&
+              (c.requestDate === todayBr || c.effectiveDate === todayBr) &&
+              ["dirty", "will_clean", "cleaning_now", "in_progress"].includes(String(c.status || "").toLowerCase())
+          ));
+
+      let operationalStatus = "pre_checkin_pendente";
+      let operationalStatusLabel = "Pré-Check-in Pendente";
+      if (isPackageItemCancelled(r)) {
+        operationalStatus = "cancelado";
+        operationalStatusLabel = "Cancelado";
+      } else if (isPackageItemExpired(r)) {
+        operationalStatus = "expirado";
+        operationalStatusLabel = "Expirado";
+      } else if (r.checkoutDone || r.checkoutCompleted || ["concluida", "checked_out", "completed", "checkout"].includes(stLower)) {
+        operationalStatus = "checkout_realizado";
+        operationalStatusLabel = "Check-out Realizado";
+      } else if (r.guestSelfCheckin || r.actualCheckinAt || ["in_house", "checkin", "checked_in"].includes(stLower)) {
+        operationalStatus = "hospedado_in_house";
+        operationalStatusLabel = "Hospedado";
+      } else if (["pre_reserva", "pendente", "pending_payment"].includes(stLower)) {
+        operationalStatus = "aguardando_pagamento";
+        operationalStatusLabel = "Aguardando Pagamento";
+      } else if (!preCheckinCompleted) {
+        operationalStatus = "pre_checkin_pendente";
+        operationalStatusLabel = "Pré-Check-in Pendente";
+      } else if (r.checkinDate && todayBr === String(r.checkinDate).slice(0, 10) && isFlatEmPrep && r.roomReadySentDate !== todayBr) {
+        operationalStatus = "em_preparacao";
+        operationalStatusLabel = "Em Preparação";
+      } else {
+        operationalStatus = "pronto_para_checkin";
+        operationalStatusLabel = "Pronto para Check-in";
+      }
+
+      const guestPortalPath = `/minha-reserva/${encodeURIComponent(r.code)}`;
+      const preCheckinPath = `/pre-checkin/${encodeURIComponent(r.code)}`;
+      const breakfastPath = `/cafe/${encodeURIComponent(r.code)}`;
+      const normalizedVehicle =
+        r.vehicle && typeof r.vehicle === "object"
+          ? r.vehicle
+          : (r.vehiclePlate
+              ? {
+                  plate: String(r.vehiclePlate || ""),
+                  brand: String(r.vehicleBrand || ""),
+                  model: String(r.vehicleModel || ""),
+                  color: String(r.vehicleColor || "")
+                }
+              : null);
+
       return {
         id: r.id,
         code: r.code,
@@ -386,27 +753,57 @@ export function computePackageSummary(db, packageIdOrRes, opts = {}) {
         flatNumber: r.flatNumber,
         checkinDate: r.checkinDate,
         checkoutDate: r.checkoutDate,
+        checkinTime: r.checkinTime || "14:00",
+        checkoutTime: r.lateCheckoutTime || r.checkoutTime || "12:00",
+        nights: diffNightsSimple(r.checkinDate, r.checkoutDate),
         status: r.status || "confirmada",
+        operationalStatus,
+        operationalStatusLabel,
         isActive: isPackageItemActive(r),
         isCancelled: isPackageItemCancelled(r),
         isExpired: isPackageItemExpired(r),
         isPaid: rSettled,
-        guestCount: Math.max(1, Number(r.guestCount || r.adults) || 1),
+        guestCount: occ,
         guestName: r.guestName || gArr[0]?.name || "A Definir",
-        guestPhone: r.guestPhone || gArr[0]?.phone || "",
-        guestDocument: r.guestDocument || gArr[0]?.cpf || gArr[0]?.document || "",
-        guest2Name: gArr[1]?.name || "",
-        guest2Phone: gArr[1]?.phone || "",
-        guest2Document: gArr[1]?.cpf || gArr[1]?.document || "",
+        guestPhone: g1Phone,
+        guestEmail: g1Email,
+        guestCpf: g1Doc,
+        guestDocument: g1Doc,
+        guest2Name: g2Name,
+        guest2Phone: g2Phone,
+        guest2Document: g2Doc,
+        guest2Email: g2Email,
+        guest3Name: g3Name,
+        guest3Phone: g3Phone,
+        guest3Document: g3Doc,
+        guest3Email: g3Email,
+        guests: guestsNormalized,
+        missingFields,
+        guestPhoneInvalid,
+        guestPhoneCorrectionRequests: activePhoneAlerts,
         requesterIsGuest1: Boolean(r.requesterIsGuest1),
         informGuestsLater: Boolean(r.informGuestsLater || r.guestPending),
-        guest2InformLater: Boolean(r.guest2InformLater || gArr[1]?.informLater),
+        guest2InformLater: Boolean(r.guest2InformLater || g2Obj.informLater),
+        guest3InformLater: Boolean(r.guest3InformLater || g3Obj.informLater),
         needsCredential: isFlatGuestCredentialIncomplete(r),
+        preCheckinCompleted,
+        checkedInAt,
+        checkedOutAt,
+        actualCheckinAt: r.actualCheckinAt || null,
+        estimatedArrivalTime: r.estimatedArrivalTime || null,
+        flatCleanStatus: isFlatEmPrep ? "em_preparacao" : "limpo",
         includeBreakfast: Boolean(r.includeBreakfast),
         twinBeds: Boolean(r.twinBeds || r.bedType === "twin" || r.bedType === "2 Solteiro"),
         extraMattress: Boolean(r.extraMattress),
         bedType: r.bedType || (r.twinBeds ? "twin" : "queen"),
-        vehicle: r.vehicle || null,
+        earlyCheckinAuthorized: Boolean(r.earlyCheckinAuthorized),
+        isFlatLocked: Boolean(r.isFlatLocked || r.flatLocked),
+        flatLockReason: String(r.flatLockReason || ""),
+        prefersHighFloor: Boolean(r.prefersHighFloor),
+        receptionNotes: r.receptionNotes || "",
+        specialRequests: r.specialRequests || "",
+        notes: r.notes || "",
+        vehicle: normalizedVehicle,
         dailyRate: round2(Number(r.dailyRate) || 0),
         totalAmount: rTot,
         paidAmount: rPaid,
@@ -415,8 +812,12 @@ export function computePackageSummary(db, packageIdOrRes, opts = {}) {
         refundResolution: r.refundResolution || null,
         refundAmount: round2(Number(r.refundAmount) || 0),
         creditGeneratedId: r.creditGeneratedId || null,
-        guestPortalPath: `/minha-reserva/${encodeURIComponent(r.code)}`,
-        preCheckinPath: `/pre-checkin/${encodeURIComponent(r.code)}`
+        guestPortalPath,
+        guestPortalUrl: `${baseUrl}${guestPortalPath}`,
+        preCheckinPath,
+        preCheckinUrl: `${baseUrl}${preCheckinPath}`,
+        breakfastPath,
+        breakfastUrl: r.includeBreakfast ? `${baseUrl}${breakfastPath}` : null
       };
     })
   };
@@ -548,9 +949,611 @@ function formatMoneyBr(val) {
   return (Number(val) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+const PHONE_EXISTS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+function getPhoneNineDigitVariants(cleanDigits) {
+  const digits = String(cleanDigits || "").replace(/\D/g, "");
+  if (!digits) return [];
+  const list = [digits];
+  if (digits.startsWith("55")) {
+    if (digits.length === 13 && digits[4] === "9") {
+      list.push(digits.slice(0, 4) + digits.slice(5));
+    } else if (digits.length === 12) {
+      list.push(digits.slice(0, 4) + "9" + digits.slice(4));
+    }
+  }
+  return Array.from(new Set(list));
+}
+
+export async function verifyWhatsAppPhoneActive(phone, zapiConfig = null, db = null, deps = {}) {
+  const cleanFn = typeof deps.cleanWhatsAppPhone === "function" ? deps.cleanWhatsAppPhone : cleanPhoneLocal;
+  const cleaned = cleanFn(phone);
+  if (!cleaned || cleaned.length < 10) {
+    return {
+      valid: false,
+      checked: true,
+      phone: cleaned,
+      digits: cleaned,
+      reason: "invalid_phone_format",
+      variantsTested: []
+    };
+  }
+
+  const effectiveCfg = zapiConfig || db?.zapiConfig || db?.settings?.zapiConfig || null;
+  const variants = getPhoneNineDigitVariants(cleaned);
+  const nowMs = Date.now();
+  const forceRefresh = Boolean(deps.forceRefresh);
+
+  if (db && (!db.whatsappPhoneExistsCache || typeof db.whatsappPhoneExistsCache !== "object")) {
+    db.whatsappPhoneExistsCache = {};
+  }
+
+  let checker =
+    typeof deps.checkZapiPhoneExists === "function"
+      ? deps.checkZapiPhoneExists
+      : (typeof globalThis.__corpflatsCheckZapiPhoneExists === "function"
+          ? globalThis.__corpflatsCheckZapiPhoneExists
+          : null);
+
+  if (!checker && effectiveCfg?.instanceId?.trim() && effectiveCfg?.token?.trim()) {
+    checker = async (targetPhone, cfg) => {
+      const c = cfg || effectiveCfg;
+      const base = (c.baseUrl || "https://api.z-api.io").replace(/\/+$/, "");
+      const url = `${base}/instances/${c.instanceId.trim()}/token/${c.token.trim()}/phone-exists/${targetPhone}`;
+      const headers = {};
+      if (c.clientToken?.trim()) headers["Client-Token"] = c.clientToken.trim();
+      try {
+        const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          return {
+            exists: data.exists !== false,
+            phone: data.phone ? cleanFn(data.phone) : targetPhone,
+            checked: true,
+            data
+          };
+        }
+        return { exists: true, phone: targetPhone, checked: false };
+      } catch (err) {
+        return { exists: true, phone: targetPhone, checked: false, error: err?.message || String(err) };
+      }
+    };
+  }
+
+  const variantsTested = [];
+  let anyChecked = false;
+
+  for (const variant of variants) {
+    const cached = !forceRefresh ? db?.whatsappPhoneExistsCache?.[variant] : null;
+    if (cached && cached.checked && nowMs - Number(cached.checkedAt || 0) < PHONE_EXISTS_CACHE_TTL_MS) {
+      anyChecked = true;
+      variantsTested.push({ phone: variant, exists: Boolean(cached.exists), checked: true, fromCache: true });
+      if (cached.exists) {
+        const resolved = cached.resolvedPhone || variant;
+        return { valid: true, checked: true, fromCache: true, phone: resolved, digits: resolved, variantsTested };
+      }
+      continue;
+    }
+
+    if (typeof checker !== "function") {
+      continue;
+    }
+
+    try {
+      const res = await checker(variant, effectiveCfg);
+      if (res && res.checked) {
+        anyChecked = true;
+        const resolved = res.phone ? cleanFn(res.phone) : variant;
+        const exists = res.exists !== false;
+        if (db?.whatsappPhoneExistsCache) {
+          db.whatsappPhoneExistsCache[variant] = {
+            exists,
+            resolvedPhone: resolved,
+            checked: true,
+            checkedAt: nowMs
+          };
+        }
+        variantsTested.push({ phone: variant, exists, checked: true });
+        if (exists) {
+          return { valid: true, checked: true, phone: resolved, digits: resolved, variantsTested };
+        }
+      } else {
+        variantsTested.push({ phone: variant, exists: true, checked: false });
+      }
+    } catch (err) {
+      variantsTested.push({ phone: variant, exists: true, checked: false, error: err?.message || String(err) });
+    }
+  }
+
+  if (anyChecked && variantsTested.some((v) => v.checked) && variantsTested.filter((v) => v.checked).every((v) => v.exists === false)) {
+    return {
+      valid: false,
+      checked: true,
+      phone: cleaned,
+      digits: cleaned,
+      reason: "no_whatsapp_account",
+      variantsTested
+    };
+  }
+
+  return {
+    valid: true,
+    checked: false,
+    phone: cleaned,
+    digits: cleaned,
+    reason: "zapi_unavailable_unverified",
+    variantsTested
+  };
+}
+
+export async function registerAndNotifyInvalidGuestPhone(db, r, target = {}, deps = {}) {
+  if (!db || !r) return { registered: false, notified: false, reason: "missing_context" };
+
+  const guestIndex = Math.max(1, Number(target.index ?? target.guestIndex ?? 1));
+  const guestName = String(
+    target.name ||
+    target.guestName ||
+    (guestIndex === 1 ? r.guestName : r.guests?.[guestIndex - 1]?.name) ||
+    `Hóspede ${guestIndex}`
+  ).trim();
+  const rawInvalidPhone = String(
+    target.phone ||
+    (guestIndex === 1 ? r.guestPhone : r.guests?.[guestIndex - 1]?.phone || r.guests?.[guestIndex - 1]?.whatsapp) ||
+    ""
+  ).trim();
+  const invalidDigits = rawInvalidPhone.replace(/\D/g, "");
+  const reason = String(target.reason || (invalidDigits.length < 10 ? "invalid_phone_format" : "no_whatsapp_account"));
+
+  const cleanFn = typeof deps.cleanWhatsAppPhone === "function" ? deps.cleanWhatsAppPhone : cleanPhoneLocal;
+  const rawReqPhone = String(
+    r.requesterInfo?.whatsapp ||
+    r.requesterInfo?.phone ||
+    r.requesterPhone ||
+    ""
+  ).trim();
+  const reqDigits = cleanFn(rawReqPhone);
+  const reqName = String(r.requesterInfo?.name || r.requesterName || r.companyName || r.agencyName || "Solicitante").trim();
+
+  if (target.isSameAsRequester || (invalidDigits.length >= 8 && reqDigits && phonesEndMatch(reqDigits, invalidDigits))) {
+    return { registered: false, notified: false, reason: "same_as_requester" };
+  }
+
+  const dedupKey = `${r.id || r.code}:${guestIndex}:${invalidDigits || "empty"}`;
+  if (inFlightInvalidGuestPhoneAlerts.has(dedupKey)) {
+    return { registered: false, notified: false, reason: "in_flight_dedup" };
+  }
+
+  if (!Array.isArray(r.guestPhoneCorrectionRequests)) {
+    r.guestPhoneCorrectionRequests = [];
+  }
+
+  const alreadyNotified = r.guestPhoneCorrectionRequests.some(
+    (req) =>
+      req &&
+      req.status === "awaiting_reply" &&
+      Number(req.guestIndex) === guestIndex &&
+      String(req.invalidPhoneDigits || "") === invalidDigits &&
+      Boolean(req.whatsappSent)
+  );
+  if (alreadyNotified) {
+    return { registered: false, notified: false, reason: "already_notified" };
+  }
+
+  const nowIso = new Date().toISOString();
+  for (const prev of r.guestPhoneCorrectionRequests) {
+    if (prev && prev.status === "awaiting_reply" && Number(prev.guestIndex) === guestIndex) {
+      prev.status = "superseded";
+      prev.resolvedAt = nowIso;
+    }
+  }
+
+  const reqEntry = {
+    id: `gph_${r.id || r.code}_${guestIndex}_${Date.now()}`,
+    status: "awaiting_reply",
+    packageCode: r.packageCode || r.packageId || null,
+    reservationId: r.id ?? null,
+    reservationCode: r.code || "",
+    flatNumber: String(r.flatNumber || ""),
+    guestIndex,
+    guestName,
+    invalidPhone: rawInvalidPhone,
+    invalidPhoneDigits: invalidDigits,
+    requesterPhone: reqDigits || rawReqPhone,
+    requesterName: reqName,
+    reason,
+    source: target.source || "dispatch_instructions",
+    notifiedAt: nowIso,
+    whatsappSent: false,
+    correctedPhone: null,
+    resolvedAt: null
+  };
+  r.guestPhoneCorrectionRequests.push(reqEntry);
+  r.guestPhoneInvalid = true;
+
+  const notifyPanelFn = typeof deps.createNotification === "function"
+    ? deps.createNotification
+    : globalThis.__corpflatsCreateNotification;
+
+  if (!reqDigits || reqDigits.length < 10) {
+    if (typeof notifyPanelFn === "function") {
+      try {
+        notifyPanelFn({
+          category: "pre_checkin",
+          title: `⚠️ Telefone sem WhatsApp — Flat ${r.flatNumber} (${guestName})`,
+          message: `O telefone de ${guestName} (${rawInvalidPhone || "vazio"}) não possui WhatsApp ativo e não há WhatsApp do Solicitante para aviso automático.`,
+          severity: "warning",
+          metadata: {
+            reservationId: r.id,
+            reservationCode: r.code,
+            packageCode: r.packageCode || null,
+            flatNumber: r.flatNumber,
+            guestIndex,
+            guestName,
+            invalidPhone: rawInvalidPhone
+          },
+          targetUrl: "/reservas"
+        });
+      } catch (_) {}
+    }
+    if (typeof deps.saveDatabase === "function") deps.saveDatabase("guest_phone_invalid_no_requester");
+    return { registered: true, notified: false, request: reqEntry, reason: "missing_requester_phone" };
+  }
+
+  const reqFirst = reqName.split(/\s+/)[0] || "Solicitante";
+  const pkgRef = r.packageCode || r.packageId;
+  const pkgLabel = pkgRef ? ` (Pacote *${pkgRef}*)` : "";
+  const msgText =
+    `Olá, *${reqFirst}*! ⚠️\n\n` +
+    `Tentamos enviar as instruções de check-in do *Flat ${r.flatNumber}*${pkgLabel}, ` +
+    `mas o número informado para *${guestName}* (*${rawInvalidPhone || "não informado"}*) *não possui WhatsApp ativo*.\n\n` +
+    `Por favor, *responda aqui mesmo neste WhatsApp* com o número correto (com DDD) de *${guestName}* para liberarmos o acesso e reenviarmos as instruções imediatamente!`;
+
+  const cleanBase = String(deps.baseUrl || db?.settings?.baseUrl || "https://corpflats.com.br").replace(/\/+$/, "");
+  const pkgToken = pkgRef ? ensureRequesterPortalToken(db, r) : ensureRequesterPortalToken(db, r);
+  const portalUrl = pkgRef
+    ? `${cleanBase}/solicitante/${encodeURIComponent(pkgRef)}${pkgToken ? `?t=${encodeURIComponent(pkgToken)}` : ""}`
+    : `${cleanBase}/credenciamento/${encodeURIComponent(r.code)}`;
+  const buttons = [
+    { id: `btn_fix_phone_${r.code}_${guestIndex}`, type: "URL", label: "🔐 Atualizar no Portal", url: portalUrl }
+  ];
+
+  const sendFn = typeof deps.sendZapiMessage === "function" ? deps.sendZapiMessage : null;
+  inFlightInvalidGuestPhoneAlerts.add(dedupKey);
+  try {
+    let sentOk = false;
+    let zRes = null;
+    if (sendFn && !deps.suppressExternalSend) {
+      zRes = await sendFn(db?.zapiConfig, {
+        phone: reqDigits,
+        message: msgText,
+        buttons,
+        channelId: "guest_schedule",
+        recipientRole: "solicitante",
+        triggerEvent: "invalid_guest_phone_correction",
+        db
+      });
+      sentOk = Boolean(zRes?.success || zRes?.ok || zRes?.sent || zRes?.messageId || zRes?.zaapId);
+      reqEntry.whatsappSent = sentOk;
+
+      if (!Array.isArray(db.whatsappHistory)) db.whatsappHistory = [];
+      db.whatsappHistory.push({
+        id: `auto_phonefix_${r.id}_${guestIndex}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        reservationId: r.id || null,
+        reservationCode: r.code,
+        packageCode: pkgRef || null,
+        title: "Solicitação de Correção de WhatsApp do Hóspede",
+        guestName: reqName,
+        guestPhone: reqDigits,
+        recipientType: "requester",
+        recipientRole: "solicitante",
+        triggerEvent: "invalid_guest_phone_correction",
+        message: msgText,
+        buttons,
+        status: sentOk ? "sent" : "failed",
+        messageId: zRes?.messageId || null,
+        error: zRes?.error || null,
+        sentAt: nowIso
+      });
+
+      if (typeof deps.appendMessageToConversation === "function") {
+        deps.appendMessageToConversation(db, {
+          phone: reqDigits,
+          senderName: "CorpFlats",
+          senderPhone: db?.zapiConfig?.instanceId || "",
+          fromMe: true,
+          text: msgText,
+          type: "text",
+          buttons,
+          triggerEvent: "invalid_guest_phone_correction",
+          reservationCode: r.code,
+          packageCode: pkgRef || null,
+          status: sentOk ? "delivered" : "failed",
+          timestamp: nowIso,
+          messageId: zRes?.messageId || `msg_phonefix_${Date.now()}_${guestIndex}`
+        });
+      }
+    }
+
+    if (typeof notifyPanelFn === "function") {
+      try {
+        notifyPanelFn({
+          category: "pre_checkin",
+          title: `⚠️ WhatsApp Inválido — Flat ${r.flatNumber} (${guestName})`,
+          message: `O número '${rawInvalidPhone || "não informado"}' de ${guestName} não possui WhatsApp ativo. Solicitante ${reqName} foi notificado para informar o número correto.`,
+          severity: "warning",
+          metadata: {
+            reservationId: r.id,
+            reservationCode: r.code,
+            packageCode: pkgRef || null,
+            flatNumber: r.flatNumber,
+            guestIndex,
+            guestName,
+            invalidPhone: rawInvalidPhone,
+            whatsappSent: sentOk
+          },
+          targetUrl: "/whatsapp-chat"
+        });
+      } catch (_) {}
+    }
+
+    if (typeof deps.saveDatabase === "function") {
+      deps.saveDatabase("guest_phone_correction_requested");
+    }
+
+    return { registered: true, notified: sentOk, request: reqEntry };
+  } finally {
+    inFlightInvalidGuestPhoneAlerts.delete(dedupKey);
+  }
+}
+
+export async function updateGuestPhoneAndResendInstructions(db, params = {}, deps = {}) {
+  if (!db) {
+    return { ok: false, code: "DB_UNAVAILABLE", error: "Banco de dados indisponível." };
+  }
+
+  let r = params.reservation || null;
+  if (!r && Array.isArray(db.reservations)) {
+    const targetId = params.reservationId !== undefined && params.reservationId !== null ? String(params.reservationId) : "";
+    const targetCode = String(params.reservationCode || params.codigo_reserva_alvo || "").trim().toUpperCase();
+    r = db.reservations.find(
+      (item) =>
+        item &&
+        ((targetId && String(item.id) === targetId) ||
+          (targetCode && (String(item.code || "").toUpperCase() === targetCode || String(item.reservationCode || "").toUpperCase() === targetCode)))
+    ) || null;
+  }
+
+  if (!r) {
+    return { ok: false, code: "RESERVATION_NOT_FOUND", error: "Reserva não encontrada para atualização do telefone." };
+  }
+
+  const cleanFn = typeof deps.cleanWhatsAppPhone === "function" ? deps.cleanWhatsAppPhone : cleanPhoneLocal;
+  const rawNewPhone = String(params.newPhone || params.phone || "").trim();
+  const cleanDigits = cleanFn(rawNewPhone);
+
+  if (!cleanDigits || cleanDigits.length < 10) {
+    return {
+      ok: false,
+      invalidWhatsApp: true,
+      code: "TELEFONE_INVALIDO",
+      error: `O telefone informado ("${rawNewPhone}") está incompleto. Informe o número com DDD (mínimo 10 dígitos).`
+    };
+  }
+
+  let normalizedPhone = cleanDigits;
+  if (params.skipWhatsAppValidation !== true) {
+    const waCheck = await verifyWhatsAppPhoneActive(rawNewPhone, db?.zapiConfig, db, deps);
+    if (!waCheck.valid) {
+      return {
+        ok: false,
+        invalidWhatsApp: true,
+        code: "TELEFONE_SEM_WHATSAPP",
+        phoneTested: waCheck.phone || cleanDigits,
+        error: `O número informado (${rawNewPhone}) também não possui conta ativa no WhatsApp.`
+      };
+    }
+    normalizedPhone = waCheck.phone || cleanDigits;
+  }
+
+  let guestIndex = Number(params.guestIndex) || 0;
+  if (!guestIndex && params.guestName && Array.isArray(r.guests)) {
+    const idxMatched = r.guests.findIndex((g, idx) => g && areGuestNamesRoughlyCompatible(params.guestName, g.name || (idx === 0 ? r.guestName : "")));
+    if (idxMatched >= 0) guestIndex = Number(r.guests[idxMatched]?.index) || idxMatched + 1;
+  }
+  if (!guestIndex && Array.isArray(r.guestPhoneCorrectionRequests)) {
+    const activePending = r.guestPhoneCorrectionRequests.filter((req) => req && req.status === "awaiting_reply");
+    if (activePending.length === 1) {
+      guestIndex = Number(activePending[0].guestIndex) || 1;
+    }
+  }
+  guestIndex = Math.max(1, Math.min(3, guestIndex || 1));
+
+  if (!Array.isArray(r.guests)) r.guests = [];
+  const prevGuestObj = r.guests[guestIndex - 1] || {};
+  const oldPhone =
+    guestIndex === 1
+      ? String(r.guestPhone || prevGuestObj.phone || prevGuestObj.whatsapp || "").trim()
+      : String(prevGuestObj.phone || prevGuestObj.whatsapp || "").trim();
+  const targetGuestName = String(
+    params.guestName ||
+    prevGuestObj.name ||
+    (guestIndex === 1 ? r.guestName : "") ||
+    `Hóspede ${guestIndex}`
+  ).trim();
+
+  const nowIso = new Date().toISOString();
+  r.guests[guestIndex - 1] = {
+    ...prevGuestObj,
+    index: guestIndex,
+    isMain: guestIndex === 1,
+    name: prevGuestObj.name || (guestIndex === 1 ? r.guestName : "") || targetGuestName,
+    phone: normalizedPhone,
+    whatsapp: normalizedPhone,
+    informLater: false
+  };
+
+  if (guestIndex === 1) {
+    r.guestPhone = normalizedPhone;
+    r.whatsappPhone = normalizedPhone;
+    r.guestPending = false;
+    r.informGuestsLater = false;
+  } else if (guestIndex === 2) {
+    r.guest2InformLater = false;
+  } else if (guestIndex === 3) {
+    r.guest3InformLater = false;
+  }
+
+  r.guestPhoneUpdatedAt = nowIso;
+  r.updatedAt = nowIso;
+
+  // Limpa eventual stamp anterior para o mesmo índice/telefone para garantir reenvio imediato
+  delete r[`pkgGuestInstrSent_${guestIndex}_${normalizedPhone}`];
+  delete r[`pkgGuestInstrSent_${guestIndex}_${cleanDigits}`];
+
+  if (Array.isArray(r.guestPhoneCorrectionRequests)) {
+    for (const req of r.guestPhoneCorrectionRequests) {
+      if (req && req.status === "awaiting_reply" && Number(req.guestIndex) === guestIndex) {
+        req.status = "resolved";
+        req.correctedPhone = normalizedPhone;
+        req.resolvedAt = nowIso;
+      }
+    }
+  }
+  r.guestPhoneInvalid = Array.isArray(r.guestPhoneCorrectionRequests)
+    ? r.guestPhoneCorrectionRequests.some((req) => req && req.status === "awaiting_reply")
+    : false;
+
+  // Atualiza cadastro do hóspede no CRM (db.guests) SEM nunca sobrescrever o perfil de um Solicitante distinto
+  const reqPhoneDigits = normalizePhoneDigitsSimple(
+    r.requesterInfo?.whatsapp || r.requesterInfo?.phone || r.requesterPhone || ""
+  );
+  const reqDocDigits = String(r.requesterInfo?.cpf || r.companyCnpj || r.agencyCnpj || "").replace(/\D/g, "");
+  const reqNameStr = String(r.requesterInfo?.name || r.requesterName || "").trim();
+  const isSeparateRequester = Boolean(!r.requesterIsGuest1 || guestIndex > 1);
+
+  const gObj = r.guests[guestIndex - 1];
+  const targetGuestId = gObj?.guestId || (guestIndex === 1 ? r.guestId : null);
+  const targetDoc = String(
+    gObj?.cpf || gObj?.document || (guestIndex === 1 ? (r.guestCpf || r.guestDocument) : "") || ""
+  ).replace(/\D/g, "");
+
+  if (Array.isArray(db.guests)) {
+    const isProtectedRequesterRecord = (g) => {
+      if (!isSeparateRequester) return false;
+      const gPhoneD = normalizePhoneDigitsSimple(g.whatsapp || g.phone || "");
+      const gDocD = String(g.cpf || g.document || g.documentNumber || "").replace(/\D/g, "");
+      if (reqPhoneDigits.length >= 8 && gPhoneD && phonesEndMatch(gPhoneD, reqPhoneDigits)) {
+        if (!targetNameCompat(g)) return true;
+      }
+      if (reqDocDigits.length >= 11 && gDocD === reqDocDigits && reqDocDigits !== targetDoc) {
+        return true;
+      }
+      if (reqNameStr && areGuestNamesRoughlyCompatible(reqNameStr, g.fullName || g.name) && !areGuestNamesRoughlyCompatible(targetGuestName, g.fullName || g.name)) {
+        return true;
+      }
+      return false;
+    };
+    const targetNameCompat = (g) => areGuestNamesRoughlyCompatible(targetGuestName, g.fullName || g.name);
+
+    let crmGuest = null;
+    if (targetGuestId) {
+      crmGuest = db.guests.find((g) => g && String(g.id) === String(targetGuestId) && !isProtectedRequesterRecord(g));
+    }
+    if (!crmGuest && targetDoc.length >= 11) {
+      crmGuest = db.guests.find((g) => {
+        if (!g || isProtectedRequesterRecord(g)) return false;
+        const gDocD = String(g.cpf || g.document || g.documentNumber || "").replace(/\D/g, "");
+        return gDocD === targetDoc && (!targetGuestName || targetNameCompat(g));
+      });
+    }
+    if (!crmGuest && oldPhone && oldPhone.replace(/\D/g, "").length >= 8) {
+      crmGuest = db.guests.find((g) => {
+        if (!g || isProtectedRequesterRecord(g)) return false;
+        const gPhoneD = normalizePhoneDigitsSimple(g.whatsapp || g.phone || "");
+        return phonesEndMatch(gPhoneD, oldPhone) && (!targetGuestName || targetNameCompat(g));
+      });
+    }
+    if (crmGuest) {
+      crmGuest.phone = normalizedPhone;
+      crmGuest.whatsapp = normalizedPhone;
+      crmGuest.updatedAt = nowIso;
+    }
+  }
+
+  const auditEntry = {
+    id: `log_gph_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    action: "guest_phone_corrected",
+    timestamp: nowIso,
+    actor: params.actor || { name: "Sofia IA / Solicitante", role: "system", type: "ai" },
+    source: params.source || "WhatsApp / Portal do Solicitante",
+    description: `WhatsApp do ${guestIndex}º hóspede (${targetGuestName}) atualizado para ${normalizedPhone}`,
+    changes: [
+      {
+        field: guestIndex === 1 ? "guestPhone" : `guest${guestIndex}Phone`,
+        label: `WhatsApp (${targetGuestName})`,
+        oldValue: oldPhone || "(vazio)",
+        newValue: normalizedPhone
+      }
+    ]
+  };
+  if (typeof deps.addReservationAuditLog === "function") {
+    deps.addReservationAuditLog(r, auditEntry);
+  } else {
+    if (!Array.isArray(r.auditLogs)) r.auditLogs = [];
+    r.auditLogs.unshift(auditEntry);
+  }
+
+  if (typeof deps.saveDatabase === "function") {
+    deps.saveDatabase("guest_phone_corrected");
+  }
+
+  const effectiveBaseUrl = String(params.baseUrl || deps.baseUrl || db?.settings?.baseUrl || "https://corpflats.com.br").replace(/\/+$/, "");
+  const stLower = String(r.status || "").toLowerCase().trim();
+  const isConfirmedOrActive = stLower === "confirmada" || stLower === "checkin" || stLower === "checked_in" || stLower === "in_house";
+  let whatsappDispatched = false;
+  let resendResult = null;
+
+  if (isConfirmedOrActive && !deps.suppressExternalSend) {
+    if (r.packageCode || r.packageId || typeof deps.dispatchCatchUpGuestRulerMessages !== "function") {
+      resendResult = await dispatchIndividualFlatGuestInstructions(db, [r], effectiveBaseUrl, {
+        ...deps,
+        onlyGuestIndices: [guestIndex],
+        forceResend: true,
+        skipWhatsAppPreCheck: true
+      });
+      whatsappDispatched = Array.isArray(resendResult) && resendResult.some((item) => item && item.guestIndex === guestIndex && item.sent !== false);
+    } else {
+      resendResult = await deps.dispatchCatchUpGuestRulerMessages(db, deps.saveDatabase, r, {
+        baseUrl: effectiveBaseUrl,
+        onlyGuestIndices: [guestIndex],
+        forceResendInstructions: true
+      });
+      whatsappDispatched = Array.isArray(resendResult?.dispatchedStages) && resendResult.dispatchedStages.length > 0;
+    }
+
+    if (typeof deps.scheduleUpcomingReservationTriggers === "function") {
+      try {
+        deps.scheduleUpcomingReservationTriggers(db, deps.saveDatabase);
+      } catch (_) {}
+    }
+  }
+
+  return {
+    ok: true,
+    reservationCode: r.code,
+    flatNumber: String(r.flatNumber || ""),
+    guestIndex,
+    guestName: targetGuestName,
+    oldPhone,
+    newPhone: normalizedPhone,
+    whatsappDispatched,
+    resendResult
+  };
+}
+
 /**
- * Envia 1 única mensagem consolidada de Pré-Reserva (WhatsApp + E-mail) para o Solicitante do pacote,
- * sem disparar N mensagens separadas.
+ * Envia 1 única mensagem consolidada de Pré-Reserva ou Confirmação (WhatsApp + E-mail) para o Solicitante do pacote,
+ * sem disparar N mensagens separadas e sem expor URLs cruas quando há botões.
  */
 export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, baseUrl, deps = {}) {
   const summary = computePackageSummary(db, packageIdOrRes, {
@@ -562,17 +1565,29 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
   const all = getPackageReservations(db, summary.packageCode);
   const activeItems = all.filter((r) => isPackageItemActive(r));
   const nowIso = new Date().toISOString();
-  const isConfirmedNoHold = activeItems.every((r) => String(r.status || "").toLowerCase() === "confirmada") && !activeItems[0]?.expiresAt;
   const holdLabel = activeItems[0]?.holdDurationLabel || "30 minutos";
+  const allConfirmed = activeItems.length > 0 && activeItems.every((r) => String(r.status || "").toLowerCase().trim() === "confirmada");
   const isFaturado = summary.isFaturadoBoleto;
   const isPaid = summary.isPaid;
+  const paidAmt = round2(Number(summary.paidAmount) || 0);
+  const pendingAmt = round2(Number(summary.pendingAmount) || 0);
+  const hasPartialPayment = !isPaid && !isFaturado && paidAmt > 0.01 && pendingAmt > 0.01;
+
+  const statusLabel = allConfirmed ? "Confirmada" : "Pré-Reserva";
+  const paymentStatusLabel = isPaid
+    ? "Pago integralmente"
+    : isFaturado
+      ? "Faturado"
+      : hasPartialPayment
+        ? `Pagamento parcial de R$ ${formatMoneyBr(paidAmt)} • Pendente R$ ${formatMoneyBr(pendingAmt)}`
+        : "Pendente";
 
   // Marca flags nas reservas filhas para evitar disparos duplicados avulsos da régua ou dos timers de 20s/60s
   for (const r of activeItems) {
     r.packagePreResDispatchedAt = nowIso;
     r._needsOfficialPreResDispatch = false;
     r._preReservationRulerSentAt = nowIso;
-    if (isPaid && isFlatGuestCredentialIncomplete(r)) {
+    if ((isPaid || allConfirmed) && isFlatGuestCredentialIncomplete(r)) {
       r.b2bCredentialWhatsappSentAt = r.b2bCredentialWhatsappSentAt || nowIso;
       r.credentialFirstRequestSentAt = r.credentialFirstRequestSentAt || nowIso;
       r.credentialSentStages = {
@@ -587,56 +1602,47 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
     .filter((it) => it.isActive)
     .map((it) => {
       const occLabel = `${it.guestCount} hóspede${it.guestCount > 1 ? "s" : ""}`;
-      const bfLabel = it.includeBreakfast ? "Com Café" : "Sem Café";
-      const bedLabel = it.twinBeds ? "2 Camas Solteiro" : "Cama Casal";
-      const gLabel = it.informGuestsLater ? "Hóspedes a informar após pagamento" : it.guestName;
-      return `• *Flat ${it.flatNumber}* (${it.code}): ${formatDateBrShort(it.checkinDate)} a ${formatDateBrShort(it.checkoutDate)} • ${occLabel} • ${bfLabel} • ${bedLabel} • _${gLabel}_ — R$ ${formatMoneyBr(it.totalAmount)}`;
+      const bfLabel = it.includeBreakfast ? "Com café" : "Sem café";
+      const bedLabel = it.twinBeds ? "2 camas solteiro" : "Cama casal";
+      const gLabel = it.informGuestsLater ? "A informar" : (it.guestName || "A definir");
+      return (
+        `• *Flat ${it.flatNumber}* • ${formatDateBrShort(it.checkinDate)} a ${formatDateBrShort(it.checkoutDate)} (${it.nights} diária${it.nights > 1 ? "s" : ""})\n` +
+        `  ${occLabel} • ${bfLabel} • ${bedLabel}\n` +
+        `  Hóspede: ${gLabel} — R$ ${formatMoneyBr(it.totalAmount)}`
+      );
     })
-    .join("\n");
+    .join("\n\n");
 
-  let msgText = "";
-  if (isPaid) {
-    msgText =
-      `Olá, *${reqNameFirst}*! Tudo bem? 😊\n\n` +
-      `Seu pacote com *${summary.activeFlatsCount} flats* no *CorpFlats* (*${summary.packageCode}*) está *CONFIRMADO*!\n\n` +
-      `🏢 *Resumo dos Flats Reservados:*\n${flatsLines}\n\n` +
-      `💰 *Total do Pacote:* R$ ${formatMoneyBr(summary.totalAmount)} (Pago)\n` +
-      (summary.needsGuestCredentials
-        ? `\n👥 *Cadastro dos Hóspedes por Flat (Link Único):*\nAcesse para informar ou revisar o Hóspede 1 e 2 de cada flat:\n${summary.batchCredentialUrl}\n`
-        : "") +
-      `\n🔗 *Painel Completo do Pacote (Recibo & Nota Fiscal):*\n${summary.packagePortalUrl}`;
-  } else if (isFaturado) {
-    msgText =
-      `Olá, *${reqNameFirst}*! Tudo bem? 😊\n\n` +
-      `Seu pacote faturado com *${summary.activeFlatsCount} flats* no *CorpFlats* (*${summary.packageCode}*) foi registrado com sucesso!\n\n` +
-      `🏢 *Resumo dos Flats Reservados:*\n${flatsLines}\n\n` +
-      `💰 *Valor Total Faturado do Pacote:* R$ ${formatMoneyBr(summary.totalAmount)}\n` +
-      (summary.needsGuestCredentials
-        ? `\n👥 *Cadastro dos Hóspedes por Flat (Link Único):*\n${summary.batchCredentialUrl}\n`
-        : "") +
-      `\n🔗 *Painel do Pacote:*\n${summary.packagePortalUrl}`;
-  } else {
-    const hasPartialDeposit = round2(Number(summary.paidAmount) || 0) > 0;
-    msgText =
-      `Olá, *${reqNameFirst}*! Tudo bem? 😊\n\n` +
-      `Preparamos sua pré-reserva unificada de *${summary.activeFlatsCount} flats* no *CorpFlats* (*${summary.packageCode}*) com *pagamento único*!\n\n` +
-      `🏢 *Flats incluídos no pacote:*\n${flatsLines}\n\n` +
-      (hasPartialDeposit
-        ? `💰 *Total do Pacote:* R$ ${formatMoneyBr(summary.totalAmount)}\n` +
-          `✅ *Sinal Já Pago:* - R$ ${formatMoneyBr(summary.paidAmount)}\n` +
-          `💎 *Saldo Restante no PIX:* *R$ ${formatMoneyBr(summary.pendingAmount)}*\n`
-        : `💎 *Total Único no PIX:* *R$ ${formatMoneyBr(summary.pendingAmount)}*\n`) +
-      `💳 *Ou no Cartão de Crédito:* R$ ${formatMoneyBr(summary.cardPendingAmount)}\n` +
-      (isConfirmedNoHold
-        ? `✅ *Status dos flats:* Confirmado com sinal pago\n\n`
-        : `⏳ *Prazo de garantia dos flats:* ${holdLabel}\n\n`) +
-      `🔗 *Pagar PIX Único ou Cartão / Acompanhar Pacote:*\n${summary.packagePortalUrl}\n\n` +
-      (summary.pixCopiaECola ? `📋 *Copiar Chave PIX Única:*\n${summary.packageCopyPixUrl}\n\n` : "") +
-      `_Assim que o pagamento único for confirmado, enviaremos seu recibo unificado` +
-      (summary.needsGuestCredentials
-        ? ` e o link único para você informar os hóspedes de cada flat!_`
-        : ` e cada hóspede receberá apenas as instruções do seu respectivo flat (sem valores financeiros)._`);
-  }
+  const headerLine = isPaid
+    ? `Olá, *${reqNameFirst}*! Seu pacote com *${summary.activeFlatsCount} flats* no *CorpFlats* (*${summary.packageCode}*) está confirmado!`
+    : allConfirmed
+      ? `Olá, *${reqNameFirst}*! Sua reserva com *${summary.activeFlatsCount} flats* no *CorpFlats* (*${summary.packageCode}*) está registrada.`
+      : `Olá, *${reqNameFirst}*! Sua pré-reserva com *${summary.activeFlatsCount} flats* no *CorpFlats* (*${summary.packageCode}*) foi gerada.`;
+
+  const financialLines = isPaid
+    ? `💰 *Total do pacote:* R$ ${formatMoneyBr(summary.totalAmount)}`
+    : isFaturado
+      ? `💰 *Total faturado:* R$ ${formatMoneyBr(summary.totalAmount)}`
+      : hasPartialPayment
+        ? `💰 *Total do pacote:* R$ ${formatMoneyBr(summary.totalAmount)}\n` +
+          `💎 *Saldo no PIX:* R$ ${formatMoneyBr(pendingAmt)} • *Cartão:* R$ ${formatMoneyBr(summary.cardPendingAmount)}`
+        : `💎 *Total no PIX:* R$ ${formatMoneyBr(pendingAmt)} • *Cartão:* R$ ${formatMoneyBr(summary.cardPendingAmount)}`;
+
+  const holdLine = !allConfirmed && !isPaid && !isFaturado ? `\n⏳ *Validade:* ${holdLabel}` : "";
+
+  const footerGuidance = summary.needsGuestCredentials
+    ? `👥 Use os botões abaixo para gerenciar o pacote e cadastrar os hóspedes de cada flat.`
+    : allConfirmed
+      ? `✨ Os hóspedes identificados recebem apenas as instruções do seu flat (sem valores financeiros).`
+      : `Use os botões abaixo para acompanhar o pacote e concluir o pagamento.`;
+
+  const msgText =
+    `${headerLine}\n\n` +
+    `🏢 *Flats do Pacote:*\n${flatsLines}\n\n` +
+    `📌 *Status:* ${statusLabel}\n` +
+    `💳 *Status do pagamento:* ${paymentStatusLabel}${holdLine}\n` +
+    `${financialLines}\n\n` +
+    `${footerGuidance}`;
 
   let sentWhatsapp = false;
   let sentEmail = false;
@@ -644,22 +1650,49 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
   const cleanPhone =
     typeof deps.cleanWhatsAppPhone === "function"
       ? deps.cleanWhatsAppPhone(summary.requesterPhone)
-      : String(summary.requesterPhone || "").replace(/\D/g, "");
+      : cleanPhoneLocal(summary.requesterPhone);
 
   if (cleanPhone && cleanPhone.length >= 10 && typeof deps.sendZapiMessage === "function" && !deps.suppressExternalSend) {
     try {
-      const triggerEvt = isPaid ? "payment_confirmed" : "pre_reservation_created";
-      const buttons = !isPaid && !isFaturado && summary.pixCopiaECola
-        ? [
-            { id: `pkg_portal_${summary.packageCode}`, type: "URL", url: summary.packagePortalUrl, label: "Abrir Pacote / Pagar" },
-            { id: `pkg_pix_${summary.packageCode}`, type: "URL", url: summary.packageCopyPixUrl, label: "Copiar PIX Único" }
-          ]
-        : [{ id: `pkg_portal_${summary.packageCode}`, type: "URL", url: summary.packagePortalUrl, label: "Acessar Pacote" }];
+      const triggerEvt = isPaid ? "payment_confirmed" : (allConfirmed ? "reservation_created" : "pre_reservation_created");
+      const buttons = [];
+      if (!isPaid && !isFaturado) {
+        buttons.push({
+          id: `pkg_portal_${summary.packageCode}`,
+          type: "URL",
+          url: summary.packagePortalUrl,
+          label: "💳 Ver Pacote e Pagar"
+        });
+        if (summary.pixCopiaECola) {
+          buttons.push({
+            id: `pkg_pix_${summary.packageCode}`,
+            type: "COPY",
+            copyCode: summary.pixCopiaECola,
+            url: summary.packageCopyPixUrl,
+            label: "📋 Copiar Código PIX"
+          });
+        }
+      } else {
+        buttons.push({
+          id: `pkg_portal_${summary.packageCode}`,
+          type: "URL",
+          url: summary.packagePortalUrl,
+          label: "🏨 Abrir Pacote"
+        });
+      }
+      if (summary.needsGuestCredentials && buttons.length < 3) {
+        buttons.push({
+          id: `pkg_guests_${summary.packageCode}`,
+          type: "URL",
+          url: `${summary.packagePortalUrl}#hospedes`,
+          label: "👥 Cadastrar Hóspedes"
+        });
+      }
 
       const zRes = await deps.sendZapiMessage(db?.zapiConfig, {
         phone: cleanPhone,
         message: msgText,
-        buttons,
+        buttons: buttons.slice(0, 3),
         channelId: "guest_schedule",
         recipientRole: "solicitante",
         triggerEvent: triggerEvt,
@@ -678,8 +1711,9 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
           recipientType: r.requesterIsGuest1 && isPaid ? "guest" : "requester",
           recipientRole: "solicitante",
           triggerEvent: triggerEvt,
-          templateId: isPaid ? "tpl_package_payment_confirmed" : "tpl_package_pre_reserva",
+          templateId: isPaid ? "tpl_package_payment_confirmed" : (allConfirmed ? "tpl_package_confirmed" : "tpl_package_pre_reserva"),
           message: msgText,
+          buttons: buttons.slice(0, 3),
           status: sentWhatsapp ? "sent" : "failed",
           messageId: zRes?.messageId || null,
           sentAt: nowIso
@@ -693,7 +1727,7 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
           fromMe: true,
           text: msgText,
           type: "text",
-          buttons,
+          buttons: buttons.slice(0, 3),
           triggerEvent: triggerEvt,
           reservationCode: activeItems[0]?.code || summary.packageCode,
           packageCode: summary.packageCode,
@@ -710,18 +1744,26 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
   const requesterEmailList = parseEmailList(summary.requesterEmail);
   if (requesterEmailList.length > 0 && typeof deps.sendEmailAsync === "function" && !deps.suppressExternalSend) {
     try {
-      const subject = isPaid
-        ? `Confirmação do Pacote ${summary.packageCode} (${summary.activeFlatsCount} Flats) — CorpFlats`
-        : `Pré-Reserva Pacote ${summary.packageCode} (${summary.activeFlatsCount} Flats - Pagamento Único) — CorpFlats`;
+      const subject = allConfirmed
+        ? `Reserva Confirmada — Pacote ${summary.packageCode} (${summary.activeFlatsCount} Flats) — CorpFlats`
+        : `Pré-Reserva Pacote ${summary.packageCode} (${summary.activeFlatsCount} Flats) — CorpFlats`;
+      const emailBadge = isPaid
+        ? "Pacote Confirmado"
+        : isFaturado
+          ? "Pacote Faturado"
+          : allConfirmed
+            ? (hasPartialPayment ? "Confirmada • Pgto Parcial" : "Confirmada • Pgto Pendente")
+            : "Pré-Reserva";
+
       const htmlRows = summary.items
         .filter((it) => it.isActive)
         .map(
           (it) =>
             `<tr>
-              <td style="padding:8px;border-bottom:1px solid #e2e8f0;"><strong>Flat ${it.flatNumber}</strong> (${it.code})</td>
+              <td style="padding:8px;border-bottom:1px solid #e2e8f0;"><strong>Flat ${it.flatNumber}</strong></td>
               <td style="padding:8px;border-bottom:1px solid #e2e8f0;">${formatDateBrShort(it.checkinDate)} a ${formatDateBrShort(it.checkoutDate)}</td>
               <td style="padding:8px;border-bottom:1px solid #e2e8f0;">${it.guestCount} pax • ${it.includeBreakfast ? "Com Café" : "Sem Café"}</td>
-              <td style="padding:8px;border-bottom:1px solid #e2e8f0;">${it.informGuestsLater ? "Informar após pagamento" : it.guestName}</td>
+              <td style="padding:8px;border-bottom:1px solid #e2e8f0;">${it.informGuestsLater ? "A informar" : it.guestName}</td>
               <td style="padding:8px;border-bottom:1px solid #e2e8f0;text-align:right;">R$ ${formatMoneyBr(it.totalAmount)}</td>
             </tr>`
         )
@@ -731,10 +1773,13 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
         <div style="font-family:Arial,sans-serif;color:#1e293b;max-width:640px;margin:0 auto;">
           <h2 style="color:#0f172a;">Olá, ${summary.requesterName}!</h2>
           <p>${
-            isPaid
-              ? `Seu pacote <strong>${summary.packageCode}</strong> com <strong>${summary.activeFlatsCount} flats</strong> está confirmado!`
-              : `Sua pré-reserva unificada <strong>${summary.packageCode}</strong> com <strong>${summary.activeFlatsCount} flats</strong> foi gerada para pagamento único.`
+            allConfirmed
+              ? `Sua reserva <strong>${summary.packageCode}</strong> com <strong>${summary.activeFlatsCount} flats</strong> está registrada (${statusLabel} • ${paymentStatusLabel}).`
+              : `Sua pré-reserva <strong>${summary.packageCode}</strong> com <strong>${summary.activeFlatsCount} flats</strong> foi gerada (${paymentStatusLabel}).`
           }</p>
+          <p style="font-size:14px;margin:8px 0;">
+            <strong>Status:</strong> ${statusLabel} &nbsp;|&nbsp; <strong>Status do pagamento:</strong> ${paymentStatusLabel}
+          </p>
           <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;">
             <thead>
               <tr style="background:#f8fafc;text-align:left;">
@@ -749,27 +1794,27 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
           </table>
           <p style="font-size:16px;"><strong>Total do Pacote: R$ ${formatMoneyBr(summary.totalAmount)}</strong></p>
           ${
-            !isPaid && !isFaturado && round2(Number(summary.paidAmount) || 0) > 0
-              ? `<p style="font-size:15px;color:#15803d;margin:4px 0;"><strong>Sinal / Valor Já Pago: - R$ ${formatMoneyBr(summary.paidAmount)}</strong></p>
-                 <p style="font-size:16px;color:#0f172a;margin:4px 0;"><strong>Saldo Restante a Pagar: R$ ${formatMoneyBr(summary.pendingAmount)}</strong></p>`
+            hasPartialPayment
+              ? `<p style="font-size:15px;color:#15803d;margin:4px 0;"><strong>Valor Já Pago: - R$ ${formatMoneyBr(paidAmt)}</strong></p>
+                 <p style="font-size:16px;color:#0f172a;margin:4px 0;"><strong>Saldo Pendente: R$ ${formatMoneyBr(pendingAmt)}</strong></p>`
               : ""
           }
           ${
             !isPaid && !isFaturado && summary.pixCopiaECola
               ? `<div style="background:#f0fdf4;border:1px solid #86efac;padding:12px;border-radius:8px;margin:16px 0;">
-                  <strong>Chave PIX Copia e Cola Única (Pacote Completo):</strong>
+                  <strong>PIX Copia e Cola (Pacote Completo):</strong>
                   <pre style="white-space:pre-wrap;word-break:break-all;font-size:12px;background:#fff;padding:8px;border-radius:4px;">${summary.pixCopiaECola}</pre>
                 </div>`
               : ""
           }
           <p style="margin:20px 0;">
             <a href="${summary.packagePortalUrl}" style="background:#0f172a;color:#ffffff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;">
-              ${isPaid ? "Acessar Recibo & Nota Fiscal do Pacote" : "Pagar Agora / Acompanhar Pacote"}
+              ${!isPaid && !isFaturado ? "Ver Pacote e Pagar" : "Abrir Portal do Solicitante"}
             </a>
           </p>
           ${
-            isPaid && summary.needsGuestCredentials
-              ? `<p><a href="${summary.batchCredentialUrl}" style="color:#2563eb;font-weight:bold;">Clique aqui para cadastrar Hóspede 1 e Hóspede 2 de cada flat</a></p>`
+            summary.needsGuestCredentials
+              ? `<p><a href="${summary.packagePortalUrl}#hospedes" style="color:#2563eb;font-weight:bold;">Cadastrar ou revisar hóspedes de cada flat</a></p>`
               : ""
           }
         </div>
@@ -779,7 +1824,7 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
         typeof deps.wrapEmailTemplate === "function"
           ? deps.wrapEmailTemplate({
               title: subject,
-              badge: isPaid ? "Pacote Confirmado" : (isFaturado ? "Pacote Faturado" : "Pré-Reserva Unificada"),
+              badge: emailBadge,
               contentHtml: bodyHtml
             })
           : bodyHtml;
@@ -793,7 +1838,7 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
         overrides: deps.emailOverrides,
         metadata: {
           category: "reservation_package",
-          trigger: isPaid ? "package_confirmed" : "package_pre_reservation_created",
+          trigger: isPaid ? "package_confirmed" : (allConfirmed ? "package_created_confirmed" : "package_pre_reservation_created"),
           packageCode: summary.packageCode
         }
       });
@@ -803,9 +1848,13 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
     }
   }
 
-  // Se já nasceu confirmada/paga (ex.: Confirmada no PMS), envia instruções individuais sem valores para os hóspedes já cadastrados
-  if (isPaid) {
-    await dispatchIndividualFlatGuestInstructions(db, activeItems, baseUrl, deps);
+  // Dispara instruções individuais imediatamente na criação para todos os flats ativos com status === "confirmada" (independente de paidAmount === 0 ou faturado)
+  const confirmedActiveItems = activeItems.filter((r) => String(r.status || "").toLowerCase().trim() === "confirmada");
+  if (confirmedActiveItems.length > 0) {
+    await dispatchIndividualFlatGuestInstructions(db, confirmedActiveItems, baseUrl, {
+      ...deps,
+      triggerEvent: isPaid ? "payment_confirmed" : "reservation_created"
+    });
   }
 
   if (typeof deps.saveDatabase === "function") deps.saveDatabase("package_created_dispatched");
@@ -813,76 +1862,135 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
 }
 
 /**
- * Dispara instruções individuais de cada flat para Hóspede 1 e Hóspede 2 já identificados,
- * ocultando 100% dos valores financeiros para quem não é o Solicitante.
+ * Dispara instruções individuais de cada flat para Hóspede 1, 2 e 3 já identificados,
+ * ocultando 100% dos valores financeiros, sem URLs cruas no corpo, sem "Senha da Porta" (Cartão NFC na recepção 24h)
+ * e validando WhatsApp ativo na Z-API (notificando o Solicitante automaticamente se inválido).
  */
 export async function dispatchIndividualFlatGuestInstructions(db, reservationsList, baseUrl, deps = {}) {
   const cleanBase = String(baseUrl || "https://corpflats.com.br").replace(/\/+$/, "");
   const sentTo = [];
   if (!Array.isArray(reservationsList) || reservationsList.length === 0) return sentTo;
 
+  const cleanFn = typeof deps.cleanWhatsAppPhone === "function" ? deps.cleanWhatsAppPhone : cleanPhoneLocal;
+  const onlyIndices = Array.isArray(deps.onlyGuestIndices) && deps.onlyGuestIndices.length > 0
+    ? new Set(deps.onlyGuestIndices.map((n) => Number(n)))
+    : null;
+  const todayBr = getBrasiliaDateStrNow();
+  const triggerEvt = deps.triggerEvent || "reservation_created";
+
   const primary = reservationsList[0];
-  const reqPhoneDigits = String(
+  const reqPhoneDigits = cleanFn(
     primary?.requesterInfo?.whatsapp ||
     primary?.requesterInfo?.phone ||
     primary?.requesterPhone ||
     ""
-  ).replace(/\D/g, "");
+  );
+
+  const defaultPdfUrl = db?.zapiConfig?.guestGuidePdfUrl || "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf";
+  const defaultPdfName = db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf";
+  const pdfCaption = "Segue em anexo o Manual do Hóspede em PDF com todas as orientações da sua acomodação! 📖";
 
   for (const r of reservationsList) {
     if (!isPackageItemActive(r)) continue;
+    const itemReqDigits = cleanFn(
+      r.requesterInfo?.whatsapp ||
+      r.requesterInfo?.phone ||
+      r.requesterPhone ||
+      reqPhoneDigits ||
+      ""
+    );
     const guestsArr = Array.isArray(r.guests) ? r.guests : [];
     const guestTargets = [];
 
     // Hóspede 1
     const g1Name = String(r.guestName || guestsArr[0]?.name || "").trim();
-    const g1Phone = String(r.guestPhone || guestsArr[0]?.phone || "").trim();
-    const g1Digits = g1Phone.replace(/\D/g, "");
+    const g1Phone = String(r.guestPhone || guestsArr[0]?.phone || guestsArr[0]?.whatsapp || "").trim();
+    const g1Digits = cleanFn(g1Phone);
     const isPlaceholder1 = !g1Name || /a definir|informar depois|pendente|^h[oó]spede\s*\d*$/i.test(g1Name);
 
-    if (!isPlaceholder1 && g1Digits.length >= 10 && !r.guestPending && !r.informGuestsLater) {
+    if (!isPlaceholder1 && !r.guestPending && !r.informGuestsLater) {
       guestTargets.push({
         index: 1,
         name: g1Name,
         phone: g1Phone,
         digits: g1Digits,
         email: String(r.guestEmail || guestsArr[0]?.email || "").trim(),
-        isSameAsRequester: Boolean(r.requesterIsGuest1 || (reqPhoneDigits && g1Digits === reqPhoneDigits))
+        isSameAsRequester: Boolean(r.requesterIsGuest1 || (itemReqDigits && g1Digits && phonesEndMatch(g1Digits, itemReqDigits)))
       });
     }
 
-    // Hóspede 2 (e 3 se houver)
-    const maxCount = Math.max(1, Number(r.guestCount || r.adults) || 1);
+    // Hóspede 2 e 3
+    const maxCount = Math.max(1, Math.min(3, Number(r.guestCount || r.adults) || 1));
     for (let i = 1; i < Math.min(maxCount, guestsArr.length); i++) {
       const comp = guestsArr[i];
       if (!comp || comp.informLater) continue;
+      if (i === 1 && r.guest2InformLater) continue;
+      if (i === 2 && r.guest3InformLater) continue;
       const cName = String(comp.name || "").trim();
       const cPhone = String(comp.phone || comp.whatsapp || "").trim();
-      const cDigits = cPhone.replace(/\D/g, "");
+      const cDigits = cleanFn(cPhone);
       if (!cName || /a definir|informar depois|pendente|^h[oó]spede\s*\d*$/i.test(cName)) continue;
-      if (cDigits.length >= 10) {
-        guestTargets.push({
-          index: i + 1,
-          name: cName,
-          phone: cPhone,
-          digits: cDigits,
-          email: String(comp.email || "").trim(),
-          isSameAsRequester: Boolean(reqPhoneDigits && cDigits === reqPhoneDigits)
-        });
-      }
+      guestTargets.push({
+        index: i + 1,
+        name: cName,
+        phone: cPhone,
+        digits: cDigits,
+        email: String(comp.email || "").trim(),
+        isSameAsRequester: Boolean(itemReqDigits && cDigits && phonesEndMatch(cDigits, itemReqDigits))
+      });
     }
 
     for (const target of guestTargets) {
-      // Se é o próprio Solicitante no Flat 1, ele já recebeu o recibo + painel do pacote;
-      // mas ainda enviamos o link direto do pré-checkin do flat dele se ainda não enviado, ou pulamos duplicata
-      const sentKey = `pkgGuestInstrSent_${target.index}_${target.digits}`;
-      if (r[sentKey]) continue;
-      r[sentKey] = new Date().toISOString();
+      if (onlyIndices && !onlyIndices.has(target.index)) continue;
 
       // Garante que qualquer acesso individual por não-solicitante oculte valores financeiros
       if (!r.requesterIsGuest1) {
         r.hideFinancialForGuest = true;
       }
+
+      // Se for o próprio solicitante (que acabou de receber o resumo/recibo do pacote), não dispara 2º WhatsApp redundante na mesma hora
+      if (target.isSameAsRequester && target.index === 1 && !deps.forceSendToRequesterGuest) {
+        const sentKeyReq = `pkgGuestInstrSent_${target.index}_${target.digits}`;
+        if (!r[sentKeyReq]) r[sentKeyReq] = new Date().toISOString();
+        sentTo.push({ reservationCode: r.code, flatNumber: r.flatNumber, guestIndex: target.index, skippedSameAsRequester: true });
+        continue;
+      }
+
+      // Se o hóspede nomeado não tem telefone válido (< 10 dígitos), notifica Solicitante (quando distinto) e não grava sentKey
+      if (!target.digits || target.digits.length < 10) {
+        if (!deps.suppressExternalSend && !target.isSameAsRequester && itemReqDigits.length >= 10) {
+          await registerAndNotifyInvalidGuestPhone(
+            db,
+            r,
+            { ...target, reason: "invalid_phone_format", source: "dispatch_instructions" },
+            { ...deps, baseUrl: cleanBase }
+          );
+        }
+        continue;
+      }
+
+      let cleanTargetPhone = target.digits;
+      const sentKeyBeforeCheck = `pkgGuestInstrSent_${target.index}_${target.digits}`;
+      if (r[sentKeyBeforeCheck] && !deps.forceResend) continue;
+
+      if (!deps.suppressExternalSend && !deps.skipWhatsAppPreCheck && !target.isSameAsRequester) {
+        const waCheck = await verifyWhatsAppPhoneActive(target.phone, db?.zapiConfig, db, deps);
+        if (!waCheck.valid) {
+          await registerAndNotifyInvalidGuestPhone(
+            db,
+            r,
+            { ...target, reason: waCheck.reason || "no_whatsapp_account", source: "dispatch_instructions" },
+            { ...deps, baseUrl: cleanBase }
+          );
+          continue;
+        }
+        if (waCheck.digits && waCheck.digits.length >= 10) {
+          cleanTargetPhone = waCheck.digits;
+        }
+      }
+
+      const sentKey = `pkgGuestInstrSent_${target.index}_${cleanTargetPhone}`;
+      if (r[sentKey] && !deps.forceResend) continue;
 
       const preCheckinUrl =
         target.index > 1
@@ -892,49 +2000,170 @@ export async function dispatchIndividualFlatGuestInstructions(db, reservationsLi
         target.index > 1
           ? `${cleanBase}/minha-reserva/${encodeURIComponent(r.code)}?guest=${target.index}`
           : `${cleanBase}/minha-reserva/${encodeURIComponent(r.code)}`;
+      const breakfastUrl = `${cleanBase}/cafe/${encodeURIComponent(r.code)}`;
+      const autocheckinUrl = `${cleanBase}/api/pms/guest-portal/${encodeURIComponent(r.code)}/self-checkin`;
+
+      const guestItemObj = guestsArr[target.index - 1] || {};
+      const preCheckinDoneForTarget = Boolean(
+        target.index > 1
+          ? (guestItemObj.hasCompletedCheckin || guestItemObj.status === "CHECKED_IN")
+          : (r.preCheckinCompleted || r.fnhrCompleted || guestsArr[0]?.hasCompletedCheckin)
+      );
+      const hasEnteredFlat = Boolean(
+        r.guestSelfCheckin ||
+        r.actualCheckinAt ||
+        ["in_house", "checkin", "checked_in"].includes(String(r.status || "").toLowerCase().trim())
+      );
+      const isFlatCleanAndReleased = Boolean(
+        r.roomReadySentDate === todayBr ||
+        (typeof deps.evaluateSelfCheckinEligibility === "function"
+          ? deps.evaluateSelfCheckinEligibility(db, r)?.allowed
+          : (r.checkinDate && todayBr >= String(r.checkinDate).slice(0, 10) && r.flatCleanStatus !== "em_preparacao"))
+      );
 
       const firstName = target.name.split(/\s+/)[0] || "Hóspede";
       const bfText = r.includeBreakfast ? "Incluso ☕" : "Não incluso";
       const bedText = r.twinBeds ? "2 Camas de Solteiro" : "Cama de Casal";
-
-      // Se for o próprio solicitante (que acabou de receber o recibo do pacote), não dispara 2º WhatsApp redundante na mesma hora
-      if (target.isSameAsRequester && target.index === 1) {
-        sentTo.push({ reservationCode: r.code, flatNumber: r.flatNumber, guestIndex: target.index, skippedSameAsRequester: true });
-        continue;
-      }
+      const hotelAddress = db?.settings?.hotelAddress || "Edifício Soho Residence Service, Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes/RJ";
 
       const guestMsg =
         `Olá, *${firstName}*! Seja muito bem-vindo(a) ao *CorpFlats*! 😊\n\n` +
-        `Sua hospedagem está *confirmada*! Confira os dados exclusivos do seu flat:\n\n` +
-        `🏢 *Acomodação:* Flat *${r.flatNumber}* (Reserva *${r.code}*)\n` +
+        `Sua hospedagem está *confirmada*! Confira os detalhes da sua acomodação:\n\n` +
+        `🏢 *Flat ${r.flatNumber}* (Reserva *${r.code}*)\n` +
         `📅 *Check-in:* ${formatDateBrShort(r.checkinDate)} a partir das ${r.checkinTime || "14:00"}\n` +
         `📅 *Check-out:* ${formatDateBrShort(r.checkoutDate)} até as ${r.checkoutTime || "12:00"}\n` +
-        `🛏️ *Configuração:* ${bedText} • Café da manhã: ${bfText}\n\n` +
-        `📝 *Pré-Check-in Digital (Ficha & Acesso):*\n${preCheckinUrl}\n\n` +
-        `🔑 *Portal da sua Estadia (Instruções & Senha da Porta):*\n${portalUrl}`;
+        `🛏️ *Configuração:* ${bedText} • Café da manhã: ${bfText}\n` +
+        `🔑 *Acesso ao flat:* Cartão NFC retirado na recepção 24h após concluir o Check-in Online\n` +
+        `📍 *Endereço:* ${hotelAddress}\n\n` +
+        (preCheckinDoneForTarget
+          ? `Use os botões abaixo para acessar sua *Área do Hóspede*${r.includeBreakfast ? " e montar seu café da manhã" : ""}:`
+          : `Use os botões abaixo para concluir o *Check-in Online* e acessar sua *Área do Hóspede*:`);
 
-      const cleanTargetPhone =
-        typeof deps.cleanWhatsAppPhone === "function"
-          ? deps.cleanWhatsAppPhone(target.phone)
-          : target.digits;
+      const guestButtons = [];
+      if (!hasEnteredFlat) {
+        if (preCheckinDoneForTarget && isFlatCleanAndReleased) {
+          guestButtons.push({
+            id: "btn_cheguei",
+            type: "URL",
+            url: autocheckinUrl,
+            label: "📍 Já Cheguei no Flat"
+          });
+        } else if (!preCheckinDoneForTarget) {
+          guestButtons.push({
+            id: "btn_chk",
+            type: "URL",
+            url: preCheckinUrl,
+            label: "📝 Fazer Check-in Online"
+          });
+        }
+      }
+      guestButtons.push({
+        id: "btn_portal",
+        type: "URL",
+        url: portalUrl,
+        label: "🏨 Área do Hóspede"
+      });
+      if (r.includeBreakfast === true && guestButtons.length < 3) {
+        guestButtons.push({
+          id: "btn_cafe",
+          type: "URL",
+          url: breakfastUrl,
+          label: "🥐 Escolher Itens do Café"
+        });
+      }
+
+      const finalButtons = guestButtons.slice(0, 3);
+      let gSent = false;
 
       if (cleanTargetPhone && typeof deps.sendZapiMessage === "function" && !deps.suppressExternalSend) {
         try {
           const sentIso = new Date().toISOString();
-          const guestButtons = [
-            { id: `pre_${r.code}_${target.index}`, type: "URL", url: preCheckinUrl, label: "Fazer Pré-Check-in" },
-            { id: `por_${r.code}_${target.index}`, type: "URL", url: portalUrl, label: "Instruções do Flat" }
-          ];
+          const alreadyHasPdf =
+            typeof deps.hasPdfAlreadyBeenSentOrInFlight === "function"
+              ? Boolean(deps.hasPdfAlreadyBeenSentOrInFlight(db, r.code, r.id, cleanTargetPhone))
+              : (db?.whatsappHistory || []).some(
+                  (h) =>
+                    h &&
+                    h.status === "sent" &&
+                    h.documentUrl &&
+                    String(h.reservationCode || "").toUpperCase() === String(r.code || "").toUpperCase() &&
+                    phonesEndMatch(h.guestPhone, cleanTargetPhone)
+                );
+
+          const hasDedicatedMediaSender =
+            typeof deps.sendZapiMedia === "function" || typeof deps.sendZapiDocument === "function";
+          const attachViaSendZapiMessage = Boolean(!alreadyHasPdf && !hasDedicatedMediaSender && defaultPdfUrl);
+
           const gRes = await deps.sendZapiMessage(db?.zapiConfig, {
             phone: cleanTargetPhone,
             message: guestMsg,
-            buttons: guestButtons,
+            buttons: finalButtons,
+            ...(attachViaSendZapiMessage
+              ? {
+                  documentUrl: defaultPdfUrl,
+                  documentName: defaultPdfName,
+                  documentCaption: pdfCaption
+                }
+              : {}),
             channelId: "guest_schedule",
             recipientRole: "guest",
-            triggerEvent: "payment_confirmed",
+            triggerEvent: triggerEvt,
             db
           });
-          const gSent = Boolean(gRes?.success || gRes?.ok || gRes?.sent || gRes?.messageId || gRes?.zaapId);
+
+          gSent = Boolean(gRes?.success || gRes?.ok || gRes?.sent || gRes?.messageId || gRes?.zaapId);
+
+          if (!gSent && gRes?.noWhatsAppAccount && !target.isSameAsRequester && itemReqDigits.length >= 10) {
+            await registerAndNotifyInvalidGuestPhone(
+              db,
+              r,
+              { ...target, reason: "no_whatsapp_account", source: "zapi_send_error" },
+              { ...deps, baseUrl: cleanBase }
+            );
+          }
+
+          let attachedPdfNow = Boolean(gSent && attachViaSendZapiMessage);
+          if (gSent && !alreadyHasPdf && hasDedicatedMediaSender) {
+            try {
+              if (typeof deps.sendZapiMedia === "function") {
+                await deps.sendZapiMedia(db?.zapiConfig, {
+                  phone: cleanTargetPhone,
+                  document: defaultPdfUrl,
+                  documentUrl: defaultPdfUrl,
+                  mediaUrl: defaultPdfUrl,
+                  fileName: defaultPdfName,
+                  documentName: defaultPdfName,
+                  caption: pdfCaption,
+                  reservationCode: r.code,
+                  reservationId: r.id,
+                  channelId: "guest_schedule",
+                  recipientRole: "guest",
+                  triggerEvent: triggerEvt,
+                  db
+                });
+                attachedPdfNow = true;
+              } else if (typeof deps.sendZapiDocument === "function") {
+                await deps.sendZapiDocument(db?.zapiConfig, {
+                  phone: cleanTargetPhone,
+                  document: defaultPdfUrl,
+                  fileName: defaultPdfName,
+                  caption: pdfCaption,
+                  channelId: "guest_schedule",
+                  recipientRole: "guest",
+                  triggerEvent: triggerEvt,
+                  db
+                });
+                attachedPdfNow = true;
+              }
+            } catch (docErr) {
+              console.warn(`[Package Guest PDF] Erro ao anexar Manual_do_Hospede para ${cleanTargetPhone}:`, docErr?.message || docErr);
+            }
+          }
+
+          if (gSent) {
+            r[sentKey] = sentIso;
+          }
+
           if (!Array.isArray(db.whatsappHistory)) db.whatsappHistory = [];
           db.whatsappHistory.push({
             id: `wah_pkgg_${r.id}_${target.index}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -945,13 +2174,18 @@ export async function dispatchIndividualFlatGuestInstructions(db, reservationsLi
             guestPhone: cleanTargetPhone,
             recipientType: target.index > 1 ? `guest_${target.index}` : "guest",
             recipientRole: "guest",
-            triggerEvent: "payment_confirmed",
+            triggerEvent: triggerEvt,
             templateId: "tpl_package_guest_instructions",
             message: guestMsg,
+            buttons: finalButtons,
+            documentUrl: attachedPdfNow ? defaultPdfUrl : null,
+            documentName: attachedPdfNow ? defaultPdfName : null,
             status: gSent ? "sent" : "failed",
             messageId: gRes?.messageId || null,
+            error: gRes?.error || null,
             sentAt: sentIso
           });
+
           if (typeof deps.appendMessageToConversation === "function") {
             deps.appendMessageToConversation(db, {
               phone: cleanTargetPhone,
@@ -959,9 +2193,11 @@ export async function dispatchIndividualFlatGuestInstructions(db, reservationsLi
               senderPhone: db?.zapiConfig?.instanceId || "",
               fromMe: true,
               text: guestMsg,
-              type: "text",
-              buttons: guestButtons,
-              triggerEvent: "payment_confirmed",
+              type: attachedPdfNow ? "document" : "text",
+              mediaUrl: attachedPdfNow ? defaultPdfUrl : null,
+              fileName: attachedPdfNow ? defaultPdfName : null,
+              buttons: finalButtons,
+              triggerEvent: triggerEvt,
               reservationCode: r.code,
               status: gSent ? "delivered" : "failed",
               timestamp: sentIso,
@@ -979,6 +2215,7 @@ export async function dispatchIndividualFlatGuestInstructions(db, reservationsLi
         guestIndex: target.index,
         guestName: target.name,
         phone: cleanTargetPhone,
+        sent: gSent,
         hideFinancialForGuest: true
       });
     }
@@ -1128,32 +2365,32 @@ export async function settlePackagePaymentAtomically(db, triggerResOrPkgId, paym
       .filter((it) => it.isActive)
       .map(
         (it) =>
-          `• *Flat ${it.flatNumber}* (${it.code}): ${formatDateBrShort(it.checkinDate)} a ${formatDateBrShort(it.checkoutDate)} — R$ ${formatMoneyBr(it.totalAmount)}`
+          `• *Flat ${it.flatNumber}* (${formatDateBrShort(it.checkinDate)} a ${formatDateBrShort(it.checkoutDate)}) — R$ ${formatMoneyBr(it.totalAmount)}`
       )
       .join("\n");
 
     const receiptMsg =
-      `✅ *Pagamento Único Confirmado — Pacote ${pkgCode}!*\n\n` +
-      `Olá, *${reqFirstName}*! Recebemos seu pagamento de *R$ ${formatMoneyBr(summary.totalAmount)}* e todos os *${summary.activeFlatsCount} flats* do seu pacote estão 100% garantidos!\n\n` +
+      `✅ *Pagamento Confirmado — Pacote ${pkgCode}!*\n\n` +
+      `Olá, *${reqFirstName}*! Recebemos seu pagamento de *R$ ${formatMoneyBr(summary.totalAmount)}* e todos os *${summary.activeFlatsCount} flats* do seu pacote estão garantidos!\n\n` +
       `🏢 *Flats Confirmados:*\n${flatsBreakdown}\n\n` +
       (summary.needsGuestCredentials
-        ? `👥 *Próximo Passo — Informar Hóspede 1 e 2 de cada Flat:*\nUse este *link único* para preencher rapidamente os hóspedes de cada apartamento conforme a ocupação:\n${summary.batchCredentialUrl}\n\n`
-        : `✨ _Os hóspedes já cadastrados receberão apenas as instruções de check-in do seu próprio flat (sem valores financeiros)._\n\n`) +
-      `🧾 *Recibo Único & Opção de 1 NFS-e Única (CPF ou CNPJ):*\n${summary.packagePortalUrl}`;
+        ? `👥 *Próximo Passo:* Use o botão *Cadastrar Hóspedes* abaixo para informar os hóspedes de cada flat.\n\n`
+        : `✨ _Os hóspedes já cadastrados receberão apenas as instruções do seu respectivo flat (sem valores financeiros)._\n\n`) +
+      `🧾 Acesse seu recibo e nota fiscal consolidada pelo botão abaixo:`;
 
     const cleanReqPhone =
       typeof deps.cleanWhatsAppPhone === "function"
         ? deps.cleanWhatsAppPhone(summary.requesterPhone)
-        : String(summary.requesterPhone || "").replace(/\D/g, "");
+        : cleanPhoneLocal(summary.requesterPhone);
 
     if (cleanReqPhone && cleanReqPhone.length >= 10 && typeof deps.sendZapiMessage === "function" && !suppressSend) {
       try {
         const buttons = summary.needsGuestCredentials
           ? [
-              { id: `cred_${pkgCode}`, type: "URL", url: summary.batchCredentialUrl, label: "Cadastrar Hóspedes" },
-              { id: `rec_${pkgCode}`, type: "URL", url: summary.packagePortalUrl, label: "Recibo / Nota Fiscal" }
+              { id: `cred_${pkgCode}`, type: "URL", url: `${summary.packagePortalUrl}#hospedes`, label: "👥 Cadastrar Hóspedes" },
+              { id: `rec_${pkgCode}`, type: "URL", url: summary.packagePortalUrl, label: "🧾 Abrir Pacote" }
             ]
-          : [{ id: `rec_${pkgCode}`, type: "URL", url: summary.packagePortalUrl, label: "Recibo / Nota Fiscal" }];
+          : [{ id: `rec_${pkgCode}`, type: "URL", url: summary.packagePortalUrl, label: "🧾 Abrir Pacote" }];
         const zRes = await deps.sendZapiMessage(db?.zapiConfig, {
           phone: cleanReqPhone,
           message: receiptMsg,

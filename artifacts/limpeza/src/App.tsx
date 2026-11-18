@@ -71,6 +71,7 @@ const BookingEngine = lazyWithRetry(() => import('@/pages/booking-engine'));
 const GuestBreakfast = lazyWithRetry(() => import('@/pages/guest-breakfast'));
 const GuestCheckout = lazyWithRetry(() => import('@/pages/guest-checkout'));
 const GuestPortal = lazyWithRetry(() => import('@/pages/guest-portal'));
+const RequesterPortal = lazyWithRetry(() => import('@/pages/requester-portal'));
 const GuestMinibar = lazyWithRetry(() => import('@/pages/guest-minibar'));
 const MyAccount = lazyWithRetry(() => import('@/pages/my-account'));
 // import ServiceOrders from '@/pages/service-orders';
@@ -373,6 +374,16 @@ function GuestPortalWrapper(props: any) {
       return <SmartFlatPreview />;
     }
   }
+  const routeCode = String(
+    props?.params?.code ||
+    props?.code ||
+    (typeof window !== 'undefined'
+      ? (window.location.pathname.match(/\/(?:minha-reserva|portal-hospede|guest-portal|copiar-pix|pix)\/([^/?#]+)/i)?.[1] || '')
+      : '')
+  ).trim();
+  if (routeCode.toUpperCase().startsWith('PKG-')) {
+    return <RequesterPortal {...props} />;
+  }
   return <GuestPortal {...props} />;
 }
 
@@ -466,6 +477,8 @@ function Router() {
         <Route path="/minibar/flat/:flatNumber" component={GuestMinibar} />
         <Route path="/frigobar/:flatNumber" component={GuestMinibar} />
         <Route path="/minibar/:flatNumber" component={GuestMinibar} />
+        <Route path="/solicitante/:code" component={RequesterPortal} />
+        <Route path="/solicitante" component={RequesterPortal} />
         <Route path="/minha-reserva/:code" component={GuestPortalWrapper} />
         <Route path="/minha-reserva" component={GuestPortalWrapper} />
         <Route path="/copiar-pix/:code" component={GuestPortalWrapper} />
@@ -758,6 +771,7 @@ const PUBLIC_GUEST_PATH_PREFIXES = [
   "/pre-checkin",
   "/minha-conta",
   "/minha-reserva",
+  "/solicitante",
   "/checkout",
   "/cafe",
   "/frigobar/",

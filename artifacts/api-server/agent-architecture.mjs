@@ -21,10 +21,35 @@
  *  13. `notificar_administrador`
  */
 
-import { triggerImmediateWhatsApp, generateStaticPixPayload, formatReservationChannelLabel, resolveReservationGuestCount, computeCardAmountFromPix } from './zapi-service.mjs';
+import {
+  triggerImmediateWhatsApp,
+  generateStaticPixPayload,
+  formatReservationChannelLabel,
+  resolveReservationGuestCount,
+  computeCardAmountFromPix,
+  sendZapiMessage,
+  sendZapiDocument,
+  appendMessageToConversation,
+  checkZapiPhoneExists,
+  dispatchCatchUpGuestRulerMessages,
+  scheduleUpcomingReservationTriggers,
+  hasPdfAlreadyBeenSentOrInFlight,
+  evaluateSelfCheckinEligibility,
+} from './zapi-service.mjs';
 import { validateGuestEmailAddress, updateGuestEmailAndResendRecentPending } from './mail-service.mjs';
 import { WbpPricingManager, calculateSebraeRate, STANDARD_SEBRAE_SEASONALITY_FACTORS } from './wbp/pricing.mjs';
-import { generatePackageCode, computePackageSummary, syncPackagePixAndPaymentLinks, cancelSinglePackageFlat, getPackageReservations, isPackageItemActive, isReservationSettledInPackage } from './package-reservations-service.mjs';
+import {
+  generatePackageCode,
+  computePackageSummary,
+  syncPackagePixAndPaymentLinks,
+  cancelSinglePackageFlat,
+  getPackageReservations,
+  isPackageItemActive,
+  isReservationSettledInPackage,
+  ensureRequesterPortalToken,
+  verifyWhatsAppPhoneActive,
+  updateGuestPhoneAndResendInstructions,
+} from './package-reservations-service.mjs';
 
 function normalizePhoneDigits(phone) {
   return String(phone || '').replace(/\D+/g, '');
@@ -510,6 +535,64 @@ export function injectSessionContext(params = {}) {
     }
   }
 
+  // Varre TODAS as reservas ativas não expiradas onde o remetente é Solicitante para expor alertas de WhatsApp inválido de hóspedes (inclusive Flats 2..N)
+  const alertasTelefoneHospedeInvalido = [];
+  const seenPhoneAlertKeys = new Set();
+  if (cleanPhone && cleanPhone.length >= 8) {
+    for (const r of reservations) {
+      if (!r) continue;
+      const st = String(r.status || '').toLowerCase().trim();
+      if (['cancelada', 'cancelado', 'cancelled', 'expirada', 'expired', 'no_show', 'concluida', 'checked_out'].includes(st)) continue;
+      if (r.checkoutCompleted) continue;
+      const paySt = String(r.paymentStatus || '').toLowerCase().trim();
+      const isPaidItem = ['paid', 'pago', 'pago_total', 'pago_integralmente', 'confirmado'].includes(paySt);
+      const holdExp = r.expiresAt || r.holdExpiresAt;
+      if ((st === 'pre_reserva' || st === 'pendente' || r.isPreReservation) && !isPaidItem && holdExp) {
+        const expMs = new Date(holdExp).getTime();
+        if (Number.isFinite(expMs) && expMs <= nowMs) continue;
+      }
+
+      const reqPhoneCand = r.requesterInfo?.whatsapp || r.requesterInfo?.phone || r.requesterPhone || '';
+      const isReqMatch = Boolean(
+        phonesMatch(reqPhoneCand, cleanPhone) ||
+        (r.requesterIsGuest1 && phonesMatch(r.guestPhone || r.phone, cleanPhone))
+      );
+      if (!isReqMatch) continue;
+
+      const reqList = Array.isArray(r.guestPhoneCorrectionRequests) ? r.guestPhoneCorrectionRequests : [];
+      for (const reqItem of reqList) {
+        if (!reqItem || reqItem.status !== 'awaiting_reply') continue;
+        const gIdx = Math.max(1, Number(reqItem.guestIndex) || 1);
+        const rCodeItem = String(r.code || r.reservationCode || `RES-${r.flatNumber}-${r.id}`).trim();
+        const dedupKey = `${rCodeItem}:${gIdx}`;
+        if (seenPhoneAlertKeys.has(dedupKey)) continue;
+        seenPhoneAlertKeys.add(dedupKey);
+
+        const gName = String(
+          reqItem.guestName ||
+          (gIdx === 1 ? r.guestName : r.guests?.[gIdx - 1]?.name) ||
+          `Hóspede ${gIdx}`
+        ).trim();
+
+        alertasTelefoneHospedeInvalido.push({
+          codigo_reserva: rCodeItem,
+          codigo_pacote: r.packageCode || r.packageId || null,
+          flat: String(r.flatNumber || ''),
+          indice_hospede: gIdx,
+          nome_hospede: gName,
+          telefone_invalido: String(reqItem.invalidPhone || ''),
+          motivo: String(reqItem.reason || 'no_whatsapp_account'),
+          solicitado_em: reqItem.notifiedAt || null,
+          status: 'AGUARDANDO_CORRECAO',
+        });
+      }
+    }
+  }
+
+  if (reservaSessao && alertasTelefoneHospedeInvalido.length > 0) {
+    reservaSessao.alertas_telefone_hospede_invalido = alertasTelefoneHospedeInvalido;
+  }
+
   const veiculoPendente =
     runtime?.conversation?.pendingVehicle ||
     matchedGuest?.pendingVehicle ||
@@ -525,6 +608,7 @@ export function injectSessionContext(params = {}) {
     dados_hospede: dadosHospede,
     reserva_ativa: reservaSessao,
     reserva_atual: reservaSessao,
+    ...(alertasTelefoneHospedeInvalido.length > 0 ? { alertas_telefone_hospede_invalido: alertasTelefoneHospedeInvalido } : {}),
     veiculo_pendente: veiculoPendente,
   };
 
@@ -572,6 +656,9 @@ export function buildContextoSessaoJson(context) {
       estado_atual: context?.estado_atual || 'COMERCIAL_VENDAS',
       dados_hospede: context?.dados_hospede || context?.hospede || null,
       reserva_atual: sanitizedRes,
+      ...(Array.isArray(context?.alertas_telefone_hospede_invalido) && context.alertas_telefone_hospede_invalido.length > 0
+        ? { alertas_telefone_hospede_invalido: context.alertas_telefone_hospede_invalido }
+        : {}),
     },
   };
   return JSON.stringify(payload, null, 2);
@@ -2836,9 +2923,10 @@ export const consultarDetalhesReservaTool = {
 export const atualizarDadosHospedeTool = {
   name: 'atualizar_dados_hospede',
   description:
-    'Atualiza os dados cadastrais e operacionais do hóspede ou lead (CPF/CNPJ, e-mail, horário previsto de chegada, ' +
-    'placa/marca/modelo/cor do veículo para garagem e nomes de acompanhantes). Quando o hóspede informar ou confirmar um novo e-mail ' +
-    '(especialmente após aviso de e-mail incorreto no check-in), valida o endereço, atualiza no sistema e reenvia automaticamente os e-mails pendentes recentes (não antigos). ' +
+    'Atualiza os dados cadastrais e operacionais do hóspede ou lead (CPF/CNPJ, e-mail, telefone/WhatsApp de hóspede em pacote ou reserva individual, horário previsto de chegada, ' +
+    'placa/marca/modelo/cor do veículo para garagem e nomes de acompanhantes). Quando o e-mail é atualizado, valida o endereço e reenvia os e-mails pendentes recentes. ' +
+    'Quando o Solicitante informar ou corrigir o telefone WhatsApp de um hóspede (especialmente após alertas_telefone_hospede_invalido), valida na Z-API, atualiza o cadastro, ' +
+    'reenvia as instruções individuais sem valores e agenda os lembretes da estadia. ' +
     'Caso o cliente envie os dados do veículo antes de ter reserva criada, grava vinculado ao WhatsApp dele para anexar automaticamente assim que a reserva for criada. Para FNRH e documento, envia sempre o link /pre-checkin/:code.',
   allowedStates: ['COMERCIAL_VENDAS', 'PRE_CHECKIN', 'IN_STAY_CONCIERGE', 'POS_CHECKOUT'],
   parametersSchema: {
@@ -2854,6 +2942,25 @@ export const atualizarDadosHospedeTool = {
         type: 'BOOLEAN',
         description:
           'Passe TRUE quando houver alerta_email_incorreto ativo e o hóspede responder que o e-mail já cadastrado na reserva está correto ("esse mesmo", "está certo", "já recebi o e-mail"), mesmo sem redigitar o endereço.',
+      },
+      telefone_hospede: {
+        type: 'STRING',
+        description:
+          'Novo número de WhatsApp (com DDD) do hóspede informado pelo Solicitante para correção ou cadastro (ex: "22999887766").',
+      },
+      codigo_reserva_alvo: {
+        type: 'STRING',
+        description:
+          'Código da reserva ou número do flat alvo quando o Solicitante gerencia vários flats (ex: "RES-512-0302" ou "512").',
+      },
+      nome_hospede_alvo: {
+        type: 'STRING',
+        description:
+          'Nome do hóspede cujo telefone/dados devem ser atualizados quando houver mais de um hóspede no pacote/reserva.',
+      },
+      indice_hospede_alvo: {
+        type: 'INTEGER',
+        description: 'Índice do hóspede na reserva (1, 2 ou 3) quando especificado.',
       },
       horario_previsto_chegada: { type: 'STRING', description: 'Horário previsto de chegada para o check-in no formato HH:MM.' },
       placa_veiculo: { type: 'STRING', description: 'Placa do veículo caso o hóspede vá utilizar a garagem (ex: ABC1D23).' },
@@ -2873,6 +2980,277 @@ export const atualizarDadosHospedeTool = {
       const reserva = context.reserva_ativa || context.reserva_atual;
       const db = context.runtime?.db;
       const camposAtualizados = [];
+
+      const normTextSimple = (s) =>
+        String(s || '')
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+          .trim();
+
+      // 0. Correção / atualização de telefone WhatsApp do hóspede (inclusive em outro flat do pacote via Solicitante)
+      const rawNewGuestPhone = args.telefone_hospede !== undefined ? String(args.telefone_hospede).trim() : '';
+      let phoneUpdateResult = null;
+      if (rawNewGuestPhone !== '') {
+        if (!db || !Array.isArray(db.reservations)) {
+          const msgNoDb =
+            'Explique educadamente que não localizamos uma reserva ativa vinculada a este número no momento para atualizar o telefone do hóspede.';
+          return {
+            status: 'BLOQUEADO_PELA_REGRA',
+            codigo_regra_bloqueio: 'SEM_RESERVA_ATIVA',
+            instrucao_para_ia: msgNoDb,
+            instrucao_resposta_ia: msgNoDb,
+          };
+        }
+
+        const senderDigits = normalizePhoneDigits(context.telefone_remetente);
+        const nowMsExec = Date.now() + Number(globalThis.__simulatedTimeOffsetMs || 0);
+        const activeRequesterReservations = db.reservations.filter((r) => {
+          if (!r) return false;
+          const st = String(r.status || '').toLowerCase().trim();
+          if (['cancelada', 'cancelado', 'cancelled', 'expirada', 'expired', 'no_show', 'concluida', 'checked_out'].includes(st)) {
+            return false;
+          }
+          if (r.checkoutCompleted) return false;
+          const paySt = String(r.paymentStatus || '').toLowerCase().trim();
+          const isPaidIt = ['paid', 'pago', 'pago_total', 'pago_integralmente', 'confirmado'].includes(paySt);
+          const holdExp = r.expiresAt || r.holdExpiresAt;
+          if ((st === 'pre_reserva' || st === 'pendente' || r.isPreReservation) && !isPaidIt && holdExp) {
+            const expMs = new Date(holdExp).getTime();
+            if (Number.isFinite(expMs) && expMs <= nowMsExec) return false;
+          }
+          const reqCand = r.requesterInfo?.whatsapp || r.requesterInfo?.phone || r.requesterPhone || '';
+          const matchesSenderAsReq = Boolean(
+            senderDigits &&
+            (phonesMatch(reqCand, senderDigits) || (r.requesterIsGuest1 && phonesMatch(r.guestPhone || r.phone, senderDigits)))
+          );
+          const matchesSessionRes = reserva ? matchesSessionReservation(r, reserva) : false;
+          return matchesSenderAsReq || matchesSessionRes;
+        });
+
+        const pendingCandidates = [];
+        for (const r of activeRequesterReservations) {
+          const reqList = Array.isArray(r.guestPhoneCorrectionRequests) ? r.guestPhoneCorrectionRequests : [];
+          for (const reqItem of reqList) {
+            if (!reqItem || reqItem.status !== 'awaiting_reply') continue;
+            const gIdx = Math.max(1, Number(reqItem.guestIndex) || 1);
+            const gName = String(
+              reqItem.guestName ||
+              (gIdx === 1 ? r.guestName : r.guests?.[gIdx - 1]?.name) ||
+              `Hóspede ${gIdx}`
+            ).trim();
+            pendingCandidates.push({
+              reservation: r,
+              guestIndex: gIdx,
+              guestName: gName,
+              invalidPhone: reqItem.invalidPhone || '',
+              code: String(r.code || r.reservationCode || `RES-${r.flatNumber}-${r.id}`),
+              flatNumber: String(r.flatNumber || ''),
+            });
+          }
+        }
+
+        const targetCodeFilter = normTextSimple(args.codigo_reserva_alvo).replace(/^flat\s*/i, '');
+        const targetNameFilter = normTextSimple(args.nome_hospede_alvo);
+        const targetIdxFilter = Number(args.indice_hospede_alvo) > 0 ? Number(args.indice_hospede_alvo) : 0;
+
+        let resolvedTargetRes = null;
+        let resolvedGuestIndex = 0;
+        let resolvedGuestName = '';
+
+        if (pendingCandidates.length > 0) {
+          let filtered = pendingCandidates;
+          if (targetCodeFilter) {
+            const byCode = filtered.filter(
+              (c) =>
+                normTextSimple(c.code) === targetCodeFilter ||
+                normTextSimple(c.flatNumber) === targetCodeFilter ||
+                normTextSimple(c.code).includes(targetCodeFilter)
+            );
+            if (byCode.length > 0) filtered = byCode;
+          }
+          if (targetNameFilter) {
+            const byName = filtered.filter((c) => normTextSimple(c.guestName).includes(targetNameFilter));
+            if (byName.length > 0) filtered = byName;
+          }
+          if (targetIdxFilter > 0) {
+            const byIdx = filtered.filter((c) => c.guestIndex === targetIdxFilter);
+            if (byIdx.length > 0) filtered = byIdx;
+          }
+
+          if (filtered.length > 1) {
+            const opcoes = filtered
+              .map((c) => `*${c.guestName}* (Flat ${c.flatNumber} • ${c.code})`)
+              .join(', ');
+            const msgAmbig =
+              `Explique com cordialidade ao solicitante que há mais de um hóspede aguardando correção de WhatsApp (${opcoes}) ` +
+              `e pergunte exatamente a qual hóspede ou flat este novo número (${rawNewGuestPhone}) pertence antes de gravar.`;
+            return {
+              status: 'BLOQUEADO_PELA_REGRA',
+              codigo_regra_bloqueio: 'AMBIGUIDADE_HOSPEDE_PENDENTE',
+              dados: {
+                opcoes_pendentes: filtered.map((c) => ({
+                  codigo_reserva: c.code,
+                  flat: c.flatNumber,
+                  indice_hospede: c.guestIndex,
+                  nome_hospede: c.guestName,
+                  telefone_invalido: c.invalidPhone,
+                })),
+              },
+              instrucao_para_ia: msgAmbig,
+              instrucao_resposta_ia: msgAmbig,
+            };
+          }
+
+          if (filtered.length === 1) {
+            resolvedTargetRes = filtered[0].reservation;
+            resolvedGuestIndex = filtered[0].guestIndex;
+            resolvedGuestName = filtered[0].guestName;
+          }
+        }
+
+        if (!resolvedTargetRes) {
+          let resPool = activeRequesterReservations;
+          if (targetCodeFilter) {
+            const byCodeRes = resPool.filter((r) => {
+              const rc = normTextSimple(r.code || r.reservationCode || '');
+              const rf = normTextSimple(r.flatNumber || '');
+              return rc === targetCodeFilter || rf === targetCodeFilter || rc.includes(targetCodeFilter);
+            });
+            if (byCodeRes.length > 0) resPool = byCodeRes;
+          }
+
+          if (targetNameFilter) {
+            const nameMatches = [];
+            for (const r of resPool) {
+              const gArr = Array.isArray(r.guests) ? r.guests : [];
+              const maxG = Math.max(1, gArr.length);
+              for (let idx = 1; idx <= Math.min(3, maxG); idx++) {
+                const nm = idx === 1 ? (r.guestName || gArr[0]?.name || '') : (gArr[idx - 1]?.name || '');
+                if (nm && normTextSimple(nm).includes(targetNameFilter)) {
+                  nameMatches.push({ r, idx, nm: String(nm).trim() });
+                }
+              }
+            }
+            if (nameMatches.length > 1) {
+              const opcoesN = nameMatches.map((m) => `*${m.nm}* (Flat ${m.r.flatNumber} • ${m.r.code})`).join(', ');
+              const msgAmbigName =
+                `Pergunte educadamente a qual reserva/flat este número pertence, pois encontramos mais de um hóspede compatível: ${opcoesN}.`;
+              return {
+                status: 'BLOQUEADO_PELA_REGRA',
+                codigo_regra_bloqueio: 'AMBIGUIDADE_HOSPEDE_PENDENTE',
+                instrucao_para_ia: msgAmbigName,
+                instrucao_resposta_ia: msgAmbigName,
+              };
+            }
+            if (nameMatches.length === 1) {
+              resolvedTargetRes = nameMatches[0].r;
+              resolvedGuestIndex = nameMatches[0].idx;
+              resolvedGuestName = nameMatches[0].nm;
+            }
+          }
+
+          if (!resolvedTargetRes) {
+            if (resPool.length > 1 && !targetCodeFilter) {
+              const flatsListStr = resPool.map((r) => `Flat ${r.flatNumber} (${r.code} - ${r.guestName || 'A definir'})`).join(', ');
+              const msgAmbigRes =
+                `Explique educadamente que você localizou mais de um flat ativo vinculado a este solicitante (${flatsListStr}) e peça para confirmar o número do flat ou nome do hóspede antes de atualizar o telefone.`;
+              return {
+                status: 'BLOQUEADO_PELA_REGRA',
+                codigo_regra_bloqueio: 'AMBIGUIDADE_RESERVA_ALVO',
+                instrucao_para_ia: msgAmbigRes,
+                instrucao_resposta_ia: msgAmbigRes,
+              };
+            }
+            resolvedTargetRes = resPool[0] || (reserva ? db.reservations.find((r) => matchesSessionReservation(r, reserva)) : null);
+            resolvedGuestIndex = targetIdxFilter || 1;
+            resolvedGuestName = resolvedTargetRes
+              ? String(
+                  resolvedGuestIndex === 1
+                    ? (resolvedTargetRes.guestName || resolvedTargetRes.guests?.[0]?.name || '')
+                    : (resolvedTargetRes.guests?.[resolvedGuestIndex - 1]?.name || '')
+                ).trim()
+              : '';
+          }
+        }
+
+        if (!resolvedTargetRes) {
+          const msgNoTarget =
+            'Explique educadamente que não localizamos uma reserva ativa correspondente para atualizar o WhatsApp do hóspede e peça o código da reserva ou número do flat.';
+          return {
+            status: 'BLOQUEADO_PELA_REGRA',
+            codigo_regra_bloqueio: 'SEM_RESERVA_ATIVA',
+            instrucao_para_ia: msgNoTarget,
+            instrucao_resposta_ia: msgNoTarget,
+          };
+        }
+
+        const baseUrlPhone = String(
+          db?.settings?.baseUrl ||
+          (typeof process !== 'undefined' && (process.env?.APP_BASE_URL || process.env?.SERVER_BASE_URL)) ||
+          'https://corpflats.com.br'
+        ).replace(/\/+$/, '');
+
+        const rawRtSend = context.runtime?.sendZapiMessage;
+        const sendZapiAdapter = typeof rawRtSend === 'function'
+          ? (rawRtSend === sendZapiMessage
+              ? sendZapiMessage
+              : async (cfg, payload) => {
+                  if (rawRtSend.length >= 3 && payload && typeof payload === 'object') {
+                    return await rawRtSend(payload.phone, payload.message, payload);
+                  }
+                  return await rawRtSend(cfg, payload);
+                })
+          : sendZapiMessage;
+
+        phoneUpdateResult = await updateGuestPhoneAndResendInstructions(
+          db,
+          {
+            reservation: resolvedTargetRes,
+            guestIndex: resolvedGuestIndex || 1,
+            guestName: resolvedGuestName || undefined,
+            newPhone: rawNewGuestPhone,
+            baseUrl: baseUrlPhone,
+            actor: { name: 'Sofia IA', role: 'system', type: 'ai' },
+            source: 'WhatsApp Sofia IA',
+          },
+          {
+            saveDatabase: context.runtime?.saveDatabase,
+            sendZapiMessage: sendZapiAdapter,
+            ...(rawRtSend === sendZapiMessage || !rawRtSend
+              ? { sendZapiDocument }
+              : {}),
+            hasPdfAlreadyBeenSentOrInFlight,
+            evaluateSelfCheckinEligibility,
+            checkZapiPhoneExists: context.runtime?.checkZapiPhoneExists || globalThis.__corpflatsCheckZapiPhoneExists || checkZapiPhoneExists,
+            appendMessageToConversation: context.runtime?.appendMessageToConversation || appendMessageToConversation,
+            createNotification: context.runtime?.createNotification || globalThis.__corpflatsCreateNotification,
+            dispatchCatchUpGuestRulerMessages,
+            scheduleUpcomingReservationTriggers,
+            suppressExternalSend: Boolean(context.runtime?.suppressExternalSend),
+          }
+        );
+
+        if (!phoneUpdateResult.ok) {
+          const msgPhoneErr = phoneUpdateResult.invalidWhatsApp
+            ? `Explique com cordialidade que o sistema validou o número informado (${rawNewGuestPhone}), mas ele também não possui conta ativa no WhatsApp (ou está incompleto). Por segurança, nada foi alterado — peça por favor outro número de WhatsApp válido (com DDD) para o hóspede${resolvedGuestName ? ` *${resolvedGuestName}*` : ''}.`
+            : `Explique educadamente que não foi possível atualizar o telefone agora (${phoneUpdateResult.error || 'erro de validação'}).`;
+          return {
+            status: 'BLOQUEADO_PELA_REGRA',
+            codigo_regra_bloqueio: phoneUpdateResult.code || 'TELEFONE_SEM_WHATSAPP',
+            dados: {
+              telefone_informado: rawNewGuestPhone,
+              motivo: phoneUpdateResult.error || null,
+            },
+            instrucao_para_ia: msgPhoneErr,
+            instrucao_resposta_ia: msgPhoneErr,
+          };
+        }
+
+        camposAtualizados.push(
+          `WhatsApp de ${phoneUpdateResult.guestName} (Flat ${phoneUpdateResult.flatNumber}): ${phoneUpdateResult.newPhone}`
+        );
+      }
 
       let validatedEmail = '';
       const fallbackCurrentEmail =
@@ -2933,7 +3311,7 @@ export const atualizarDadosHospedeTool = {
       }
 
       // CENÁRIO 1: Cliente enviou dados (ex: placa/carro/e-mail) ANTES de ter uma reserva criada para ele
-      if (!reserva) {
+      if (!reserva && !phoneUpdateResult) {
         if (camposAtualizados.length === 0) {
           const msg =
             'Explique educadamente que você não localizou uma reserva ativa vinculada a este número no momento e pergunte se ele deseja fazer uma reserva ou informar os dados do veículo/cadastro.';
@@ -3029,13 +3407,14 @@ export const atualizarDadosHospedeTool = {
         db?.settings?.baseUrl ||
         (typeof process !== 'undefined' && process.env?.SERVER_BASE_URL) ||
         'https://corpflats.com.br';
-      const linkPreCheckin = `${baseUrl}/pre-checkin/${reserva.id}`;
+      const targetRefCode = phoneUpdateResult?.reservationCode || reserva?.id || '';
+      const linkPreCheckin = targetRefCode ? `${baseUrl}/pre-checkin/${targetRefCode}` : `${baseUrl}/reservar`;
 
       let garageDispatchResult = null;
       let jaTinhaDisparadoGatilhos = false;
       let emailResendSummary = null;
 
-      if (Array.isArray(db?.reservations)) {
+      if (reserva && Array.isArray(db?.reservations)) {
         const targetRes = db.reservations.find((r) => matchesSessionReservation(r, reserva));
         if (targetRes) {
           jaTinhaDisparadoGatilhos = Boolean(
@@ -3146,22 +3525,45 @@ export const atualizarDadosHospedeTool = {
         }
       }
 
+      const detalheTelefone = phoneUpdateResult
+        ? ` Confirme ao solicitante que o WhatsApp de *${phoneUpdateResult.guestName}* (Flat *${phoneUpdateResult.flatNumber}*, reserva *${phoneUpdateResult.reservationCode}*) foi atualizado para *${phoneUpdateResult.newPhone}*` +
+          (phoneUpdateResult.whatsappDispatched
+            ? ` e as instruções de check-in (sem valores financeiros) já foram enviadas imediatamente para esse novo número!`
+            : ` no sistema!`)
+        : '';
+
       const preCheckinSuffix =
-        reserva.status_pre_checkin_fnrh === 'CONCLUIDO'
+        phoneUpdateResult && camposAtualizados.length === 1
           ? ''
-          : ` Caso o hóspede ainda precise preencher a FNRH e enviar a foto do documento/assinatura digital do pré-check-in, o link oficial é: ${linkPreCheckin}.`;
+          : reserva?.status_pre_checkin_fnrh === 'CONCLUIDO'
+            ? ''
+            : ` Caso o hóspede ainda precise preencher a FNRH e enviar a foto do documento/assinatura digital do pré-check-in, o link oficial é: ${linkPreCheckin}.`;
+
+      const refResLabel = phoneUpdateResult
+        ? `*${phoneUpdateResult.reservationCode}* (Flat ${phoneUpdateResult.flatNumber})`
+        : `*${reserva?.id}* (${reserva?.nome_imovel})`;
 
       const msg =
-        emailResendSummary?.sameEmailConfirmed && camposAtualizados.length === 1 && validatedEmail
-          ? `Confirme com muita cordialidade na reserva *${reserva.id}* (${reserva.nome_imovel}):${detalheEmail}${preCheckinSuffix}`
-          : `Confirme com cordialidade que os dados da reserva *${reserva.id}* (${reserva.nome_imovel}) foram atualizados no sistema: ` +
-            `${camposAtualizados.join(' | ')}.${detalheGaragem}${detalheEmail}${preCheckinSuffix}`;
+        phoneUpdateResult && camposAtualizados.length === 1
+          ? `${detalheTelefone.trim()}`
+          : emailResendSummary?.sameEmailConfirmed && camposAtualizados.length === 1 && validatedEmail
+            ? `Confirme com muita cordialidade na reserva ${refResLabel}:${detalheEmail}${preCheckinSuffix}`
+            : `Confirme com cordialidade que os dados da reserva ${refResLabel} foram atualizados no sistema: ` +
+              `${camposAtualizados.join(' | ')}.${detalheTelefone}${detalheGaragem}${detalheEmail}${preCheckinSuffix}`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
         dados: {
-          reserva_id: reserva.id,
+          reserva_id: phoneUpdateResult?.reservationCode || reserva?.id,
           campos_atualizados: camposAtualizados,
+          ...(phoneUpdateResult
+            ? {
+                telefone_hospede_atualizado: phoneUpdateResult.newPhone,
+                hospede_atualizado: phoneUpdateResult.guestName,
+                flat_atualizado: phoneUpdateResult.flatNumber,
+                instrucoes_reenviadas: Boolean(phoneUpdateResult.whatsappDispatched),
+              }
+            : {}),
           email_atualizado: validatedEmail || undefined,
           email_confirmado_sem_alteracao: Boolean(emailResendSummary?.sameEmailConfirmed),
           emails_pendentes_reenviados: emailResendSummary?.resentCount ?? 0,
@@ -3999,7 +4401,8 @@ export const alterarDatasReservaTool = {
         const updatedPending = syncedPkg?.pendingAmount ?? projectedPkgTotal;
         const updatedCard = syncedPkg?.cardPendingAmount ?? computeCardAmountFromPix(updatedPending);
         const updatedPix = syncedPkg?.pixCopiaECola || '';
-        const updatedPortal = syncedPkg?.packagePortalUrl || `${baseUrlPkg}/minha-reserva/${encodeURIComponent(pkgCodeAlt)}?requester=1`;
+        const pkgTokAlt = ensureRequesterPortalToken(db, pkgCodeAlt);
+        const updatedPortal = syncedPkg?.packagePortalUrl || `${baseUrlPkg}/solicitante/${encodeURIComponent(pkgCodeAlt)}${pkgTokAlt ? `?t=${encodeURIComponent(pkgTokAlt)}` : ''}`;
         const msgPkgDone =
           `Confirme com cordialidade que o *${refNomeImovel}* (${refReservaCodigo}) no pacote *${pkgCodeAlt}* foi atualizado para *${novaEntrada} a ${novaSaida}* (${novasDiarias} diária(s))! ` +
           `O novo saldo consolidado do pacote (${syncedPkg?.activeFlatsCount || 1} flat(s)) foi recalculado para *R$ ${updatedPending.toFixed(2)}* no PIX único (ou R$ ${updatedCard.toFixed(2)} no Cartão). ` +
@@ -5250,7 +5653,7 @@ export const gerenciarNotaFiscalNfseTool = {
 
       if (args.acao === 'SOLICITAR_RECIBO_COMPROVANTE') {
         const linkComprovante = isPackageConsolidated
-          ? `${baseUrl}/minha-reserva/${encodeURIComponent(pkgCode)}?requester=1`
+          ? (pkgSummary.packagePortalUrl || `${baseUrl}/solicitante/${encodeURIComponent(pkgCode)}`)
           : `${baseUrl}/minha-reserva/${reserva.id}`;
         const labelAlvo = isPackageConsolidated
           ? `do pacote *${pkgCode}* (${pkgSummary.activeFlatsCount} flat(s))`
@@ -7231,8 +7634,8 @@ export function buildStateRoutedPrompt(context, manualImovel = '') {
     jsonContext,
     ``,
     `# DIRETRIZES OBRIGATÓRIAS DE EXECUÇÃO E USO DE FERRAMENTAS (TOOL CALLING)`,
-    `1. **Intenção -> Ferramenta:** Sempre que o hóspede pedir algo que envolva datas (\`alterar_datas_reserva\`, \`estender_estadia\`), horários (\`solicitar_early_checkin\`, \`solicitar_late_checkout\`), disponibilidade (\`consultar_disponibilidade\`), valores/descontos (\`calcular_orcamento\`), fotos (\`enviar_midia_unidade\`), reserva (\`gerar_link_reserva\`), veículo/cadastro/correção de e-mail (\`atualizar_dados_hospede\`), cartão NFC/acesso (\`resolver_problema_cartao_nfc\`), visitas (\`autorizar_visita_temporaria\`), cancelamento (\`processar_cancelamento\`), governança (\`solicitar_limpeza_extra\`), manutenção (\`abrir_chamado_manutencao\`), achados e perdidos (\`consultar_achados_e_perdidos\`) ou nota fiscal/recibo (\`gerenciar_nota_fiscal_nfse\`), chame a ferramenta adequada antes de responder.`,
-    `2. **Continuidade Multi-Turn (Respostas Curtas do Hóspede):** Quando o hóspede responder a uma pergunta anterior sua na conversa (ex: você perguntou "até que data gostaria de ficar?" e ele respondeu "até amanhã só", ou o sistema avisou sobre \`alerta_email_incorreto\` e o hóspede enviou um novo e-mail, confirmou \`email_sugerido\`, ou afirmou que o e-mail já cadastrado está correto / "é esse mesmo"), mantenha 100% do contexto e acione IMEDIATAMENTE a ferramenta correspondente (\`estender_estadia\` ou \`atualizar_dados_hospede\` passando \`email\` ou \`confirmar_email_atual: true\`).`,
+    `1. **Intenção -> Ferramenta:** Sempre que o hóspede pedir algo que envolva datas (\`alterar_datas_reserva\`, \`estender_estadia\`), horários (\`solicitar_early_checkin\`, \`solicitar_late_checkout\`), disponibilidade (\`consultar_disponibilidade\`), valores/descontos (\`calcular_orcamento\`), fotos (\`enviar_midia_unidade\`), reserva (\`gerar_link_reserva\`), veículo/cadastro/correção de e-mail ou telefone (\`atualizar_dados_hospede\`), cartão NFC/acesso (\`resolver_problema_cartao_nfc\`), visitas (\`autorizar_visita_temporaria\`), cancelamento (\`processar_cancelamento\`), governança (\`solicitar_limpeza_extra\`), manutenção (\`abrir_chamado_manutencao\`), achados e perdidos (\`consultar_achados_e_perdidos\`) ou nota fiscal/recibo (\`gerenciar_nota_fiscal_nfse\`), chame a ferramenta adequada antes de responder.`,
+    `2. **Continuidade Multi-Turn (Respostas Curtas do Hóspede ou Solicitante):** Quando o hóspede ou solicitante responder a uma pergunta anterior sua na conversa (ex: você perguntou "até que data gostaria de ficar?" e ele respondeu "até amanhã só", ou o sistema avisou sobre \`alerta_email_incorreto\` e o hóspede enviou um novo e-mail / confirmou \`email_sugerido\` / afirmou que o e-mail já cadastrado está correto, ou houver \`alertas_telefone_hospede_invalido\` ativo e o Solicitante enviar o novo número WhatsApp do hóspede), mantenha 100% do contexto e acione IMEDIATAMENTE a ferramenta correspondente (\`estender_estadia\` ou \`atualizar_dados_hospede\` passando \`email\`, \`confirmar_email_atual: true\`, ou \`telefone_hospede\` com \`codigo_reserva_alvo\`/\`nome_hospede_alvo\`/\`indice_hospede_alvo\` quando aplicável).`,
     `3. **Proibição de Repetir "Olá, [Nome]!" e Apresentação em Conversa em Andamento:** Se já houver mensagens recentes trocadas no histórico da conversa, NUNCA repita "Olá, [Nome]!", "Bom dia, [Nome]!" e NUNCA se apresente novamente dizendo "Sou a Sofia, concierge virtual da CorpFlats". Continue o diálogo diretamente do ponto onde parou, como uma pessoa real no WhatsApp.`,
     `4. **Acesso via Cartão NFC (Zero Senha de Porta):** Na CorpFlats (Soho Residence) o acesso aos flats é feito exclusivamente por **Cartão NFC** retirado na recepção 24h. NUNCA mencione "senha da porta" ou "senha da fechadura eletrônica".`,
     `5. **Simulação antes da Efetivação:** Para alterações que envolvam custos ou mudanças de data, chame a ferramenta primeiro em modo de simulação/consulta (\`confirmacao_hospede: false\` ou \`efetivar_alteracao: false\`), informe as condições ao hóspede e só efetive após o "sim" explícito dele.`,

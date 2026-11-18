@@ -277,8 +277,14 @@ export const gerenciarNotaFiscalNfseTool: AgentToolDefinition<GerenciarNotaFisca
       const isConsolidatedPkg = Boolean(pkgCode && (pkgActiveItems.length > 0 || reservaAny.pacote_multi_flat));
 
       if (args.acao === 'SOLICITAR_RECIBO_COMPROVANTE') {
+        const pkgTok = String(
+          reservaAny.pacote_multi_flat?.requesterPortalToken ||
+          pkgActiveItems.find((r: any) => r?.requesterPortalToken)?.requesterPortalToken ||
+          targetRes?.requesterPortalToken ||
+          ''
+        ).trim();
         const linkComprovante = isConsolidatedPkg
-          ? `${baseUrl}/minha-reserva/${encodeURIComponent(pkgCode)}?requester=1`
+          ? (reservaAny.pacote_multi_flat?.packagePortalUrl || `${baseUrl}/solicitante/${encodeURIComponent(pkgCode)}${pkgTok ? `?t=${encodeURIComponent(pkgTok)}` : ''}`)
           : `${baseUrl}/minha-reserva/${encodeURIComponent(reserva.id)}`;
         const msgRecibo = isConsolidatedPkg
           ? `Envie ao solicitante o link oficial do Painel Unificado do Pacote *${pkgCode}* (${linkComprovante}), onde ele pode visualizar e baixar o *Recibo Único Consolidado* de todos os flats e também emitir *1 NFS-e Única Consolidada (CPF ou CNPJ)*.`

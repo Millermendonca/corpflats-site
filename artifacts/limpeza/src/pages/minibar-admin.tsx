@@ -95,6 +95,7 @@ const SOHO_FLATS = [
 const CATEGORIES = [
   "Bebidas",
   "Petiscos",
+  "Kit de Boas-Vindas",
   "Água & Sucos",
   "Refrigerantes",
   "Cervejas & Alcoólicos",
@@ -584,7 +585,7 @@ export const INITIAL_HOMOLOGATION_CATALOG: BrandHomologationItem[] = [
     productName: "Amendoim Mendorato (Cortesia)",
     category: "Kit Boas-Vindas",
     currentImageUrl: "/images/frigobar/proposta_amendoim_mendorato_27g.png",
-    currentDiagnosis: "Novo item de cortesia exigido no Kit Boas-Vindas (fornecimento próprio hotel)",
+    currentDiagnosis: "Item de cortesia do Kit Boas-Vindas (fornecimento e controle de estoque próprio CorpFlats — isento de repasse Anserve)",
     proposedBrand: {
       brandName: "Amendoim Dourado Japonês Mendorato 27g",
       imageUrl: "/images/frigobar/proposta_amendoim_mendorato_27g.png",
@@ -663,7 +664,9 @@ export default function MinibarAdminPage() {
   const [insightsSubView, setInsightsSubView] = useState<
     "visao_geral" | "produtos_flats" | "perfil_hospedes"
   >("visao_geral");
-  const [catalogSubView, setCatalogSubView] = useState<"produtos" | "gabarito" | "galeria_marcas">("produtos");
+  const [catalogSubView, setCatalogSubView] = useState<
+    "produtos" | "gabarito" | "estoque_amendoim" | "galeria_marcas"
+  >("produtos");
 
   // Homologation Gallery State (R1 & R2)
   const [homologationItems, setHomologationItems] = useState<BrandHomologationItem[]>(() => {
@@ -1018,6 +1021,13 @@ export default function MinibarAdminPage() {
   });
   const [settlementData, setSettlementData] = useState<any>(null);
   const [insightsData, setInsightsData] = useState<any>(null);
+  const [peanutStock, setPeanutStock] = useState<any>(null);
+  const [peanutMovType, setPeanutMovType] = useState<"entry" | "set_balance" | "manual_out">("entry");
+  const [peanutMovQty, setPeanutMovQty] = useState("");
+  const [peanutMovThreshold, setPeanutMovThreshold] = useState("30");
+  const [peanutMovCost, setPeanutMovCost] = useState("");
+  const [peanutMovNotes, setPeanutMovNotes] = useState("");
+  const [savingPeanutStock, setSavingPeanutStock] = useState(false);
 
   // Staff Management State (Both Gestores & Repositoras Anserve)
   const [staffList, setStaffList] = useState<any[]>([]);
@@ -1243,6 +1253,180 @@ export default function MinibarAdminPage() {
     }
   };
 
+  const fetchPeanutStock = async () => {
+    try {
+      const res = await fetch(
+        `/api/minibar/peanut-stock?startDate=${extratoStartDate}&endDate=${extratoEndDate}`,
+        { credentials: "include" }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.peanutStock) {
+          setPeanutStock(data.peanutStock);
+          if (data.peanutStock.minAlertThreshold !== undefined) {
+            setPeanutMovThreshold(String(data.peanutStock.minAlertThreshold));
+          }
+          if (data.peanutStock.ownUnitCost !== undefined && Number(data.peanutStock.ownUnitCost) > 0) {
+            setPeanutMovCost(prev => (prev === "" ? String(data.peanutStock.ownUnitCost) : prev));
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[MinibarAdmin] Erro ao carregar estoque de amendoim:", err);
+    }
+  };
+
+  const handleSubmitPeanutMovement = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsedQty = Math.round(Number(String(peanutMovQty).replace(",", ".")));
+    if (
+      !Number.isFinite(parsedQty) ||
+      (peanutMovType === "set_balance" ? parsedQty < 0 : parsedQty <= 0)
+    ) {
+      toast({
+        title: "Quantidade inválida",
+        description:
+          peanutMovType === "set_balance"
+            ? "Informe um saldo físico inteiro maior ou igual a 0."
+            : "Informe uma quantidade inteira maior que zero.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setSavingPeanutStock(true);
+    try {
+      const parsedThreshold = peanutMovThreshold.trim()
+        ? Math.max(0, Math.round(Number(peanutMovThreshold.replace(",", "."))))
+        : undefined;
+      const parsedCost = peanutMovCost.trim()
+        ? Math.max(0, Number(peanutMovCost.replace(",", ".")))
+        : undefined;
+
+      const res = await fetch(
+        `/api/minibar/peanut-stock/movements?startDate=${extratoStartDate}&endDate=${extratoEndDate}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            type: peanutMovType,
+            quantity: parsedQty,
+            minAlertThreshold: Number.isFinite(parsedThreshold) ? parsedThreshold : undefined,
+            unitCost: parsedCost !== undefined && Number.isFinite(parsedCost) ? parsedCost : undefined,
+            notes: peanutMovNotes.trim()
+          })
+        }
+      );
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setPeanutStock(data.peanutStock);
+        setPeanutMovQty("");
+        setPeanutMovNotes("");
+        await Promise.all([fetchProducts(), fetchSettlement()]);
+        toast({
+          title: "Estoque de amendoim atualizado! 🥜",
+          description: `Saldo atual registrado: ${data.peanutStock?.currentBalance ?? 0} unidades (repasse Anserve R$ 0,00).`
+        });
+      } else {
+        toast({
+          title: "Erro ao atualizar estoque",
+          description: data.error || "Não foi possível gravar a movimentação.",
+          variant: "destructive"
+        });
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro de comunicação",
+        description: err.message,
+        variant: "destructive"
+      });
+    } finally {
+      setSavingPeanutStock(false);
+    }
+  };
+
+  const handleDeletePeanutMovement = async (mov: any) => {
+    if (!confirm("Excluir esta movimentação manual do histórico de estoque do amendoim?")) return;
+    try {
+      const res = await fetch(
+        `/api/minibar/peanut-stock/movements/${encodeURIComponent(mov.id)}?startDate=${extratoStartDate}&endDate=${extratoEndDate}`,
+        {
+          method: "DELETE",
+          credentials: "include"
+        }
+      );
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setPeanutStock(data.peanutStock);
+        toast({
+          title: "Movimentação removida",
+          description: `Saldo recalculado para ${data.peanutStock?.currentBalance ?? 0} un.`
+        });
+      } else {
+        toast({
+          title: "Erro ao excluir movimentação",
+          description: data.error || "Tente novamente.",
+          variant: "destructive"
+        });
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro de comunicação",
+        description: err.message,
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleExportPeanutStockCsv = () => {
+    const byFlat = peanutStock?.byFlat || [];
+    const movs = peanutStock?.movements || [];
+    const headers = [
+      "Seção",
+      "Referência / Flat / Data",
+      "Descrição / Tipo",
+      "Qtd Hóspedes",
+      "Qtd Ajustes Internos",
+      "Total / Impacto Saldo",
+      "Repasse Anserve (R$)",
+      "Observação / Responsável"
+    ];
+    const rows: Array<Array<string | number>> = [
+      [
+        "RESUMO",
+        `${extratoStartDate} a ${extratoEndDate}`,
+        "Saldo Atual Estoque Próprio CorpFlats",
+        peanutStock?.periodGuestConsumed || 0,
+        peanutStock?.periodInternalConsumed || 0,
+        peanutStock?.currentBalance ?? 0,
+        "0,00",
+        `Fornecimento Próprio CorpFlats • Mín. Alerta: ${peanutStock?.minAlertThreshold ?? 30} un.`
+      ],
+      ...byFlat.map((f: any) => [
+        "CONSUMO_POR_FLAT",
+        `Flat ${f.flatNumber}`,
+        "Saída automática nas conferências",
+        f.guestConsumed || 0,
+        f.internalConsumed || 0,
+        f.totalConsumed || 0,
+        "0,00",
+        "Controle interno CorpFlats"
+      ]),
+      ...movs.map((m: any) => [
+        "MOVIMENTACAO_MANUAL",
+        m.createdAt ? new Date(m.createdAt).toLocaleString("pt-BR") : "",
+        m.type === "entry" ? "Entrada Compra" : m.type === "set_balance" ? "Inventário Físico" : "Baixa Manual",
+        "-",
+        "-",
+        m.delta >= 0 ? `+${m.delta}` : String(m.delta),
+        "0,00",
+        `${m.notes || "-"} (${m.createdBy || "Admin"})`
+      ])
+    ];
+    downloadCsvFile(`corpflats_estoque_amendoim_${extratoStartDate}_a_${extratoEndDate}.csv`, headers, rows);
+  };
+
   const fetchInsights360 = async () => {
     try {
       const res = await fetch(
@@ -1284,6 +1468,7 @@ export default function MinibarAdminPage() {
         fetchProducts(),
         fetchDefaultStock(),
         fetchSettlement(),
+        fetchPeanutStock(),
         fetchInsights360(),
         fetchAnserveStaff(),
         fetchDeliveryMonitor(),
@@ -1405,6 +1590,8 @@ export default function MinibarAdminPage() {
         });
         setProductModalOpen(false);
         fetchProducts();
+        fetchSettlement();
+        fetchPeanutStock();
         fetchInsights360();
       } else {
         toast({
@@ -2601,6 +2788,27 @@ export default function MinibarAdminPage() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => setCatalogSubView("estoque_amendoim")}
+                  className={`px-4 py-2 rounded-2xl text-xs font-black transition-all flex items-center gap-2 ${
+                    catalogSubView === "estoque_amendoim"
+                      ? "bg-amber-700 text-white shadow-sm"
+                      : "bg-muted/60 text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Package className="w-4 h-4" />
+                  <span>🥜 Estoque Amendoim (Próprio)</span>
+                  <Badge
+                    className={`font-black text-[9px] px-1.5 py-0.5 rounded-full ml-0.5 ${
+                      peanutStock?.lowStockAlert
+                        ? "bg-rose-500 text-white"
+                        : "bg-amber-400 text-slate-950"
+                    }`}
+                  >
+                    {peanutStock?.hasStockConfigured ? `${peanutStock.currentBalance} un.` : "Configurar"}
+                  </Badge>
+                </button>
+                <button
+                  type="button"
                   onClick={() => setCatalogSubView("galeria_marcas")}
                   className={`px-4 py-2 rounded-2xl text-xs font-black transition-all flex items-center gap-2 ${
                     catalogSubView === "galeria_marcas"
@@ -2747,10 +2955,28 @@ export default function MinibarAdminPage() {
                           </div>
 
                           <div className="text-right">
-                            <span className="text-[10px] text-muted-foreground block">Custo Repasse Anserve:</span>
-                            <span className="text-xs font-mono font-semibold text-muted-foreground">
-                              R$ {Number(p.cost || 0).toFixed(2)}
-                            </span>
+                            {p.id === "prod_amendoim_mendorato" || (p as any).supplierOrigin === "hotel_proprio" ? (
+                              <>
+                                <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold block">
+                                  Fornecimento Próprio (Sem Repasse):
+                                </span>
+                                <span className="text-xs font-mono font-bold text-foreground">
+                                  R$ 0,00 Anserve
+                                </span>
+                                {Number((p as any).ownCost ?? p.cost ?? 0) > 0 && (
+                                  <span className="text-[10px] text-muted-foreground block">
+                                    Custo interno: R$ {Number((p as any).ownCost ?? p.cost ?? 0).toFixed(2)}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <>
+                                <span className="text-[10px] text-muted-foreground block">Custo Repasse Anserve:</span>
+                                <span className="text-xs font-mono font-semibold text-muted-foreground">
+                                  R$ {Number(p.cost || 0).toFixed(2)}
+                                </span>
+                              </>
+                            )}
                           </div>
                         </div>
                       </Card>
@@ -2859,6 +3085,406 @@ export default function MinibarAdminPage() {
                       </div>
                     );
                   })}
+                </div>
+              </div>
+            ) : catalogSubView === "estoque_amendoim" ? (
+              <div className="space-y-5 w-full min-w-0">
+                <div className="bg-card border border-border p-4 sm:p-5 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[10px] font-black">
+                        🥜 FORNECIMENTO PRÓPRIO CORPFLATS • SEM REPASSE ANSERVE (R$ 0,00)
+                      </Badge>
+                      {peanutStock?.lowStockAlert && (
+                        <Badge className="bg-rose-600 text-white text-[10px] font-black">
+                          ⚠️ Estoque Abaixo do Mínimo ({peanutStock.minAlertThreshold} un.)
+                        </Badge>
+                      )}
+                    </div>
+                    <h3 className="text-sm sm:text-base font-black text-foreground">
+                      Controle de Estoque Próprio — Amendoim Mendorato 27g
+                    </h3>
+                    <p className="text-xs text-muted-foreground">
+                      Baixa automática a cada conferência/passagem nos flats. O amendoim não entra no repasse financeiro para a Anserve.
+                    </p>
+                  </div>
+
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleExportPeanutStockCsv}
+                    className="rounded-xl text-xs font-bold h-9 gap-1.5 shrink-0"
+                  >
+                    <Download className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Exportar Estoque & Saídas (CSV)</span>
+                  </Button>
+                </div>
+
+                {/* KPIs do Estoque Próprio */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+                  <Card
+                    className={`rounded-2xl border p-4 space-y-1 ${
+                      peanutStock?.lowStockAlert
+                        ? "border-rose-500/50 bg-rose-500/5"
+                        : "border-border bg-card"
+                    }`}
+                  >
+                    <span className="text-[11px] text-muted-foreground font-semibold">
+                      Saldo Disponível CorpFlats
+                    </span>
+                    <div
+                      className={`text-xl font-black ${
+                        peanutStock?.lowStockAlert ? "text-rose-600" : "text-foreground"
+                      }`}
+                    >
+                      {peanutStock?.hasStockConfigured
+                        ? `${peanutStock.currentBalance} un.`
+                        : "Não iniciado"}
+                    </div>
+                    <span className="text-[10px] text-muted-foreground block">
+                      Alerta mínimo: {peanutStock?.minAlertThreshold ?? 30} un.
+                    </span>
+                  </Card>
+
+                  <Card className="rounded-2xl border border-border bg-card p-4 space-y-1">
+                    <span className="text-[11px] text-muted-foreground font-semibold">
+                      Saídas no Período Selecionado
+                    </span>
+                    <div className="text-xl font-black text-amber-600">
+                      {peanutStock?.periodTotalOut || 0} un.
+                    </div>
+                    <span className="text-[10px] text-muted-foreground block">
+                      {peanutStock?.periodGuestConsumed || 0} hóspedes •{" "}
+                      {peanutStock?.periodInternalConsumed || 0} flats •{" "}
+                      {peanutStock?.periodManualOutQty || 0} avulsas
+                    </span>
+                  </Card>
+
+                  <Card className="rounded-2xl border border-border bg-card p-4 space-y-1">
+                    <span className="text-[11px] text-muted-foreground font-semibold">
+                      Entradas / Compras no Período
+                    </span>
+                    <div className="text-xl font-black text-emerald-600">
+                      +{peanutStock?.periodEntriesQty || 0} un.
+                    </div>
+                    <span className="text-[10px] text-muted-foreground block">
+                      Total histórico comprado: {peanutStock?.totalEntriesQty || 0} un.
+                    </span>
+                  </Card>
+
+                  <Card className="rounded-2xl border border-border bg-card p-4 space-y-1">
+                    <span className="text-[11px] text-muted-foreground font-semibold">
+                      Repasse para Anserve
+                    </span>
+                    <div className="text-xl font-black text-muted-foreground font-mono">
+                      R$ 0,00
+                    </div>
+                    <span className="text-[10px] text-muted-foreground block">
+                      {Number(peanutStock?.ownUnitCost || 0) > 0
+                        ? `Custo interno período: R$ ${Number(peanutStock?.periodOwnCostTotal || 0).toFixed(2)}`
+                        : "Fornecimento 100% próprio"}
+                    </span>
+                  </Card>
+                </div>
+
+                {/* Formulário Semântico de Movimentação */}
+                <form
+                  onSubmit={handleSubmitPeanutMovement}
+                  aria-labelledby="peanut-stock-form-title"
+                  className="bg-card border border-border rounded-3xl p-4 sm:p-5 space-y-4"
+                >
+                  <div>
+                    <h4 id="peanut-stock-form-title" className="text-sm font-black text-foreground">
+                      Lançar Movimentação ou Ajustar Inventário Físico
+                    </h4>
+                    <p className="text-xs text-muted-foreground">
+                      Use "Definir Saldo Físico Atual" na primeira contagem e "Entrada de Compra" sempre que repor novas caixas.
+                    </p>
+                  </div>
+
+                  <fieldset className="space-y-2">
+                    <legend className="text-xs font-bold text-foreground mb-1.5">
+                      Tipo de Movimentação *
+                    </legend>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      <div
+                        className={`p-3 rounded-2xl border flex items-center gap-2.5 text-xs font-bold ${
+                          peanutMovType === "entry"
+                            ? "border-emerald-500 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                            : "border-border bg-muted/30 text-foreground"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          id="peanut-type-entry"
+                          name="peanutMovementType"
+                          value="entry"
+                          checked={peanutMovType === "entry"}
+                          onChange={() => setPeanutMovType("entry")}
+                          className="accent-emerald-600 w-4 h-4 shrink-0"
+                        />
+                        <label htmlFor="peanut-type-entry" className="cursor-pointer flex-1">
+                          ➕ Entrada de Compra / Reposição
+                        </label>
+                      </div>
+
+                      <div
+                        className={`p-3 rounded-2xl border flex items-center gap-2.5 text-xs font-bold ${
+                          peanutMovType === "set_balance"
+                            ? "border-sky-500 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                            : "border-border bg-muted/30 text-foreground"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          id="peanut-type-set-balance"
+                          name="peanutMovementType"
+                          value="set_balance"
+                          checked={peanutMovType === "set_balance"}
+                          onChange={() => setPeanutMovType("set_balance")}
+                          className="accent-sky-600 w-4 h-4 shrink-0"
+                        />
+                        <label htmlFor="peanut-type-set-balance" className="cursor-pointer flex-1">
+                          📋 Definir Saldo Físico Atual (Inventário)
+                        </label>
+                      </div>
+
+                      <div
+                        className={`p-3 rounded-2xl border flex items-center gap-2.5 text-xs font-bold ${
+                          peanutMovType === "manual_out"
+                            ? "border-rose-500 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+                            : "border-border bg-muted/30 text-foreground"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          id="peanut-type-manual-out"
+                          name="peanutMovementType"
+                          value="manual_out"
+                          checked={peanutMovType === "manual_out"}
+                          onChange={() => setPeanutMovType("manual_out")}
+                          className="accent-rose-600 w-4 h-4 shrink-0"
+                        />
+                        <label htmlFor="peanut-type-manual-out" className="cursor-pointer flex-1">
+                          ➖ Baixa Avulsa / Avaria
+                        </label>
+                      </div>
+                    </div>
+                  </fieldset>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="peanut-mov-qty" className="text-xs font-bold">
+                        {peanutMovType === "set_balance" ? "Saldo Físico Contado (un.) *" : "Quantidade (un.) *"}
+                      </Label>
+                      <Input
+                        id="peanut-mov-qty"
+                        name="peanutMovQty"
+                        type="text"
+                        inputMode="numeric"
+                        required
+                        placeholder={peanutMovType === "set_balance" ? "Ex: 120" : "Ex: 50"}
+                        value={peanutMovQty}
+                        onChange={e => setPeanutMovQty(e.target.value.replace(/\D/g, ""))}
+                        className="h-9 text-xs rounded-xl font-mono"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="peanut-mov-threshold" className="text-xs font-bold">
+                        Estoque Mínimo p/ Alerta (un.)
+                      </Label>
+                      <Input
+                        id="peanut-mov-threshold"
+                        name="peanutMovThreshold"
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="30"
+                        value={peanutMovThreshold}
+                        onChange={e => setPeanutMovThreshold(e.target.value.replace(/\D/g, ""))}
+                        className="h-9 text-xs rounded-xl font-mono"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="peanut-mov-cost" className="text-xs font-bold">
+                        Custo Próprio Unit. (R$ opcional)
+                      </Label>
+                      <Input
+                        id="peanut-mov-cost"
+                        name="peanutMovCost"
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0,00"
+                        value={peanutMovCost}
+                        onChange={e => setPeanutMovCost(e.target.value)}
+                        aria-describedby="peanut-own-cost-help"
+                        className="h-9 text-xs rounded-xl font-mono"
+                      />
+                      <span id="peanut-own-cost-help" className="text-[10px] text-muted-foreground block">
+                        Apenas para relatório interno CorpFlats; repasse Anserve permanece R$ 0,00.
+                      </span>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="peanut-mov-notes" className="text-xs font-bold">
+                        Observação
+                      </Label>
+                      <Input
+                        id="peanut-mov-notes"
+                        name="peanutMovNotes"
+                        type="text"
+                        placeholder="Ex: Caixa c/ 100 un. fornecedor"
+                        value={peanutMovNotes}
+                        onChange={e => setPeanutMovNotes(e.target.value)}
+                        className="h-9 text-xs rounded-xl"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+                    <Button
+                      type="submit"
+                      disabled={savingPeanutStock}
+                      className="rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white h-9"
+                    >
+                      {savingPeanutStock ? "Registrando..." : "Registrar Movimentação"}
+                    </Button>
+                  </div>
+                </form>
+
+                {/* Tabelas Responsivas Acessíveis */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
+                    <CardHeader className="p-4 border-b border-border bg-muted/20">
+                      <CardTitle id="peanut-flat-table-title" className="text-xs font-black uppercase tracking-wider text-muted-foreground">
+                        Saída de Amendoim por Flat no Período
+                      </CardTitle>
+                    </CardHeader>
+                    <div
+                      tabIndex={0}
+                      role="region"
+                      aria-labelledby="peanut-flat-table-title"
+                      className="w-full overflow-auto max-h-[380px]"
+                    >
+                      <table className="w-full min-w-[400px] text-xs text-left">
+                        <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur-xs text-muted-foreground font-bold border-b border-border">
+                          <tr>
+                            <th className="p-3">Flat</th>
+                            <th className="p-3 text-center">Consumo Hóspedes</th>
+                            <th className="p-3 text-center">Ajustes Internos</th>
+                            <th className="p-3 text-right">Total Consumido</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {(!peanutStock?.byFlat || peanutStock.byFlat.length === 0) ? (
+                            <tr>
+                              <td colSpan={4} className="p-6 text-center text-muted-foreground">
+                                Nenhuma saída de amendoim registrada no período.
+                              </td>
+                            </tr>
+                          ) : (
+                            peanutStock.byFlat.map((f: any) => (
+                              <tr key={f.flatNumber} className="hover:bg-muted/20">
+                                <td className="p-3 font-black text-foreground">Flat {f.flatNumber}</td>
+                                <td className="p-3 text-center font-mono">{f.guestConsumed} un.</td>
+                                <td className="p-3 text-center font-mono text-muted-foreground">{f.internalConsumed} un.</td>
+                                <td className="p-3 text-right font-mono font-black text-amber-600">{f.totalConsumed} un.</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+
+                  <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
+                    <CardHeader className="p-4 border-b border-border bg-muted/20">
+                      <CardTitle id="peanut-mov-table-title" className="text-xs font-black uppercase tracking-wider text-muted-foreground">
+                        Histórico de Entradas, Inventários e Baixas Manuais
+                      </CardTitle>
+                    </CardHeader>
+                    <div
+                      tabIndex={0}
+                      role="region"
+                      aria-labelledby="peanut-mov-table-title"
+                      className="w-full overflow-auto max-h-[420px]"
+                    >
+                      <table className="w-full min-w-[560px] text-xs text-left">
+                        <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur-xs text-muted-foreground font-bold border-b border-border">
+                          <tr>
+                            <th className="p-3">Data/Hora</th>
+                            <th className="p-3">Tipo</th>
+                            <th className="p-3 text-center">Qtd Informada</th>
+                            <th className="p-3 text-center">Impacto Saldo</th>
+                            <th className="p-3">Observação</th>
+                            <th className="p-3">Responsável</th>
+                            <th className="p-3 text-center w-12">Ação</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {(!peanutStock?.movements || peanutStock.movements.length === 0) ? (
+                            <tr>
+                              <td colSpan={7} className="p-6 text-center text-muted-foreground">
+                                Nenhuma movimentação manual lançada ainda.
+                              </td>
+                            </tr>
+                          ) : (
+                            peanutStock.movements.map((m: any) => (
+                              <tr key={m.id} className="hover:bg-muted/20">
+                                <td className="p-3 font-mono text-[11px] whitespace-nowrap">
+                                  {m.createdAt ? new Date(m.createdAt).toLocaleString("pt-BR") : "-"}
+                                </td>
+                                <td className="p-3">
+                                  <Badge
+                                    variant="outline"
+                                    className={`text-[10px] font-bold ${
+                                      m.type === "entry"
+                                        ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
+                                        : m.type === "set_balance"
+                                        ? "border-sky-500/40 text-sky-700 dark:text-sky-300"
+                                        : "border-rose-500/40 text-rose-700 dark:text-rose-300"
+                                    }`}
+                                  >
+                                    {m.type === "entry"
+                                      ? "Entrada"
+                                      : m.type === "set_balance"
+                                      ? "Inventário"
+                                      : "Baixa"}
+                                  </Badge>
+                                </td>
+                                <td className="p-3 text-center font-mono font-bold">{m.quantity} un.</td>
+                                <td
+                                  className={`p-3 text-center font-mono font-black ${
+                                    Number(m.delta) >= 0 ? "text-emerald-600" : "text-rose-600"
+                                  }`}
+                                >
+                                  {Number(m.delta) >= 0 ? `+${m.delta}` : m.delta}
+                                </td>
+                                <td className="p-3 text-muted-foreground max-w-[160px] truncate" title={m.notes || ""}>
+                                  {m.notes || "-"}
+                                </td>
+                                <td className="p-3 text-muted-foreground">{m.createdBy || "Admin"}</td>
+                                <td className="p-3 text-center">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => handleDeletePeanutMovement(m)}
+                                    title="Excluir movimentação manual"
+                                    className="h-7 w-7 rounded-lg text-muted-foreground hover:text-rose-600 hover:bg-rose-500/10"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </Button>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
                 </div>
               </div>
             ) : (
@@ -3571,21 +4197,45 @@ export default function MinibarAdminPage() {
                     <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between">
                       <div>
                         <span className="font-bold text-foreground block">💧 Copos d'Água Mineral 200ml</span>
-                        <span className="text-muted-foreground block text-[10px]">Fornecedor: Anserve • Custo unitário R$ 2,00</span>
+                        <span className="text-muted-foreground block text-[10px]">
+                          Fornecedor: Anserve • Custo unitário R${" "}
+                          {Number(
+                            settlementData.courtesyWaterUnitCost ??
+                              settlementData.courtesySummary?.courtesyWaterUnitCost ??
+                              2
+                          ).toFixed(2)}
+                        </span>
                       </div>
                       <div className="text-right">
                         <span className="font-bold block text-foreground">{settlementData.courtesyWaterCupsTotal ?? settlementData.courtesySummary?.totalCourtesyWaterCups ?? 0} un. consumidas</span>
                         <strong className="text-sky-600 font-mono">+ R$ {Number(settlementData.courtesyWaterTotalCost ?? settlementData.courtesySummary?.courtesyWaterTotalCost ?? 0).toFixed(2)}</strong>
                       </div>
                     </div>
-                    <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between">
+                    <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between gap-2">
                       <div>
                         <span className="font-bold text-foreground block">🥜 Amendoim Mendorato 27g</span>
-                        <span className="text-amber-600 dark:text-amber-400 font-semibold block text-[10px]">Fornecedor: Hotel Próprio (CorpFlats)</span>
+                        <span className="text-amber-600 dark:text-amber-400 font-semibold block text-[10px]">
+                          Fornecedor: Hotel Próprio (CorpFlats)
+                          {peanutStock?.hasStockConfigured ? ` • Saldo: ${peanutStock.currentBalance} un.` : ""}
+                        </span>
                       </div>
-                      <div className="text-right">
-                        <span className="font-bold block text-foreground">{settlementData.courtesyMendoratoPeanutsTotal ?? settlementData.courtesySummary?.totalCourtesyMendoratoPeanuts ?? 0} un. consumidas</span>
-                        <strong className="text-muted-foreground font-mono">R$ 0,00 (Isento de Repasse)</strong>
+                      <div className="text-right space-y-1 shrink-0">
+                        <span className="font-bold block text-foreground">
+                          {(settlementData.courtesyMendoratoPeanutsTotal ?? settlementData.courtesySummary?.totalCourtesyMendoratoPeanuts ?? 0) +
+                            Number(settlementData.courtesySummary?.internalCourtesyMendoratoPeanuts || 0)}{" "}
+                          un. consumidas
+                        </span>
+                        <strong className="text-muted-foreground font-mono block">R$ 0,00 (Isento de Repasse)</strong>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTab("catalogo");
+                            setCatalogSubView("estoque_amendoim");
+                          }}
+                          className="text-[10px] font-bold text-amber-600 hover:underline inline-flex items-center gap-0.5"
+                        >
+                          Gerenciar Estoque →
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -3711,13 +4361,22 @@ export default function MinibarAdminPage() {
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-bold">Custo / Repasse Anserve (R$)</Label>
+                  <Label className="text-xs font-bold">
+                    {editingProduct?.id === "prod_amendoim_mendorato"
+                      ? "Custo Próprio CorpFlats (R$) — Sem Repasse Anserve"
+                      : "Custo / Repasse Anserve (R$)"}
+                  </Label>
                   <Input
-                    placeholder="6.50"
+                    placeholder={editingProduct?.id === "prod_amendoim_mendorato" ? "0.00" : "6.50"}
                     value={pCost}
                     onChange={e => setPCost(e.target.value)}
                     className="h-9 text-xs rounded-xl font-mono"
                   />
+                  {editingProduct?.id === "prod_amendoim_mendorato" && (
+                    <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold block">
+                      O amendoim nunca gera repasse financeiro para a Anserve (apenas controle interno).
+                    </span>
+                  )}
                 </div>
               </div>
 

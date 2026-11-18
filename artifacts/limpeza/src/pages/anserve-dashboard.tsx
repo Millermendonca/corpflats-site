@@ -842,10 +842,15 @@ export default function AnserveDashboardPage() {
 
   const handleExportProductsCsv = () => {
     const prods = reportsData?.salesSummary?.byProduct || [];
-    if (prods.length === 0) {
+    const courtesyItems = (
+      reportsData?.courtesyReportItems ||
+      reportsData?.salesSummary?.courtesyReportItems ||
+      []
+    ).filter((c: any) => Number(c?.unitsConsumed || 0) > 0);
+    if (prods.length === 0 && courtesyItems.length === 0) {
       toast({
         title: "Sem produtos vendidos no período",
-        description: "Não há saídas pagas para exportar.",
+        description: "Não há saídas pagas ou cortesias para exportar.",
         variant: "destructive"
       });
       return;
@@ -854,22 +859,41 @@ export default function AnserveDashboardPage() {
       "ID Produto",
       "Produto",
       "Categoria",
-      "Unidades Vendidas",
-      "Preço Unitário (R$)",
+      "Origem / Fornecedor",
+      "Unidades Saída",
+      "Preço Venda (R$)",
       "Faturamento Bruto (R$)",
-      "Custo Unitário (R$)",
-      "Custo Total Repasse (R$)"
+      "Custo Unit. Repasse Anserve (R$)",
+      "Total Repasse Anserve (R$)"
     ];
-    const rows = prods.map((p: any) => [
-      p.productId,
-      p.productName,
-      p.category,
-      p.unitsSold,
-      Number(p.unitPrice || 0).toFixed(2).replace(".", ","),
-      Number(p.totalRevenue || 0).toFixed(2).replace(".", ","),
-      Number(p.unitCost || 0).toFixed(2).replace(".", ","),
-      Number(p.totalCost || 0).toFixed(2).replace(".", ",")
-    ]);
+    const rows = [
+      ...prods.map((p: any) => [
+        p.productId,
+        p.productName,
+        p.category,
+        p.productId === "prod_amendoim_mendorato"
+          ? "CorpFlats Próprio (Controle de Estoque - Sem Repasse)"
+          : "Anserve (Venda)",
+        p.unitsSold,
+        Number(p.unitPrice || 0).toFixed(2).replace(".", ","),
+        Number(p.totalRevenue || 0).toFixed(2).replace(".", ","),
+        Number(p.unitCost || 0).toFixed(2).replace(".", ","),
+        Number(p.totalCost || 0).toFixed(2).replace(".", ",")
+      ]),
+      ...courtesyItems.map((c: any) => [
+        c.productId,
+        c.productName,
+        c.category || "Kit de Boas-Vindas",
+        c.supplier === "hotel_proprio"
+          ? "CorpFlats Próprio (Controle de Estoque - Sem Repasse)"
+          : "Anserve (Repasse a Custo)",
+        c.unitsConsumed,
+        "0,00",
+        "0,00",
+        Number(c.reimbursementUnitCost || 0).toFixed(2).replace(".", ","),
+        Number(c.totalReimbursementToAnserve || 0).toFixed(2).replace(".", ",")
+      ])
+    ];
     downloadCsvFile(`anserve_produtos_vendidos_${startDate}_a_${endDate}.csv`, headers, rows);
   };
 
@@ -1186,7 +1210,14 @@ export default function AnserveDashboardPage() {
                       + R$ {Number(settlement.courtesyWaterTotalCost ?? settlement.courtesySummary?.courtesyWaterTotalCost ?? settlement.courtesyRestockCost ?? 0).toFixed(2)}
                     </strong>
                     <span className="text-[10px] text-muted-foreground block mt-0.5">
-                      {settlement.courtesyWaterCupsTotal ?? settlement.courtesySummary?.totalCourtesyWaterCups ?? 0} copos × R$ 2,00 (Estoque Anserve)
+                      {settlement.courtesyWaterCupsTotal ?? settlement.courtesySummary?.totalCourtesyWaterCups ?? 0} copos × R${" "}
+                      {Number(
+                        settlement.courtesyWaterUnitCost ??
+                          settlement.courtesySummary?.courtesyWaterUnitCost ??
+                          reportsData?.courtesySummary?.courtesyWaterUnitCost ??
+                          2
+                      ).toFixed(2)}{" "}
+                      (Custo Anserve)
                     </span>
                   </div>
 
@@ -1222,7 +1253,14 @@ export default function AnserveDashboardPage() {
                       <div>
                         <span className="font-bold text-foreground block">💧 Copos d'Água Mineral 200ml</span>
                         <span className="text-[10px] text-sky-600 dark:text-sky-400 font-semibold block">
-                          Estoque Anserve • Custo R$ 2,00 / un.
+                          Estoque Anserve • Repasse a Custo: R${" "}
+                          {Number(
+                            settlement.courtesyWaterUnitCost ??
+                              settlement.courtesySummary?.courtesyWaterUnitCost ??
+                              reportsData?.courtesySummary?.courtesyWaterUnitCost ??
+                              2
+                          ).toFixed(2)}{" "}
+                          / un.
                         </span>
                       </div>
                       <div className="text-right">
@@ -1235,19 +1273,29 @@ export default function AnserveDashboardPage() {
                       </div>
                     </div>
 
-                    <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between">
+                    <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between gap-2">
                       <div>
                         <span className="font-bold text-foreground block">🥜 Amendoim Mendorato 27g</span>
                         <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold block">
-                          Fornecimento Próprio Hotel • R$ 0,00 Repasse
+                          Fornecimento Próprio CorpFlats • Sem Repasse (R$ 0,00)
                         </span>
+                        {canDeleteOrders && reportsData?.peanutStock?.hasStockConfigured && (
+                          <span className="text-[10px] text-muted-foreground font-semibold block mt-0.5">
+                            Saldo Estoque Hotel:{" "}
+                            <strong className={reportsData.peanutStock.lowStockAlert ? "text-rose-600" : "text-foreground"}>
+                              {reportsData.peanutStock.currentBalance} un.
+                            </strong>
+                          </span>
+                        )}
                       </div>
-                      <div className="text-right">
+                      <div className="text-right shrink-0">
                         <span className="text-xs font-bold text-foreground block">
-                          {settlement.courtesyMendoratoPeanutsTotal ?? settlement.courtesySummary?.totalCourtesyMendoratoPeanuts ?? 0} consumidos
+                          {(settlement.courtesyMendoratoPeanutsTotal ?? settlement.courtesySummary?.totalCourtesyMendoratoPeanuts ?? 0) +
+                            Number(settlement.courtesySummary?.internalCourtesyMendoratoPeanuts || 0)}{" "}
+                          saídas (Controle de Estoque)
                         </span>
                         <strong className="text-xs font-mono font-bold text-muted-foreground">
-                          R$ 0,00 (Hotel)
+                          R$ 0,00 (Sem Repasse)
                         </strong>
                       </div>
                     </div>
@@ -1314,41 +1362,102 @@ export default function AnserveDashboardPage() {
               </div>
             </Card>
 
-            {/* Saída por Produto */}
-            {Array.isArray(reportsData?.salesSummary?.byProduct) &&
-              reportsData.salesSummary.byProduct.length > 0 && (
+            {/* Saída por Produto & Cortesias no Período */}
+            {((Array.isArray(reportsData?.salesSummary?.byProduct) &&
+              reportsData.salesSummary.byProduct.length > 0) ||
+              (Array.isArray(reportsData?.courtesyReportItems) &&
+                reportsData.courtesyReportItems.some((c: any) => Number(c?.unitsConsumed || 0) > 0))) && (
                 <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
                   <CardHeader className="p-4 border-b border-border bg-muted/20">
                     <CardTitle className="text-xs font-black uppercase tracking-wider text-muted-foreground">
-                      Resumo de Saída por Produto (Vendas Pagas no Período)
+                      Resumo de Saída por Produto & Cortesias (Período Selecionado)
                     </CardTitle>
                   </CardHeader>
-                  <div className="w-full overflow-x-auto">
-                    <table className="w-full min-w-[460px] text-xs text-left">
-                      <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
-                        <tr>
-                          <th className="p-3">Produto</th>
-                          <th className="p-3">Categoria</th>
-                          <th className="p-3 text-center">Qtd. Vendida</th>
-                          <th className="p-3 text-right">Preço Venda</th>
-                          <th className="p-3 text-right">Total Vendido</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        {reportsData.salesSummary.byProduct.map((p: any) => (
-                          <tr key={p.productId} className="hover:bg-muted/20">
-                            <td className="p-3 font-bold text-foreground">{p.productName}</td>
-                            <td className="p-3 text-muted-foreground">{p.category}</td>
-                            <td className="p-3 text-center font-mono font-bold">{p.unitsSold} un.</td>
-                            <td className="p-3 text-right font-mono">R$ {Number(p.unitPrice).toFixed(2)}</td>
-                            <td className="p-3 text-right font-mono font-black text-emerald-600">
-                              R$ {Number(p.totalRevenue).toFixed(2)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  {Array.isArray(reportsData?.salesSummary?.byProduct) &&
+                    reportsData.salesSummary.byProduct.length > 0 && (
+                      <div className="w-full overflow-x-auto">
+                        <table className="w-full min-w-[540px] text-xs text-left">
+                          <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
+                            <tr>
+                              <th className="p-3">Produto</th>
+                              <th className="p-3">Categoria</th>
+                              <th className="p-3 text-center">Qtd. Vendida</th>
+                              <th className="p-3 text-right">Preço Venda</th>
+                              <th className="p-3 text-right">Total Vendido</th>
+                              <th className="p-3 text-right">Custo / Repasse Anserve</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {reportsData.salesSummary.byProduct.map((p: any) => (
+                              <tr key={p.productId} className="hover:bg-muted/20">
+                                <td className="p-3 font-bold text-foreground">{p.productName}</td>
+                                <td className="p-3 text-muted-foreground">{p.category}</td>
+                                <td className="p-3 text-center font-mono font-bold">{p.unitsSold} un.</td>
+                                <td className="p-3 text-right font-mono">R$ {Number(p.unitPrice).toFixed(2)}</td>
+                                <td className="p-3 text-right font-mono font-black text-emerald-600">
+                                  R$ {Number(p.totalRevenue).toFixed(2)}
+                                </td>
+                                <td className="p-3 text-right font-mono font-semibold text-sky-600">
+                                  R$ {Number(p.totalCost || 0).toFixed(2)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                  {Array.isArray(reportsData?.courtesyReportItems) &&
+                    reportsData.courtesyReportItems.some((c: any) => Number(c?.unitsConsumed || 0) > 0) && (
+                      <div className="p-4 border-t border-border bg-muted/10 space-y-2.5">
+                        <div className="text-[11px] font-black uppercase tracking-wider text-muted-foreground">
+                          Saída de Cortesias & Controle de Estoque no Período
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 text-xs">
+                          {reportsData.courtesyReportItems.map((c: any) => {
+                            const isHotelOwn = c.supplier === "hotel_proprio";
+                            return (
+                              <div
+                                key={c.productId}
+                                className="p-3 rounded-2xl bg-card border border-border flex items-center justify-between gap-2"
+                              >
+                                <div className="min-w-0">
+                                  <span className="font-bold text-foreground block truncate">
+                                    {isHotelOwn ? "🥜 " : "💧 "}
+                                    {c.productName}
+                                  </span>
+                                  <span
+                                    className={`text-[10px] font-semibold block ${
+                                      isHotelOwn
+                                        ? "text-amber-600 dark:text-amber-400"
+                                        : "text-sky-600 dark:text-sky-400"
+                                    }`}
+                                  >
+                                    {c.supplierLabel}
+                                    {!isHotelOwn &&
+                                      ` • Custo R$ ${Number(c.reimbursementUnitCost || 0).toFixed(2)}/un.`}
+                                  </span>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <span className="font-mono font-bold text-foreground block">
+                                    {Number(c.unitsConsumed || 0)} un.
+                                  </span>
+                                  {isHotelOwn ? (
+                                    <span className="text-[10px] font-mono font-bold text-muted-foreground">
+                                      R$ 0,00 (Sem Repasse — Controle de Estoque)
+                                    </span>
+                                  ) : (
+                                    <strong className="text-[11px] font-mono font-black text-sky-600">
+                                      + R$ {Number(c.totalReimbursementToAnserve || 0).toFixed(2)}
+                                    </strong>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                 </Card>
               )}
 

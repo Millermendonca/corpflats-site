@@ -14860,13 +14860,15 @@ export async function processAiInboundMessage({
 
   const isDev = isDeveloperPhone(cleanTarget, db);
   const isPendingEmailCorrectionReply = !isDev && hasActivePendingEmailCorrectionForGuest(db, cleanTarget, conv);
+  const isPendingGuestPhoneCorrectionReply = !isDev && hasActivePendingGuestPhoneCorrectionForRequester(db, cleanTarget, conv);
+  const isPendingCorrectionReply = isPendingEmailCorrectionReply || isPendingGuestPhoneCorrectionReply;
 
   // 2.5. Verifica se o canal ai_agent está em Modo de Teste (independente de guest_schedule)
   const isAiTestMode = aiChannel
     ? Boolean(aiChannel.testMode)
     : (db?.zapiConfig?.aiAgent?.testMode !== undefined ? Boolean(db.zapiConfig.aiAgent.testMode) : Boolean(db?.zapiConfig?.testModeOnly));
 
-  if (isAiTestMode && !isPendingEmailCorrectionReply) {
+  if (isAiTestMode && !isPendingCorrectionReply) {
     const rawWhitelist = Array.isArray(aiChannel?.whitelist) && aiChannel.whitelist.length > 0
       ? aiChannel.whitelist
       : [...DEFAULT_TEST_ALLOWED_PHONES, ...String(db?.zapiConfig?.testAllowedPhones || "").split(/[,\s]+/)];
@@ -15023,7 +15025,7 @@ export async function processAiInboundMessage({
   }
 
   // Se a conversa estiver pausada manualmente (operador assumiu ou hóspede pediu humano)
-  if (conv && conv.aiPaused === true && !isPendingEmailCorrectionReply) {
+  if (conv && conv.aiPaused === true && !isPendingCorrectionReply) {
     if (isDev) {
       console.log(`[WhatsApp AI] Mensagem de desenvolvedor recebida em conversa pausada. Restaurando atividade da IA.`);
       conv.aiPaused = false;
@@ -15055,7 +15057,7 @@ export async function processAiInboundMessage({
   }
 
   // Se o operador humano está conduzindo a conversa no histórico (mesmo que aiPaused não estivesse marcado)
-  if (!isDev && !isPendingEmailCorrectionReply && conv && conv.aiPaused !== false && hasHumanOperatorMessagesInConversation(conv, db)) {
+  if (!isDev && !isPendingCorrectionReply && conv && conv.aiPaused !== false && hasHumanOperatorMessagesInConversation(conv, db)) {
     let activePreResEval = null;
     try {
       activePreResEval = await evaluateAndNotifyActivePreReservation({
@@ -15201,7 +15203,7 @@ export async function processAiInboundMessage({
   }
 
   // 4. Verifica Modo de Atuação
-  if (aiConfig.mode === "copilot" && !isPendingEmailCorrectionReply) {
+  if (aiConfig.mode === "copilot" && !isPendingCorrectionReply) {
     let activePreResEval = null;
     if (!isDev && conv) {
       try {
@@ -15227,7 +15229,7 @@ export async function processAiInboundMessage({
     };
   }
 
-  if (aiConfig.mode === "off_hours" && !isDev && !isPendingEmailCorrectionReply) {
+  if (aiConfig.mode === "off_hours" && !isDev && !isPendingCorrectionReply) {
     // Horário fora de expediente
     const now = new Date();
     const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
@@ -15550,7 +15552,7 @@ export async function processAiInboundMessage({
       const zapiSendRes = await sendZapiMessage(db.zapiConfig, {
         phone: cleanTarget,
         message: balloonText,
-        channelId: isPendingEmailCorrectionReply ? "guest_schedule" : "ai_agent",
+        channelId: isPendingCorrectionReply ? "guest_schedule" : "ai_agent",
         recipientRole: "guest",
         delayTyping: typingSec > 0 ? typingSec : undefined,
         db
@@ -16724,6 +16726,65 @@ function hasActivePendingEmailCorrectionForGuest(db, cleanTarget, conv = null) {
     if (!m || !m.fromMe || isAutomatedOrSofiaMessage(m)) return false;
     const mMs = new Date(m.timestamp || m.createdAt || 0).getTime();
     return mMs > notifiedMs;
+  });
+
+  return !hasOperatorMessageAfterPrompt;
+}
+
+/**
+ * Verifica se o Solicitante possui uma solicitação ativa e recente (< 48h) de correção de telefone/WhatsApp de hóspede
+ * disparada automaticamente pelo sistema (guest_schedule) aguardando resposta do Solicitante,
+ * sem que um operador humano tenha assumido a conversa após o envio dessa pergunta.
+ */
+function hasActivePendingGuestPhoneCorrectionForRequester(db, cleanTarget, conv = null) {
+  const targetDigits = cleanWhatsAppPhone(cleanTarget);
+  if (!targetDigits || targetDigits.length < 8 || !Array.isArray(db?.reservations)) {
+    return false;
+  }
+  const nowMs = Date.now();
+  let latestNotifiedMs = 0;
+
+  for (const r of db.reservations) {
+    if (!r) continue;
+    const rawStatus = String(r.status || "").toLowerCase();
+    if (rawStatus === "cancelada" || rawStatus === "cancelled" || rawStatus === "expirada") continue;
+
+    const list = Array.isArray(r.guestPhoneCorrectionRequests) ? r.guestPhoneCorrectionRequests : [];
+    for (const req of list) {
+      if (!req || req.status !== "awaiting_reply" || !req.whatsappSent) continue;
+      const notifiedMs = req.notifiedAt ? new Date(req.notifiedAt).getTime() : 0;
+      if (!notifiedMs || Number.isNaN(notifiedMs) || nowMs - notifiedMs > 48 * 3600 * 1000) continue;
+
+      const candidatePhones = [
+        req.requesterPhone,
+        r.requesterInfo?.whatsapp,
+        r.requesterInfo?.phone,
+        r.requesterPhone
+      ]
+        .map(p => cleanWhatsAppPhone(p))
+        .filter(p => p && p.length >= 8);
+
+      const matchesRequester = candidatePhones.some(
+        p => p.endsWith(targetDigits.slice(-8)) || targetDigits.endsWith(p.slice(-8))
+      );
+      if (matchesRequester && notifiedMs > latestNotifiedMs) {
+        latestNotifiedMs = notifiedMs;
+      }
+    }
+  }
+
+  if (!latestNotifiedMs) return false;
+
+  if (conv?.aiPaused === true && conv?.aiPausedAt) {
+    const pausedMs = new Date(conv.aiPausedAt).getTime();
+    if (pausedMs > latestNotifiedMs) return false;
+  }
+
+  const messages = Array.isArray(conv?.messages) ? conv.messages : [];
+  const hasOperatorMessageAfterPrompt = messages.some(m => {
+    if (!m || !m.fromMe || isAutomatedOrSofiaMessage(m)) return false;
+    const mMs = new Date(m.timestamp || m.createdAt || 0).getTime();
+    return mMs > latestNotifiedMs;
   });
 
   return !hasOperatorMessageAfterPrompt;
