@@ -291,7 +291,16 @@ export default function FiscalInvoicesPage() {
         setCertStatus(data.certStatus)
       }
       if (data.channelRules) {
-        setChannelRules(data.channelRules)
+        const cr = data.channelRules
+        setChannelRules({
+          ...cr,
+          direct: cr.direct !== undefined ? Boolean(cr.direct) : (cr.site !== undefined ? Boolean(cr.site) : true),
+          whatsapp: cr.whatsapp !== undefined ? Boolean(cr.whatsapp) : true,
+          b2b: cr.b2b !== undefined ? Boolean(cr.b2b) : true,
+          booking: cr.booking !== undefined ? Boolean(cr.booking) : false,
+          airbnb: cr.airbnb !== undefined ? Boolean(cr.airbnb) : false,
+          autoCheckout: cr.autoCheckout !== undefined ? Boolean(cr.autoCheckout) : true
+        })
       }
     } catch (e) {
       console.error(e)
@@ -3742,12 +3751,18 @@ export default function FiscalInvoicesPage() {
     setChannelRules(updated)
     setSavingChannelRules(true)
     try {
-      await fetch("/api/nfse/channel-rules", {
+      const resp = await fetch("/api/nfse/channel-rules", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ channel: channelKey, enabled: !currentVal, rules: updated }),
         credentials: "include"
       })
+      if (resp.ok) {
+        const payload = await resp.json().catch(() => null)
+        if (payload?.channelRules) {
+          setChannelRules(payload.channelRules)
+        }
+      }
       toast({
         title: "Regra Atualizada",
         description: `Canal ${channelKey} configurado para ${!currentVal ? 'emissão automática' : 'manual'}.`
@@ -5311,6 +5326,33 @@ export default function FiscalInvoicesPage() {
                                 <div className="text-[10px] text-muted-foreground font-mono">
                                   {displayTomadorDoc || "Sem documento informado"}
                                 </div>
+                                {res.autoInvoiceStatus && res.autoInvoiceStatus !== "emitted" && res.autoInvoiceStatus !== "skipped_rule_off" && res.autoInvoiceStatus !== "skipped_disabled_global" && (
+                                  <div className="mt-1">
+                                    <Badge
+                                      variant="outline"
+                                      title={res.autoInvoiceLastError || res.autoInvoiceStatus}
+                                      className={`text-[9px] h-4 px-1.5 ${
+                                        res.autoInvoiceStatus === "awaiting_document_whatsapp"
+                                          ? "border-sky-500/40 text-sky-700 dark:text-sky-300 bg-sky-500/10"
+                                          : res.autoInvoiceStatus === "waiting_package_last_checkout"
+                                          ? "border-violet-500/40 text-violet-700 dark:text-violet-300 bg-violet-500/10"
+                                          : res.autoInvoiceStatus === "queued_retry"
+                                          ? "border-amber-500/40 text-amber-700 dark:text-amber-300 bg-amber-500/10"
+                                          : "border-rose-500/40 text-rose-700 dark:text-rose-300 bg-rose-500/10"
+                                      }`}
+                                    >
+                                      {res.autoInvoiceStatus === "awaiting_document_whatsapp"
+                                        ? "💬 Aguardando CPF/CNPJ no WhatsApp"
+                                        : res.autoInvoiceStatus === "waiting_package_last_checkout"
+                                        ? "📦 Aguardando último flat do pacote"
+                                        : res.autoInvoiceStatus === "blocked_unpaid"
+                                        ? "⛔ Bloqueada: pagamento pendente"
+                                        : res.autoInvoiceStatus === "queued_retry"
+                                        ? "⏳ Na fila automática SEFIN"
+                                        : "⚠️ Erro na auto-emissão"}
+                                    </Badge>
+                                  </div>
+                                )}
                                 {/* 3-Tomador Switcher Rápido */}
                                 <div className="flex items-center gap-1 mt-1.5">
                                   <button
@@ -5985,25 +6027,28 @@ export default function FiscalInvoicesPage() {
               <CardContent className="p-5 space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {[
-                    { key: "direct", title: "Reservas Diretas (Site)", desc: "Auto-emissão ao confirmar pagamento da reserva direta" },
-                    { key: "whatsapp", title: "Reservas WhatsApp / Balcão", desc: "Auto-emissão ao registrar hóspede com CPF/CNPJ no chat" },
-                    { key: "booking", title: "Reservas Booking.com", desc: "Auto-emissão com dados fiscais fornecidos pelo canal OTA" },
-                    { key: "airbnb", title: "Reservas Airbnb", desc: "Auto-emissão com recibo de repasse e dados do hóspede" },
-                    { key: "b2b", title: "Reservas B2B Corporativo / Agências", desc: "Emissão conforme Tomador do voucher (Agência, Empresa ou Hóspede)" },
-                    { key: "autoCheckout", title: "Auto-Emissão no Check-out", desc: "Dispara NFS-e no momento em que a governança ou recepção marca saída" }
-                  ].map(rule => (
-                    <div key={rule.key} className="p-4 rounded-2xl bg-muted/20 border border-border flex items-center justify-between gap-4">
-                      <div>
-                        <h4 className="font-bold text-xs text-foreground">{rule.title}</h4>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">{rule.desc}</p>
+                    { key: "autoCheckout", title: "⚡ Auto-Emissão no Check-out (Chave Mestra)", desc: "Habilita disparo automático da NFS-e em todos os canais de check-out (PMS, Portaria, Link Digital, Frigobar, Governança e WhatsApp)", defaultVal: true },
+                    { key: "direct", title: "Reservas Diretas (Site)", desc: "Auto-emissão no check-out para reservas do site (site_direto / direct)", defaultVal: true },
+                    { key: "whatsapp", title: "Reservas WhatsApp / Balcão", desc: "Auto-emissão no check-out para reservas feitas pelo WhatsApp ou balcão", defaultVal: true },
+                    { key: "b2b", title: "Reservas B2B Corporativo / Agências", desc: "Auto-emissão conforme Tomador do voucher (Agência, Empresa ou Hóspede)", defaultVal: true },
+                    { key: "booking", title: "Reservas Booking.com", desc: "Auto-emissão no check-out para reservas Booking.com (ou quando marcado na reserva)", defaultVal: false },
+                    { key: "airbnb", title: "Reservas Airbnb", desc: "Auto-emissão no check-out para reservas Airbnb (ou quando marcado na reserva)", defaultVal: false }
+                  ].map(rule => {
+                    const isChecked = channelRules[rule.key] !== undefined ? Boolean(channelRules[rule.key]) : rule.defaultVal
+                    return (
+                      <div key={rule.key} className={`p-4 rounded-2xl border flex items-center justify-between gap-4 ${rule.key === "autoCheckout" ? "bg-primary/5 border-primary/30" : "bg-muted/20 border-border"}`}>
+                        <div>
+                          <h4 className="font-bold text-xs text-foreground">{rule.title}</h4>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">{rule.desc}</p>
+                        </div>
+                        <Switch 
+                          checked={isChecked}
+                          onCheckedChange={() => handleToggleChannelRule(rule.key, isChecked)}
+                          disabled={savingChannelRules}
+                        />
                       </div>
-                      <Switch 
-                        checked={channelRules[rule.key] !== false}
-                        onCheckedChange={() => handleToggleChannelRule(rule.key, channelRules[rule.key] !== false)}
-                        disabled={savingChannelRules}
-                      />
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </CardContent>
             </Card>

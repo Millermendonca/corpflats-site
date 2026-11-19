@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { parseEmailList } from "./mail-service.mjs";
+import { evaluateFlatCheckinReadiness } from "./zapi-service.mjs";
 
 const inFlightInvalidGuestPhoneAlerts = new Set();
 
@@ -687,9 +688,14 @@ export function computePackageSummary(db, packageIdOrRes, opts = {}) {
       const flatCleanObj = Array.isArray(db?.flats)
         ? db.flats.find((fl) => Number(fl.id) === Number(r.flatId) || String(fl.number) === String(r.flatNumber))
         : null;
+      const pkgFlatReadiness =
+        r.checkinDate && todayBr === String(r.checkinDate).slice(0, 10)
+          ? evaluateFlatCheckinReadiness(db, r)
+          : null;
       const isFlatEmPrep =
         flatCleanObj?.status === "dirty" ||
         flatCleanObj?.status === "cleaning_now" ||
+        Boolean(pkgFlatReadiness && !pkgFlatReadiness.isFlatReady) ||
         (Array.isArray(db?.cleaningRequests) &&
           db.cleaningRequests.some(
             (c) =>
@@ -1879,13 +1885,32 @@ export async function dispatchIndividualFlatGuestInstructions(db, reservationsLi
   const triggerEvt = deps.triggerEvent || "reservation_created";
 
   const primary = reservationsList[0];
-  const reqPhoneDigits = cleanFn(
-    primary?.requesterInfo?.whatsapp ||
-    primary?.requesterInfo?.phone ||
-    primary?.requesterPhone ||
-    ""
-  );
+  const allRequesterDigitsSet = new Set();
+  const collectReqPhonesFrom = (resObj) => {
+    if (!resObj || typeof resObj !== "object") return;
+    const cands = [
+      resObj.requesterInfo?.whatsapp,
+      resObj.requesterInfo?.phone,
+      resObj.requesterPhone,
+      resObj.agencyAgentPhone,
+      resObj.validatedRequesterWhatsapp
+    ];
+    for (const c of cands) {
+      const d = cleanFn(c);
+      if (d && d.length >= 8) allRequesterDigitsSet.add(d);
+    }
+  };
+  collectReqPhonesFrom(primary);
+  for (const sib of reservationsList) collectReqPhonesFrom(sib);
+  const allRequesterDigits = Array.from(allRequesterDigitsSet);
+  const reqPhoneDigits = allRequesterDigits[0] || "";
 
+  const matchesAnyRequesterPhone = (digits) => {
+    if (!digits || digits.length < 8) return false;
+    return allRequesterDigits.some((rd) => phonesEndMatch(digits, rd));
+  };
+
+  const dispatchedGuestPhonesInBatch = new Set();
   const defaultPdfUrl = db?.zapiConfig?.guestGuidePdfUrl || "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf";
   const defaultPdfName = db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf";
   const pdfCaption = "Segue em anexo o Manual do Hóspede em PDF com todas as orientações da sua acomodação! 📖";
@@ -1896,6 +1921,8 @@ export async function dispatchIndividualFlatGuestInstructions(db, reservationsLi
       r.requesterInfo?.whatsapp ||
       r.requesterInfo?.phone ||
       r.requesterPhone ||
+      r.agencyAgentPhone ||
+      r.validatedRequesterWhatsapp ||
       reqPhoneDigits ||
       ""
     );
@@ -1915,7 +1942,7 @@ export async function dispatchIndividualFlatGuestInstructions(db, reservationsLi
         phone: g1Phone,
         digits: g1Digits,
         email: String(r.guestEmail || guestsArr[0]?.email || "").trim(),
-        isSameAsRequester: Boolean(r.requesterIsGuest1 || (itemReqDigits && g1Digits && phonesEndMatch(g1Digits, itemReqDigits)))
+        isSameAsRequester: Boolean(r.requesterIsGuest1 || matchesAnyRequesterPhone(g1Digits) || (itemReqDigits && g1Digits && phonesEndMatch(g1Digits, itemReqDigits)))
       });
     }
 
@@ -1936,7 +1963,7 @@ export async function dispatchIndividualFlatGuestInstructions(db, reservationsLi
         phone: cPhone,
         digits: cDigits,
         email: String(comp.email || "").trim(),
-        isSameAsRequester: Boolean(itemReqDigits && cDigits && phonesEndMatch(cDigits, itemReqDigits))
+        isSameAsRequester: Boolean(matchesAnyRequesterPhone(cDigits) || (itemReqDigits && cDigits && phonesEndMatch(cDigits, itemReqDigits)))
       });
     }
 
@@ -1948,11 +1975,30 @@ export async function dispatchIndividualFlatGuestInstructions(db, reservationsLi
         r.hideFinancialForGuest = true;
       }
 
-      // Se for o próprio solicitante (que acabou de receber o resumo/recibo do pacote), não dispara 2º WhatsApp redundante na mesma hora
-      if (target.isSameAsRequester && target.index === 1 && !deps.forceSendToRequesterGuest) {
-        const sentKeyReq = `pkgGuestInstrSent_${target.index}_${target.digits}`;
-        if (!r[sentKeyReq]) r[sentKeyReq] = new Date().toISOString();
-        sentTo.push({ reservationCode: r.code, flatNumber: r.flatNumber, guestIndex: target.index, skippedSameAsRequester: true });
+      const isAllowedRequesterSelfStay = Boolean(
+        r.requesterIsGuest1 === true &&
+        (!r.packageIndex || Number(r.packageIndex) === 1) &&
+        target.index === 1
+      );
+
+      if (target.isSameAsRequester) {
+        if (!isAllowedRequesterSelfStay) {
+          // Solicitante NÃO é hóspede deste flat (ou é flat secundário / acompanhante): bloqueia disparo operacional sempre
+          sentTo.push({ reservationCode: r.code, flatNumber: r.flatNumber, guestIndex: target.index, skippedRequesterNonGuest: true });
+          continue;
+        }
+        // Solicitante é o Hóspede 1 do 1º flat: evita 2º WhatsApp imediato redundante logo após o recibo do pacote
+        if (!deps.forceSendToRequesterGuest) {
+          const sentKeyReq = `pkgGuestInstrSent_${target.index}_${target.digits}`;
+          if (!r[sentKeyReq]) r[sentKeyReq] = new Date().toISOString();
+          sentTo.push({ reservationCode: r.code, flatNumber: r.flatNumber, guestIndex: target.index, skippedSameAsRequester: true });
+          continue;
+        }
+      }
+
+      const phoneKey8 = target.digits ? target.digits.slice(-8) : "";
+      if (phoneKey8 && dispatchedGuestPhonesInBatch.has(phoneKey8)) {
+        sentTo.push({ reservationCode: r.code, flatNumber: r.flatNumber, guestIndex: target.index, skippedDuplicatePackagePhone: true });
         continue;
       }
 
@@ -1968,6 +2014,7 @@ export async function dispatchIndividualFlatGuestInstructions(db, reservationsLi
         }
         continue;
       }
+      if (phoneKey8) dispatchedGuestPhonesInBatch.add(phoneKey8);
 
       let cleanTargetPhone = target.digits;
       const sentKeyBeforeCheck = `pkgGuestInstrSent_${target.index}_${target.digits}`;

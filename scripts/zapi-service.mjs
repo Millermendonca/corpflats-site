@@ -3007,6 +3007,458 @@ function areGuestNamesCompatibleInline(nameA = "", nameB = "") {
   return tokA[0] === tokB[0] || tokA.every(t => tokB.includes(t)) || tokB.every(t => tokA.includes(t));
 }
 
+const INACTIVE_STAY_RESERVATION_STATUSES = new Set([
+  "cancelled",
+  "cancelada",
+  "canceled",
+  "no_show",
+  "noshow",
+  "expired",
+  "expired_pre_reservation"
+]);
+
+function isInactiveReservationForStayGuard(r) {
+  if (!r || typeof r !== "object") return true;
+  return INACTIVE_STAY_RESERVATION_STATUSES.has(String(r.status || "").toLowerCase().trim());
+}
+
+function getPackageGroupKeyForStayGuard(r) {
+  if (!r || typeof r !== "object") return "";
+  const pid = String(r.packageId || "").trim();
+  if (pid) return `id:${pid}`;
+  const pcode = String(r.packageCode || "").trim().toUpperCase();
+  if (pcode) return `code:${pcode}`;
+  return "";
+}
+
+function doReservationDatesOverlapForStayGuard(resA, resB) {
+  const pkgA = getPackageGroupKeyForStayGuard(resA);
+  const pkgB = getPackageGroupKeyForStayGuard(resB);
+  const aIn = String(resA?.checkinDate || "").slice(0, 10);
+  const aOut = String(resA?.checkoutDate || "").slice(0, 10);
+  const bIn = String(resB?.checkinDate || "").slice(0, 10);
+  const bOut = String(resB?.checkoutDate || "").slice(0, 10);
+  if (aIn && aOut && bIn && bOut) {
+    return aIn < bOut && bIn < aOut;
+  }
+  return Boolean(pkgA && pkgB && pkgA === pkgB);
+}
+
+function resolveRequesterSnapshotNoRecurse(reservation = {}, db = {}) {
+  const rawName = (reservation.guestName || reservation.guests?.[0]?.name || "").trim();
+  const guestName = rawName || "Hóspede";
+  const rawGuestPhone = String(reservation.guestPhone || reservation.guests?.[0]?.phone || "").trim();
+  const rawGuestEmail = normalizeEmailAddress(reservation.guestEmail || reservation.guests?.[0]?.email);
+  const chanLower = String(reservation.channel || reservation.source || "").toLowerCase();
+  const isB2bChannel = chanLower.includes("b2b") || Boolean(reservation.agencyId || reservation.agencyName || reservation.b2bReservationNumber);
+  const explicitRequesterName = String(
+    reservation.requesterInfo?.name ||
+    reservation.requesterName ||
+    reservation.agencyAgentName ||
+    ""
+  ).trim();
+  const rawExplicitReqPhone = String(
+    reservation.validatedRequesterWhatsapp ||
+    reservation.agencyAgentPhone ||
+    reservation.requesterInfo?.whatsapp ||
+    reservation.requesterInfo?.phone ||
+    reservation.requesterPhone ||
+    ""
+  ).trim();
+  const rawExplicitReqEmail = normalizeEmailAddress(
+    reservation.agencyAgentEmail ||
+    reservation.requesterInfo?.email ||
+    reservation.requesterEmail ||
+    ""
+  );
+
+  let requesterType = reservation.requesterType || "guest";
+  if (requesterType === "agency_b2b") requesterType = "agency";
+  if (requesterType === "third_party") requesterType = "other_person";
+  if (requesterType === "guest") {
+    if (reservation.agencyId || reservation.agencyName || isB2bChannel) {
+      requesterType = "agency";
+    } else if (reservation.companyId || reservation.companyName) {
+      requesterType = "company";
+    } else {
+      const hasAnyExplicitRequesterField = Boolean(
+        explicitRequesterName || rawExplicitReqPhone || rawExplicitReqEmail
+      );
+      if (hasAnyExplicitRequesterField) {
+        const shouldTreatAsSeparateOtherPerson = Boolean(
+          reservation.requesterIsGuest1 === false ||
+          (Boolean(getPackageGroupKeyForStayGuard(reservation)) && reservation.requesterIsGuest1 !== true) ||
+          isPendingGuestName(rawName) ||
+          (explicitRequesterName && rawName && !areGuestNamesCompatibleInline(explicitRequesterName, rawName)) ||
+          (rawExplicitReqPhone && rawGuestPhone && !matchClientPhone(rawExplicitReqPhone, rawGuestPhone)) ||
+          (rawExplicitReqEmail && rawGuestEmail && rawExplicitReqEmail !== rawGuestEmail)
+        );
+        if (shouldTreatAsSeparateOtherPerson) {
+          requesterType = "other_person";
+        }
+      }
+    }
+  }
+
+  let agencyObj = null;
+  if (reservation.agencyId && Array.isArray(db?.agencies)) {
+    agencyObj = db.agencies.find(a => String(a.id) === String(reservation.agencyId)) || null;
+  }
+  if (!agencyObj && reservation.agencyCnpj && Array.isArray(db?.agencies)) {
+    const targetCnpj = String(reservation.agencyCnpj).replace(/\D/g, "");
+    if (targetCnpj) {
+      agencyObj = db.agencies.find(a => String(a.cnpj || "").replace(/\D/g, "") === targetCnpj) || null;
+    }
+  }
+  if (!agencyObj && reservation.agencyName && Array.isArray(db?.agencies)) {
+    agencyObj = db.agencies.find(a =>
+      a.tradeName?.toLowerCase() === reservation.agencyName?.toLowerCase() ||
+      a.corporateName?.toLowerCase() === reservation.agencyName?.toLowerCase()
+    ) || null;
+  }
+
+  let companyObj = null;
+  if (reservation.companyId && Array.isArray(db?.companies)) {
+    companyObj = db.companies.find(c => String(c.id) === String(reservation.companyId)) || null;
+  }
+  if (!companyObj && reservation.companyName && Array.isArray(db?.companies)) {
+    companyObj = db.companies.find(c =>
+      c.tradeName?.toLowerCase() === reservation.companyName?.toLowerCase() ||
+      c.corporateName?.toLowerCase() === reservation.companyName?.toLowerCase()
+    ) || null;
+  }
+
+  const explicitPhones = [];
+  const explicitEmails = [];
+  const pushPhone = (val) => {
+    const parts = String(val || "").split(/[\/;|,]+/).map(s => s.trim()).filter(Boolean);
+    for (const p of parts) {
+      if (p.replace(/\D/g, "").length >= 8) explicitPhones.push(p);
+    }
+  };
+  const pushEmail = (val) => {
+    for (const addr of parseEmailList(val)) {
+      if (addr) explicitEmails.push(addr);
+    }
+  };
+
+  pushPhone(reservation.validatedRequesterWhatsapp);
+  pushPhone(reservation.agencyAgentPhone);
+  pushPhone(reservation.requesterInfo?.whatsapp);
+  pushPhone(reservation.requesterInfo?.phone);
+  pushPhone(reservation.requesterPhone);
+  pushPhone(reservation.companyData?.companyPhone);
+  if (requesterType === "agency" || isB2bChannel) {
+    pushPhone(agencyObj?.agents?.[0]?.phone);
+    pushPhone(agencyObj?.whatsapp);
+    pushPhone(agencyObj?.phone);
+    pushPhone(companyObj?.phone);
+  } else if (requesterType === "company") {
+    pushPhone(companyObj?.whatsapp);
+    pushPhone(companyObj?.phone);
+    pushPhone(companyObj?.telefone);
+  }
+
+  pushEmail(reservation.agencyAgentEmail);
+  pushEmail(reservation.requesterInfo?.email);
+  pushEmail(reservation.requesterEmail);
+  pushEmail(reservation.companyData?.companyEmail);
+  if (requesterType === "agency" || isB2bChannel) {
+    pushEmail(agencyObj?.email);
+    pushEmail(agencyObj?.agents?.[0]?.email);
+    pushEmail(agencyObj?.financialEmail);
+    pushEmail(agencyObj?.emailFinanceiro);
+  } else if (requesterType === "company") {
+    pushEmail(companyObj?.email);
+    pushEmail(companyObj?.financialEmail);
+    pushEmail(companyObj?.emailFinanceiro);
+  }
+
+  return {
+    requesterType,
+    isB2bChannel,
+    explicitRequesterName,
+    guestName,
+    rawGuestName: rawName,
+    explicitPhones: [...new Set(explicitPhones)],
+    explicitEmails: [...new Set(explicitEmails)]
+  };
+}
+
+/**
+ * Avalia se um contato (WhatsApp / E-mail) de uma reserva pode receber mensagens operacionais
+ * de estadia e pós-estadia (boas-vindas, instruções de check-in, quarto pronto, café da manhã,
+ * check-out, NPS/avaliação, frigobar, achados).
+ *
+ * Bloqueia:
+ * - alvo "requester"
+ * - contato do solicitante/agência copiado no campo de hóspede ou acompanhante quando !requesterIsGuest1
+ * - contato do solicitante em flats secundários do pacote (mesmo que tenha marcado requesterIsGuest1 no Flat 1)
+ * - contato repetido em múltiplos flats ativos com datas sobrepostas (libera apenas no 1º flat elegível)
+ */
+export function evaluateStayContactEligibility(reservation = {}, db = {}, options = {}) {
+  const targetType = String(options.targetType || "guest").trim() || "guest";
+  const candidatePhoneRaw = String(
+    options.candidatePhone !== undefined
+      ? options.candidatePhone
+      : (targetType === "guest" ? (reservation.guestPhone || reservation.guests?.[0]?.phone || "") : "")
+  ).trim();
+  const candidateEmailRaw = normalizeEmailAddress(
+    options.candidateEmail !== undefined
+      ? options.candidateEmail
+      : (targetType === "guest" ? (reservation.guestEmail || reservation.guests?.[0]?.email || "") : "")
+  );
+
+  if (targetType === "requester") {
+    return {
+      phoneAllowedForStay: false,
+      emailAllowedForStay: false,
+      effectivePhone: "",
+      effectiveEmail: "",
+      blockedReason: "REQUESTER_TARGET_BLOCKED_FOR_STAY",
+      phoneBlockedReason: candidatePhoneRaw ? "REQUESTER_TARGET_BLOCKED_FOR_STAY" : null,
+      emailBlockedReason: candidateEmailRaw ? "REQUESTER_TARGET_BLOCKED_FOR_STAY" : null,
+      isRequesterContactMatch: true,
+      isDuplicateMultiFlat: false,
+      isFirstPackageFlat: false
+    };
+  }
+
+  const allActiveReservations = Array.isArray(db?.reservations)
+    ? db.reservations.filter(r => r && !isInactiveReservationForStayGuard(r))
+    : [];
+
+  const pkgKey = getPackageGroupKeyForStayGuard(reservation);
+  const packageSiblings = pkgKey
+    ? allActiveReservations
+        .filter(r => getPackageGroupKeyForStayGuard(r) === pkgKey)
+        .sort((a, b) => {
+          const idxDiff = (Number(a.packageIndex) || 9999) - (Number(b.packageIndex) || 9999);
+          if (idxDiff !== 0) return idxDiff;
+          const ca = String(a.createdAt || "");
+          const cb = String(b.createdAt || "");
+          if (ca !== cb) return ca.localeCompare(cb);
+          return String(a.id || "").localeCompare(String(b.id || ""));
+        })
+    : [];
+
+  const isFirstPackageFlat = packageSiblings.length > 0
+    ? String(packageSiblings[0].id || packageSiblings[0].code) === String(reservation.id || reservation.code)
+    : (!reservation.packageIndex || Number(reservation.packageIndex) <= 1);
+
+  const snap = resolveRequesterSnapshotNoRecurse(reservation, db);
+  const reqCtx = options.requesterContext || null;
+  const requesterType = snap.requesterType;
+  const knownRequesterPhones = new Set(snap.explicitPhones);
+  const knownRequesterEmails = new Set(snap.explicitEmails);
+
+  if (reqCtx?.hasOwnPhone && reqCtx?.phone) {
+    knownRequesterPhones.add(reqCtx.phone);
+  }
+  if (reqCtx?.hasOwnEmail && reqCtx?.email) {
+    for (const em of parseEmailList(reqCtx.email)) knownRequesterEmails.add(em);
+  }
+
+  // Coleta telefones/e-mails explícitos do solicitante nos demais flats do mesmo pacote
+  // ou da mesma agência/empresa B2B
+  for (const other of allActiveReservations) {
+    if (String(other.id || other.code) === String(reservation.id || reservation.code)) continue;
+    const samePkg = Boolean(pkgKey && getPackageGroupKeyForStayGuard(other) === pkgKey);
+    const sameAgency = Boolean(
+      (reservation.agencyId && other.agencyId && String(reservation.agencyId) === String(other.agencyId)) ||
+      (reservation.agencyCnpj && other.agencyCnpj && String(reservation.agencyCnpj).replace(/\D/g, "") === String(other.agencyCnpj).replace(/\D/g, ""))
+    );
+    const sameCompany = Boolean(reservation.companyId && other.companyId && String(reservation.companyId) === String(other.companyId));
+    if (!samePkg && !sameAgency && !sameCompany) continue;
+
+    const otherSnap = resolveRequesterSnapshotNoRecurse(other, db);
+    if (samePkg || otherSnap.requesterType !== "guest" || otherSnap.isB2bChannel) {
+      for (const p of otherSnap.explicitPhones) knownRequesterPhones.add(p);
+      for (const em of otherSnap.explicitEmails) knownRequesterEmails.add(em);
+    }
+  }
+
+  const hasSeparateRequesterContext = Boolean(
+    requesterType !== "guest" ||
+    snap.isB2bChannel ||
+    reservation.hideFinancialForGuest ||
+    Boolean(pkgKey) ||
+    reservation.requesterIsGuest1 === false ||
+    packageSiblings.some(s => s.requesterIsGuest1 === false || String(s.requesterType || "guest") !== "guest") ||
+    (snap.explicitRequesterName &&
+      snap.rawGuestName &&
+      !isPendingGuestName(snap.rawGuestName) &&
+      !areGuestNamesCompatibleInline(snap.explicitRequesterName, snap.rawGuestName))
+  );
+
+  const phoneMatchesRequester = Boolean(
+    candidatePhoneRaw &&
+    hasSeparateRequesterContext &&
+    Array.from(knownRequesterPhones).some(rp => matchClientPhone(candidatePhoneRaw, rp))
+  );
+  const emailMatchesRequester = Boolean(
+    candidateEmailRaw &&
+    hasSeparateRequesterContext &&
+    knownRequesterEmails.has(candidateEmailRaw)
+  );
+
+  // Permissão explícita: solicitante marcou que ELE MESMO é o Hóspede 1 no 1º flat
+  const requesterAllowedOnThisTarget = Boolean(
+    targetType === "guest" &&
+    reservation.requesterIsGuest1 === true &&
+    isFirstPackageFlat
+  );
+
+  let phoneBlockedReason = null;
+  let emailBlockedReason = null;
+  let isDuplicateMultiFlat = false;
+
+  if (phoneMatchesRequester && !requesterAllowedOnThisTarget) {
+    phoneBlockedReason = targetType === "guest"
+      ? (isFirstPackageFlat ? "REQUESTER_PHONE_IN_GUEST_FIELD" : "REQUESTER_PHONE_IN_SECONDARY_FLAT")
+      : "REQUESTER_PHONE_IN_COMPANION_FIELD";
+  }
+
+  if (emailMatchesRequester && !requesterAllowedOnThisTarget) {
+    emailBlockedReason = targetType === "guest"
+      ? (isFirstPackageFlat ? "REQUESTER_EMAIL_IN_GUEST_FIELD" : "REQUESTER_EMAIL_IN_SECONDARY_FLAT")
+      : "REQUESTER_EMAIL_IN_COMPANION_FIELD";
+  }
+
+  // Caso 3: mesmo WhatsApp ou e-mail repetido em 2+ reservas ativas com datas sobrepostas (ex.: Booking/Airbnb/PMS sem seção Solicitante)
+  const computeMultiFlatPrimaryStatus = (kind, candidateVal) => {
+    if (!candidateVal || allActiveReservations.length < 2) {
+      return { blockedReason: null, duplicate: false };
+    }
+    const matchesContactOnRes = (resObj) => {
+      if (kind === "phone") {
+        const g1p = String(resObj.guestPhone || resObj.guests?.[0]?.phone || "").trim();
+        if (g1p && matchClientPhone(candidateVal, g1p)) return true;
+        if (Array.isArray(resObj.guests)) {
+          return resObj.guests.some(g => g?.phone && matchClientPhone(candidateVal, g.phone));
+        }
+        return false;
+      } else {
+        const g1e = normalizeEmailAddress(resObj.guestEmail || resObj.guests?.[0]?.email);
+        if (g1e && g1e === candidateVal) return true;
+        if (Array.isArray(resObj.guests)) {
+          return resObj.guests.some(g => normalizeEmailAddress(g?.email) === candidateVal);
+        }
+        return false;
+      }
+    };
+
+    const overlappingPeers = allActiveReservations.filter(other => {
+      if (String(other.id || other.code) === String(reservation.id || reservation.code)) return true;
+      if (!doReservationDatesOverlapForStayGuard(reservation, other)) return false;
+      return matchesContactOnRes(other);
+    });
+
+    if (overlappingPeers.length < 2) {
+      return { blockedReason: null, duplicate: false };
+    }
+
+    // Há sobreposição real de múltiplos flats com o mesmo contato!
+    if (targetType === "guest" && isPendingGuestName(snap.rawGuestName)) {
+      return { blockedReason: "PLACEHOLDER_GUEST_MULTI_FLAT", duplicate: true };
+    }
+
+    // Se qualquer flat do grupo marcou explicitamente requesterIsGuest1 === false com esse mesmo contato como solicitante,
+    // também bloqueia se este flat não tem requesterIsGuest1 === true
+    const anyExplicitNonGuestRequester = overlappingPeers.some(p => {
+      if (p.requesterIsGuest1 !== false) return false;
+      const pSnap = resolveRequesterSnapshotNoRecurse(p, db);
+      return kind === "phone"
+        ? pSnap.explicitPhones.some(rp => matchClientPhone(candidateVal, rp))
+        : pSnap.explicitEmails.includes(candidateVal);
+    });
+    if (anyExplicitNonGuestRequester && reservation.requesterIsGuest1 !== true) {
+      return {
+        blockedReason: kind === "phone" ? "REQUESTER_PHONE_IN_GUEST_FIELD" : "REQUESTER_EMAIL_IN_GUEST_FIELD",
+        duplicate: true
+      };
+    }
+
+    // Filtra apenas flats que podem ser o 1º flat elegível
+    const eligiblePeers = overlappingPeers.filter(p => {
+      if (p.requesterIsGuest1 === false) return false;
+      const pGuestName = String(p.guestName || p.guests?.[0]?.name || "").trim();
+      if (isPendingGuestName(pGuestName)) return false;
+      const pSnap = resolveRequesterSnapshotNoRecurse(p, db);
+      const matchesOwnReq = kind === "phone"
+        ? pSnap.explicitPhones.some(rp => matchClientPhone(candidateVal, rp))
+        : pSnap.explicitEmails.includes(candidateVal);
+      if (matchesOwnReq && p.requesterIsGuest1 !== true && (pSnap.requesterType !== "guest" || pSnap.isB2bChannel || p.hideFinancialForGuest || getPackageGroupKeyForStayGuard(p))) {
+        return false;
+      }
+      return true;
+    }).sort((a, b) => {
+      const aReqFlag = a.requesterIsGuest1 === true ? 0 : 1;
+      const bReqFlag = b.requesterIsGuest1 === true ? 0 : 1;
+      if (aReqFlag !== bReqFlag) return aReqFlag - bReqFlag;
+      const pkgDiff = (Number(a.packageIndex) || 9999) - (Number(b.packageIndex) || 9999);
+      if (pkgDiff !== 0) return pkgDiff;
+      const ca = String(a.createdAt || "");
+      const cb = String(b.createdAt || "");
+      if (ca !== cb) return ca.localeCompare(cb);
+      return String(a.id || a.code || "").localeCompare(String(b.id || b.code || ""));
+    });
+
+    const winner = eligiblePeers[0] || null;
+    if (!winner) {
+      return { blockedReason: "DUPLICATE_CONTACT_NO_ELIGIBLE_PRIMARY", duplicate: true };
+    }
+    const isWinner = String(winner.id || winner.code) === String(reservation.id || reservation.code);
+    if (!isWinner) {
+      return { blockedReason: "DUPLICATE_CONTACT_SECONDARY_FLAT", duplicate: true };
+    }
+    // No flat vencedor, apenas o Hóspede 1 usa o contato principal caso o acompanhante repita o mesmo telefone
+    if (targetType !== "guest") {
+      const wG1Phone = String(winner.guestPhone || winner.guests?.[0]?.phone || "").trim();
+      const wG1Email = normalizeEmailAddress(winner.guestEmail || winner.guests?.[0]?.email);
+      if (kind === "phone" && wG1Phone && matchClientPhone(candidateVal, wG1Phone)) {
+        return { blockedReason: "DUPLICATE_CONTACT_SECONDARY_FLAT", duplicate: true };
+      }
+      if (kind === "email" && wG1Email && wG1Email === candidateVal) {
+        return { blockedReason: "DUPLICATE_CONTACT_SECONDARY_FLAT", duplicate: true };
+      }
+    }
+    return { blockedReason: null, duplicate: false };
+  };
+
+  if (!phoneBlockedReason && candidatePhoneRaw) {
+    const resPhoneDup = computeMultiFlatPrimaryStatus("phone", candidatePhoneRaw);
+    if (resPhoneDup.blockedReason) {
+      phoneBlockedReason = resPhoneDup.blockedReason;
+      isDuplicateMultiFlat = isDuplicateMultiFlat || resPhoneDup.duplicate;
+    }
+  }
+
+  if (!emailBlockedReason && candidateEmailRaw) {
+    const resEmailDup = computeMultiFlatPrimaryStatus("email", candidateEmailRaw);
+    if (resEmailDup.blockedReason) {
+      emailBlockedReason = resEmailDup.blockedReason;
+      isDuplicateMultiFlat = isDuplicateMultiFlat || resEmailDup.duplicate;
+    }
+  }
+
+  const phoneAllowedForStay = Boolean(candidatePhoneRaw && !phoneBlockedReason);
+  const emailAllowedForStay = Boolean(candidateEmailRaw && !emailBlockedReason);
+
+  return {
+    phoneAllowedForStay,
+    emailAllowedForStay,
+    effectivePhone: phoneAllowedForStay ? candidatePhoneRaw : "",
+    effectiveEmail: emailAllowedForStay ? candidateEmailRaw : "",
+    blockedReason: phoneBlockedReason || emailBlockedReason || null,
+    phoneBlockedReason,
+    emailBlockedReason,
+    isRequesterContactMatch: phoneMatchesRequester || emailMatchesRequester,
+    isDuplicateMultiFlat,
+    isFirstPackageFlat
+  };
+}
+
 export function getReservationRecipients(reservation = {}, db = {}) {
   const rawName = (reservation.guestName || reservation.guests?.[0]?.name || "").trim();
   const guestName = rawName || "Hóspede";
@@ -3163,15 +3615,39 @@ export function getReservationRecipients(reservation = {}, db = {}) {
 
   const requesterFirstName = requesterName.split(" ")[0] || requesterName;
   const cleanRequesterDigits = String(requesterPhone).replace(/\D/g, "");
+  const hasPackageGroup = Boolean(reservation.packageId || reservation.packageCode);
   const isDifferentFromGuest = Boolean(
     isB2bChannel ||
     reservation.hideFinancialForGuest ||
     requesterType === "agency" ||
-    (cleanRequesterDigits && cleanGuestDigits && cleanRequesterDigits !== cleanGuestDigits) ||
+    reservation.requesterIsGuest1 === false ||
+    (hasPackageGroup && reservation.requesterIsGuest1 !== true) ||
+    (cleanRequesterDigits && cleanGuestDigits && !matchClientPhone(cleanRequesterDigits, cleanGuestDigits)) ||
     (requesterEmail && guestEmail && requesterEmail !== guestEmail) ||
     (requesterType !== "guest" && requesterHasOwnContact) ||
     (requesterType !== "guest" && requesterName && requesterName.toLowerCase() !== guestName.toLowerCase())
   );
+
+  const requesterSummaryObj = {
+    name: requesterName,
+    firstName: requesterFirstName,
+    phone: requesterPhone,
+    cleanDigits: cleanRequesterDigits,
+    email: requesterEmail,
+    type: requesterType,
+    company: requesterCompany,
+    hasOwnPhone: requesterHasOwnPhone,
+    hasOwnEmail: requesterHasOwnEmail,
+    hasOwnContact: requesterHasOwnContact,
+    isDifferentFromGuest
+  };
+
+  const guestStayElig = evaluateStayContactEligibility(reservation, db, {
+    targetType: "guest",
+    candidatePhone: rawGuestPhone,
+    candidateEmail: guestEmail,
+    requesterContext: requesterSummaryObj
+  });
 
   // Acompanhantes (2º, 3º hóspede...) cadastrados no PMS com WhatsApp e/ou e-mail
   const companions = [];
@@ -3185,6 +3661,12 @@ export function getReservationRecipients(reservation = {}, db = {}) {
     const rawName = String(g.name || "").trim();
     const isPlaceholder = !rawName || /^h[óo]spede\s*\d*$/i.test(rawName);
     const name = isPlaceholder ? "Hóspede" : rawName;
+    const compStayElig = evaluateStayContactEligibility(reservation, db, {
+      targetType: `guest_${index}`,
+      candidatePhone: phone,
+      candidateEmail: email,
+      requesterContext: requesterSummaryObj
+    });
     companions.push({
       index,
       type: `guest_${index}`,
@@ -3193,6 +3675,12 @@ export function getReservationRecipients(reservation = {}, db = {}) {
       phone,
       cleanDigits: phone.replace(/\D/g, ""),
       email,
+      stayPhone: compStayElig.effectivePhone,
+      stayCleanDigits: String(compStayElig.effectivePhone || "").replace(/\D/g, ""),
+      stayEmail: compStayElig.effectiveEmail,
+      stayBlockedReason: compStayElig.blockedReason || null,
+      stayPhoneBlockedReason: compStayElig.phoneBlockedReason || null,
+      stayEmailBlockedReason: compStayElig.emailBlockedReason || null,
       hasCompletedCheckin: Boolean((g.hasCompletedCheckin || g.status === "CHECKED_IN") && !g.needsReSignature && !reservation.needsReSignature),
       needsReSignature: Boolean(g.needsReSignature ?? reservation.needsReSignature),
       hadCompletedCheckinBefore: Boolean(g.hadCompletedCheckinBefore || g.previousCheckinSignedAt || g.fnrhSignedAt || g.fnrhDocumentUuid || g.fnrhPdfUrl)
@@ -3205,22 +3693,16 @@ export function getReservationRecipients(reservation = {}, db = {}) {
       firstName: guestFirstName,
       phone: rawGuestPhone,
       cleanDigits: cleanGuestDigits,
-      email: guestEmail
+      email: guestEmail,
+      stayPhone: guestStayElig.effectivePhone,
+      stayCleanDigits: String(guestStayElig.effectivePhone || "").replace(/\D/g, ""),
+      stayEmail: guestStayElig.effectiveEmail,
+      stayBlockedReason: guestStayElig.blockedReason || null,
+      stayPhoneBlockedReason: guestStayElig.phoneBlockedReason || null,
+      stayEmailBlockedReason: guestStayElig.emailBlockedReason || null
     },
     companions,
-    requester: {
-      name: requesterName,
-      firstName: requesterFirstName,
-      phone: requesterPhone,
-      cleanDigits: cleanRequesterDigits,
-      email: requesterEmail,
-      type: requesterType,
-      company: requesterCompany,
-      hasOwnPhone: requesterHasOwnPhone,
-      hasOwnEmail: requesterHasOwnEmail,
-      hasOwnContact: requesterHasOwnContact,
-      isDifferentFromGuest
-    }
+    requester: requesterSummaryObj
   };
 }
 
@@ -3282,6 +3764,7 @@ export const GUEST_ONLY_STAY_AND_POST_EVENTS = new Set([
   "new_reservation_direct",
   "new_reservation_ota",
   "sameday_reservation",
+  "checkin_welcome",
   "checkin_day_instructions",
   "pre_checkin_reminder",
   "pre_checkin_completed",
@@ -3293,11 +3776,15 @@ export const GUEST_ONLY_STAY_AND_POST_EVENTS = new Set([
   "checkin_cleaning_delay",
   "checkin_completed",
   "breakfast_reminder",
+  "breakfast_in_production",
+  "breakfast_on_the_way",
   "checkout_reminder",
   "checkout_not_detected",
   "checkout_completed",
   "on_checkout",
   "late_checkout_approved",
+  "sunday_upsell_offer",
+  "sunday_upsell_offer_pix",
   "post_checkout_review",
   "nps_approved",
   "nps_score_4",
@@ -3308,7 +3795,9 @@ export const GUEST_ONLY_STAY_AND_POST_EVENTS = new Set([
   "lost_item_registered",
   "lost_item",
   "minibar_discrepancy",
-  "minibar_invoice"
+  "minibar_invoice",
+  "minibar_payment_reminder",
+  "minibar_payment_formal_notice"
 ]);
 
 export const GUEST_ONLY_TEMPLATE_IDS = new Set([
@@ -3317,6 +3806,7 @@ export const GUEST_ONLY_TEMPLATE_IDS = new Set([
   "tpl_new_reservation_direct",
   "tpl_new_reservation_ota",
   "tpl_sameday_reservation_instructions",
+  "tpl_checkin_welcome",
   "tpl_checkin_day_instructions",
   "tpl_pre_checkin_reminder",
   "tpl_pre_checkin_completed",
@@ -3327,11 +3817,15 @@ export const GUEST_ONLY_TEMPLATE_IDS = new Set([
   "tpl_checkin_cleaning_delay",
   "tpl_checkin_completed",
   "tpl_breakfast_reminder",
+  "tpl_breakfast_in_production",
+  "tpl_breakfast_on_the_way",
   "qm_breakfast",
   "tpl_checkout_reminder",
   "tpl_checkout_not_detected",
   "tpl_checkout_completed",
   "tpl_late_checkout_approved",
+  "tpl_sunday_upsell",
+  "tpl_package_guest_instructions",
   "tpl_nps_satisfaction_check",
   "tpl_post_checkout_review",
   "tpl_nps_score_4",
@@ -3417,77 +3911,122 @@ export function buildTemplateTargets(tpl, recipients, options = {}) {
     : Boolean(requester?.isDifferentFromGuest && (requester?.phone || requester?.email));
 
   let targetMode = options.targetMode || tpl?.recipientTarget || "guest";
-  if (options.onlyRequester) {
+  if (isGuestOnlyStayOrPost && !options.forceTargetMode) {
+    targetMode = "guest";
+  } else if (options.onlyRequester) {
     targetMode = "requester";
   } else if (options.excludeRequester) {
     targetMode = "guest";
   } else if (requester?.isDifferentFromGuest && !options.forceTargetMode) {
     if (isPureBilling) {
       targetMode = "requester";
-    } else if (isGuestOnlyStayOrPost) {
-      targetMode = "guest";
     } else if (isRequesterAndGuest && requesterHasOwnContact) {
       targetMode = "both";
     }
   }
 
+  const excludeRequesterFinal = Boolean(options.excludeRequester || (isGuestOnlyStayOrPost && !options.forceTargetMode));
   const includeEmail = options.includeEmail !== undefined ? options.includeEmail : shouldMirrorTemplateToEmail(tpl);
   const onlyGuestIdx = options.onlyGuestIndex ? Number(options.onlyGuestIndex) : 0;
   const onlyCompanions = Boolean(options.onlyCompanions);
   const raw = [];
-  const guestTarget = () => ({ type: "guest", guestIndex: 1, name: guest.name, phone: guest.phone, email: guest.email });
+
+  const isGuestPhoneBlockedAsRequester = String(guest.stayPhoneBlockedReason || "").startsWith("REQUESTER_");
+  const isGuestEmailBlockedAsRequester = String(guest.stayEmailBlockedReason || "").startsWith("REQUESTER_");
+
+  const effectiveGuestPhone = isGuestOnlyStayOrPost
+    ? (guest.stayPhone !== undefined ? guest.stayPhone : guest.phone)
+    : (isGuestPhoneBlockedAsRequester ? "" : guest.phone);
+  const effectiveGuestEmail = isGuestOnlyStayOrPost
+    ? (guest.stayEmail !== undefined ? guest.stayEmail : guest.email)
+    : (isGuestEmailBlockedAsRequester ? "" : guest.email);
+
+  const compPhone = (c) => {
+    if (!c) return "";
+    if (isGuestOnlyStayOrPost) return c.stayPhone !== undefined ? c.stayPhone : c.phone;
+    return String(c.stayPhoneBlockedReason || "").startsWith("REQUESTER_") ? "" : c.phone;
+  };
+  const compEmail = (c) => {
+    if (!c) return "";
+    if (isGuestOnlyStayOrPost) return c.stayEmail !== undefined ? c.stayEmail : c.email;
+    return String(c.stayEmailBlockedReason || "").startsWith("REQUESTER_") ? "" : c.email;
+  };
+
+  const guestTarget = () => ({
+    type: "guest",
+    guestIndex: 1,
+    name: guest.name,
+    phone: effectiveGuestPhone || "",
+    email: effectiveGuestEmail || ""
+  });
+
+  const pushRequesterTarget = () => {
+    if (excludeRequesterFinal || (targetMode !== "requester" && targetMode !== "both")) return;
+    if (targetMode === "requester" || requester.isDifferentFromGuest) {
+      if (requester.phone || requester.email) {
+        raw.push({ type: "requester", guestIndex: null, name: requester.name, phone: requester.phone, email: requester.email });
+      } else if (targetMode === "requester" && (!requester.isDifferentFromGuest || !requesterHasOwnContact) && (guest.phone || guest.email)) {
+        raw.push({ type: "guest", guestIndex: 1, name: guest.name, phone: guest.phone, email: guest.email });
+      }
+    }
+  };
 
   if (onlyGuestIdx > 1 && !(requester?.isDifferentFromGuest && isPureBilling)) {
     const allowFallbackToPrimary = options.allowFallbackToPrimary !== undefined
       ? Boolean(options.allowFallbackToPrimary)
       : (tpl?.triggerEvent === "pre_checkin_completed");
     const matchedComp = (recipients.companions || []).find(c => Number(c.index) === onlyGuestIdx);
-    if (matchedComp && (matchedComp.phone || matchedComp.email)) {
+    const mPhone = compPhone(matchedComp);
+    const mEmail = compEmail(matchedComp);
+    if (matchedComp && (mPhone || mEmail)) {
       raw.push({
         type: matchedComp.type || `guest_${onlyGuestIdx}`,
         guestIndex: matchedComp.index,
         name: matchedComp.name,
-        phone: matchedComp.phone,
-        email: matchedComp.email,
+        phone: mPhone,
+        email: mEmail,
         hasCompletedCheckin: matchedComp.hasCompletedCheckin
       });
-    } else if (allowFallbackToPrimary && (guest.phone || guest.email)) {
+    } else if (allowFallbackToPrimary && (effectiveGuestPhone || effectiveGuestEmail)) {
       raw.push({
         type: `guest_${onlyGuestIdx}`,
         guestIndex: onlyGuestIdx,
         name: matchedComp?.name || `Hóspede ${onlyGuestIdx}`,
-        phone: matchedComp?.phone || guest.phone,
-        email: matchedComp?.email || guest.email,
+        phone: mPhone || effectiveGuestPhone,
+        email: mEmail || effectiveGuestEmail,
         hasCompletedCheckin: true
       });
     }
-    if (!options.excludeRequester && (targetMode === "requester" || targetMode === "both") && requester?.isDifferentFromGuest && (requester.phone || requester.email)) {
+    if (!excludeRequesterFinal && (targetMode === "requester" || targetMode === "both") && requester?.isDifferentFromGuest && (requester.phone || requester.email)) {
       raw.push({ type: "requester", guestIndex: null, name: requester.name, phone: requester.phone, email: requester.email });
     }
   } else {
+    // Quando o solicitante é diferente do hóspede em eventos compartilhados (ex.: payment_confirmed, reservation_updated),
+    // priorizamos o alvo "requester" antes de "guest" para que qualquer colisão de contato preserve a versão financeira (sem café/check-in/PDF).
+    if (requester?.isDifferentFromGuest) {
+      pushRequesterTarget();
+    }
+
     if (!onlyCompanions && (targetMode === "guest" || targetMode === "both")) {
-      if (guest.phone || guest.email) raw.push(guestTarget());
+      if (effectiveGuestPhone || effectiveGuestEmail) raw.push(guestTarget());
     }
 
-    if (!options.excludeRequester && (targetMode === "requester" || targetMode === "both")) {
-      if (targetMode === "requester" || requester.isDifferentFromGuest) {
-        if (requester.phone || requester.email) {
-          raw.push({ type: "requester", guestIndex: null, name: requester.name, phone: requester.phone, email: requester.email });
-        } else if (targetMode === "requester" && (!requester.isDifferentFromGuest || !requesterHasOwnContact) && (guest.phone || guest.email)) {
-          raw.push(guestTarget());
-        }
-      }
+    if (!requester?.isDifferentFromGuest) {
+      pushRequesterTarget();
     }
 
-    if (!onlyCompanions && raw.length === 0 && (guest.phone || guest.email)) {
-      if (!(targetMode === "requester" && requester?.isDifferentFromGuest && requesterHasOwnContact)) {
+    if (!onlyCompanions && raw.length === 0 && !isGuestOnlyStayOrPost && (guest.phone || guest.email)) {
+      if (!(targetMode === "requester" && requester?.isDifferentFromGuest && requesterHasOwnContact) && !isGuestPhoneBlockedAsRequester && !isGuestEmailBlockedAsRequester) {
         raw.push(guestTarget());
       }
     }
 
     if (onlyGuestIdx !== 1 && (targetMode === "guest" || targetMode === "both") && shouldIncludeCompanions(tpl)) {
       for (const c of (recipients.companions || [])) {
-        raw.push({ type: c.type, guestIndex: c.index, name: c.name, phone: c.phone, email: c.email, hasCompletedCheckin: c.hasCompletedCheckin });
+        const cPhone = compPhone(c) || "";
+        const cEmail = compEmail(c) || "";
+        if (!cPhone && !cEmail) continue;
+        raw.push({ type: c.type, guestIndex: c.index, name: c.name, phone: cPhone, email: cEmail, hasCompletedCheckin: c.hasCompletedCheckin });
       }
     }
   }
@@ -3615,6 +4154,31 @@ export function sendMirrorEmail(db, saveDatabase, {
 }) {
   try {
     if (!db || !email || !message) return null;
+    if (isGuestOnlyStayOrPostTemplateOrEvent(triggerEvent || templateId)) {
+      if (recipientType === "requester") {
+        console.log(`[EMAIL GUARD] Espelho de estadia (${triggerEvent || templateId}) bloqueado para solicitante (${email}).`);
+        return null;
+      }
+      const effectiveResForEmail = reservation || (
+        Array.isArray(db?.reservations) && (reservationCode || reservationId)
+          ? db.reservations.find(rv =>
+              rv &&
+              ((reservationCode && String(rv.code || "").toUpperCase() === String(reservationCode).trim().toUpperCase()) ||
+               (reservationId && String(rv.id) === String(reservationId)))
+            ) || null
+          : null
+      );
+      if (effectiveResForEmail) {
+        const emailElig = evaluateStayContactEligibility(effectiveResForEmail, db, {
+          targetType: recipientType || "guest",
+          candidateEmail: email
+        });
+        if (!emailElig.emailAllowedForStay) {
+          console.log(`[EMAIL GUARD] Espelho de estadia (${triggerEvent || templateId}) bloqueado para ${email} (${emailElig.emailBlockedReason || emailElig.blockedReason || "CONTATO_INELEGIVEL"}).`);
+          return null;
+        }
+      }
+    }
     const rawOrigin = baseUrl || (typeof process !== "undefined" && process.env?.APP_BASE_URL) || "https://corpflats.com.br";
     const appOrigin = String(rawOrigin).replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
     const rendered = renderWhatsAppMirrorEmail({
@@ -3726,6 +4290,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
         : 1);
 
   const recipientIsRequester = targetRecipient === "requester" || (targetRecipient && typeof targetRecipient === "object" && targetRecipient.type === "requester");
+  const suppressStayOpsForRequester = Boolean(recipientIsRequester && (requester.isDifferentFromGuest || reservation.requesterIsGuest1 === false));
   const isB2b = String(reservation.channel || "").toLowerCase().includes("b2b") || Boolean(reservation.agencyId || reservation.hideFinancialForGuest);
   const hideFinancialForGuest = Boolean((isB2b || requester.isDifferentFromGuest) && !recipientIsRequester);
   const primaryRecipientName = companion ? companion.name : (recipientIsRequester ? requester.name : guest.name);
@@ -3846,7 +4411,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const hasBreakfast = Boolean(reservation.includeBreakfast || reservation.hasBreakfast || reservation.ratePlan === "with_breakfast" || isBreakfastExplicitTemplate);
 
   // Links inteligentes com autenticação por código de reserva
-  const linkCheckinDigital = getCheckinUrlSync(reservation, recipientGuestIndex, appOrigin, db);
+  const linkCheckinDigital = suppressStayOpsForRequester ? "" : getCheckinUrlSync(reservation, recipientGuestIndex, appOrigin, db);
   const linkPortalHospede = (recipientIsRequester && requester.isDifferentFromGuest)
     ? `${appOrigin}/minha-reserva/${resCode}?requester=1`
     : (recipientGuestIndex && Number(recipientGuestIndex) > 1 
@@ -3855,8 +4420,8 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const linkPagamento = (recipientIsRequester && requester.isDifferentFromGuest)
     ? `${appOrigin}/minha-reserva/${resCode}?requester=1`
     : `${appOrigin}/minha-reserva/${resCode}`;
-  const linkCafeManha = (hasBreakfast || isBreakfastExplicitTemplate) && !isCancelled && !isUnpaidPreReservaTag ? `${appOrigin}/cafe/${resCode}` : "";
-  const linkCheckout = `${appOrigin}/checkout/${resCode}`;
+  const linkCafeManha = (!suppressStayOpsForRequester && (hasBreakfast || isBreakfastExplicitTemplate) && !isCancelled && !isUnpaidPreReservaTag) ? `${appOrigin}/cafe/${resCode}` : "";
+  const linkCheckout = suppressStayOpsForRequester ? "" : `${appOrigin}/checkout/${resCode}`;
 
   const cardTotalAmount = computeCardAmountFromPix(totalAmount);
   const cardPendingAmount = computeCardAmountFromPix(pendingAmount > 0 ? pendingAmount : totalAmount);
@@ -4055,7 +4620,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   // Mostrar benefício de early check-in apenas para reservas com chegada futura
   // OU para o próprio dia do check-in quando criadas com pelo menos 30min de antecedência.
   let earlyCheckinBeneficio = "";
-  if (reservation.checkinDate) {
+  if (!suppressStayOpsForRequester && reservation.checkinDate) {
     const checkinDate = reservation.checkinDate;
     const todayStr = new Date().toISOString().substring(0, 10);
     const isSameDayCheckin = checkinDate === todayStr;
@@ -4102,7 +4667,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   }
 
   // Tag de link de autodeclaração de checkin ("Já cheguei / Estou no Flat")
-  const linkAutocheckin = `${appOrigin}/api/pms/guest-portal/${resCode}/self-checkin`;
+  const linkAutocheckin = suppressStayOpsForRequester ? "" : `${appOrigin}/api/pms/guest-portal/${resCode}/self-checkin`;
 
   // Estado dinâmico de liberação do flat para reservas do próprio dia (sameday_reservation)
   const refNowForTags = reservation?._nowOverride instanceof Date
@@ -4115,29 +4680,42 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const sameDayReleaseState = getSameDayFlatReleaseState(db, reservation, reservation?._nowOverride || null);
   const horarioLiberacaoHoje = sameDayReleaseState.releaseTimeStr || checkinTime;
   let statusLiberacaoFlatHoje = "";
-  if (sameDayReleaseState.isFlatReadyNow) {
-    statusLiberacaoFlatHoje = `✨ *Status do Flat ${flatNumber}:* *Limpo e Liberado para Entrada Imediata!* 🔑\nSua acomodação já está 100% pronta e higienizada esperando por você.`;
-  } else if (!sameDayReleaseState.isFlatClean) {
-    statusLiberacaoFlatHoje = `🧹 *Status do Flat ${flatNumber}:* *Em Preparação pela Governança*\nNossa equipe está preparando e higienizando sua acomodação neste momento. Assim que o flat estiver 100% pronto, enviaremos uma notificação aqui no WhatsApp liberando sua entrada!`;
-    if (isBeforeStandardCheckin) {
-      const normChan = normalizeReservationChannel(reservation.channel || reservation.source || "site");
-      const isOtaOrB2bChan = normChan === "booking" || normChan === "airbnb" || normChan === "b2b";
-      if (!isOtaOrB2bChan) {
-        statusLiberacaoFlatHoje += `\n\n🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*\nLembramos que o nosso check-in oficial é *a partir das ${checkinTime}*. Como você reservou diretamente conosco, oferecemos o check-in antecipado a partir das 10:00 como uma *cortesia ESTRITAMENTE MEDIANTE DISPONIBILIDADE* — não é uma regra fixa, pois depende da desocupação do hóspede anterior e da conclusão da limpeza. Assim que o flat estiver pronto pela governança, você receberá a notificação por aqui!`;
-      } else {
-        statusLiberacaoFlatHoje += `\n\n🔑 *Cortesia de Early Check-in (a partir das 12:00):*\nLembramos que o nosso check-in oficial é *a partir das ${checkinTime}*, e o check-in antecipado a partir das 12:00 é uma *cortesia mediante disponibilidade* (não é uma regra fixa, pois depende da saída do hóspede anterior e da conclusão da limpeza). Assim que o flat estiver pronto, avisaremos por aqui!`;
+  if (!suppressStayOpsForRequester) {
+    if (sameDayReleaseState.isFlatReadyNow) {
+      statusLiberacaoFlatHoje = `✨ *Status do Flat ${flatNumber}:* *Limpo e Liberado para Entrada Imediata!* 🔑\nSua acomodação já está 100% pronta e higienizada esperando por você.`;
+    } else if (!sameDayReleaseState.isFlatClean) {
+      statusLiberacaoFlatHoje = `🧹 *Status do Flat ${flatNumber}:* *Em Preparação pela Governança*\nNossa equipe está preparando e higienizando sua acomodação neste momento. Assim que o flat estiver 100% pronto, enviaremos uma notificação aqui no WhatsApp liberando sua entrada!`;
+      if (isBeforeStandardCheckin) {
+        const normChan = normalizeReservationChannel(reservation.channel || reservation.source || "site");
+        const isOtaOrB2bChan = normChan === "booking" || normChan === "airbnb" || normChan === "b2b";
+        if (!isOtaOrB2bChan) {
+          statusLiberacaoFlatHoje += `\n\n🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*\nLembramos que o nosso check-in oficial é *a partir das ${checkinTime}*. Como você reservou diretamente conosco, oferecemos o check-in antecipado a partir das 10:00 como uma *cortesia ESTRITAMENTE MEDIANTE DISPONIBILIDADE* — não é uma regra fixa, pois depende da desocupação do hóspede anterior, da conclusão da limpeza e da conferência de frigobar. Assim que o flat estiver pronto, você receberá a notificação por aqui!`;
+        } else {
+          statusLiberacaoFlatHoje += `\n\n🔑 *Cortesia de Early Check-in (a partir das 12:00):*\nLembramos que o nosso check-in oficial é *a partir das ${checkinTime}*, e o check-in antecipado a partir das 12:00 é uma *cortesia mediante disponibilidade* (não é uma regra fixa, pois depende da saída do hóspede anterior, da conclusão da limpeza e da conferência de frigobar). Assim que o flat estiver pronto, avisaremos por aqui!`;
+        }
       }
+    } else if (sameDayReleaseState.isMinibarPendingForEarlyCheckin) {
+      statusLiberacaoFlatHoje = `🧊 *Status do Flat ${flatNumber}:* *Em Conferência Final (Frigobar)*\nSua acomodação já foi higienizada e aguarda a conferência de frigobar pela equipe de abastecimento para liberação antecipada. Assim que concluída (ou no horário oficial das ${checkinTime}), enviaremos uma notificação aqui no WhatsApp liberando sua entrada!`;
+      if (isBeforeStandardCheckin) {
+        const normChan = normalizeReservationChannel(reservation.channel || reservation.source || "site");
+        const isOtaOrB2bChan = normChan === "booking" || normChan === "airbnb" || normChan === "b2b";
+        if (!isOtaOrB2bChan) {
+          statusLiberacaoFlatHoje += `\n\n🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*\nLembramos que o nosso check-in oficial é *a partir das ${checkinTime}*. O check-in antecipado a partir das 10:00 é uma *cortesia ESTRITAMENTE MEDIANTE DISPONIBILIDADE* após a conclusão da limpeza e da conferência de frigobar.`;
+        } else {
+          statusLiberacaoFlatHoje += `\n\n🔑 *Cortesia de Early Check-in (a partir das 12:00):*\nLembramos que o nosso check-in oficial é *a partir das ${checkinTime}*, e o check-in antecipado a partir das 12:00 é uma *cortesia mediante disponibilidade* após a conclusão da limpeza e da conferência de frigobar.`;
+        }
+      }
+    } else {
+      statusLiberacaoFlatHoje = `🕙 *Status do Flat ${flatNumber}:* *Liberação programada a partir das ${horarioLiberacaoHoje} (Cortesia Early Check-in)*\nO horário padrão de check-in é às ${checkinTime}, mas como sua acomodação já está higienizada e conferida, sua entrada antecipada está programada como cortesia a partir das ${horarioLiberacaoHoje}! Enviaremos a confirmação de liberação da sua acomodação aqui no WhatsApp no horário de entrada!`;
     }
-  } else {
-    statusLiberacaoFlatHoje = `🕙 *Status do Flat ${flatNumber}:* *Liberação programada a partir das ${horarioLiberacaoHoje} (Cortesia Early Check-in)*\nO horário padrão de check-in é às ${checkinTime}, mas como sua acomodação já está higienizada, sua entrada antecipada está programada como cortesia a partir das ${horarioLiberacaoHoje}! Enviaremos a confirmação de liberação da sua acomodação aqui no WhatsApp no horário de entrada!`;
   }
 
   // Tag: {{status_cafe}}, {{mensagem_cafe_incluso}} e {{aviso_cafe_exclusivo_flat}}
   const statusCafe = isCancelled ? "Cancelado" : (hasBreakfast ? "Incluso" : "Não incluso");
-  const mensagemCafeIncluso = (hasBreakfast && !isCancelled && !isUnpaidPreReservaTag)
+  const mensagemCafeIncluso = (!suppressStayOpsForRequester && hasBreakfast && !isCancelled && !isUnpaidPreReservaTag)
     ? `🥐 *Café da Manhã Incluso:*\nSua diária inclui nosso café da manhã servido exclusivamente no seu flat!`
     : "";
-  const avisoCafeExclusivoFlat = (hasBreakfast && !isCancelled)
+  const avisoCafeExclusivoFlat = (!suppressStayOpsForRequester && hasBreakfast && !isCancelled)
     ? `\n\n🥐 *Sobre o seu Café da Manhã:* Como sua reserva inclui café da manhã, informamos também que ele é servido *exclusivamente no flat* (diretamente na sua acomodação).`
     : "";
 
@@ -4772,6 +5350,7 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
   const rawTargetType = targetRecipient && typeof targetRecipient === "object" ? targetRecipient.type : targetRecipient;
   const isRequesterBtnTarget = rawTargetType === "requester";
   const hasSeparateRequester = Boolean(recipientsForBtn.requester?.isDifferentFromGuest);
+  const stripStayBtnsForRequester = Boolean(isRequesterBtnTarget && (hasSeparateRequester || reservation?.requesterIsGuest1 === false));
   const targetGuestIdx = companionTarget ? companionTarget.index : (targetRecipient?.guestIndex || targetRecipient?.index);
   const linkPortalHospede = (isRequesterBtnTarget && hasSeparateRequester)
     ? `${appOrigin}/minha-reserva/${resCode}?requester=1`
@@ -5050,9 +5629,9 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
   const isAllowedTemplate = ALLOWED_TEMPLATES_FOR_CAFE.includes(templateId) || ALLOWED_EVENTS_FOR_CAFE.includes(triggerEvent);
   const isBreakfastExplicitTemplate = templateId === "qm_breakfast" || templateId === "tpl_breakfast_reminder" || triggerEvent === "breakfast_reminder";
 
-  // Se o contexto for pré-reserva não paga, cancelamento, pós-checkout, checkout, cobrança, sem café ou template não autorizado:
-  // Remove QUALQUER botão de café existente ou acidental (pré-reserva NUNCA recebe botão de café).
-  if (isUnpaidPreReserva || (!isBreakfastExplicitTemplate && (isCancellationTrigger || isCheckoutOrReviewContext || isFinancialReminderOnly || !hasBreakfast || !isAllowedTemplate))) {
+  // Se o contexto for pré-reserva não paga, solicitante não-hóspede, cancelamento, pós-checkout, checkout, cobrança, sem café ou template não autorizado:
+  // Remove QUALQUER botão de café existente ou acidental (pré-reserva e solicitante NUNCA recebem botão de café).
+  if (isUnpaidPreReserva || stripStayBtnsForRequester || (!isBreakfastExplicitTemplate && (isCancellationTrigger || isCheckoutOrReviewContext || isFinancialReminderOnly || !hasBreakfast || !isAllowedTemplate))) {
     list = list.filter(b => b.id !== "btn_cafe" && (!b.url || (!String(b.url).includes("/cafe") && !String(b.url).includes("link_cafe_manha"))));
   } else {
     // Para reservas ativas com café OU disparo explícito de café:
@@ -5074,6 +5653,28 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
         list.push(cafeBtn);
       }
     }
+  }
+
+  if (stripStayBtnsForRequester) {
+    list = list.filter(b => {
+      if (!b) return false;
+      if (isCheckinBtn(b) || isChegueiBtn(b) || b.id === "btn_cafe") return false;
+      const bUrl = String(b.url || "").toLowerCase();
+      if (
+        bUrl.includes("/cafe") ||
+        bUrl.includes("link_cafe_manha") ||
+        bUrl.includes("/pre-checkin") ||
+        bUrl.includes("/precheckin") ||
+        bUrl.includes("link_checkin") ||
+        bUrl.includes("/self-checkin") ||
+        bUrl.includes("link_autocheckin") ||
+        bUrl.includes("/checkout") ||
+        bUrl.includes("link_checkout")
+      ) {
+        return false;
+      }
+      return true;
+    });
   }
 
   const recipientsObj = getReservationRecipients(reservation || {}, db || {});
@@ -8169,6 +8770,11 @@ export async function handleConciergeGroupMessage({
       await triggerCheckoutWhatsApp(db, saveDatabase, r, `portaria_whatsapp (${senderLabel})`).catch(e => {
         console.warn("[Concierge Checkout Trigger]:", e.message);
       });
+      if (typeof globalThis.runCheckoutAutoBillingAndNfse === "function") {
+        await globalThis.runCheckoutAutoBillingAndNfse(r, { triggerSource: `portaria_whatsapp (${senderLabel})` }).catch(e => {
+          console.warn("[Concierge Checkout Auto-NFS-e Error]:", e?.message || e);
+        });
+      }
     }
 
     // Garante o cancelamento de lembretes de estadia/check-out na fila para o flat mesmo se a reserva já estava como completed antes
@@ -9276,7 +9882,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       }
       // Garante que templates existentes possuam a propriedade channels, recipientTarget e documentName inicializadas
       for (const tpl of db.whatsappTemplates) {
-        if (!tpl.recipientTarget || GUEST_ONLY_TEMPLATE_IDS.has(tpl.id)) {
+        if (!tpl.recipientTarget || isGuestOnlyStayOrPostTemplateOrEvent(tpl)) {
           tpl.recipientTarget = "guest";
         }
         if (!tpl.channels || !Array.isArray(tpl.channels) || tpl.channels.length === 0) {
@@ -12756,6 +13362,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           await triggerCheckoutWhatsApp(db, saveDatabase, checkedOutRes, "whatsapp_sofia_assist").catch(e => {
             console.warn("[Sofia Assist Checkout Trigger Error]:", e.message);
           });
+          if (typeof globalThis.runCheckoutAutoBillingAndNfse === "function") {
+            await globalThis.runCheckoutAutoBillingAndNfse(checkedOutRes, { triggerSource: "whatsapp_sofia_assist" }).catch(e => {
+              console.warn("[Sofia Assist Checkout Auto-NFS-e Error]:", e?.message || e);
+            });
+          }
         }
         executionResult = {
           success: Boolean(outResult?.success),
@@ -13309,6 +13920,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       }
       const db = getDb();
       if (db) {
+        sanitizeRequesterStayQueues(db, saveDatabase);
         await checkAndScheduleReadyFlatsOnCheckinDay(db, saveDatabase, process.env.APP_BASE_URL || "https://corpflats.com.br");
         await sanitizeAndDispatchTodaySub5Nps(db, saveDatabase);
       }
@@ -14284,16 +14896,183 @@ export function cancelPendingStayRemindersForCheckout(dbOrGetter, saveDatabase =
 }
 
 /**
+ * Higieniza imediatamente templates e filas agendadas/pendentes (`db.whatsappQueue` e `db.emailQueue`),
+ * cancelando qualquer mensagem operacional de estadia ou pós-estadia direcionada ao solicitante
+ * ou a contato bloqueado/duplicado em flats secundários.
+ */
+export function sanitizeRequesterStayQueues(db, saveDatabase = null) {
+  let cancelledWhatsappCount = 0;
+  let cancelledEmailCount = 0;
+  let updatedTemplatesCount = 0;
+  if (!db || typeof db !== "object") {
+    return { cancelledWhatsappCount, cancelledEmailCount };
+  }
+
+  const nowIso = new Date().toISOString();
+  const findResvForItem = (item) => {
+    if (!item || !Array.isArray(db.reservations)) return null;
+    const itemCode = String(item.reservationCode || "").trim().toUpperCase();
+    const itemIdStr = item.reservationId !== undefined && item.reservationId !== null
+      ? String(item.reservationId).trim()
+      : "";
+    const itemIdUpper = itemIdStr.toUpperCase();
+    return db.reservations.find(r => {
+      if (!r) return false;
+      const rCode = String(r.code || r.reservationCode || "").trim().toUpperCase();
+      const rId = r.id !== undefined && r.id !== null ? String(r.id).trim() : "";
+      if (itemCode && rCode && rCode === itemCode) return true;
+      if (itemIdStr && rId && rId === itemIdStr) return true;
+      if (itemIdUpper && rCode && rCode === itemIdUpper) return true;
+      return false;
+    }) || null;
+  };
+
+  if (Array.isArray(db.whatsappTemplates)) {
+    for (const tpl of db.whatsappTemplates) {
+      if (!tpl) continue;
+      if (!tpl.recipientTarget || isGuestOnlyStayOrPostTemplateOrEvent(tpl)) {
+        if (tpl.recipientTarget !== "guest") {
+          tpl.recipientTarget = "guest";
+          updatedTemplatesCount++;
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(db.whatsappQueue)) {
+    for (const item of db.whatsappQueue) {
+      if (!item || (item.status !== "scheduled" && item.status !== "pending")) continue;
+      if (!isGuestOnlyStayOrPostTemplateOrEvent(item.triggerEvent || item.templateId)) continue;
+
+      if (item.recipientType === "requester") {
+        item.status = "cancelled";
+        item.cancelReason = "REQUESTER_STAY_BLOCKED";
+        item.error = "Cancelado: mensagem de estadia bloqueada para solicitante";
+        item.updatedAt = nowIso;
+        cancelledWhatsappCount++;
+        continue;
+      }
+
+      const resv = findResvForItem(item);
+      if (!resv) continue;
+
+      const stayElig = evaluateStayContactEligibility(resv, db, {
+        targetType: item.recipientType || "guest",
+        candidatePhone: item.guestPhone || item.phone || "",
+        candidateEmail: item.guestEmail || ""
+      });
+
+      const hasPhone = Boolean(item.guestPhone || item.phone);
+      const hasEmail = Boolean(item.guestEmail);
+      const phoneBlocked = hasPhone && !stayElig.phoneAllowedForStay;
+      const emailBlocked = hasEmail && !stayElig.emailAllowedForStay;
+
+      if ((phoneBlocked && (!hasEmail || emailBlocked)) || (!hasPhone && emailBlocked) || (!hasPhone && !hasEmail && !stayElig.phoneAllowedForStay && !stayElig.emailAllowedForStay)) {
+        item.status = "cancelled";
+        item.cancelReason = stayElig.blockedReason || "REQUESTER_OR_DUPLICATE_STAY_BLOCKED";
+        item.error = `Cancelado pela trava de estadia: ${item.cancelReason}`;
+        item.updatedAt = nowIso;
+        cancelledWhatsappCount++;
+      }
+    }
+  }
+
+  if (Array.isArray(db.emailQueue)) {
+    for (const eItem of db.emailQueue) {
+      if (!eItem || (eItem.status !== "scheduled" && eItem.status !== "pending")) continue;
+      const evKey = String(eItem.triggerEvent || eItem.type || eItem.templateId || "").trim();
+      if (!isGuestOnlyStayOrPostTemplateOrEvent(evKey)) continue;
+
+      if (eItem.recipientType === "requester") {
+        eItem.status = "cancelled";
+        eItem.cancelReason = "REQUESTER_STAY_EMAIL_BLOCKED";
+        eItem.error = "Cancelado: e-mail de estadia bloqueado para solicitante";
+        eItem.updatedAt = nowIso;
+        cancelledEmailCount++;
+        continue;
+      }
+
+      const resv = findResvForItem(eItem);
+      if (!resv) continue;
+
+      const candidateEmail = eItem.to || eItem.recipient || eItem.guestEmail || "";
+      const emailElig = evaluateStayContactEligibility(resv, db, {
+        targetType: eItem.recipientType || "guest",
+        candidateEmail
+      });
+      if (!emailElig.emailAllowedForStay) {
+        eItem.status = "cancelled";
+        eItem.cancelReason = emailElig.emailBlockedReason || emailElig.blockedReason || "REQUESTER_OR_DUPLICATE_STAY_EMAIL_BLOCKED";
+        eItem.error = `Cancelado pela trava de e-mail de estadia: ${eItem.cancelReason}`;
+        eItem.updatedAt = nowIso;
+        cancelledEmailCount++;
+      }
+    }
+  }
+
+  if ((cancelledWhatsappCount > 0 || cancelledEmailCount > 0 || updatedTemplatesCount > 0) && typeof saveDatabase === "function") {
+    saveDatabase();
+  }
+
+  return { cancelledWhatsappCount, cancelledEmailCount };
+}
+
+/**
  * Entrega um item da fila: WhatsApp (se houver telefone e não estiver bloqueado) e e-mail espelho (se houver e-mail).
  */
 export async function deliverQueueItem(db, saveDatabase, item, { method = "automated", historyPrefix = "cron", skipWhatsApp = false, includeDocument = false, buttons = null, bypassTestMode = false, nowOverride = null } = {}) {
   let sendButtons = buttons || item.renderedButtons || [];
   const resv = (db.reservations || []).find(r => r.id === item.reservationId || r.code === item.reservationCode) || null;
+  const isStayOnlyItem = isGuestOnlyStayOrPostTemplateOrEvent(item.triggerEvent || item.templateId);
   if (!item.guestPhone && resv) {
     const recips = getReservationRecipients(resv, db);
-    const recoveredPhone = (item.recipientType === "requester" ? recips.requester?.phone : recips.guest?.phone) || resv.guestPhone || "";
+    let recoveredPhone = "";
+    if (isStayOnlyItem) {
+      if (item.recipientType && String(item.recipientType).startsWith("guest_")) {
+        const compMatch = getCompanionForTarget(recips, item.recipientType);
+        recoveredPhone = compMatch?.stayPhone || "";
+      } else if (item.recipientType !== "requester") {
+        recoveredPhone = recips.guest?.stayPhone || "";
+      }
+    } else {
+      recoveredPhone = (item.recipientType === "requester" ? recips.requester?.phone : recips.guest?.phone) || resv.guestPhone || "";
+    }
     if (recoveredPhone) {
       item.guestPhone = recoveredPhone;
+    }
+  }
+
+  if (isStayOnlyItem) {
+    if (item.recipientType === "requester") {
+      console.log(`[Auto-WhatsApp] Bloqueando entrega de estadia '${item.triggerEvent || item.templateId}' para solicitante (${item.recipientName || item.guestName}).`);
+      item.status = "cancelled";
+      item.cancelReason = "REQUESTER_STAY_BLOCKED";
+      item.error = "Cancelado: mensagem de estadia bloqueada para solicitante";
+      item.updatedAt = new Date().toISOString();
+      if (typeof saveDatabase === "function") saveDatabase();
+      return { waResult: null, emailLog: null, success: false, cancelled: true };
+    }
+    if (resv) {
+      const stayElig = evaluateStayContactEligibility(resv, db, {
+        targetType: item.recipientType || "guest",
+        candidatePhone: item.guestPhone || "",
+        candidateEmail: item.guestEmail || ""
+      });
+      if (item.guestPhone && !stayElig.phoneAllowedForStay) {
+        item.guestPhone = "";
+      }
+      if (item.guestEmail && !stayElig.emailAllowedForStay) {
+        item.guestEmail = "";
+      }
+      if (!item.guestPhone && !item.guestEmail) {
+        console.log(`[Auto-WhatsApp] Bloqueando entrega de estadia '${item.triggerEvent || item.templateId}' para ${item.recipientName || item.guestName}: ${stayElig.blockedReason || "contato inelegível"}.`);
+        item.status = "cancelled";
+        item.cancelReason = stayElig.blockedReason || "REQUESTER_OR_DUPLICATE_STAY_BLOCKED";
+        item.error = `Cancelado: contato bloqueado para estadia (${item.cancelReason})`;
+        item.updatedAt = new Date().toISOString();
+        if (typeof saveDatabase === "function") saveDatabase();
+        return { waResult: null, emailLog: null, success: false, cancelled: true };
+      }
     }
   }
 
@@ -14321,14 +15100,19 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
   }
 
   // Trava final em tempo real para itens agendados de "Quarto Liberado" (10:00 Diretas / 12:00 OTAs):
-  // garante que o flat ainda está limpo e que o hóspede ainda não entrou fisicamente antes de entregar
+  // garante que o flat ainda está limpo, com conferência de frigobar concluída (antes das 14:00) e que o hóspede ainda não entrou fisicamente antes de entregar
   if (ROOM_READY_GROUP_EVENTS.has(item.triggerEvent)) {
-    const { todayStr } = getBrasiliaDateParts(new Date());
-    if (resv && isFlatStillBeingCleanedOnCheckinDay(db, resv, todayStr)) {
-      console.log(`[Auto-WhatsApp] Cancelando agendamento de '${item.triggerEvent}' para ${item.recipientName || item.guestName}: flat ${resv.flatNumber} está em processo de limpeza hoje (aguarda conclusão da governança).`);
+    const nowForQueueCheck = new Date();
+    const { todayStr } = getBrasiliaDateParts(nowForQueueCheck);
+    const readiness = resv ? evaluateFlatCheckinReadiness(db, resv, nowForQueueCheck) : null;
+    if (resv && readiness && !readiness.isFlatReady) {
+      const cancelReasonMsg = !readiness.isFlatClean
+        ? "Cancelado: flat está em processo de limpeza hoje; aguarda conclusão da governança"
+        : `Cancelado: conferência de frigobar pendente hoje; aguarda reposição Anserve ou horário oficial das ${readiness.standardCheckinTime}`;
+      console.log(`[Auto-WhatsApp] Cancelando agendamento de '${item.triggerEvent}' para ${item.recipientName || item.guestName}: flat ${resv.flatNumber} — ${cancelReasonMsg}.`);
       item.status = "cancelled";
-      item.error = "Cancelado: flat está em processo de limpeza hoje; aguarda conclusão da governança";
-      item.updatedAt = new Date().toISOString();
+      item.error = cancelReasonMsg;
+      item.updatedAt = nowForQueueCheck.toISOString();
       if (typeof saveDatabase === "function") saveDatabase();
       return { waResult: null, emailLog: null, success: false, cancelled: true };
     }
@@ -14660,7 +15444,12 @@ export async function dispatchTemplateToTarget(db, saveDatabase, { tpl, eventNam
     tpl?.id === "tpl_new_reservation_ota" ||
     tpl?.id === "tpl_payment_confirmed" ||
     tpl?.id === "tpl_sameday_reservation_instructions";
-  const rawHasAttachment = isCheckinCompletedEvent
+  const recipsForAttach = getReservationRecipients(reservation || {}, db || {});
+  const isSeparateRequesterAttach = Boolean(
+    target?.type === "requester" &&
+    (recipsForAttach?.requester?.isDifferentFromGuest || reservation?.requesterIsGuest1 === false)
+  );
+  const rawHasAttachment = (isCheckinCompletedEvent || (isSeparateRequesterAttach && (isConfirmationEvent || String(tpl.documentUrl || "").includes("Manual_do_Hospede"))))
     ? false
     : Boolean(tpl.hasAttachment === true || (tpl.hasAttachment === undefined && (tpl.documentUrl || isConfirmationEvent)));
   let hasAttachment = rawHasAttachment;
@@ -14837,6 +15626,10 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
   const tomorrowStr = tomorrowDate.toISOString().substring(0, 10);
 
   let hasChanges = false;
+  const reqSanitizeRes = sanitizeRequesterStayQueues(db, null);
+  if (reqSanitizeRes.cancelledWhatsappCount > 0 || reqSanitizeRes.cancelledEmailCount > 0) {
+    hasChanges = true;
+  }
 
   // 0. Higienização preventiva: 'checkin_cleaning_delay' e 'sunday_upsell_offer' NUNCA devem ficar pré-agendados na fila estática,
   // e 'breakfast_reminder' fora da janela/estadia ou com pedido já realizado é cancelado imediatamente.
@@ -15313,6 +16106,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     // como texto acolhedor, aguardando alguns segundos antes de enviar o Resumo da Reserva + Manual em PDF + Botões.
     if (
       !reservation._skipAutoIntro &&
+      !reservation._onlyRequesterTarget &&
       (eventName === "reservation_created" || eventName === "payment_confirmed" || eventName === "sameday_reservation")
     ) {
       const historyBeforeIntro = Array.isArray(db.whatsappHistory) ? db.whatsappHistory.length : 0;
@@ -15635,6 +16429,64 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       for (const d of dispatches) {
         let target = { ...d };
 
+        // TRAVA ABSOLUTA DE ESTADIA E PÓS-ESTADIA: nunca disparar eventos/templates de estadia para o solicitante
+        // nem para contato de solicitante/agência copiado no hóspede ou flat secundário duplicado.
+        if (isGuestOnlyStayOrPostTemplateOrEvent(eventName || tpl)) {
+          if (target.type === "requester") {
+            console.log(`[Z-API Stay Guard] Evento de estadia '${eventName}' bloqueado para solicitante (Reserva ${reservation.code || reservation.id}).`);
+            continue;
+          }
+          const stayElig = evaluateStayContactEligibility(reservation, db, {
+            targetType: target.type || "guest",
+            candidatePhone: target.phone || "",
+            candidateEmail: target.email || ""
+          });
+          if (target.phone && !stayElig.phoneAllowedForStay) {
+            console.log(`[Z-API Stay Guard] Bloqueando WhatsApp de estadia '${eventName}' para ${target.phone} (${stayElig.phoneBlockedReason || stayElig.blockedReason}) na Reserva ${reservation.code || reservation.id}.`);
+            target.phone = "";
+          }
+          if (target.email && !stayElig.emailAllowedForStay) {
+            console.log(`[Z-API Stay Guard] Bloqueando e-mail de estadia '${eventName}' para ${target.email} (${stayElig.emailBlockedReason || stayElig.blockedReason}) na Reserva ${reservation.code || reservation.id}.`);
+            target.email = "";
+          }
+          if (!target.phone && !target.email) continue;
+        }
+
+        // Deduplicação de comprovante único de pagamento ao solicitante por pacote
+        const pkgGroupKey = getPackageGroupKeyForStayGuard(reservation);
+        const isPaymentConfirmReq = Boolean(
+          pkgGroupKey &&
+          target.type === "requester" &&
+          (eventName === "payment_confirmed" || tpl?.id === "tpl_payment_confirmed")
+        );
+        if (isPaymentConfirmReq && !reservation._bypassPackageReceiptDedup) {
+          const pkgSiblings = (db.reservations || []).filter(s => s && !isInactiveReservationForStayGuard(s) && getPackageGroupKeyForStayGuard(s) === pkgGroupKey);
+          const pkgCodes = new Set(pkgSiblings.map(s => String(s.code || s.reservationCode || "").trim().toUpperCase()).filter(Boolean));
+          const pkgIds = new Set(pkgSiblings.map(s => (s.id !== undefined && s.id !== null ? String(s.id) : "")).filter(Boolean));
+          if (rCode) pkgCodes.add(rCode);
+          if (rId) pkgIds.add(rId);
+
+          const alreadySentPkgReceipt = Boolean(
+            reservation.packagePaymentReceiptSentAt ||
+            pkgSiblings.some(s => Boolean(s.packagePaymentReceiptSentAt)) ||
+            (db.whatsappHistory || []).some(h => {
+              if (!h || !isWhatsappHistorySuccessStatus(h.status)) return false;
+              const isPayEv = h.triggerEvent === "payment_confirmed" || h.templateId === "tpl_payment_confirmed";
+              if (!isPayEv) return false;
+              if ((h.recipientType || "") !== "requester" && h.recipientRole !== "solicitante") return false;
+              const hCode = String(h.reservationCode || "").trim().toUpperCase();
+              const hId = h.reservationId ? String(h.reservationId) : "";
+              const inSamePkg = (hCode && pkgCodes.has(hCode)) || (hId && (pkgIds.has(hId) || pkgCodes.has(hId)));
+              if (!inSamePkg) return false;
+              return !target.phone || !h.guestPhone || matchClientPhone(target.phone, h.guestPhone);
+            })
+          );
+          if (alreadySentPkgReceipt) {
+            console.log(`[Z-API Package Dedup] Comprovante 'payment_confirmed' para o solicitante já enviado no pacote ${pkgGroupKey}. Pulando duplicata na reserva ${reservation.code || reservation.id}.`);
+            continue;
+          }
+        }
+
         // REGRA HÓSPEDE FREQUENTE: Nunca enviar a 1ª mensagem de apresentação institucional (corpflats_intro)
         // para destinatários que já se hospedaram antes (2ª reserva em diante) ou já a receberam no histórico.
         if (
@@ -15775,7 +16627,17 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
           if (!target.phone && !target.email) continue;
         }
 
-        await dispatchTemplateToTarget(db, saveDatabase, { tpl, eventName, reservation, target, baseUrl });
+        const dispatchRes = await dispatchTemplateToTarget(db, saveDatabase, { tpl, eventName, reservation, target, baseUrl });
+
+        if (isPaymentConfirmReq && (dispatchRes?.waResult?.success || Boolean(dispatchRes?.emailLog))) {
+          const pkgReceiptTs = new Date().toISOString();
+          reservation.packagePaymentReceiptSentAt = pkgReceiptTs;
+          for (const s of (db.reservations || [])) {
+            if (s && !isInactiveReservationForStayGuard(s) && getPackageGroupKeyForStayGuard(s) === pkgGroupKey) {
+              s.packagePaymentReceiptSentAt = pkgReceiptTs;
+            }
+          }
+        }
 
         if (dispatches.length > 1) {
           await new Promise(r => setTimeout(r, 1200));
@@ -16653,11 +17515,33 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
         continue;
       }
 
+      // Trava combinada: limpeza concluída + (antes das 14:00, conferência de frigobar feita hoje)
+      const readiness = evaluateFlatCheckinReadiness(db, resv, now);
+      if (!readiness.isFlatReady) {
+        const pendingLabel = !readiness.isFlatClean && readiness.isMinibarPendingForEarlyCheckin
+          ? "limpeza e conferência de frigobar"
+          : !readiness.isFlatClean
+            ? "conclusão da limpeza"
+            : `conferência de frigobar (ou horário oficial das ${readiness.standardCheckinTime})`;
+        console.log(`[Room Ready Hold] Flat ${flatNumber} (${resv.code || resv.guestName}): aguardando ${pendingLabel} antes de liberar.`);
+        continue;
+      }
+
+      const rrRoomReady = getReservationRecipients(resv, db);
+      const hasEligibleStayTarget = Boolean(
+        rrRoomReady.guest?.stayPhone ||
+        rrRoomReady.guest?.stayEmail ||
+        (rrRoomReady.companions || []).some(c => c.stayPhone || c.stayEmail)
+      );
+      if (!hasEligibleStayTarget) {
+        console.log(`[Room Ready Guard] Reserva ${resv.code || resv.id} sem contato de hóspede elegível para estadia (${rrRoomReady.guest?.stayBlockedReason || "solicitante_ou_duplicado"}).`);
+        continue;
+      }
+
       // Trava de Segurança: Modo de Teste / Sandbox (só ignora se nenhum destinatário for alcançável)
       if (db?.zapiConfig?.testModeOnly !== false) {
-        const rr = getReservationRecipients(resv, db);
-        const contacts = [rr.guest, ...rr.companions];
-        const reachable = contacts.some(c => c.email || (c.phone && isPhoneAllowedInTestMode(c.phone, db?.zapiConfig)));
+        const contacts = [rrRoomReady.guest, ...(rrRoomReady.companions || [])];
+        const reachable = contacts.some(c => c.stayEmail || (c.stayPhone && isPhoneAllowedInTestMode(c.stayPhone, db?.zapiConfig)));
         if (!reachable) {
           console.log(`[Room Ready Sandbox] Ignorando disparo de quarto pronto para ${resv.guestPhone} (${resv.guestName}): Modo de Teste ativo.`);
           continue;
@@ -16743,7 +17627,8 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
       markReservationRoomReadySent(db, resv, todayStr, now.toISOString(), eventName);
       if (typeof saveDatabase === "function") saveDatabase();
 
-      await triggerImmediateWhatsApp(db, saveDatabase, eventName, resv, baseUrl);
+      const resvForImmediate = nowOverride ? { ...resv, _nowOverride: now } : resv;
+      await triggerImmediateWhatsApp(db, saveDatabase, eventName, resvForImmediate, baseUrl);
     }
   } catch (err) {
     console.error("[Room Ready WhatsApp Error]:", err.message);
@@ -17579,15 +18464,16 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
     }
 
     const recips = getReservationRecipients(reservation, db);
-    const rawGuestPhone = reservation.guestPhone || reservation.guests?.[0]?.phone || recips.guest?.phone || "";
-    const cleanGuestPhone = String(rawGuestPhone).replace(/\D/g, "");
-    const hasAnyValidPhone = Boolean(
-      (cleanGuestPhone && cleanGuestPhone.length >= 10) ||
-      (recips.requester?.cleanDigits && recips.requester.cleanDigits.length >= 10) ||
-      recips.companions.some(c => c.cleanDigits && c.cleanDigits.length >= 10)
+    const guestStayPhone = recips.guest?.stayPhone || "";
+    const guestStayEmail = recips.guest?.stayEmail || "";
+    const cleanGuestPhone = recips.guest?.stayCleanDigits || String(guestStayPhone).replace(/\D/g, "");
+    const hasTitularStayContact = Boolean((cleanGuestPhone && cleanGuestPhone.length >= 10) || guestStayEmail);
+    const firstEligibleComp = (recips.companions || []).find(c => c.stayCleanDigits && c.stayCleanDigits.length >= 10);
+    const hasAnyEligibleCompStayContact = (recips.companions || []).some(c =>
+      (c.stayCleanDigits && c.stayCleanDigits.length >= 10) || Boolean(c.stayEmail)
     );
-    if (!hasAnyValidPhone && !reservationHasAnyContact(reservation, db)) {
-      return { dispatchedStages, skippedReason: "no_valid_guest_phone" };
+    if (!hasTitularStayContact && !hasAnyEligibleCompStayContact) {
+      return { dispatchedStages, skippedReason: recips.guest?.stayBlockedReason || "no_valid_guest_stay_contact" };
     }
 
     const baseUrl = options.baseUrl || "https://corpflats.com.br";
@@ -17608,7 +18494,7 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
       return { dispatchedStages, skippedReason: "past_checkout" };
     }
 
-    const effectivePhoneForDedup = cleanGuestPhone || recips.requester?.cleanDigits || recips.companions?.[0]?.cleanDigits || "";
+    const effectivePhoneForDedup = cleanGuestPhone || firstEligibleComp?.stayCleanDigits || "";
     const normGuestPhone = normalizePhoneForDedup(effectivePhoneForDedup);
     const rCodeUpper = String(reservation.code || reservation.reservationCode || "").trim().toUpperCase();
     const rIdStr = reservation.id ? String(reservation.id) : "";
@@ -17648,6 +18534,8 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
 
     const guestOnlyRes = {
       ...reservation,
+      guestPhone: guestStayPhone,
+      guestEmail: guestStayEmail,
       _excludeRequesterTarget: true,
       _forceInitialWelcome: true,
       _allowScheduledTemplateImmediate: true,
@@ -17677,7 +18565,7 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
     const isPast0700OnCheckin = todayStr > reservation.checkinDate || (todayStr === reservation.checkinDate && brHour >= 7);
     const hasBreakfast = hasReservationBreakfast(reservation);
 
-    if (!isCompanionOnlyRun) {
+    if (!isCompanionOnlyRun && hasTitularStayContact) {
       // 1. APRESENTAÇÃO CORPFLATS (tpl_corpflats_intro) + CONFIRMAÇÃO DE RESERVA (ou SAMEDAY CONSOLIDADA se check-in for hoje após 07:01)
       if (!hasGuestReceivedEvent(["reservation_created", "payment_confirmed", "sameday_reservation"])) {
         const initialEvent = isSameDayAfter0701 ? "sameday_reservation" : "reservation_created";
@@ -17732,7 +18620,7 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
         await pauseBetweenStages();
       }
 
-      // 4. QUARTO LIBERADO / PRONTO — se hoje === checkinDate, ainda não tiver sido consolidado no sameday_reservation (roomReadySentDate !== todayStr) e o flat já estiver limpo (ou >= 14:00)
+      // 4. QUARTO LIBERADO / PRONTO — se hoje === checkinDate, ainda não tiver sido consolidado no sameday_reservation (roomReadySentDate !== todayStr) e o flat já estiver pronto (limpo + frigobar conferido antes das 14:00, ou limpo >= 14:00)
       if (
         todayStr === reservation.checkinDate &&
         reservation.roomReadySentDate !== todayStr &&
@@ -17745,9 +18633,10 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
         const checkinTime = db.settings?.checkinTime || "14:00";
         const [checkHour, checkMin] = checkinTime.split(":").map(Number);
         const isAtOrAfterCheckin = brHour > checkHour || (brHour === checkHour && brMinute >= checkMin);
-        const isFlatClean = !isFlatStillBeingCleanedOnCheckinDay(db, reservation, todayStr) || reservation.roomReadySentDate === todayStr;
+        const readiness = evaluateFlatCheckinReadiness(db, reservation, now);
+        const isFlatReadyForRelease = readiness.isFlatReady || reservation.roomReadySentDate === todayStr;
 
-        if (isFlatClean && brHour >= earliestReleaseHour) {
+        if (isFlatReadyForRelease && brHour >= earliestReleaseHour) {
           let roomReadyEvent = isOtaOrB2b ? "room_ready_ota" : "room_ready";
           if (isAtOrAfterCheckin && !isOtaOrB2b) {
             roomReadyEvent = "room_ready_regular";
@@ -17763,8 +18652,8 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
           markQueuedStageCancelledForGuest(["room_ready", "room_ready_ota", "room_ready_regular"], "Enviado via recuperação imediata (Catch-Up)");
           dispatchedStages.push(roomReadyEvent);
           await pauseBetweenStages();
-        } else if (isFlatClean && brHour < earliestReleaseHour) {
-          await triggerRoomReadyWhatsApp(db, saveDatabase, reservation.flatId, reservation.flatNumber, baseUrl);
+        } else if (isFlatReadyForRelease && brHour < earliestReleaseHour) {
+          await triggerRoomReadyWhatsApp(db, saveDatabase, reservation.flatId, reservation.flatNumber, baseUrl, now);
         }
       }
 
@@ -17794,7 +18683,7 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
             saveDatabase,
             "breakfast_reminder",
             {
-              ...reservation,
+              ...guestOnlyRes,
               _forceInitialWelcome: true,
               _allowScheduledTemplateImmediate: true,
               _skipAutoIntro: true,
@@ -17815,11 +18704,12 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
       if (!comp || !(Number(comp.index) > 1)) continue;
       if (onlyIndices && !onlyIndices.includes(Number(comp.index))) continue;
 
-      const compDigits = String(comp.cleanDigits || comp.phone || "").replace(/\D/g, "");
+      const compDigits = String(comp.stayCleanDigits || comp.stayPhone || "").replace(/\D/g, "");
+      const compStayEmail = comp.stayEmail || "";
       const normCompPhone = normalizePhoneForDedup(compDigits);
       const hasValidCompContact = Boolean(
         (compDigits && compDigits.length >= 10 && (!mainNormDigits || normCompPhone !== mainNormDigits)) ||
-        (comp.email && comp.email !== (recips.guest?.email || ""))
+        (compStayEmail && compStayEmail !== (guestStayEmail || ""))
       );
       if (!hasValidCompContact) continue;
 
@@ -17941,9 +18831,10 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
         const checkinTime = db.settings?.checkinTime || "14:00";
         const [checkHour, checkMin] = checkinTime.split(":").map(Number);
         const isAtOrAfterCheckin = brHour > checkHour || (brHour === checkHour && brMinute >= checkMin);
-        const isFlatClean = !isFlatStillBeingCleanedOnCheckinDay(db, reservation, todayStr) || reservation.roomReadySentDate === todayStr;
+        const readinessComp = evaluateFlatCheckinReadiness(db, reservation, now);
+        const isFlatReadyForComp = readinessComp.isFlatReady || reservation.roomReadySentDate === todayStr;
 
-        if (isFlatClean && brHour >= earliestReleaseHour) {
+        if (isFlatReadyForComp && brHour >= earliestReleaseHour) {
           let roomReadyEvent = isOtaOrB2b ? "room_ready_ota" : "room_ready";
           if (isAtOrAfterCheckin && !isOtaOrB2b) {
             roomReadyEvent = "room_ready_regular";
@@ -18331,11 +19222,208 @@ export function isFlatStillBeingCleanedOnCheckinDay(db, resv, todayStr) {
 }
 
 /**
+ * Verifica se a conferência real de frigobar (Anserve) foi concluída HOJE (`todayStr`) para o flat da reserva.
+ * Regra operacional oficial:
+ * - TODOS os flats com entrada hoje (inclusive flats já vagos/limpos desde a véspera) exigem conferência real hoje;
+ * - Marcações de dispensa (`nq` / `np` / `isSkipMark`) e ajustes técnicos apenas de cortesia (`isCourtesyCorrectionOnly`) NÃO contam;
+ * - Em caso de dobradinha (outro hóspede com check-out hoje no mesmo flat), a conferência só conta após a saída real do hóspede anterior
+ *   (conferência final pós-checkout / `finalMinibarInspectionAt` / inspeção pós-saída hoje) — lançamentos diários anteriores à saída NÃO contam.
+ */
+export function isFlatMinibarInspectedTodayOnCheckinDay(db, resv, todayStr) {
+  if (!db || !resv || !todayStr) return true;
+
+  const flatId = resv.flatId !== undefined && resv.flatId !== null ? Number(resv.flatId) : null;
+  const rawFlatNum = resv.flatNumber || (flatId && Array.isArray(db.flats) ? db.flats.find(f => Number(f.id) === flatId)?.number : "");
+  const flatNumStr = String(rawFlatNum || "").trim();
+  const flatNumClean = flatNumStr.replace(/\D/g, "");
+  if (!flatId && !flatNumStr) return true;
+
+  const matchesFlatNum = (val) => {
+    const s = String(val || "").trim();
+    if (!s) return false;
+    if (flatNumClean) {
+      const c = s.replace(/\D/g, "");
+      if (c && c === flatNumClean) return true;
+    }
+    return flatNumStr ? s.toLowerCase() === flatNumStr.toLowerCase() : false;
+  };
+
+  const getInspectionDateBr = (insp) => {
+    if (!insp) return "";
+    if (insp.launchDate && /^\d{4}-\d{2}-\d{2}/.test(String(insp.launchDate))) {
+      return String(insp.launchDate).slice(0, 10);
+    }
+    const ts = insp.inspectedAt || insp.createdAt;
+    if (!ts) return "";
+    return getBrasiliaDateStrFromIso(ts) || String(ts).slice(0, 10);
+  };
+
+  const isRealNonSkipInspection = (insp) => {
+    if (!insp || insp.isSkipMark || insp.isCourtesyCorrectionOnly) return false;
+    const st = String(insp.status || "").toLowerCase().trim();
+    if (st === "nq" || st === "np") return false;
+    return true;
+  };
+
+  const todayFlatInspections = (Array.isArray(db.minibarInspections) ? db.minibarInspections : []).filter(i =>
+    isRealNonSkipInspection(i) &&
+    matchesFlatNum(i.flatNumber) &&
+    getInspectionDateBr(i) === todayStr
+  );
+
+  // Verifica se há outro hóspede com saída HOJE neste mesmo flat (dobradinha / turnover)
+  const departingTodayList = (Array.isArray(db.reservations) ? db.reservations : []).filter(other => {
+    if (!other) return false;
+    if (resv.id !== undefined && resv.id !== null && other.id === resv.id) return false;
+    if (resv.code && other.code && String(other.code).trim().toUpperCase() === String(resv.code).trim().toUpperCase()) return false;
+    const st = String(other.status || "").toLowerCase().trim();
+    if (
+      st === "cancelada" ||
+      st === "cancelado" ||
+      st === "cancelled" ||
+      st === "no_show" ||
+      st === "pre_reserva" ||
+      st === "pendente" ||
+      st === "expirada"
+    ) {
+      return false;
+    }
+    const sameFlat = (flatId && Number(other.flatId) === flatId) || matchesFlatNum(other.flatNumber);
+    if (!sameFlat) return false;
+    const actualOutDateBr = other.actualCheckoutAt ? getBrasiliaDateStrFromIso(other.actualCheckoutAt) : "";
+    return other.checkoutDate === todayStr || other.earlyCheckoutDate === todayStr || actualOutDateBr === todayStr;
+  });
+
+  if (departingTodayList.length > 0) {
+    for (const dep of departingTodayList) {
+      const depSt = String(dep.status || "").toLowerCase().trim();
+      const isDepOut =
+        isReservationOrFlatCheckedOut(db, dep, dep.flatId, flatNumStr) ||
+        Boolean(
+          dep.checkoutDone ||
+          dep.checkoutCompleted ||
+          dep.actualCheckoutAt ||
+          dep.earlyCheckoutReleasedAt ||
+          dep.checkedOutAt ||
+          dep.digitalCheckoutAt ||
+          dep.isRoomMoveHistoricalSegment ||
+          depSt === "completed" ||
+          depSt === "checked_out" ||
+          depSt === "checkout"
+        );
+      if (!isDepOut) return false;
+
+      const undoneAt = String(dep._checkoutUndoneAt || "").trim();
+      const actualOutIso = String(
+        dep.actualCheckoutAt ||
+        dep.earlyCheckoutReleasedAt ||
+        dep.checkedOutAt ||
+        dep.digitalCheckoutAt ||
+        ""
+      ).trim();
+
+      const hasFinalFlagToday = Boolean(
+        dep.finalMinibarInspectionAt &&
+        (!undoneAt || String(dep.finalMinibarInspectionAt) > undoneAt) &&
+        (getBrasiliaDateStrFromIso(dep.finalMinibarInspectionAt) === todayStr ||
+          String(dep.finalMinibarInspectionAt).slice(0, 10) === todayStr)
+      );
+      if (hasFinalFlagToday) continue;
+
+      const depCodeUpper = String(dep.code || (dep.id ? `RES-${dep.id}` : "")).trim().toUpperCase();
+      const hasPostCheckoutInspToday = todayFlatInspections.some(i => {
+        if (undoneAt && i.inspectedAt && String(i.inspectedAt) <= undoneAt) return false;
+        const iCodeUpper = String(i.reservationCode || "").trim().toUpperCase();
+        const matchesDep =
+          (depCodeUpper && iCodeUpper && iCodeUpper === depCodeUpper) ||
+          (dep.id !== undefined && dep.id !== null && i.reservationId !== undefined && i.reservationId !== null && String(i.reservationId) === String(dep.id));
+
+        if (i.isFinalCheckoutInspection === true) {
+          return matchesDep || !iCodeUpper;
+        }
+        if (actualOutIso && i.inspectedAt && String(i.inspectedAt) >= actualOutIso && i.isDailyLaunch !== true) {
+          return true;
+        }
+        if (
+          i.unoccupiedLaunchMode === "internal_adjustment" ||
+          i.unoccupiedLaunchMode === "link_last_reservation" ||
+          i.noActiveGuestInFlat === true
+        ) {
+          return !actualOutIso || !i.inspectedAt || String(i.inspectedAt) >= actualOutIso;
+        }
+        if (dep.isRoomMoveHistoricalSegment && i.isDailyLaunch !== true) {
+          return matchesDep || !iCodeUpper;
+        }
+        return false;
+      });
+
+      if (!hasPostCheckoutInspToday) return false;
+    }
+    return true;
+  }
+
+  // Sem check-out hoje (flat já vago / entrada_hoje): exige qualquer conferência real feita hoje
+  return todayFlatInspections.length > 0;
+}
+
+/**
+ * Avalia o estado unificado de prontidão do flat para liberação de check-in:
+ * - Limpeza: sempre obrigatória no dia do check-in;
+ * - Conferência de frigobar (Anserve): obrigatória SOMENTE para o check-in antecipado (antes do horário oficial das 14:00).
+ *   A partir das 14:00 (ou em dias posteriores ao check-in), basta a limpeza estar concluída.
+ */
+export function evaluateFlatCheckinReadiness(db, resv, nowOverride = null) {
+  const now = nowOverride instanceof Date ? nowOverride : (nowOverride ? new Date(nowOverride) : new Date());
+  const { todayStr, hour: brHour, minute: brMinute } = getBrasiliaDateParts(now);
+  const standardCheckinTime = String(db?.settings?.checkinTime || "14:00").trim() || "14:00";
+  const [stdHRaw, stdMRaw] = standardCheckinTime.split(":").map(Number);
+  const stdH = Number.isFinite(stdHRaw) ? stdHRaw : 14;
+  const stdM = Number.isFinite(stdMRaw) ? stdMRaw : 0;
+
+  const resCheckinDate = String(resv?.checkinDate || "").slice(0, 10);
+  const isCheckinDatePast = Boolean(resCheckinDate && resCheckinDate < todayStr);
+  const isCheckinToday = Boolean(!resCheckinDate || resCheckinDate === todayStr);
+  const isAtOrAfterStandardCheckin =
+    isCheckinDatePast ||
+    (isCheckinToday && (brHour > stdH || (brHour === stdH && brMinute >= stdM)));
+
+  const isFlatClean = !isFlatStillBeingCleanedOnCheckinDay(db, resv, todayStr);
+  const isMinibarInspected = isFlatMinibarInspectedTodayOnCheckinDay(db, resv, todayStr);
+  const requiresMinibarForRelease = Boolean(isCheckinToday && !isAtOrAfterStandardCheckin);
+  const isMinibarPendingForEarlyCheckin = Boolean(requiresMinibarForRelease && !isMinibarInspected);
+  const isFlatReady = Boolean(isFlatClean && (!requiresMinibarForRelease || isMinibarInspected));
+
+  let readinessBlockReason = null;
+  if (!isFlatClean && isMinibarPendingForEarlyCheckin) {
+    readinessBlockReason = "cleaning_and_minibar_pending";
+  } else if (!isFlatClean) {
+    readinessBlockReason = "flat_not_clean";
+  } else if (isMinibarPendingForEarlyCheckin) {
+    readinessBlockReason = "minibar_not_inspected";
+  }
+
+  return {
+    todayStr,
+    standardCheckinTime,
+    isCheckinToday,
+    isCheckinDatePast,
+    isAtOrAfterStandardCheckin,
+    isFlatClean,
+    isMinibarInspected,
+    requiresMinibarForRelease,
+    isMinibarPendingForEarlyCheckin,
+    isFlatReady,
+    readinessBlockReason
+  };
+}
+
+/**
  * Avalia o estado de liberação do flat para reservas com check-in HOJE (same-day):
  * Respeita o horário de liberação da reserva/canal:
  * - Horário customizado na reserva (`reservation.checkinTime` quando diferente do padrão "14:00")
  * - Caso contrário, `10:00` para reservas diretas (Site/WhatsApp) e `12:00` para OTAs/B2B (Booking, Airbnb, B2B)
- * Retorna `{ todayStr, isSameDay, isFlatClean, releaseHour, releaseMin, releaseTimeStr, isAtOrAfterRelease, isFlatReadyNow }`.
+ * - Antes das 14:00, exige TANTO limpeza concluída QUANTO conferência de frigobar feita hoje.
+ * Retorna `{ todayStr, isSameDay, isFlatClean, isMinibarInspected, isMinibarPendingForEarlyCheckin, isFlatReady, releaseHour, releaseMin, releaseTimeStr, isAtOrAfterRelease, isFlatReadyNow }`.
  */
 export function getSameDayFlatReleaseState(db, reservation, nowOverride = null) {
   const now = nowOverride instanceof Date ? nowOverride : (nowOverride ? new Date(nowOverride) : new Date());
@@ -18345,6 +19433,9 @@ export function getSameDayFlatReleaseState(db, reservation, nowOverride = null) 
       todayStr,
       isSameDay: false,
       isFlatClean: false,
+      isMinibarInspected: false,
+      isMinibarPendingForEarlyCheckin: false,
+      isFlatReady: false,
       releaseHour: 14,
       releaseMin: 0,
       releaseTimeStr: "14:00",
@@ -18371,14 +19462,17 @@ export function getSameDayFlatReleaseState(db, reservation, nowOverride = null) 
 
   const releaseTimeStr = `${String(releaseHour).padStart(2, "0")}:${String(releaseMin).padStart(2, "0")}`;
   const isSameDay = reservation.checkinDate === todayStr;
-  const isFlatClean = !isFlatStillBeingCleanedOnCheckinDay(db, reservation, todayStr);
+  const readiness = evaluateFlatCheckinReadiness(db, reservation, now);
   const isAtOrAfterRelease = brHour > releaseHour || (brHour === releaseHour && brMinute >= releaseMin);
-  const isFlatReadyNow = Boolean(isSameDay && isFlatClean && isAtOrAfterRelease);
+  const isFlatReadyNow = Boolean(isSameDay && readiness.isFlatReady && isAtOrAfterRelease);
 
   return {
     todayStr,
     isSameDay,
-    isFlatClean,
+    isFlatClean: readiness.isFlatClean,
+    isMinibarInspected: readiness.isMinibarInspected,
+    isMinibarPendingForEarlyCheckin: readiness.isMinibarPendingForEarlyCheckin,
+    isFlatReady: readiness.isFlatReady,
     releaseHour,
     releaseMin,
     releaseTimeStr,
@@ -18392,6 +19486,7 @@ export function getSameDayFlatReleaseState(db, reservation, nowOverride = null) 
  * já está liberada neste instante para a reserva.
  * - Bloqueia em datas anteriores ao check-in (`future_checkin_date`);
  * - No dia do check-in, bloqueia enquanto o flat ainda estiver ocupado pelo hóspede anterior ou em limpeza (`flat_not_clean`),
+ *   enquanto faltar conferência de frigobar antes das 14:00 (`minibar_not_inspected`),
  *   e antes do horário mínimo permitido pelo canal/autorização (`before_release_time`);
  * - Em dias posteriores ao check-in dentro da estadia ativa (`todayStr > checkinDate`), libera normalmente (`ok`).
  */
@@ -18407,6 +19502,8 @@ export function evaluateSelfCheckinEligibility(db, reservation, nowOverride = nu
       todayStr,
       isCheckinToday: false,
       isFlatClean: false,
+      isMinibarInspected: false,
+      isMinibarPendingForEarlyCheckin: false,
       standardCheckinTime,
       effectiveReleaseTime: standardCheckinTime,
       isOtaOrB2b: false
@@ -18433,6 +19530,8 @@ export function evaluateSelfCheckinEligibility(db, reservation, nowOverride = nu
       todayStr,
       isCheckinToday: reservation.checkinDate === todayStr,
       isFlatClean: false,
+      isMinibarInspected: false,
+      isMinibarPendingForEarlyCheckin: false,
       standardCheckinTime,
       effectiveReleaseTime: standardCheckinTime,
       isOtaOrB2b: false
@@ -18477,6 +19576,8 @@ export function evaluateSelfCheckinEligibility(db, reservation, nowOverride = nu
       todayStr,
       isCheckinToday: false,
       isFlatClean: false,
+      isMinibarInspected: false,
+      isMinibarPendingForEarlyCheckin: false,
       standardCheckinTime: stdHHMM,
       effectiveReleaseTime,
       isOtaOrB2b
@@ -18490,6 +19591,8 @@ export function evaluateSelfCheckinEligibility(db, reservation, nowOverride = nu
       todayStr,
       isCheckinToday: false,
       isFlatClean: true,
+      isMinibarInspected: true,
+      isMinibarPendingForEarlyCheckin: false,
       standardCheckinTime: stdHHMM,
       effectiveReleaseTime,
       isOtaOrB2b
@@ -18497,15 +19600,32 @@ export function evaluateSelfCheckinEligibility(db, reservation, nowOverride = nu
   }
 
   const isCheckinToday = Boolean(reservation.checkinDate === todayStr);
-  const isFlatClean = !isFlatStillBeingCleanedOnCheckinDay(db, reservation, todayStr);
+  const readiness = evaluateFlatCheckinReadiness(db, reservation, now);
 
-  if (!isFlatClean) {
+  if (!readiness.isFlatClean) {
     return {
       allowed: false,
       reason: "flat_not_clean",
       todayStr,
       isCheckinToday,
       isFlatClean: false,
+      isMinibarInspected: readiness.isMinibarInspected,
+      isMinibarPendingForEarlyCheckin: readiness.isMinibarPendingForEarlyCheckin,
+      standardCheckinTime: stdHHMM,
+      effectiveReleaseTime,
+      isOtaOrB2b
+    };
+  }
+
+  if (readiness.isMinibarPendingForEarlyCheckin) {
+    return {
+      allowed: false,
+      reason: "minibar_not_inspected",
+      todayStr,
+      isCheckinToday,
+      isFlatClean: true,
+      isMinibarInspected: false,
+      isMinibarPendingForEarlyCheckin: true,
       standardCheckinTime: stdHHMM,
       effectiveReleaseTime,
       isOtaOrB2b
@@ -18519,6 +19639,8 @@ export function evaluateSelfCheckinEligibility(db, reservation, nowOverride = nu
       todayStr,
       isCheckinToday: true,
       isFlatClean: true,
+      isMinibarInspected: readiness.isMinibarInspected,
+      isMinibarPendingForEarlyCheckin: false,
       standardCheckinTime: stdHHMM,
       effectiveReleaseTime,
       isOtaOrB2b
@@ -18531,6 +19653,8 @@ export function evaluateSelfCheckinEligibility(db, reservation, nowOverride = nu
     todayStr,
     isCheckinToday,
     isFlatClean: true,
+    isMinibarInspected: readiness.isMinibarInspected,
+    isMinibarPendingForEarlyCheckin: false,
     standardCheckinTime: stdHHMM,
     effectiveReleaseTime,
     isOtaOrB2b
@@ -18538,7 +19662,8 @@ export function evaluateSelfCheckinEligibility(db, reservation, nowOverride = nu
 }
 
 /**
- * Verifica todas as reservas com check-in hoje cujo flat JÁ está limpo/pronto (ex.: pronto desde a véspera sem check-out hoje)
+ * Verifica todas as reservas com check-in hoje cujo flat JÁ está pronto para liberação
+ * (antes das 14:00: limpeza concluída + conferência de frigobar feita hoje; a partir das 14:00: limpeza concluída)
  * e garante o agendamento na fila conforme o canal (10:00 para Diretas / 12:00 para OTAs/B2B) ou o disparo imediato caso
  * o horário de liberação já tenha sido atingido.
  */
@@ -18551,7 +19676,7 @@ export async function checkAndScheduleReadyFlatsOnCheckinDay(dbOrGetter, saveDat
     const { todayStr, hour: brHour } = getBrasiliaDateParts(now);
     if (brHour >= 22) return;
 
-    const arrivingInCleanFlats = (db.reservations || []).filter(r =>
+    const arrivingInReadyFlats = (db.reservations || []).filter(r =>
       r &&
       r.status !== "cancelada" &&
       r.status !== "cancelled" &&
@@ -18563,13 +19688,13 @@ export async function checkAndScheduleReadyFlatsOnCheckinDay(dbOrGetter, saveDat
       r.checkinDate === todayStr &&
       reservationHasAnyContact(r, db) &&
       !hasReservationEnteredOrCompletedCheckin(db, r, todayStr) &&
-      !isFlatStillBeingCleanedOnCheckinDay(db, r, todayStr)
+      evaluateFlatCheckinReadiness(db, r, now).isFlatReady
     );
 
-    if (arrivingInCleanFlats.length === 0) return;
+    if (arrivingInReadyFlats.length === 0) return;
 
     const processedFlats = new Set();
-    for (const resv of arrivingInCleanFlats) {
+    for (const resv of arrivingInReadyFlats) {
       const flatKey = `${resv.flatId || ""}:${resv.flatNumber || ""}`;
       if (processedFlats.has(flatKey)) continue;
       processedFlats.add(flatKey);
@@ -18620,6 +19745,14 @@ export async function checkAndTriggerCleaningDelayAlerts(dbOrGetter, saveDatabas
 
     for (const resv of arrivingToday) {
       const flatNum = String(resv.flatNumber || "");
+
+      const delayElig = evaluateStayContactEligibility(resv, db, {
+        targetType: "guest",
+        candidatePhone: resv.guestPhone
+      });
+      if (!delayElig.phoneAllowedForStay) {
+        continue;
+      }
 
       // Só envia se o flat alocado AINDA estiver sendo limpo / pendente de limpeza hoje
       if (!isFlatStillBeingCleanedOnCheckinDay(db, resv, todayStr)) {
@@ -20467,6 +21600,18 @@ export function evaluateSundayUpsellEligibility(db, targetSundayDate) {
     const guestPhone = r.guestPhone || r.phone;
     if (!guestPhone) {
       ineligibleReservations.push({ reservation: r, reason: "SEM_TELEFONE" });
+      continue;
+    }
+
+    const upsellElig = evaluateStayContactEligibility(r, db, {
+      targetType: "guest",
+      candidatePhone: guestPhone
+    });
+    if (!upsellElig.phoneAllowedForStay) {
+      ineligibleReservations.push({
+        reservation: r,
+        reason: upsellElig.phoneBlockedReason || "TELEFONE_SOLICITANTE_OU_DUPLICADO"
+      });
       continue;
     }
 

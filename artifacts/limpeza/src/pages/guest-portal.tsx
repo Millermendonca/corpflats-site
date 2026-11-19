@@ -1830,15 +1830,19 @@ export default function GuestPortal() {
     )
   }
 
-  const { isFlatClean, flatCleaningStatus, canDoEarlyCheckin, hasEarlyCheckinBenefit, canClaimFreeEarlyCheckin, breakfastOrder, preCheckinStatus, termsAndRules, adminWhatsApp } = data
+  const { isFlatClean, isMinibarInspected, isMinibarPendingForEarlyCheckin, isFlatReady, flatCleaningStatus, canDoEarlyCheckin, hasEarlyCheckinBenefit, canClaimFreeEarlyCheckin, breakfastOrder, preCheckinStatus, termsAndRules, adminWhatsApp } = data
   const isActivelyCleaning = flatCleaningStatus === "cleaning_now"
 
   const currentHour = data?.currentHour ?? data?.brasilia?.hour ?? (typeof window !== "undefined" ? new Date().getHours() : 14)
   const isPastOrExact14h = Boolean(data?.isPastOrExact14h ?? (currentHour >= 14))
+  const isMinibarPendingEarly = Boolean(isMinibarPendingForEarlyCheckin && !isPastOrExact14h)
+  const isFlatReadyEffective = Boolean(
+    isFlatReady !== undefined ? isFlatReady : (isFlatClean && (isPastOrExact14h || !isMinibarPendingEarly))
+  )
   const canConfirmSelfCheckin = Boolean(
     data?.canConfirmSelfCheckin !== undefined
       ? data.canConfirmSelfCheckin
-      : (data?.isCheckinToday && isFlatClean && (canDoEarlyCheckin || isPastOrExact14h))
+      : (data?.isCheckinToday && isFlatReadyEffective && (canDoEarlyCheckin || isPastOrExact14h))
   )
 
   const checkinFormatted = reservation.checkinDate ? format(parseISO(reservation.checkinDate), "dd 'de' MMMM 'de' yyyy", { locale: ptBR }) : ""
@@ -4359,13 +4363,17 @@ export default function GuestPortal() {
               isCancelled
                 ? "bg-rose-50 text-rose-700 border-rose-200 font-bold text-xs"
                 : data.isCheckinToday 
-                  ? (isFlatClean ? "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold text-xs" : (isActivelyCleaning || !isPastOrExact14h ? "bg-amber-50 text-amber-700 border-amber-200 font-bold text-xs" : "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold text-xs"))
+                  ? (isFlatReadyEffective ? "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold text-xs" : (isActivelyCleaning || !isPastOrExact14h ? "bg-amber-50 text-amber-700 border-amber-200 font-bold text-xs" : "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold text-xs"))
                   : "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold text-xs"
             }>
               {isCancelled
                 ? "✕ Reserva Cancelada"
                 : data.isCheckinToday 
-                  ? (isFlatClean ? "✨ Flat Pronto e Limpo" : (isActivelyCleaning ? "🧹 Em Higienização" : (isPastOrExact14h ? "🔑 Check-in Liberado" : "🧹 Em Higienização")))
+                  ? (isFlatReadyEffective
+                      ? "✨ Flat Pronto e Limpo"
+                      : (isFlatClean && isMinibarPendingEarly
+                          ? "🧊 Conferência de Frigobar"
+                          : (isActivelyCleaning ? "🧹 Em Higienização" : (isPastOrExact14h ? "🔑 Check-in Liberado" : "🧹 Em Higienização"))))
                   : "✨ Flat Confirmado & Preparado"
               }
             </Badge>
@@ -4387,7 +4395,7 @@ export default function GuestPortal() {
                 </div>
               </div>
 
-              {Boolean(accessCode && (isPaid || isB2b || isFaturadoBoleto) && ((data.isCheckinToday && (isPastOrExact14h || isFlatClean)) || reservation.status === "in_house" || reservation.status === "checkin")) && (
+              {Boolean(accessCode && (isPaid || isB2b || isFaturadoBoleto) && ((data.isCheckinToday && (isPastOrExact14h || isFlatReadyEffective)) || reservation.status === "in_house" || reservation.status === "checkin")) && (
                 <div className="p-3 bg-white rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
                   <div>
                     <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
@@ -4414,20 +4422,35 @@ export default function GuestPortal() {
             {/* Status de Check-in e Governança no Dia da Chegada */}
             {data.isCheckinToday && !isCancelled && (
               <>
-                {!isFlatClean && (isActivelyCleaning || !isPastOrExact14h) ? (
+                {!isFlatReadyEffective && (isActivelyCleaning || !isPastOrExact14h) ? (
                   <div className="space-y-3">
-                    <div className="p-3.5 bg-amber-50/90 border border-amber-200/80 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
-                      <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                      <div className="space-y-1">
-                        <span className="font-bold block text-amber-950">Apartamento em Preparação & Higienização 🧹</span>
-                        <p className="leading-relaxed">
-                          Nossa equipe de governança está higienizando e preparando o flat para a sua estada. O horário oficial de check-in é a partir das <strong>14:00</strong>.
-                        </p>
-                        <p className="text-[11px] text-amber-800/90 pt-1 border-t border-amber-200/70 font-medium leading-relaxed">
-                          ℹ️ O check-in antecipado (para reservas com benefício) é <strong>estritamente mediante disponibilidade</strong> após a conclusão da limpeza e inspeção. Assim que finalizado, a entrada é liberada na portaria 24h.
-                        </p>
+                    {isFlatClean && isMinibarPendingEarly ? (
+                      <div className="p-3.5 bg-amber-50/90 border border-amber-200/80 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
+                        <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div className="space-y-1">
+                          <span className="font-bold block text-amber-950">Apartamento Higienizado • Aguardando Conferência de Frigobar 🧊</span>
+                          <p className="leading-relaxed">
+                            A limpeza do seu flat já foi concluída! Para liberar o <strong>check-in antecipado</strong>, nossa equipe de abastecimento está realizando a conferência de frigobar. O horário oficial de check-in é a partir das <strong>14:00</strong>.
+                          </p>
+                          <p className="text-[11px] text-amber-800/90 pt-1 border-t border-amber-200/70 font-medium leading-relaxed">
+                            ℹ️ Assim que a conferência de frigobar for concluída (ou pontualmente às 14:00), você receberá a confirmação no WhatsApp e sua entrada estará liberada na portaria 24h.
+                          </p>
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="p-3.5 bg-amber-50/90 border border-amber-200/80 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
+                        <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div className="space-y-1">
+                          <span className="font-bold block text-amber-950">Apartamento em Preparação & Higienização 🧹</span>
+                          <p className="leading-relaxed">
+                            Nossa equipe de governança está higienizando e preparando o flat para a sua estada. O horário oficial de check-in é a partir das <strong>14:00</strong>.
+                          </p>
+                          <p className="text-[11px] text-amber-800/90 pt-1 border-t border-amber-200/70 font-medium leading-relaxed">
+                            ℹ️ O check-in antecipado (para reservas com benefício) é <strong>estritamente mediante disponibilidade</strong> após a conclusão da limpeza e conferência de frigobar. Assim que finalizado, a entrada é liberada na portaria 24h.
+                          </p>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Bloco de Previsão de Chegada: Prioriza a Limpeza */}
                     {reservation.estimatedArrivalTime && !editingArrival ? (

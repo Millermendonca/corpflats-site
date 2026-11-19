@@ -59,7 +59,7 @@ import { CorpFlatsIcon, CorpFlatsSplashScreen, CorpFlatsWordmark } from "@/compo
 import { useToast } from "@/hooks/use-toast"
 import { formatPassport, formatPhoneForWhatsAppCheck, formatSmartPhone } from "@/lib/phone-mask"
 import { getPrimaryEmail, parseEmailList, validateEmailList } from "@/lib/email-utils"
-import { isValidBrazilianCpf } from "@/pages/agency-guest-credential"
+import { isValidBrazilianCpf, phonesMatchBr } from "@/pages/agency-guest-credential"
 
 const HoldCountdownBadge = memo(function HoldCountdownBadge({
   expiresAt,
@@ -944,6 +944,98 @@ export default function RequesterPortal() {
         toast({ title: "CPF do Hóspede 3 inválido", variant: "destructive" })
         return
       }
+    }
+
+    const reqPhoneCands = [
+      requester?.whatsapp,
+      requester?.phone,
+      summary?.requesterPhone,
+      item?.requesterInfo?.whatsapp,
+      item?.requesterInfo?.phone,
+      item?.requesterPhone,
+      item?.agencyAgentPhone,
+    ].filter(Boolean) as string[]
+    const activeIdx = activeItems.findIndex(
+      (it) => String(it?.id || it?.code) === String(item?.id || item?.code)
+    )
+    const allowRequesterAsG1Draft = Boolean(
+      guestDraft.requesterIsGuest1 &&
+      activeIdx <= 0 &&
+      (!item?.packageIndex || Number(item.packageIndex) === 1)
+    )
+
+    if (!allowRequesterAsG1Draft && reqPhoneCands.some((rp) => phonesMatchBr(p1.payload, rp))) {
+      toast({
+        title: "WhatsApp do solicitante não permitido",
+        description:
+          "Você informou o número do solicitante para o Hóspede 1 deste flat. Informe o WhatsApp real do hóspede (ou marque que você ficará no 1º flat).",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (p2Payload) {
+      if (phonesMatchBr(p2Payload, p1.payload)) {
+        toast({
+          title: "WhatsApp repetido no Hóspede 2",
+          description: "O WhatsApp do Hóspede 2 não pode ser igual ao do Hóspede 1.",
+          variant: "destructive",
+        })
+        return
+      }
+      if (reqPhoneCands.some((rp) => phonesMatchBr(p2Payload, rp))) {
+        toast({
+          title: "WhatsApp do solicitante no Hóspede 2",
+          description: "O WhatsApp do Hóspede 2 não pode ser o número do solicitante.",
+          variant: "destructive",
+        })
+        return
+      }
+    }
+
+    if (p3Payload) {
+      if (phonesMatchBr(p3Payload, p1.payload) || (p2Payload && phonesMatchBr(p3Payload, p2Payload))) {
+        toast({
+          title: "WhatsApp repetido no Hóspede 3",
+          description: "O WhatsApp do Hóspede 3 deve ser diferente do Hóspede 1 e 2.",
+          variant: "destructive",
+        })
+        return
+      }
+      if (reqPhoneCands.some((rp) => phonesMatchBr(p3Payload, rp))) {
+        toast({
+          title: "WhatsApp do solicitante no Hóspede 3",
+          description: "O WhatsApp do Hóspede 3 não pode ser o número do solicitante.",
+          variant: "destructive",
+        })
+        return
+      }
+    }
+
+    const conflictingOtherItem = activeItems.find((other) => {
+      if (!other || String(other.id || other.code) === String(item?.id || item?.code)) return false
+      if (other.guestPending || other.informGuestsLater) return false
+      const otherGuestName = String(other.guestName || other.guests?.[0]?.name || "").trim()
+      if (!otherGuestName || /a definir|informar depois|pendente|^h[óo]spede\s*\d*$/i.test(otherGuestName)) {
+        return false
+      }
+      const otherPhones = [
+        other.guestPhone,
+        ...(Array.isArray(other.guests) ? other.guests.map((g: any) => g?.phone || g?.whatsapp) : []),
+      ].filter((p) => String(p || "").replace(/\D/g, "").length >= 8)
+      return (
+        otherPhones.some((op) => phonesMatchBr(p1.payload, op)) ||
+        (p2Payload && otherPhones.some((op) => phonesMatchBr(p2Payload, op))) ||
+        (p3Payload && otherPhones.some((op) => phonesMatchBr(p3Payload, op)))
+      )
+    })
+    if (conflictingOtherItem) {
+      toast({
+        title: "WhatsApp já utilizado em outro flat",
+        description: `Este número já está cadastrado no Flat ${conflictingOtherItem.flatNumber || conflictingOtherItem.code}. Informe o WhatsApp individual de cada hóspede.`,
+        variant: "destructive",
+      })
+      return
     }
 
     setSavingGuests(true)

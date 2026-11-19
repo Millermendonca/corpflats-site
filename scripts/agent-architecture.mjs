@@ -35,6 +35,7 @@ import {
   scheduleUpcomingReservationTriggers,
   hasPdfAlreadyBeenSentOrInFlight,
   evaluateSelfCheckinEligibility,
+  evaluateFlatCheckinReadiness,
 } from './zapi-service.mjs';
 import { validateGuestEmailAddress, updateGuestEmailAndResendRecentPending } from './mail-service.mjs';
 import { WbpPricingManager, calculateSebraeRate, STANDARD_SEBRAE_SEASONALITY_FACTORS } from './wbp/pricing.mjs';
@@ -3693,7 +3694,7 @@ export const atualizarDadosHospedeTool = {
 export const solicitarEarlyCheckinTool = {
   name: 'solicitar_early_checkin',
   description:
-    'Verifica a disponibilidade de flat desocupado e limpo na governança e aplica as regras oficiais de entrada antecipada (early check-in): ' +
+    'Verifica a disponibilidade de flat desocupado, limpo na governança e com conferência de frigobar concluída hoje (exigida antes das 14:00) e aplica as regras oficiais de entrada antecipada (early check-in): ' +
     'hóspedes WhatsApp/Direto têm cortesia a partir das 10:00; demais canais têm cortesia a partir das 12:00; ' +
     'antes desses horários até o limite de 07:00 cobra meia diária (50%); antes das 07:00 cobra diária inteira (100%).',
   allowedStates: ['PRE_CHECKIN', 'IN_STAY_CONCIERGE'],
@@ -3765,16 +3766,50 @@ export const solicitarEarlyCheckinTool = {
 
       if (conflitoSaidaMesmoDia || flatSujoNaGovernanca) {
         const motivoBloqueio = conflitoSaidaMesmoDia
-          ? 'há um hóspede em estadia com saída prevista até as 12h00 e a equipe de governança fará a higienização completa logo em seguida'
-          : 'o apartamento ainda está em programação de limpeza na governança e o early check-in está sempre sujeito a haver flat desocupado e limpo';
+          ? 'há um hóspede em estadia com saída prevista até as 12h00 e a equipe de governança fará a higienização completa e a conferência de frigobar logo em seguida'
+          : 'o apartamento ainda está em programação de limpeza na governança e o early check-in está sempre sujeito a haver flat desocupado, limpo e com frigobar conferido';
         const msg =
           `Informe ao hóspede com muita empatia que no momento não conseguimos liberar a entrada antecipada às ${horarioFormatado} no ${reserva.nome_imovel} ` +
           `porque ${motivoBloqueio}. ` +
-          `Diga que já deixamos prioridade máxima na limpeza para liberar o quanto antes e que ele pode guardar as malas na recepção se chegar mais cedo!`;
+          `Diga que já deixamos prioridade máxima na preparação para liberar o quanto antes e que ele pode guardar as malas na recepção se chegar mais cedo!`;
         return {
           status: 'BLOQUEADO_PELA_REGRA',
           codigo_regra_bloqueio: 'FLAT_OCUPADO_AGUARDANDO_CHECKOUT_E_LIMPEZA',
           dados: { horario_padrao_checkin: '14:00', flat: reserva.nome_imovel },
+          instrucao_para_ia: msg,
+          instrucao_resposta_ia: msg,
+        };
+      }
+
+      // 1B. Trava determinística da Conferência de Frigobar (obrigatória para Early Check-in antes das 14:00 no dia do check-in)
+      const standardCheckinHHMM = String(db?.settings?.checkinTime || '14:00').trim() || '14:00';
+      const nowForEarlyCheck = context.runtime?.now instanceof Date ? context.runtime.now : new Date();
+      const readinessEarly = db
+        ? evaluateFlatCheckinReadiness(
+            db,
+            targetRes || { flatNumber, flatId: reserva.imovel_id, checkinDate: dataCheckin },
+            nowForEarlyCheck
+          )
+        : null;
+      if (
+        readinessEarly &&
+        readinessEarly.isCheckinToday &&
+        horarioFormatado < standardCheckinHHMM &&
+        readinessEarly.isMinibarPendingForEarlyCheckin
+      ) {
+        const msg =
+          `Informe ao hóspede com empatia e clareza que o ${reserva.nome_imovel} já foi higienizado pela governança, ` +
+          `porém ainda aguarda a *conferência de frigobar* pela equipe de abastecimento — tanto a limpeza quanto a conferência de frigobar precisam estar concluídas para liberarmos o early check-in antes das ${standardCheckinHHMM}. ` +
+          `Tranquilize-o dizendo que assim que a conferência for finalizada (ou pontualmente no horário oficial das ${standardCheckinHHMM}), enviaremos a confirmação imediata aqui no WhatsApp!`;
+        return {
+          status: 'BLOQUEADO_PELA_REGRA',
+          codigo_regra_bloqueio: 'AGUARDANDO_CONFERENCIA_FRIGOBAR',
+          dados: {
+            horario_padrao_checkin: standardCheckinHHMM,
+            flat: reserva.nome_imovel,
+            limpeza_concluida: true,
+            frigobar_conferido_hoje: false,
+          },
           instrucao_para_ia: msg,
           instrucao_resposta_ia: msg,
         };
@@ -5907,10 +5942,7 @@ export const gerenciarNotaFiscalNfseTool = {
 
       const updatedState = {
         ...existingState,
-        status:
-          args.acao === 'CONFIRMAR_DADOS_NOTA'
-            ? 'scheduled_for_checkout'
-            : 'awaiting_confirmation',
+        status: 'scheduled_for_checkout',
         reservationId: targetRes?.id || reserva.id,
         reservationCode: reserva.id,
         ...(isPackageConsolidated
@@ -5947,17 +5979,17 @@ export const gerenciarNotaFiscalNfseTool = {
         for (const rItem of pkgItemsAll) {
           rItem.confirmedFiscalData = { ...updatedState };
           rItem.consolidatePackageInvoice = true;
-          if (args.acao === 'CONFIRMAR_DADOS_NOTA') {
-            rItem.autoEmitInvoice = true;
-          }
+          rItem.autoEmitInvoice = true;
         }
         if (typeof context.runtime?.saveDatabase === 'function') {
           await context.runtime.saveDatabase();
         }
       } else if (targetRes) {
         targetRes.confirmedFiscalData = { ...updatedState };
-        if (args.acao === 'CONFIRMAR_DADOS_NOTA') {
-          targetRes.autoEmitInvoice = true;
+        targetRes.autoEmitInvoice = true;
+        if (Array.isArray(db?.guests) && targetRes.guestId) {
+          const gRec = db.guests.find((g) => g && Number(g.id) === Number(targetRes.guestId));
+          if (gRec) gRec.autoEmitInvoice = true;
         }
         if (typeof context.runtime?.saveDatabase === 'function') {
           await context.runtime.saveDatabase();
@@ -5968,10 +6000,13 @@ export const gerenciarNotaFiscalNfseTool = {
         ? `consolidada do pacote *${pkgCode}* (${pkgSummary.activeFlatsCount} flat(s))`
         : `da reserva *${reserva.id}*`;
 
+      const hasValidDocInState = /^\d{11}$|^\d{14}$/.test(String(updatedState.tomadorCpfCnpj || '').replace(/\D+/g, ''));
+
       if (args.acao === 'CONFIRMAR_DADOS_NOTA') {
         const msg =
-          `Confirme com entusiasmo que os dados da Nota Fiscal (NFS-e) ${refFiscalLabel} foram validados e agendados com sucesso ` +
-          `(Tomador: ${updatedState.tomadorNome} | ${updatedState.tipoDocumentoTomador}: ${updatedState.tomadorCpfCnpj} | Valor Total: R$ ${valorOriginal.toFixed(2)}) e que a nota única será emitida e enviada automaticamente após o check-out.`;
+          `Confirme com entusiasmo que os dados da Nota Fiscal (NFS-e) ${refFiscalLabel} foram validados e que a emissão automática no check-out já está ativada ` +
+          `(Tomador: ${updatedState.tomadorNome} | ${updatedState.tipoDocumentoTomador}: ${updatedState.tomadorCpfCnpj} | Valor Total: R$ ${valorOriginal.toFixed(2)}). ` +
+          `A nota será emitida e enviada automaticamente no WhatsApp e por e-mail assim que o check-out for realizado.`;
         return {
           status: 'SUCESSO_EXECUTADO',
           dados: updatedState,
@@ -5980,18 +6015,19 @@ export const gerenciarNotaFiscalNfseTool = {
         };
       }
 
-      const msg =
-        `Apresente ao solicitante/hóspede o resumo atualizado para conferência da Nota Fiscal (NFS-e) ${refFiscalLabel}:\n` +
-        `• *Tomador:* ${updatedState.tomadorNome}\n` +
-        `• *CPF/CNPJ:* ${updatedState.tomadorCpfCnpj}\n` +
-        `• *Endereço:* ${updatedState.tomadorEndereco}\n` +
-        `• *E-mail:* ${updatedState.tomadorEmail}\n` +
-        `• *Descrição dos Serviços:*\n${updatedState.descricaoServico}\n` +
-        `• *Valor Total:* R$ ${valorOriginal.toFixed(2)}\n` +
-        `Pergunte se todos os dados estão corretos (pode emitir em CPF ou CNPJ) e se ele confirma para deixarmos a emissão agendada automaticamente para o check-out.`;
+      const msg = hasValidDocInState
+        ? `Confirme imediatamente ao solicitante/hóspede que a *emissão automática da Nota Fiscal (NFS-e) no check-out já foi ativada* para ${refFiscalLabel} e que o PDF será enviado automaticamente assim que o check-out for realizado.\n` +
+          `Mostre também os dados cadastrados para conferência:\n` +
+          `• *Tomador:* ${updatedState.tomadorNome}\n` +
+          `• *CPF/CNPJ:* ${updatedState.tomadorCpfCnpj}\n` +
+          `• *Endereço:* ${updatedState.tomadorEndereco}\n` +
+          `• *E-mail:* ${updatedState.tomadorEmail}\n` +
+          `• *Valor Previsto:* R$ ${valorOriginal.toFixed(2)}\n` +
+          `Diga que se estiver tudo certinho ele não precisa fazer nada, mas se quiser trocar entre CPF e CNPJ ou ajustar algum dado, basta avisar por aqui.`
+        : `Confirme ao solicitante/hóspede que a *emissão automática da Nota Fiscal (NFS-e) no check-out já foi ativada* para ${refFiscalLabel}, mas explique educadamente que ainda falta o *CPF* (ou *CNPJ* da empresa) no cadastro. Peça para ele informar o CPF ou CNPJ desejado para já deixarmos salvo e garantir o envio automático no check-out.`;
 
       return {
-        status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
+        status: hasValidDocInState ? 'SUCESSO_EXECUTADO' : 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
         dados: updatedState,
         instrucao_para_ia: msg,
         instrucao_resposta_ia: msg,

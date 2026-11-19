@@ -418,10 +418,7 @@ export const gerenciarNotaFiscalNfseTool: AgentToolDefinition<GerenciarNotaFisca
 
       const updatedState: Record<string, any> = {
         ...existingState,
-        status:
-          args.acao === 'CONFIRMAR_DADOS_NOTA'
-            ? 'scheduled_for_checkout'
-            : 'awaiting_confirmation',
+        status: 'scheduled_for_checkout',
         reservationId: targetRes?.id || reserva.id,
         reservationCode: isConsolidatedPkg ? pkgCode : reserva.id,
         flatNumber,
@@ -466,33 +463,32 @@ export const gerenciarNotaFiscalNfseTool: AgentToolDefinition<GerenciarNotaFisca
           r.isConsolidatedInvoice = true;
           r.consolidatePackage = true;
           if (!r.requesterIsGuest1) r.nfHideFromGuest = true;
-          if (args.acao === 'CONFIRMAR_DADOS_NOTA' && r.isPackagePrimary) {
-            r.autoEmitInvoice = true;
-          }
-        }
-        if (args.acao === 'CONFIRMAR_DADOS_NOTA' && !pkgActiveItems.some((r) => r.autoEmitInvoice)) {
-          pkgActiveItems[0].autoEmitInvoice = true;
+          r.autoEmitInvoice = true;
         }
         if (typeof context.runtime?.saveDatabase === 'function') {
           await context.runtime.saveDatabase();
         }
       } else if (targetRes) {
         targetRes.confirmedFiscalData = { ...updatedState };
-        if (args.acao === 'CONFIRMAR_DADOS_NOTA') {
-          targetRes.autoEmitInvoice = true;
+        targetRes.autoEmitInvoice = true;
+        if (Array.isArray(db?.guests) && targetRes.guestId) {
+          const gRec = db.guests.find((g: any) => g && Number(g.id) === Number(targetRes.guestId));
+          if (gRec) gRec.autoEmitInvoice = true;
         }
         if (typeof context.runtime?.saveDatabase === 'function') {
           await context.runtime.saveDatabase();
         }
       }
 
+      const hasValidDocInState = /^\d{11}$|^\d{14}$/.test(cleanDocDigits);
+
       if (args.acao === 'CONFIRMAR_DADOS_NOTA') {
         const refLabel = isConsolidatedPkg
           ? `1 NFS-e Única Consolidada do pacote *${pkgCode}* (${pkgActiveItems.length || reservaAny.pacote_multi_flat?.quantidade_flats_ativos || 2} flats)`
           : `Nota Fiscal (NFS-e) da reserva *${reserva.id}*`;
         const msg =
-          `Confirme com entusiasmo que os dados da ${refLabel} foram validados e agendados com sucesso ` +
-          `(Tomador: ${updatedState.tomadorNome} | CPF/CNPJ: ${updatedState.tomadorCpfCnpj} | Valor Total: R$ ${valorOriginal.toFixed(2)}) e que a nota única será emitida e enviada automaticamente ao solicitante.`;
+          `Confirme com entusiasmo que os dados da ${refLabel} foram validados e que a emissão automática no check-out já está ativada ` +
+          `(Tomador: ${updatedState.tomadorNome} | CPF/CNPJ: ${updatedState.tomadorCpfCnpj} | Valor Total: R$ ${valorOriginal.toFixed(2)}) e que a nota será emitida e enviada automaticamente no check-out.`;
         return {
           status: 'SUCESSO_EXECUTADO',
           dados: updatedState,
@@ -504,18 +500,19 @@ export const gerenciarNotaFiscalNfseTool: AgentToolDefinition<GerenciarNotaFisca
       const tituloConferencia = isConsolidatedPkg
         ? `1 NFS-e Única Consolidada do Pacote *${pkgCode}* (suporta CPF ou CNPJ)`
         : `Nota Fiscal (NFS-e) da reserva *${reserva.id}*`;
-      const msg =
-        `Apresente o resumo atualizado para conferência da ${tituloConferencia}:\n` +
-        `• *Tomador:* ${updatedState.tomadorNome}\n` +
-        `• *CPF/CNPJ:* ${updatedState.tomadorCpfCnpj}\n` +
-        `• *Endereço:* ${updatedState.tomadorEndereco}\n` +
-        `• *E-mail:* ${updatedState.tomadorEmail}\n` +
-        `• *Descrição dos Serviços:*\n${updatedState.descricaoServico}\n` +
-        `• *Valor Total:* R$ ${valorOriginal.toFixed(2)}\n` +
-        `Pergunte se todos os dados estão corretos e se confirma para deixarmos a emissão agendada.`;
+      const msg = hasValidDocInState
+        ? `Confirme imediatamente que a *emissão automática no check-out já foi ativada* para a ${tituloConferencia} e que a nota será enviada automaticamente no check-out.\n` +
+          `Mostre o resumo cadastrado:\n` +
+          `• *Tomador:* ${updatedState.tomadorNome}\n` +
+          `• *CPF/CNPJ:* ${updatedState.tomadorCpfCnpj}\n` +
+          `• *Endereço:* ${updatedState.tomadorEndereco}\n` +
+          `• *E-mail:* ${updatedState.tomadorEmail}\n` +
+          `• *Valor Previsto:* R$ ${valorOriginal.toFixed(2)}\n` +
+          `Avise que se estiver tudo certo não precisa fazer mais nada, mas pode avisar se quiser alterar CPF/CNPJ ou qualquer dado.`
+        : `Confirme que a *emissão automática no check-out já foi ativada* para a ${tituloConferencia}, mas explique que falta o *CPF* ou *CNPJ* no cadastro e peça ao cliente para informar o documento desejado.`;
 
       return {
-        status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
+        status: hasValidDocInState ? 'SUCESSO_EXECUTADO' : 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
         dados: updatedState,
         instrucao_para_ia: msg,
         instrucao_resposta_ia: msg,

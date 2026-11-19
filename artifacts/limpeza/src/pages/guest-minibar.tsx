@@ -290,6 +290,7 @@ export default function GuestMinibar() {
   const [paymentMethod, setPaymentMethod] = useState<"pix" | "credit_card">("pix");
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
+  const [pixUnavailableError, setPixUnavailableError] = useState<string | null>(null);
   const [activeOrder, setActiveOrder] = useState<any | null>(null);
   const [copiedPix, setCopiedPix] = useState(false);
   const [, setPaymentStatus] = useState<"pendente" | "pago" | "falha">("pendente");
@@ -1138,6 +1139,7 @@ export default function GuestMinibar() {
     }
     setPartialMode("configured_split");
     setOrderError(null);
+    setPixUnavailableError(null);
     setStep("checkout");
   };
 
@@ -1155,6 +1157,7 @@ export default function GuestMinibar() {
 
     setIsSubmittingOrder(true);
     setOrderError(null);
+    setPixUnavailableError(null);
 
     const docToSend =
       docChoice === "cadastrado"
@@ -1164,12 +1167,21 @@ export default function GuestMinibar() {
     const emailToSend = (invoiceEmail || activeConsumerGuest.email || reservation?.email || "").trim();
     const phoneToSend = (invoicePhone || activeConsumerGuest.phone || reservation?.phone || "").trim();
 
+    const paidOrderIds = new Set(
+      (Array.isArray(paidOrdersHistory) ? paidOrdersHistory : [])
+        .map((o: any) => String(o?.id || o?.orderId || "").trim())
+        .filter(Boolean)
+    );
+
     let urlOrdId: string | undefined = undefined;
     if (typeof window !== "undefined") {
       const sp = new URLSearchParams(window.location.search);
       const ordFromQuery = sp.get("ord");
+      const isOrdAlreadyPaidWithPendingBalance =
+        Boolean(ordFromQuery) && pendingBalance > 0 && paidOrderIds.has(String(ordFromQuery).trim());
       if (
         ordFromQuery &&
+        !isOrdAlreadyPaidWithPendingBalance &&
         ordFromQuery.startsWith("ORD-MB-SPLIT-") &&
         ordFromQuery.endsWith(`-G${activeConsumerGuest.index}`)
       ) {
@@ -1177,7 +1189,10 @@ export default function GuestMinibar() {
       }
     }
     if (!urlOrdId && partialMode === "configured_split" && activeGuestConfiguredShare?.pendingOrderId) {
-      urlOrdId = String(activeGuestConfiguredShare.pendingOrderId);
+      const candidateShareOrdId = String(activeGuestConfiguredShare.pendingOrderId).trim();
+      if (!(pendingBalance > 0 && paidOrderIds.has(candidateShareOrdId))) {
+        urlOrdId = candidateShareOrdId;
+      }
     }
 
     const isPayingAllItems =
@@ -1217,9 +1232,18 @@ export default function GuestMinibar() {
         body: JSON.stringify(orderPayload)
       });
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setOrderError(data.error || "Falha ao registrar pagamento de frigobar.");
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 503 || data?.code === "INTER_PIX_UNAVAILABLE") {
+        setPixUnavailableError(
+          data?.error ||
+            "Não foi possível gerar o QR Code PIX no Banco Inter neste momento. Tente novamente em instantes ou escolha pagar com Cartão de Crédito."
+        );
+        setOrderError(null);
+        setIsSubmittingOrder(false);
+        return;
+      }
+      if (!res.ok || !data?.success) {
+        setOrderError(data?.error || "Falha ao registrar pagamento de frigobar.");
         setIsSubmittingOrder(false);
         return;
       }
@@ -2762,7 +2786,12 @@ export default function GuestMinibar() {
               <div className="grid grid-cols-2 gap-2.5">
                 <button
                   type="button"
-                  onClick={() => setPaymentMethod("pix")}
+                  onClick={() => {
+                    setPaymentMethod("pix");
+                    setPixUnavailableError(null);
+                    setOrderError(null);
+                  }}
+                  aria-pressed={paymentMethod === "pix"}
                   className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1 transition-all ${
                     paymentMethod === "pix"
                       ? "bg-cyan-950/60 border-cyan-500 text-cyan-300 shadow-md shadow-cyan-950/50"
@@ -2775,7 +2804,12 @@ export default function GuestMinibar() {
 
                 <button
                   type="button"
-                  onClick={() => setPaymentMethod("credit_card")}
+                  onClick={() => {
+                    setPaymentMethod("credit_card");
+                    setPixUnavailableError(null);
+                    setOrderError(null);
+                  }}
+                  aria-pressed={paymentMethod === "credit_card"}
                   className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1 transition-all ${
                     paymentMethod === "credit_card"
                       ? "bg-cyan-950/60 border-cyan-500 text-cyan-300 shadow-md shadow-cyan-950/50"
@@ -2789,8 +2823,40 @@ export default function GuestMinibar() {
             </Card>
           )}
 
+          {pixUnavailableError && (
+            <div
+              role="alert"
+              aria-live="assertive"
+              className="p-4 bg-amber-500/15 border border-amber-500/40 rounded-2xl text-xs text-amber-100 space-y-3"
+            >
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-bold text-amber-200">PIX momentaneamente indisponível no Banco Inter</p>
+                  <p className="text-amber-100/90 leading-relaxed">{pixUnavailableError}</p>
+                </div>
+              </div>
+              <Button
+                type="button"
+                onClick={() => {
+                  setPaymentMethod("credit_card");
+                  setPixUnavailableError(null);
+                  setOrderError(null);
+                }}
+                className="w-full h-10 bg-indigo-500 hover:bg-indigo-400 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-950/40"
+              >
+                <CreditCard className="w-4 h-4" />
+                <span>Pagar com Cartão agora ({formatBRL(checkoutAmount)})</span>
+              </Button>
+            </div>
+          )}
+
           {orderError && (
-            <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-xs text-rose-300 flex items-center gap-2">
+            <div
+              role="alert"
+              aria-live="assertive"
+              className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-xs text-rose-300 flex items-center gap-2"
+            >
               <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
               <span>{orderError}</span>
             </div>

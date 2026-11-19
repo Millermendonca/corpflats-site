@@ -118,17 +118,42 @@ test("Blindagem de Auto-Check-in Prematuro & Disparo de Quarto Pronto (Flat 904)
     assert.strictEqual(elig1231.reason, "flat_not_clean");
     assert.strictEqual(hasReservationEnteredOrCompletedCheckin(db, resDiogo, todayStr), false);
 
-    // Cenário C: 13:33:59 -> Camareira Grazi conclui a limpeza do Flat 904
+    // Cenário C: 13:33:59 -> Camareira Grazi conclui a limpeza do Flat 904, mas conferência de frigobar ainda pendente (< 14:00)
     db.reservations[0].status = "completed";
     db.reservations[0].checkoutDone = true;
+    db.reservations[0].actualCheckoutAt = "2026-11-17T15:40:00.000Z";
     db.cleaningRequests[0].status = "clean";
     db.cleaningRequests[0].completedAt = "2026-11-17T16:33:59.000Z";
 
     const now1334 = new Date("2026-11-17T16:33:59.000Z"); // 13:33:59 BRT
-    const elig1334 = evaluateSelfCheckinEligibility(db, resDiogo, now1334);
-    assert.strictEqual(elig1334.allowed, true, "Após limpeza concluída às 13:34, auto-check-in passa a ser permitido");
+    const elig1334NoMinibar = evaluateSelfCheckinEligibility(db, resDiogo, now1334);
+    assert.strictEqual(elig1334NoMinibar.allowed, false, "Antes das 14:00, sem conferência de frigobar o auto-check-in ainda deve permanecer bloqueado");
+    assert.strictEqual(elig1334NoMinibar.reason, "minibar_not_inspected");
 
     await triggerRoomReadyWhatsApp(db, () => {}, 16, "904", "https://corpflats.com.br", now1334);
+    assert.strictEqual(resDiogo.roomReadySentDate, undefined, "Sem conferência de frigobar antes das 14:00, NÃO deve disparar room_ready");
+
+    // Cenário D: 13:35:00 -> Repositora Anserve conclui a conferência final pós-checkout do Flat 904
+    db.reservations[0].finalMinibarInspectionAt = "2026-11-17T16:35:00.000Z";
+    db.minibarInspections = [
+      {
+        id: "INSP-MB-904-1",
+        flatNumber: "904",
+        reservationId: 914,
+        reservationCode: "RES-904-0914",
+        launchDate: todayStr,
+        inspectedAt: "2026-11-17T16:35:00.000Z",
+        isFinalCheckoutInspection: true,
+        isSkipMark: false,
+        status: "conforme"
+      }
+    ];
+
+    const now1335 = new Date("2026-11-17T16:35:00.000Z"); // 13:35:00 BRT
+    const elig1335 = evaluateSelfCheckinEligibility(db, resDiogo, now1335);
+    assert.strictEqual(elig1335.allowed, true, "Após limpeza E conferência de frigobar concluídas às 13:35, auto-check-in passa a ser permitido");
+
+    await triggerRoomReadyWhatsApp(db, () => {}, 16, "904", "https://corpflats.com.br", now1335);
 
     assert.strictEqual(resDiogo.roomReadySentDate, todayStr, "triggerRoomReadyWhatsApp deve marcar roomReadySentDate hoje");
     const sentRoomReady = db.whatsappHistory.find(h => h.reservationCode === "RES-904-0936" && h.triggerEvent === "room_ready");

@@ -1,15 +1,18 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Shell } from "@/components/layout";
 import { MinibarEcosystemNav } from "@/components/minibar-ecosystem-nav";
+import { MinibarCollectionsPanel } from "@/components/minibar-collections-panel";
 import { useGetMe } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import {
+  Bell,
   FileText,
   Upload,
   CheckCircle2,
   AlertTriangle,
   Clock,
   RefreshCw,
+  RotateCcw,
   Search,
   Calendar,
   DollarSign,
@@ -48,6 +51,7 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -196,7 +200,16 @@ export default function AnserveDashboardPage() {
   const { toast } = useToast();
   const canDeleteOrders = user?.role === "admin" || user?.role === "dev";
 
-  const [activeTab, setActiveTab] = useState<"vendas" | "equipe" | "estoque">("vendas");
+  const [activeTab, setActiveTab] = useState<"vendas" | "equipe" | "estoque" | "cobrancas">("vendas");
+  const [collectionsPendingCount, setCollectionsPendingCount] = useState<number>(0);
+  const [collectionsSuspiciousCount, setCollectionsSuspiciousCount] = useState<number>(0);
+
+  // Quick reopen modal state for sales table
+  const [reopenSalesOrder, setReopenSalesOrder] = useState<any | null>(null);
+  const [reopenSalesReason, setReopenSalesReason] = useState<string>("");
+  const [reopenSalesError, setReopenSalesError] = useState<string | null>(null);
+  const [reopeningSalesOrder, setReopeningSalesOrder] = useState<boolean>(false);
+  const reopenSalesReasonRef = useRef<HTMLTextAreaElement>(null);
 
   // Data states
   const [pendingOrders, setPendingOrders] = useState<PendingInvoiceOrder[]>([]);
@@ -476,6 +489,21 @@ export default function AnserveDashboardPage() {
     }
   };
 
+  const fetchCollectionsBadgeSummary = async () => {
+    try {
+      const res = await fetch("/api/minibar/collections/overview", { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.summary) {
+          setCollectionsPendingCount(Number(data.summary.pendingTargetsCount || 0));
+          setCollectionsSuspiciousCount(Number(data.summary.suspiciousPaidOrdersCount || 0));
+        }
+      }
+    } catch (err) {
+      console.error("[AnserveDashboard] Erro ao carregar resumo de cobranças:", err);
+    }
+  };
+
   const loadAllData = async () => {
     setRefreshing(true);
     try {
@@ -485,7 +513,8 @@ export default function AnserveDashboardPage() {
         fetchAnsReports(),
         fetchStaff(),
         fetchDeliveryMonitor(),
-        fetchMinibarSettings()
+        fetchMinibarSettings(),
+        fetchCollectionsBadgeSummary()
       ]);
     } finally {
       setLoading(false);
@@ -786,6 +815,53 @@ export default function AnserveDashboardPage() {
     }
   };
 
+  const handleConfirmReopenSalesOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reopenSalesOrder) return;
+    const trimmed = reopenSalesReason.trim();
+    if (trimmed.length < 3) {
+      setReopenSalesError("Informe o motivo da reabertura (mínimo de 3 caracteres).");
+      reopenSalesReasonRef.current?.focus();
+      return;
+    }
+    setReopenSalesError(null);
+    setReopeningSalesOrder(true);
+    try {
+      const res = await fetch(`/api/minibar/orders/${encodeURIComponent(reopenSalesOrder.id)}/reopen`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ reason: trimmed })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        toast({
+          title: "Pedido reaberto como pendente!",
+          description:
+            data.message ||
+            `Pedido ${reopenSalesOrder.id} (Flat ${reopenSalesOrder.flatNumber}) voltou para pendente.`
+        });
+        setReopenSalesOrder(null);
+        setReopenSalesReason("");
+        loadAllData();
+      } else {
+        toast({
+          title: "Erro ao reabrir pedido",
+          description: data.error || "Não foi possível reabrir este pedido.",
+          variant: "destructive"
+        });
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro de conexão",
+        description: err.message,
+        variant: "destructive"
+      });
+    } finally {
+      setReopeningSalesOrder(false);
+    }
+  };
+
   // CSV Export Actions
   const handleExportSalesCsv = () => {
     const orders = filteredReportOrders;
@@ -1080,15 +1156,24 @@ export default function AnserveDashboardPage() {
           </div>
         </div>
 
-        {/* 3 Abas Diretas e Organizadas */}
+        {/* 4 Abas Diretas e Organizadas */}
         <Tabs value={activeTab} onValueChange={(v: any) => setActiveTab(v)} className="w-full min-w-0 space-y-4">
-          <TabsList className="w-full bg-muted/50 p-1.5 rounded-2xl border border-border grid grid-cols-1 sm:grid-cols-3 h-auto gap-1.5">
-            <TabsTrigger value="vendas" className="rounded-xl text-xs font-bold px-3.5 py-2.5 flex items-center justify-center gap-2 w-full">
+          <TabsList
+            aria-label="Seções do painel Anserve"
+            className="w-full bg-muted/50 p-1.5 rounded-2xl border border-border flex items-center flex-nowrap overflow-x-auto snap-x snap-proximity h-auto gap-1.5"
+          >
+            <TabsTrigger
+              value="vendas"
+              className="rounded-xl text-xs font-bold px-3.5 py-2.5 flex items-center justify-center gap-2 shrink-0 lg:flex-1 snap-start relative data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:inset-x-3 data-[state=active]:after:bottom-0 data-[state=active]:after:border-b-2 data-[state=active]:after:border-primary"
+            >
               <DollarSign className="w-4 h-4 text-emerald-600 shrink-0" />
               <span>1. Vendas & Repasse (CSV)</span>
             </TabsTrigger>
 
-            <TabsTrigger value="equipe" className="rounded-xl text-xs font-bold px-3.5 py-2.5 flex items-center justify-center gap-2 w-full">
+            <TabsTrigger
+              value="equipe"
+              className="rounded-xl text-xs font-bold px-3.5 py-2.5 flex items-center justify-center gap-2 shrink-0 lg:flex-1 snap-start relative data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:inset-x-3 data-[state=active]:after:bottom-0 data-[state=active]:after:border-b-2 data-[state=active]:after:border-primary"
+            >
               <Users className="w-4 h-4 text-teal-600 shrink-0" />
               <span>2. Equipe & WhatsApp de Trabalho</span>
               <Badge variant="secondary" className="text-[10px] py-0 px-1.5 shrink-0">
@@ -1096,9 +1181,33 @@ export default function AnserveDashboardPage() {
               </Badge>
             </TabsTrigger>
 
-            <TabsTrigger value="estoque" className="rounded-xl text-xs font-bold px-3.5 py-2.5 flex items-center justify-center gap-2 w-full">
+            <TabsTrigger
+              value="estoque"
+              className="rounded-xl text-xs font-bold px-3.5 py-2.5 flex items-center justify-center gap-2 shrink-0 lg:flex-1 snap-start relative data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:inset-x-3 data-[state=active]:after:bottom-0 data-[state=active]:after:border-b-2 data-[state=active]:after:border-primary"
+            >
               <Package className="w-4 h-4 text-sky-600 shrink-0" />
               <span>3. Histórico de Lançamentos</span>
+            </TabsTrigger>
+
+            <TabsTrigger
+              value="cobrancas"
+              className="rounded-xl text-xs font-bold px-3.5 py-2.5 flex items-center justify-center gap-2 shrink-0 lg:flex-1 snap-start relative data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:inset-x-3 data-[state=active]:after:bottom-0 data-[state=active]:after:border-b-2 data-[state=active]:after:border-primary"
+            >
+              <Bell className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>4. Cobranças & Avisos</span>
+              {collectionsPendingCount > 0 && (
+                <Badge className="bg-amber-500 text-slate-950 text-[10px] font-black py-0 px-1.5 shrink-0">
+                  {collectionsPendingCount}
+                </Badge>
+              )}
+              {collectionsSuspiciousCount > 0 && (
+                <Badge
+                  className="bg-rose-600 text-white text-[10px] font-black py-0 px-1.5 shrink-0"
+                  title="Pedidos pagos sem E2E real do Banco Central"
+                >
+                  !{collectionsSuspiciousCount}
+                </Badge>
+              )}
             </TabsTrigger>
           </TabsList>
 
@@ -1142,7 +1251,10 @@ export default function AnserveDashboardPage() {
                   R$ {Number(reportsData?.salesSummary?.totalPendingRevenue || 0).toFixed(2)}
                 </div>
                 <span className="text-[10px] text-muted-foreground block">
-                  {reportsData?.salesSummary?.totalOrdersPending || 0} estadias com saldo a quitar no check-out
+                  {reportsData?.salesSummary?.totalOrdersPending || 0}{" "}
+                  {(reportsData?.salesSummary?.totalOrdersPending || 0) === 1
+                    ? "cobrança com saldo a quitar"
+                    : "cobranças com saldo a quitar"}
                 </span>
               </Card>
 
@@ -1477,18 +1589,18 @@ export default function AnserveDashboardPage() {
                 </Badge>
               </CardHeader>
 
-              <div className="w-full overflow-x-auto">
+              <div tabIndex={0} role="region" aria-label="Tabela de vendas de frigobar" className="w-full overflow-x-auto">
                 <table className="w-full min-w-[680px] text-xs text-left">
                   <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
                     <tr>
-                      <th className="p-3.5">Pedido / Data</th>
-                      <th className="p-3.5">Flat</th>
-                      <th className="p-3.5">Hóspede</th>
-                      <th className="p-3.5">Itens Consumidos</th>
-                      <th className="p-3.5">Pagamento</th>
-                      <th className="p-3.5">Nota Fiscal</th>
-                      <th className="p-3.5 text-right">Valor</th>
-                      {canDeleteOrders && <th className="p-3.5 text-center w-14">Ações</th>}
+                      <th scope="col" className="p-3.5">Pedido / Data</th>
+                      <th scope="col" className="p-3.5">Flat</th>
+                      <th scope="col" className="p-3.5">Hóspede</th>
+                      <th scope="col" className="p-3.5">Itens Consumidos</th>
+                      <th scope="col" className="p-3.5">Pagamento</th>
+                      <th scope="col" className="p-3.5">Nota Fiscal</th>
+                      <th scope="col" className="p-3.5 text-right">Valor</th>
+                      {canDeleteOrders && <th scope="col" className="p-3.5 text-center w-20">Ações</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -1501,12 +1613,12 @@ export default function AnserveDashboardPage() {
                     ) : (
                       filteredReportOrders.map((o: any) => (
                         <tr key={o.id} className="hover:bg-muted/20">
-                          <td className="p-3.5">
+                          <th scope="row" className="p-3.5 font-normal text-left">
                             <div className="font-mono font-bold text-primary">{o.id}</div>
                             <div className="text-[10px] text-muted-foreground">
                               {o.date ? new Date(o.date).toLocaleString("pt-BR") : "-"}
                             </div>
-                          </td>
+                          </th>
                           <td className="p-3.5">
                             <Badge variant="outline" className="font-bold">
                               Flat {o.flatNumber}
@@ -1522,21 +1634,33 @@ export default function AnserveDashboardPage() {
                             {o.itemsSummary}
                           </td>
                           <td className="p-3.5">
-                            <Badge
-                              className={
-                                o.paymentStatus === "pago"
-                                  ? "bg-emerald-500/15 text-emerald-700 border-emerald-500/30 text-[10px]"
-                                  : "bg-amber-500/15 text-amber-700 border-amber-500/30 text-[10px]"
-                              }
-                            >
-                              {o.paymentStatus === "pago" ? "✓ Pago" : "Aguardando"} (
-                              {o.paymentMethod === "pix"
-                                ? "PIX"
-                                : o.paymentMethod === "credit_card"
-                                ? "Cartão"
-                                : "Pós-Checkout"}
-                              )
-                            </Badge>
+                            <div className="flex flex-col items-start gap-1">
+                              <Badge
+                                className={
+                                  o.paymentStatus === "pago"
+                                    ? "bg-emerald-500/15 text-emerald-700 border-emerald-500/30 text-[10px]"
+                                    : "bg-amber-500/15 text-amber-700 border-amber-500/30 text-[10px]"
+                                }
+                              >
+                                {o.paymentStatus === "pago" ? "✓ Pago" : "Aguardando"} (
+                                {o.paymentMethod === "pix"
+                                  ? "PIX"
+                                  : o.paymentMethod === "credit_card"
+                                  ? "Cartão"
+                                  : "Pós-Checkout"}
+                                )
+                              </Badge>
+                              {o.paymentStatus === "pago" &&
+                                o.paymentVerificationStatus === "unverified_synthetic_e2e" && (
+                                  <span
+                                    className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 border border-amber-500/40 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:text-amber-300"
+                                    title="Pedido pago sem endToEndId real do Banco Central — confira no extrato Inter ou reabra como pendente"
+                                  >
+                                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                                    <span>Sem E2E real</span>
+                                  </span>
+                                )}
+                            </div>
                           </td>
                           <td className="p-3.5">
                             {o.invoiceStatus === "anexada" ? (
@@ -1563,16 +1687,40 @@ export default function AnserveDashboardPage() {
                           </td>
                           {canDeleteOrders && (
                             <td className="p-3.5 text-center">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleDeleteMinibarOrder(o)}
-                                title="Excluir pedido do histórico (apenas Admin)"
-                                className="h-7 w-7 rounded-lg text-muted-foreground hover:text-rose-600 hover:bg-rose-500/10"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </Button>
+                              <div className="inline-flex items-center justify-center gap-1">
+                                {o.paymentStatus === "pago" && (
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => {
+                                      setReopenSalesOrder(o);
+                                      setReopenSalesReason(
+                                        o.paymentVerificationStatus === "unverified_synthetic_e2e"
+                                          ? "Pedido sem E2E real do Banco Central — reaberto para cobrança."
+                                          : ""
+                                      );
+                                      setReopenSalesError(null);
+                                    }}
+                                    title="Reabrir como Pendente (apenas Admin)"
+                                    aria-label={`Reabrir pedido ${o.id} como pendente`}
+                                    className="h-7 w-7 rounded-lg text-muted-foreground hover:text-amber-700 hover:bg-amber-500/15"
+                                  >
+                                    <RotateCcw className="w-3.5 h-3.5" />
+                                  </Button>
+                                )}
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleDeleteMinibarOrder(o)}
+                                  title="Excluir pedido do histórico (apenas Admin)"
+                                  aria-label={`Excluir pedido ${o.id}`}
+                                  className="h-7 w-7 rounded-lg text-muted-foreground hover:text-rose-600 hover:bg-rose-500/10"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
                             </td>
                           )}
                         </tr>
@@ -1989,6 +2137,17 @@ export default function AnserveDashboardPage() {
                 </table>
               </div>
             </Card>
+          </TabsContent>
+
+          {/* ABA 4: COBRANÇAS & AVISOS (D+1 A D+7) & INTEGRIDADE PIX */}
+          <TabsContent value="cobrancas" className="w-full min-w-0 space-y-4">
+            <MinibarCollectionsPanel
+              onDataChanged={loadAllData}
+              onOverviewLoaded={(s) => {
+                setCollectionsPendingCount(Number(s.pendingTargetsCount || 0));
+                setCollectionsSuspiciousCount(Number(s.suspiciousPaidOrdersCount || 0));
+              }}
+            />
           </TabsContent>
         </Tabs>
 
@@ -2503,6 +2662,82 @@ export default function AnserveDashboardPage() {
                 {retryingInvoice ? "Reenviando..." : "Salvar Contato e Reenviar NF"}
               </Button>
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal: Reabrir Pedido como Pendente (Ação Rápida da Tabela de Vendas) */}
+        <Dialog open={Boolean(reopenSalesOrder)} onOpenChange={(open) => !open && setReopenSalesOrder(null)}>
+          <DialogContent className="sm:max-w-md rounded-3xl p-6 overscroll-contain">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black flex items-center gap-2 text-rose-700 dark:text-rose-400">
+                <RotateCcw className="w-5 h-5 shrink-0" />
+                <span>Reabrir Pedido como Pendente?</span>
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Reverte o pagamento de <strong>{reopenSalesOrder?.id}</strong> (Flat{" "}
+                <strong>{reopenSalesOrder?.flatNumber}</strong> • {reopenSalesOrder?.guestName} — R${" "}
+                {Number(reopenSalesOrder?.totalAmount || 0).toFixed(2)}) para pendente e restaura o saldo para
+                cobrança.
+              </DialogDescription>
+            </DialogHeader>
+
+            <form onSubmit={handleConfirmReopenSalesOrder} noValidate className="space-y-4 pt-1">
+              {reopenSalesOrder?.invoiceStatus === "anexada" && (
+                <div className="p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-900 dark:text-amber-200 text-[11px] flex items-start gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  <span>
+                    <strong>Atenção:</strong> este pedido já possui Nota Fiscal emitida. Confirme no extrato bancário
+                    antes de reabrir.
+                  </span>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <Label htmlFor="anserve-reopen-sales-reason" className="text-xs font-bold">
+                  Motivo da Reabertura <span aria-hidden="true">*</span>
+                </Label>
+                <Textarea
+                  ref={reopenSalesReasonRef}
+                  id="anserve-reopen-sales-reason"
+                  required
+                  rows={3}
+                  placeholder="Informe o motivo da reabertura para registro em auditoria..."
+                  value={reopenSalesReason}
+                  onChange={(e) => {
+                    setReopenSalesReason(e.target.value);
+                    if (reopenSalesError) setReopenSalesError(null);
+                  }}
+                  aria-invalid={Boolean(reopenSalesError)}
+                  aria-describedby={reopenSalesError ? "anserve-reopen-sales-err" : undefined}
+                  className="rounded-xl text-xs"
+                />
+                {reopenSalesError && (
+                  <p id="anserve-reopen-sales-err" role="alert" className="text-[11px] text-rose-600 font-semibold">
+                    {reopenSalesError}
+                  </p>
+                )}
+              </div>
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  autoFocus
+                  variant="outline"
+                  onClick={() => setReopenSalesOrder(null)}
+                  className="rounded-xl text-xs font-bold"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={reopeningSalesOrder}
+                  className="rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>{reopeningSalesOrder ? "Reabrindo..." : "Confirmar Reabertura"}</span>
+                </Button>
+              </DialogFooter>
+            </form>
           </DialogContent>
         </Dialog>
       </div>

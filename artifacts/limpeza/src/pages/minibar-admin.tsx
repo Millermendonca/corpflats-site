@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Shell } from "@/components/layout";
 import { MinibarEcosystemNav } from "@/components/minibar-ecosystem-nav";
+import { MinibarCollectionsPanel } from "@/components/minibar-collections-panel";
 import { FrigobarPicture } from "@/components/frigobar-picture";
 import { useGetMe } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import {
+  Bell,
   Package,
   Plus,
   Edit2,
@@ -659,8 +661,10 @@ export default function MinibarAdminPage() {
   const { toast } = useToast();
 
   const [activeTab, setActiveTab] = useState<
-    "insights" | "catalogo" | "equipe" | "extrato"
+    "insights" | "catalogo" | "equipe" | "extrato" | "cobrancas"
   >("insights");
+  const [collectionsPendingCount, setCollectionsPendingCount] = useState<number>(0);
+  const [collectionsSuspiciousCount, setCollectionsSuspiciousCount] = useState<number>(0);
   const [insightsSubView, setInsightsSubView] = useState<
     "visao_geral" | "produtos_flats" | "perfil_hospedes"
   >("visao_geral");
@@ -1461,6 +1465,21 @@ export default function MinibarAdminPage() {
     }
   };
 
+  const fetchCollectionsBadgeSummary = async () => {
+    try {
+      const res = await fetch("/api/minibar/collections/overview", { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.summary) {
+          setCollectionsPendingCount(Number(data.summary.pendingTargetsCount || 0));
+          setCollectionsSuspiciousCount(Number(data.summary.suspiciousPaidOrdersCount || 0));
+        }
+      }
+    } catch (err) {
+      console.error("[MinibarAdmin] Erro ao carregar resumo de cobranças:", err);
+    }
+  };
+
   const loadAll = async () => {
     setRefreshing(true);
     try {
@@ -1472,7 +1491,8 @@ export default function MinibarAdminPage() {
         fetchInsights360(),
         fetchAnserveStaff(),
         fetchDeliveryMonitor(),
-        fetchMinibarSettings()
+        fetchMinibarSettings(),
+        fetchCollectionsBadgeSummary()
       ]);
     } finally {
       setLoading(false);
@@ -2115,27 +2135,63 @@ export default function MinibarAdminPage() {
             </Card>
           )}
 
-        {/* 4 Abas Principais Bem Divididas */}
+        {/* 5 Abas Principais Bem Divididas */}
         <Tabs value={activeTab} onValueChange={(v: any) => setActiveTab(v)} className="w-full min-w-0 space-y-4">
-          <TabsList className="w-full bg-muted/50 p-1.5 rounded-2xl border border-border grid grid-cols-2 lg:grid-cols-4 h-auto gap-1.5">
-            <TabsTrigger value="insights" className="rounded-xl text-xs font-bold px-3 py-2.5 flex items-center justify-center gap-2 w-full">
+          <TabsList
+            aria-label="Seções administrativas do frigobar"
+            className="w-full bg-muted/50 p-1.5 rounded-2xl border border-border flex items-center flex-nowrap overflow-x-auto snap-x snap-proximity h-auto gap-1.5"
+          >
+            <TabsTrigger
+              value="insights"
+              className="rounded-xl text-xs font-bold px-3 py-2.5 flex items-center justify-center gap-2 shrink-0 xl:flex-1 snap-start relative data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:inset-x-3 data-[state=active]:after:bottom-0 data-[state=active]:after:border-b-2 data-[state=active]:after:border-primary"
+            >
               <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
-              <span className="truncate">1. Insights & Relatórios</span>
+              <span>1. Insights & Relatórios</span>
             </TabsTrigger>
 
-            <TabsTrigger value="catalogo" className="rounded-xl text-xs font-bold px-3 py-2.5 flex items-center justify-center gap-2 w-full">
+            <TabsTrigger
+              value="catalogo"
+              className="rounded-xl text-xs font-bold px-3 py-2.5 flex items-center justify-center gap-2 shrink-0 xl:flex-1 snap-start relative data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:inset-x-3 data-[state=active]:after:bottom-0 data-[state=active]:after:border-b-2 data-[state=active]:after:border-primary"
+            >
               <Package className="w-4 h-4 text-primary shrink-0" />
-              <span className="truncate">2. Cardápio & Estoque Padrão</span>
+              <span>2. Cardápio & Estoque Padrão</span>
             </TabsTrigger>
 
-            <TabsTrigger value="equipe" className="rounded-xl text-xs font-bold px-3 py-2.5 flex items-center justify-center gap-2 w-full">
+            <TabsTrigger
+              value="equipe"
+              className="rounded-xl text-xs font-bold px-3 py-2.5 flex items-center justify-center gap-2 shrink-0 xl:flex-1 snap-start relative data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:inset-x-3 data-[state=active]:after:bottom-0 data-[state=active]:after:border-b-2 data-[state=active]:after:border-primary"
+            >
               <Users className="w-4 h-4 text-teal-600 shrink-0" />
-              <span className="truncate">3. Equipe & Acessos Anserve</span>
+              <span>3. Equipe & Acessos Anserve</span>
             </TabsTrigger>
 
-            <TabsTrigger value="extrato" className="rounded-xl text-xs font-bold px-3 py-2.5 flex items-center justify-center gap-2 w-full">
+            <TabsTrigger
+              value="extrato"
+              className="rounded-xl text-xs font-bold px-3 py-2.5 flex items-center justify-center gap-2 shrink-0 xl:flex-1 snap-start relative data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:inset-x-3 data-[state=active]:after:bottom-0 data-[state=active]:after:border-b-2 data-[state=active]:after:border-primary"
+            >
               <DollarSign className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span className="truncate">4. Repasse & QR Codes A6</span>
+              <span>4. Repasse & QR Codes A6</span>
+            </TabsTrigger>
+
+            <TabsTrigger
+              value="cobrancas"
+              className="rounded-xl text-xs font-bold px-3 py-2.5 flex items-center justify-center gap-2 shrink-0 xl:flex-1 snap-start relative data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:inset-x-3 data-[state=active]:after:bottom-0 data-[state=active]:after:border-b-2 data-[state=active]:after:border-primary"
+            >
+              <Bell className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>5. Cobranças & Avisos</span>
+              {collectionsPendingCount > 0 && (
+                <Badge className="bg-amber-500 text-slate-950 text-[10px] font-black py-0 px-1.5 shrink-0">
+                  {collectionsPendingCount}
+                </Badge>
+              )}
+              {collectionsSuspiciousCount > 0 && (
+                <Badge
+                  className="bg-rose-600 text-white text-[10px] font-black py-0 px-1.5 shrink-0"
+                  title="Pedidos pagos sem E2E real do Banco Central"
+                >
+                  !{collectionsSuspiciousCount}
+                </Badge>
+              )}
             </TabsTrigger>
           </TabsList>
 
@@ -4306,6 +4362,17 @@ export default function MinibarAdminPage() {
                 })}
               </div>
             </div>
+          </TabsContent>
+
+          {/* ABA 5: COBRANÇAS & AVISOS (D+1 A D+7) & INTEGRIDADE PIX */}
+          <TabsContent value="cobrancas" className="w-full min-w-0 space-y-5">
+            <MinibarCollectionsPanel
+              onDataChanged={loadAll}
+              onOverviewLoaded={(s) => {
+                setCollectionsPendingCount(Number(s.pendingTargetsCount || 0));
+                setCollectionsSuspiciousCount(Number(s.suspiciousPaidOrdersCount || 0));
+              }}
+            />
           </TabsContent>
         </Tabs>
 

@@ -992,6 +992,7 @@ interface FlatReservationCardProps {
   primaryCheckinDate: string;
   primaryCheckoutDate: string;
   requesterType: "guest" | "other_person" | "company" | "agency_b2b";
+  requesterPhone?: string;
   requesterHasData: boolean;
   phoneVerificationMap: Record<string, PhoneVerificationEntry>;
   uploadingDoc: boolean;
@@ -1040,6 +1041,7 @@ const FlatReservationCard = memo(function FlatReservationCard({
   primaryCheckinDate,
   primaryCheckoutDate,
   requesterType,
+  requesterPhone,
   requesterHasData,
   phoneVerificationMap,
   uploadingDoc,
@@ -1812,6 +1814,35 @@ const FlatReservationCard = memo(function FlatReservationCard({
                 });
               }}
             />
+
+            {(() => {
+              const reqDigitsClean = String(requesterPhone || "").replace(/\D/g, "").replace(/^0+/, "");
+              if (!reqDigitsClean || reqDigitsClean.length < 10) return null;
+              if (flat.requesterIsGuest1 && index === 0) return null;
+              if (requesterType === "guest" && totalFlats <= 1) return null;
+              const matchesReq = (candidate?: string) => {
+                const c = String(candidate || "").replace(/\D/g, "").replace(/^0+/, "");
+                if (c.length < 10) return false;
+                if (c === reqDigitsClean) return true;
+                if (c.slice(-8) !== reqDigitsClean.slice(-8)) return false;
+                const dddA = c.startsWith("55") && (c.length === 12 || c.length === 13) ? c.slice(2, 4) : (c.length <= 11 ? c.slice(0, 2) : "");
+                const dddB = reqDigitsClean.startsWith("55") && (reqDigitsClean.length === 12 || reqDigitsClean.length === 13) ? reqDigitsClean.slice(2, 4) : (reqDigitsClean.length <= 11 ? reqDigitsClean.slice(0, 2) : "");
+                return !dddA || !dddB || dddA === dddB;
+              };
+              const g1Conflict = matchesReq(flat.guest1.phone);
+              const g2Conflict = Number(flat.guestCount) >= 2 && !flat.guest2InformLater && matchesReq(flat.guest2?.phone);
+              const g3Conflict = Number(flat.guestCount) >= 3 && !flat.guest3InformLater && matchesReq(flat.guest3?.phone);
+              if (!g1Conflict && !g2Conflict && !g3Conflict) return null;
+              return (
+                <div className="p-2.5 rounded-xl border border-amber-400/70 bg-amber-50/90 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 text-[11px] flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold">Atenção — Telefone do Solicitante no campo do Hóspede:</span>{" "}
+                    O WhatsApp informado para {g1Conflict ? "Hóspede 1" : (g2Conflict ? "Hóspede 2" : "Hóspede 3")} coincide com o do Solicitante/Agência e este flat não está marcado como hospedagem do próprio solicitante no 1º flat. Por segurança, as mensagens operacionais de estadia (café da manhã, check-in, quarto pronto, saída e avaliação) ficam bloqueadas para este número até que o contato real do hóspede seja preenchido.
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Hóspede 2 */}
             {Number(flat.guestCount) >= 2 && (
@@ -14750,6 +14781,7 @@ export default function PmsCalendar(props?: {
                         primaryCheckinDate={primaryFlat.checkinDate}
                         primaryCheckoutDate={primaryFlat.checkoutDate}
                         requesterType={formRequesterType}
+                        requesterPhone={(formChannel === "b2b" || formRequesterType === "agency_b2b") ? formAgencyAgentPhone : formRequesterPhone}
                         requesterHasData={Boolean(formRequesterName.trim() || formCompanyName.trim() || formAgencyName.trim())}
                         phoneVerificationMap={phoneVerificationMap}
                         uploadingDoc={uploadingDocFlatUid === flat.uid}

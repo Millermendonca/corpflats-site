@@ -21,7 +21,7 @@ export const solicitarEarlyCheckinTool: AgentToolDefinition<SolicitarEarlyChecki
   name: 'solicitar_early_checkin',
 
   description:
-    'Verifica a disponibilidade de flat desocupado e limpo na governança e aplica as regras oficiais de entrada antecipada (early check-in): ' +
+    'Verifica a disponibilidade de flat desocupado, limpo na governança e com conferência de frigobar concluída hoje (exigida antes das 14:00) e aplica as regras oficiais de entrada antecipada (early check-in): ' +
     'hóspedes WhatsApp/Direto têm cortesia a partir das 10:00; demais canais têm cortesia a partir das 12:00; ' +
     'antes desses horários até o limite de 07:00 cobra meia diária (50%); antes das 07:00 cobra diária inteira (100%).',
 
@@ -102,12 +102,12 @@ export const solicitarEarlyCheckinTool: AgentToolDefinition<SolicitarEarlyChecki
 
       if (conflitoSaidaMesmoDia || flatSujoNaGovernanca) {
         const motivoBloqueio = conflitoSaidaMesmoDia
-          ? 'há um hóspede em estadia com saída prevista até as 12h00 e a equipe de governança fará a higienização completa logo em seguida'
-          : 'o apartamento ainda está em programação de limpeza na governança e o early check-in está sempre sujeito a haver flat desocupado e limpo';
+          ? 'há um hóspede em estadia com saída prevista até as 12h00 e a equipe de governança fará a higienização completa e a conferência de frigobar logo em seguida'
+          : 'o apartamento ainda está em programação de limpeza na governança e o early check-in está sempre sujeito a haver flat desocupado, limpo e com frigobar conferido';
         const msg =
           `Informe ao hóspede com muita empatia que no momento não conseguimos confirmar a entrada às ${horarioFormatado} no ${reserva.nome_imovel} ` +
           `porque ${motivoBloqueio}. ` +
-          `Diga que já deixamos prioridade máxima na limpeza para liberar o quanto antes e que ele pode guardar as malas na recepção se chegar mais cedo!`;
+          `Diga que já deixamos prioridade máxima na preparação para liberar o quanto antes e que ele pode guardar as malas na recepção se chegar mais cedo!`;
         return {
           status: 'BLOQUEADO_PELA_REGRA',
           codigo_regra_bloqueio: 'FLAT_OCUPADO_AGUARDANDO_CHECKOUT_E_LIMPEZA',
@@ -115,6 +115,44 @@ export const solicitarEarlyCheckinTool: AgentToolDefinition<SolicitarEarlyChecki
           instrucao_para_ia: msg,
           instrucao_resposta_ia: msg,
         };
+      }
+
+      // TRAVA 1B: Conferência de frigobar obrigatória para Early Check-in antes das 14:00 no dia do check-in
+      const standardCheckinHHMM = String(db?.settings?.checkinTime || '14:00').trim() || '14:00';
+      const nowBrlDate = new Date(Date.now() - 3 * 3600000);
+      const todayBrlStr = nowBrlDate.toISOString().slice(0, 10);
+      const nowBrlHHMM = nowBrlDate.toISOString().slice(11, 16);
+      if (dataCheckin === todayBrlStr && horarioFormatado < standardCheckinHHMM && nowBrlHHMM < standardCheckinHHMM) {
+        const flatNumClean = flatNumber.replace(/\D/g, '');
+        const hasRealMinibarToday = Array.isArray(db?.minibarInspections)
+          ? db.minibarInspections.some((i: any) => {
+              if (!i || i.isSkipMark || i.isCourtesyCorrectionOnly) return false;
+              const st = String(i.status || '').toLowerCase().trim();
+              if (st === 'nq' || st === 'np') return false;
+              const iFlat = String(i.flatNumber || '').replace(/\D/g, '');
+              if (flatNumClean && iFlat !== flatNumClean) return false;
+              const iDate = String(i.launchDate || String(i.inspectedAt || '').slice(0, 10)).slice(0, 10);
+              return iDate === todayBrlStr;
+            })
+          : false;
+        if (!hasRealMinibarToday) {
+          const msg =
+            `Informe ao hóspede com empatia e clareza que o ${reserva.nome_imovel} já foi higienizado pela governança, ` +
+            `porém ainda aguarda a *conferência de frigobar* pela equipe de abastecimento — tanto a limpeza quanto a conferência de frigobar precisam estar concluídas para liberarmos o early check-in antes das ${standardCheckinHHMM}. ` +
+            `Tranquilize-o dizendo que assim que a conferência for finalizada (ou pontualmente no horário oficial das ${standardCheckinHHMM}), enviaremos a confirmação imediata aqui no WhatsApp!`;
+          return {
+            status: 'BLOQUEADO_PELA_REGRA',
+            codigo_regra_bloqueio: 'AGUARDANDO_CONFERENCIA_FRIGOBAR',
+            dados: {
+              horario_padrao_checkin: standardCheckinHHMM,
+              flat: reserva.nome_imovel,
+              limpeza_concluida: true,
+              frigobar_conferido_hoje: false,
+            },
+            instrucao_para_ia: msg,
+            instrucao_resposta_ia: msg,
+          };
+        }
       }
 
       // TRAVA 2: Faixas de horário por canal (WhatsApp/Direto a partir de 10:00; demais a partir de 12:00)

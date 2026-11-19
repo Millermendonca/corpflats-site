@@ -596,14 +596,14 @@ Desejamos uma ótima viagem até aqui! Se precisar de suporte, estamos à dispos
     stageNumber: 4,
     stageName: "4. Dia do Check-in (Manhã)",
     title: "Quarto Liberado • Early Check-in a partir das 10:00 (Direto)",
-    subtitle: "Se limpo antes das 10:00, aguarda as 10:00 para envio",
+    subtitle: "Se limpo e com frigobar conferido antes das 10:00, aguarda as 10:00 para envio",
     triggerEvent: "room_ready",
     channelType: "whatsapp",
     recipients: ["hospede"],
-    timingLabel: "A partir das 10:00 assim que higienizado",
-    condition: "Reserva Direta (Site/WhatsApp) com quarto limpo pelas camareiras",
+    timingLabel: "A partir das 10:00 após limpeza + frigobar",
+    condition: "Reserva Direta (Site/WhatsApp) com limpeza concluída e conferência de frigobar feita hoje (antes das 14:00)",
     channelsAllowed: ["site", "whatsapp"],
-    description: "Disparado quando a camareira conclui a limpeza do flat (a partir das 10:00 para reservas diretas). É CONDICIONAL: se o hóspede já tiver feito o Check-in Online, informa que basta ir à recepção e informar o nome; se ainda não tiver feito, avisa que o quarto já está limpo e pronto, aguardando apenas concluir o Check-in Online para liberar a entrada.",
+    description: "Disparado assim que limpeza E conferência de frigobar forem concluídas (a partir das 10:00 para reservas diretas; a partir das 14:00 basta a limpeza). É CONDICIONAL: se o hóspede já tiver feito o Check-in Online, informa que basta ir à recepção e informar o nome; se ainda não tiver feito, avisa que o quarto já está limpo e pronto, aguardando apenas concluir o Check-in Online para liberar a entrada.",
     messagePreview: `*{{primeiro_nome}}*, uma ótima notícia! 🎉🔑
 Seu *Flat {{quarto}}* no *{{nome_hotel}}* já está *Limpo e Pronto* para receber você!
 
@@ -622,14 +622,14 @@ Seu *Flat {{quarto}}* no *{{nome_hotel}}* já está *Limpo e Pronto* para recebe
     stageNumber: 4,
     stageName: "4. Dia do Check-in (Manhã)",
     title: "Quarto Liberado • Liberação de Flat às 12:00 / 14:00 (OTA)",
-    subtitle: "Disparado às 12:00 se já limpo (ou 14:00 padrão) — Condicional ao Check-in Online",
+    subtitle: "Disparado às 12:00 se limpo e com frigobar conferido (ou 14:00 padrão) — Condicional ao Check-in Online",
     triggerEvent: "room_ready_ota",
     channelType: "whatsapp",
     recipients: ["hospede"],
-    timingLabel: "Às 12:00 (se limpo) ou 14:00 (padrão)",
+    timingLabel: "Às 12:00 (limpeza + frigobar) ou 14:00 (padrão)",
     condition: "Reserva OTA (Booking / Airbnb)",
     channelsAllowed: ["booking", "airbnb"],
-    description: "Disparado às 12:00 se o flat estiver limpo (ou às 14:00 padrão), revelando o número do flat. É CONDICIONAL: se o hóspede já tiver feito o Check-in Online, orienta ir à recepção; se ainda não tiver feito, explica que o quarto está limpo e pronto, aguardando concluir o Check-in Online.",
+    description: "Disparado às 12:00 assim que limpeza E conferência de frigobar estiverem concluídas (ou às 14:00 padrão apenas com limpeza concluída), revelando o número do flat. É CONDICIONAL: se o hóspede já tiver feito o Check-in Online, orienta ir à recepção; se ainda não tiver feito, explica que o quarto está limpo e pronto, aguardando concluir o Check-in Online.",
     messagePreview: `*{{primeiro_nome}}*, uma ótima notícia! 🔑🏡
 Seu apartamento no *{{nome_hotel}}* já foi definido:
 
@@ -1283,7 +1283,7 @@ export default function ReservationJourney() {
       icon: Globe,
       color: "border-indigo-500 bg-indigo-50/40 dark:bg-indigo-950/20",
       summary: "Canal mais rentável. Permite pré-reserva com PIX automático (-5%) ou confirmação com Cartão de Crédito. Concede Early Check-in cortesia às 10:00 e acesso imediato ao portal.",
-      earlyCheckinRule: "✅ Incluso gratuitamente a partir das 10:00 se liberado pelas camareiras.",
+      earlyCheckinRule: "✅ Incluso gratuitamente a partir das 10:00 após conclusão da limpeza e conferência de frigobar.",
       flatNumberRule: "✅ Revelado imediatamente na confirmação.",
       breakfastRule: "🥐 Notificação de montagem às 18:00 se contratado e ainda não solicitado.",
       allowedNodeIds: [
@@ -1319,7 +1319,7 @@ export default function ReservationJourney() {
       icon: MessageSquare,
       color: "border-emerald-500 bg-emerald-50/40 dark:bg-emerald-950/20",
       summary: "Fechado diretamente pelo atendente no WhatsApp ou presencialmente. Suporte a faturamento PJ para empresas e solicitantes com envio de PIX personalizado.",
-      earlyCheckinRule: "✅ Incluso gratuitamente a partir das 10:00 conforme disponibilidade.",
+      earlyCheckinRule: "✅ Incluso gratuitamente a partir das 10:00 mediante limpeza e conferência de frigobar.",
       flatNumberRule: "✅ Revelado imediatamente na confirmação.",
       breakfastRule: "🥐 Notificação de montagem às 18:00 se contratado e ainda não solicitado.",
       allowedNodeIds: [
@@ -1355,7 +1355,7 @@ export default function ReservationJourney() {
       icon: Building2,
       color: "border-sky-500 bg-sky-50/40 dark:bg-sky-950/20",
       summary: "Reservas importadas das OTAs. Estratégia inteligente de ocultar o número do apartamento até o dia da entrada e incentivar o hóspede a reservar direto da próxima vez. Sem menção a pagamentos.",
-      earlyCheckinRule: "⏰ Entrada padrão às 14:00 (ou às 12:00 se liberado). Promove Early check-in às 10:00 para canais diretos.",
+      earlyCheckinRule: "⏰ Entrada padrão às 14:00 (ou às 12:00 após limpeza e conferência de frigobar). Promove Early check-in às 10:00 para canais diretos.",
       flatNumberRule: "🔒 Ocultado na confirmação; atribuído e revelado no dia do check-in às 12h ou 14h.",
       breakfastRule: "☕ Geralmente sem café incluso (ou adquirido à parte).",
       allowedNodeIds: [

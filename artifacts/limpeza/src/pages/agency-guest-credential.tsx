@@ -63,6 +63,31 @@ function formatPhoneMask(value: string): string {
   return formatSmartPhone(value);
 }
 
+/**
+ * Compara dois telefones ignorando formatação, DDI 55 opcional e variação de 8/9 dígitos locais.
+ */
+export function phonesMatchBr(phoneA?: string | null, phoneB?: string | null): boolean {
+  const cleanDigits = (raw?: string | null) => {
+    let d = String(raw || "").replace(/\D/g, "");
+    while (d.startsWith("0")) d = d.slice(1);
+    return d;
+  };
+  const a = cleanDigits(phoneA);
+  const b = cleanDigits(phoneB);
+  if (a.length < 8 || b.length < 8) return false;
+  if (a === b) return true;
+  if (a.slice(-8) !== b.slice(-8)) return false;
+  const getDdd = (d: string) => {
+    if (d.startsWith("55") && (d.length === 12 || d.length === 13)) return d.slice(2, 4);
+    if (d.length === 10 || d.length === 11) return d.slice(0, 2);
+    return null;
+  };
+  const dddA = getDdd(a);
+  const dddB = getDdd(b);
+  if (dddA && dddB && dddA !== dddB) return false;
+  return true;
+}
+
 interface BatchDraftItem {
   reservation: any;
   guestCount: number;
@@ -670,6 +695,95 @@ export default function AgencyGuestCredential() {
       }
     }
 
+    const reqPhonesForBatch = [
+      item.reservation?.requesterPhone,
+      item.reservation?.requesterInfo?.whatsapp,
+      item.reservation?.requesterInfo?.phone,
+      item.reservation?.agencyAgentPhone,
+      ...batchItems.flatMap((bi) => [
+        bi.reservation?.requesterPhone,
+        bi.reservation?.requesterInfo?.whatsapp,
+        bi.reservation?.requesterInfo?.phone,
+        bi.reservation?.agencyAgentPhone
+      ])
+    ].filter(Boolean) as string[];
+    const allowRequesterAsG1Batch = Boolean(item.requesterIsGuest1 && idx === 0);
+
+    if (!allowRequesterAsG1Batch && reqPhonesForBatch.some((rp) => phonesMatchBr(finalPhonePayload, rp))) {
+      toast({
+        title: `WhatsApp do solicitante não permitido (${refLabel})`,
+        description: "Você informou o WhatsApp do próprio solicitante para o Hóspede 1 deste flat. Informe o WhatsApp real do hóspede que vai se hospedar aqui (ou marque a opção de Solicitante como Hóspede 1 apenas no 1º flat).",
+        variant: "destructive"
+      });
+      return false;
+    }
+
+    if (finalGuest2PhonePayload) {
+      if (phonesMatchBr(finalGuest2PhonePayload, finalPhonePayload)) {
+        toast({
+          title: `WhatsApp repetido no Hóspede 2 (${refLabel})`,
+          description: "O WhatsApp do Hóspede 2 não pode ser igual ao do Hóspede 1. Informe o número individual ou marque 'Informar depois'.",
+          variant: "destructive"
+        });
+        return false;
+      }
+      if (reqPhonesForBatch.some((rp) => phonesMatchBr(finalGuest2PhonePayload, rp))) {
+        toast({
+          title: `WhatsApp do solicitante no Hóspede 2 (${refLabel})`,
+          description: "O WhatsApp do Hóspede 2 não pode ser o número do solicitante da reserva.",
+          variant: "destructive"
+        });
+        return false;
+      }
+    }
+
+    if (finalGuest3PhonePayload) {
+      if (
+        phonesMatchBr(finalGuest3PhonePayload, finalPhonePayload) ||
+        (finalGuest2PhonePayload && phonesMatchBr(finalGuest3PhonePayload, finalGuest2PhonePayload))
+      ) {
+        toast({
+          title: `WhatsApp repetido no Hóspede 3 (${refLabel})`,
+          description: "O WhatsApp do Hóspede 3 deve ser exclusivo deste acompanhante (diferente do Hóspede 1 e 2).",
+          variant: "destructive"
+        });
+        return false;
+      }
+      if (reqPhonesForBatch.some((rp) => phonesMatchBr(finalGuest3PhonePayload, rp))) {
+        toast({
+          title: `WhatsApp do solicitante no Hóspede 3 (${refLabel})`,
+          description: "O WhatsApp do Hóspede 3 não pode ser o número do solicitante da reserva.",
+          variant: "destructive"
+        });
+        return false;
+      }
+    }
+
+    const conflictingOtherBatchCard = batchItems.find((otherItem, otherIdx) => {
+      if (otherIdx === idx || !otherItem) return false;
+      const otherPhones = [
+        otherItem.guestPhone,
+        !otherItem.guest2InformLater ? otherItem.guest2Phone : "",
+        !otherItem.guest3InformLater ? otherItem.guest3Phone : ""
+      ].filter((p) => String(p || "").replace(/\D/g, "").length >= 8);
+      return (
+        otherPhones.some((op) => phonesMatchBr(finalPhonePayload, op)) ||
+        (finalGuest2PhonePayload && otherPhones.some((op) => phonesMatchBr(finalGuest2PhonePayload, op))) ||
+        (finalGuest3PhonePayload && otherPhones.some((op) => phonesMatchBr(finalGuest3PhonePayload, op)))
+      );
+    });
+    if (conflictingOtherBatchCard) {
+      const otherRef = conflictingOtherBatchCard.reservation?.b2bReservationNumber
+        ? `#${conflictingOtherBatchCard.reservation.b2bReservationNumber}`
+        : (conflictingOtherBatchCard.reservation?.code || `outro flat`);
+      toast({
+        title: `WhatsApp já usado em outro flat (${refLabel})`,
+        description: `Este número já foi informado no flat ${otherRef}. Cada hóspede deve ter seu próprio WhatsApp individual para receber check-in e café da manhã corretamente.`,
+        variant: "destructive"
+      });
+      return false;
+    }
+
     updateBatchItem(idx, { saving: true });
     try {
       const hasWa = await checkBatchItemWhatsApp(idx, finalPhonePayload);
@@ -994,6 +1108,67 @@ export default function AgencyGuestCredential() {
         toast({
           title: "CPF do Hóspede 3 inválido",
           description: "Corrija os 11 dígitos do CPF do Hóspede 3 ou deixe em branco.",
+          variant: "destructive"
+        });
+        return;
+      }
+    }
+
+    const reqPhonesSingle = [
+      reservation.requesterPhone,
+      reservation.requesterInfo?.whatsapp,
+      reservation.requesterInfo?.phone,
+      reservation.agencyAgentPhone
+    ].filter(Boolean) as string[];
+    const allowRequesterAsG1Single = Boolean(
+      requesterIsGuest1Single &&
+      (!reservation.packageIndex || Number(reservation.packageIndex) === 1)
+    );
+
+    if (!allowRequesterAsG1Single && reqPhonesSingle.some((rp) => phonesMatchBr(finalPhonePayload, rp))) {
+      toast({
+        title: "WhatsApp do solicitante não permitido",
+        description: "Você informou o WhatsApp do próprio solicitante para o Hóspede 1 deste flat. Informe o WhatsApp real do hóspede (ou marque que o solicitante será o Hóspede 1 no 1º flat).",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (finalSingleG2PhonePayload) {
+      if (phonesMatchBr(finalSingleG2PhonePayload, finalPhonePayload)) {
+        toast({
+          title: "WhatsApp repetido no Hóspede 2",
+          description: "O WhatsApp do Hóspede 2 não pode ser igual ao do Hóspede 1. Informe o número individual ou marque 'Informar depois'.",
+          variant: "destructive"
+        });
+        return;
+      }
+      if (reqPhonesSingle.some((rp) => phonesMatchBr(finalSingleG2PhonePayload, rp))) {
+        toast({
+          title: "WhatsApp do solicitante no Hóspede 2",
+          description: "O WhatsApp do Hóspede 2 não pode ser o número do solicitante da reserva.",
+          variant: "destructive"
+        });
+        return;
+      }
+    }
+
+    if (finalSingleG3PhonePayload) {
+      if (
+        phonesMatchBr(finalSingleG3PhonePayload, finalPhonePayload) ||
+        (finalSingleG2PhonePayload && phonesMatchBr(finalSingleG3PhonePayload, finalSingleG2PhonePayload))
+      ) {
+        toast({
+          title: "WhatsApp repetido no Hóspede 3",
+          description: "O WhatsApp do Hóspede 3 deve ser exclusivo deste acompanhante (diferente do Hóspede 1 e 2).",
+          variant: "destructive"
+        });
+        return;
+      }
+      if (reqPhonesSingle.some((rp) => phonesMatchBr(finalSingleG3PhonePayload, rp))) {
+        toast({
+          title: "WhatsApp do solicitante no Hóspede 3",
+          description: "O WhatsApp do Hóspede 3 não pode ser o número do solicitante da reserva.",
           variant: "destructive"
         });
         return;

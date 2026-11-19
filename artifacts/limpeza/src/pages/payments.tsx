@@ -586,7 +586,7 @@ export default function Payments() {
 
   const handleDispatchBoleto = async (b: any) => {
     try {
-      toast({ title: "Disparando E-mail e WhatsApp...", description: `Enviando Boleto #${b.code || b.id} por E-mail e WhatsApp aos destinatários.` })
+      toast({ title: "Verificando e disparando...", description: `Conferindo liquidação e enviando Boleto #${b.code || b.id} aos destinatários.` })
       const resp = await fetch(`/api/boletos/${b.id}/dispatch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -596,6 +596,12 @@ export default function Payments() {
       const data = await resp.json()
       if (resp.ok && data.success) {
         toast({ title: "Envios concluídos!", description: "PDF do boleto e botões de cópia enviados aos destinatários marcados." })
+        fetchPayments()
+      } else if (data.alreadyPaid || data.alreadyCancelled) {
+        toast({
+          title: data.alreadyPaid ? "Boleto já está PAGO!" : "Boleto cancelado",
+          description: data.error || "Envio cancelado automaticamente e status atualizado."
+        })
         fetchPayments()
       } else {
         toast({ title: "Erro ao reenviar", description: data.error || "Não foi possível disparar o boleto aos destinatários.", variant: "destructive" })
@@ -1749,19 +1755,18 @@ export default function Payments() {
                                     <span>Editar</span>
                                   </Button>
 
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => handleDispatchBoleto(b)}
-                                    className="h-7 px-2 text-[10px] font-bold rounded-lg gap-1"
-                                    title="Reenviar Boleto (PDF + Botões de Cópia) por E-mail e WhatsApp"
-                                  >
-                                    <Send className="w-3 h-3" />
-                                    <span>Enviar</span>
-                                  </Button>
-
                                   {isUnpaid && (
                                     <>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => handleDispatchBoleto(b)}
+                                        className="h-7 px-2 text-[10px] font-bold rounded-lg gap-1"
+                                        title="Reenviar Boleto (PDF + Botões de Cópia) por E-mail e WhatsApp"
+                                      >
+                                        <Send className="w-3 h-3" />
+                                        <span>Enviar</span>
+                                      </Button>
                                       <Button
                                         size="sm"
                                         onClick={() => handleMarkBoletoPaid(b)}

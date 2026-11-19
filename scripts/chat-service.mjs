@@ -820,37 +820,46 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     tomadorCodigoMunicipio: normReqAddr.ibge
   } : null;
 
-  // Seleção do Tomador Ativo desacoplando Solicitante ≠ Hóspede ≠ Tomador e respeitando preferência salva no CRM
-  let rawResRecType = String(r?.invoiceRecipientType || "").toLowerCase();
-  if (rawResRecType === "other_person" || rawResRecType === "third_party") rawResRecType = "requester";
-  let crmPrefType = String(primaryGuest?.preferredInvoiceRecipient || "").toLowerCase();
-  if (crmPrefType === "other_person" || crmPrefType === "third_party") crmPrefType = "requester";
+  // Seleção do Tomador Ativo desacoplando Solicitante ≠ Hóspede ≠ Tomador e respeitando preferência salva no CRM (sem fallback cruzado PF <-> PJ)
+  const strictRecipientMatch = Boolean(!isResObject && options?.strictRecipientMatch);
+  const normalizeRecType = (val = "") => {
+    const s = String(val || "").trim().toLowerCase();
+    if (s === "other_person" || s === "third_party" || s === "requester") return "requester";
+    if (s === "pj" || s === "company" || s === "empresa") return "company";
+    if (s === "agency" || s === "agencia") return "agency";
+    if (s === "pf" || s === "guest" || s === "hospede") return "guest";
+    return "";
+  };
+  const rawResRecType = normalizeRecType(r?.invoiceRecipientType || r?.nfRecipientType);
+  const crmPrefType = normalizeRecType(primaryGuest?.preferredInvoiceRecipient);
 
+  const confDocEarly = onlyDigits(confFiscal?.tomadorCpfCnpj || confFiscal?.doc || "");
   let recipientType = rawResRecType;
   if (preferType === "PF" || preferType === "pf" || preferType === "guest") {
     recipientType = "guest";
   } else if (preferType === "requester" || preferType === "other_person") {
-    recipientType = requesterOption ? "requester" : "guest";
+    recipientType = (requesterOption || strictRecipientMatch) ? "requester" : "guest";
   } else if (preferType === "PJ" || preferType === "pj" || preferType === "company") {
-    recipientType = companyOption ? "company" : (agencyOption ? "agency" : "guest");
+    recipientType = (companyOption || strictRecipientMatch) ? "company" : (agencyOption ? "agency" : "company");
   } else if (preferType === "agency") {
     recipientType = "agency";
-  } else if (confFiscal?.tomadorCpfCnpj || confFiscal?.doc) {
-    const confDoc = onlyDigits(confFiscal.tomadorCpfCnpj || confFiscal.doc);
-    if (agencyOption && confDoc === agencyOption.tomadorCpfCnpj) recipientType = "agency";
-    else if (companyOption && confDoc === companyOption.tomadorCpfCnpj) recipientType = "company";
-    else if (requesterOption && requesterOption.tomadorCpfCnpj && confDoc === requesterOption.tomadorCpfCnpj && confDoc !== guestOption.tomadorCpfCnpj) recipientType = "requester";
-    else if (confDoc.length === 14 && (confFiscal.tomadorTipo === "PJ" || confFiscal.tomador === "PJ" || confFiscal.type === "COMPANY")) recipientType = "company";
+  } else if (confDocEarly.length === 11 || confDocEarly.length === 14) {
+    const confRecHint = normalizeRecType(confFiscal?.invoiceRecipientType || confFiscal?.tomadorType);
+    if (agencyOption && confDocEarly === agencyOption.tomadorCpfCnpj) recipientType = "agency";
+    else if (companyOption && confDocEarly === companyOption.tomadorCpfCnpj) recipientType = "company";
+    else if (requesterOption && requesterOption.tomadorCpfCnpj && confDocEarly === requesterOption.tomadorCpfCnpj && confDocEarly !== guestOption.tomadorCpfCnpj) recipientType = "requester";
+    else if (confDocEarly.length === 14) recipientType = confRecHint === "agency" ? "agency" : "company";
+    else if (confRecHint === "requester") recipientType = "requester";
     else recipientType = "guest";
   } else if (!["guest", "company", "agency", "requester"].includes(recipientType)) {
     if (crmPrefType === "guest") {
       recipientType = "guest";
-    } else if (crmPrefType === "company" && companyOption && companyOption.tomadorCpfCnpj.length === 14) {
+    } else if (crmPrefType === "company") {
       recipientType = "company";
-    } else if (crmPrefType === "agency" && agencyOption) {
+    } else if (crmPrefType === "agency") {
       recipientType = "agency";
-    } else if (crmPrefType === "requester" && requesterOption) {
-      recipientType = "requester";
+    } else if (crmPrefType === "requester") {
+      recipientType = requesterOption || strictRecipientMatch ? "requester" : "guest";
     } else if (agencyOption && r?.channel === "b2b") {
       recipientType = "agency";
     } else if (companyOption && companyOption.tomadorCpfCnpj.length === 14 && isValidCnpj(companyOption.tomadorCpfCnpj)) {
@@ -860,11 +869,84 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     }
   }
 
-  let activeOption =
-    (recipientType === "agency" && agencyOption && agencyOption.tomadorCpfCnpj) ? { ...agencyOption } :
-    (recipientType === "company" && companyOption && companyOption.tomadorCpfCnpj) ? { ...companyOption } :
-    (recipientType === "requester" && requesterOption && (requesterOption.tomadorCpfCnpj || requesterOption.tomadorNome)) ? { ...requesterOption } :
-    { ...guestOption };
+  const buildEmptyCompanyScaffold = () => ({
+    type: "company",
+    tomadorTipo: "PJ",
+    tomadorType: "pj",
+    tomadorPadrao: "PJ",
+    companyId: crmComp?.id ? Number(crmComp.id) : (effectiveCompanyId ? Number(effectiveCompanyId) : null),
+    name: toTitleCaseLocal(confFiscal?.tomadorNome || r?.companyName || primaryGuest?.companyName || "Empresa"),
+    doc: "",
+    tomadorNome: toTitleCaseLocal(confFiscal?.tomadorNome || r?.companyName || primaryGuest?.companyName || "Empresa"),
+    tomadorCpfCnpj: "",
+    tomadorEmail: maskEmailForDraft([r?.nfDeliveryEmails, !hideFromGuest ? guestEmail : ""]),
+    tomadorTelefone: maskPhoneForDraft(hideFromGuest ? "" : guestPhone),
+    tomadorEndereco: "",
+    tomadorNumero: "",
+    tomadorComplemento: "",
+    tomadorBairro: "",
+    tomadorCep: "",
+    tomadorCidade: "",
+    tomadorUf: "",
+    tomadorCodigoMunicipio: ""
+  });
+
+  const buildEmptyAgencyScaffold = () => ({
+    type: "agency",
+    tomadorTipo: "PJ",
+    tomadorType: "agency",
+    tomadorPadrao: "AGÊNCIA PJ",
+    agencyId: crmAgency?.id ? Number(crmAgency.id) : (effectiveAgencyId ? Number(effectiveAgencyId) : null),
+    name: toTitleCaseLocal(confFiscal?.tomadorNome || r?.agencyName || r?.agencyTradeName || "Agência de Viagens"),
+    doc: "",
+    tomadorNome: toTitleCaseLocal(confFiscal?.tomadorNome || r?.agencyName || r?.agencyTradeName || "Agência de Viagens"),
+    tomadorCpfCnpj: "",
+    tomadorEmail: maskEmailForDraft([r?.agencyAgentEmail, r?.nfDeliveryEmails]),
+    tomadorTelefone: maskPhoneForDraft(r?.agencyAgentPhone || ""),
+    tomadorEndereco: "",
+    tomadorNumero: "",
+    tomadorComplemento: "",
+    tomadorBairro: "",
+    tomadorCep: "",
+    tomadorCidade: "",
+    tomadorUf: "",
+    tomadorCodigoMunicipio: ""
+  });
+
+  const buildEmptyRequesterScaffold = () => ({
+    type: "requester",
+    tomadorTipo: "PF",
+    tomadorType: "pf",
+    tomadorPadrao: "TERCEIRO PF",
+    requesterGuestId: r?.requesterInfo?.guestId ? Number(r.requesterInfo.guestId) : null,
+    guestId: guestOption.guestId,
+    name: toTitleCaseLocal(r?.requesterInfo?.name || confFiscal?.tomadorNome || "Solicitante"),
+    doc: "",
+    tomadorNome: toTitleCaseLocal(r?.requesterInfo?.name || confFiscal?.tomadorNome || "Solicitante"),
+    tomadorCpfCnpj: "",
+    tomadorEmail: maskEmailForDraft([r?.requesterInfo?.email]),
+    tomadorTelefone: maskPhoneForDraft(r?.requesterInfo?.phone || r?.requesterInfo?.whatsapp || ""),
+    tomadorEndereco: "",
+    tomadorNumero: "",
+    tomadorComplemento: "",
+    tomadorBairro: "",
+    tomadorCep: "",
+    tomadorCidade: "",
+    tomadorUf: "",
+    tomadorCodigoMunicipio: ""
+  });
+
+  // Nunca faz fallback silencioso de Empresa/Agência para CPF do hóspede (ou vice-versa)
+  let activeOption;
+  if (recipientType === "agency") {
+    activeOption = agencyOption ? { ...agencyOption } : buildEmptyAgencyScaffold();
+  } else if (recipientType === "company") {
+    activeOption = companyOption ? { ...companyOption } : buildEmptyCompanyScaffold();
+  } else if (recipientType === "requester") {
+    activeOption = requesterOption ? { ...requesterOption } : buildEmptyRequesterScaffold();
+  } else {
+    activeOption = { ...guestOption };
+  }
 
   // Se houver dados já confirmados/personalizados em confirmedFiscalData ou invoiceDetails compatíveis com o tomador ativo, aplica por cima
   const customOverlay = confFiscal || invDetails || null;
@@ -872,7 +954,13 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
   const overlayMatchesActive = Boolean(
     customOverlay &&
     (!preferType || (preferType === "PF" && ovDoc.length === 11) || (preferType === "PJ" && ovDoc.length === 14) || (preferType === "requester" && ovDoc.length === 11)) &&
-    (!ovDoc || ovDoc === activeOption.tomadorCpfCnpj || (recipientType === "requester" && ovDoc.length === 11) || (ovDoc.length === 14 && activeOption.tomadorTipo === "PJ" && (companyOption || agencyOption)))
+    (
+      !ovDoc ||
+      ovDoc === activeOption.tomadorCpfCnpj ||
+      (recipientType === "requester" && ovDoc.length === 11) ||
+      (recipientType === "guest" && ovDoc.length === 11) ||
+      (ovDoc.length === 14 && (recipientType === "company" || recipientType === "agency" || activeOption.tomadorTipo === "PJ"))
+    )
   );
   if (overlayMatchesActive) {
     if (ovDoc.length === 11 || ovDoc.length === 14) {
@@ -1025,6 +1113,12 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     activeOption.tomadorCep ? `CEP: ${activeOption.tomadorCep}` : ""
   ].filter(Boolean).join(" - ");
 
+  const activeDocDigits = onlyDigits(activeOption.tomadorCpfCnpj || "");
+  const expectedDocumentKind = (recipientType === "company" || recipientType === "agency") ? "CNPJ" : "CPF";
+  const hasValidActiveDoc = expectedDocumentKind === "CNPJ"
+    ? (activeDocDigits.length === 14 && isValidCnpj(activeDocDigits))
+    : ((activeDocDigits.length === 11 && isValidCpf(activeDocDigits)) || (activeDocDigits.length === 14 && isValidCnpj(activeDocDigits) && Boolean(confFiscal?.tomadorCpfCnpj)));
+
   return {
     reservationId: r?.id || null,
     reservationCode: r?.code || null,
@@ -1041,6 +1135,9 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     discriminacao: descricaoServico,
     discriminacaoSugerida: descricaoServico,
     invoiceRecipientType: recipientType,
+    expectedRecipientType: recipientType,
+    missingRequiredDocument: !hasValidActiveDoc,
+    missingDocumentKind: expectedDocumentKind,
     nfHideFromGuest: hideFromGuest,
     nfDeliveryEmails: draftNfDeliveryEmails,
     guestName,

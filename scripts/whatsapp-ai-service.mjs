@@ -11,7 +11,7 @@
  * - Base de conhecimento rica sobre o CorpFlats (Wi-Fi, garagem, café, horários, localização, comodidades)
  */
 
-import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, isOwnHotelWhatsAppPhone, isBotMessage, DEVELOPER_PHONES, doesReservationMatchPhone, findAllReservationsByPhone, formatPhoneDisplay, evaluateZapiChannelPolicy, ensureZapiChannels, getReservationRecipients, triggerImmediateWhatsApp, formatReservationChannelLabel, resolveReservationGuestCount, computeCardAmountFromPix } from "./zapi-service.mjs";
+import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, isOwnHotelWhatsAppPhone, isBotMessage, DEVELOPER_PHONES, doesReservationMatchPhone, findAllReservationsByPhone, formatPhoneDisplay, evaluateZapiChannelPolicy, ensureZapiChannels, getReservationRecipients, triggerImmediateWhatsApp, formatReservationChannelLabel, resolveReservationGuestCount, computeCardAmountFromPix, evaluateFlatCheckinReadiness } from "./zapi-service.mjs";
 import { buildOfficialNfseDraftForReservation as _rawBuildOfficialNfseDraftForReservation } from "./chat-service.mjs";
 import {
   getRoomMoveGroupReservations,
@@ -971,6 +971,9 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
   let flatNumber = matchedReservation?.flatNumber || null;
   let flatId = matchedReservation?.flatId || null;
   let cleaningStatus = "desconhecido";
+  let isFlatClean = false;
+  let isMinibarInspected = true;
+  let isMinibarPendingForEarlyCheckin = false;
   let isRoomReady = false;
   let isCheckoutCompleted = false;
 
@@ -993,7 +996,7 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
       stayStatus = "estadia_passada";
     }
 
-    // Consulta governança se for check-in hoje ou em estadia
+    // Consulta governança + conferência de frigobar se for check-in hoje ou em estadia
     if (flatNumber && Array.isArray(db?.cleaningRequests)) {
       const cleanReq = db.cleaningRequests.find(c => 
         (String(c.flatNumber) === String(flatNumber) || c.flatId === flatId) &&
@@ -1001,15 +1004,28 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
       );
       if (cleanReq) {
         cleaningStatus = cleanReq.status || "pendente";
-        isRoomReady = cleanReq.status === "clean" || cleanReq.completedAt != null;
+        isFlatClean = cleanReq.status === "clean" || cleanReq.completedAt != null;
       } else {
         // Se não há chamado de limpeza hoje, verifica status do flat
         const flatObj = (db?.flats || []).find(f => String(f.number) === String(flatNumber) || f.id === flatId);
         if (flatObj && flatObj.status === "clean") {
           cleaningStatus = "clean";
-          isRoomReady = true;
+          isFlatClean = true;
         }
       }
+    }
+
+    if (stayStatus === "checkin_hoje") {
+      const readiness = evaluateFlatCheckinReadiness(db, matchedReservation, now);
+      isFlatClean = readiness.isFlatClean;
+      isMinibarInspected = readiness.isMinibarInspected;
+      isMinibarPendingForEarlyCheckin = readiness.isMinibarPendingForEarlyCheckin;
+      isRoomReady = readiness.isFlatReady;
+      if (isFlatClean && cleaningStatus === "desconhecido") {
+        cleaningStatus = "clean";
+      }
+    } else {
+      isRoomReady = isFlatClean;
     }
   }
 
@@ -1098,6 +1114,9 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
     stayStatus,
     flatNumber,
     cleaningStatus,
+    isFlatClean,
+    isMinibarInspected,
+    isMinibarPendingForEarlyCheckin,
     isRoomReady
   };
 
@@ -3916,6 +3935,18 @@ export function handleGetFlatStatus(db, args = {}) {
     !isReservationCheckoutCompleted(r, db)
   );
 
+  const arrivingTodayRes = (db?.reservations || []).find(r =>
+    (String(r.flatNumber) === String(flat.number) || String(r.flatId) === String(flat.id)) &&
+    r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "expirada" &&
+    r.checkinDate === todayStr
+  ) || { flatId: flat.id, flatNumber: String(flat.number), checkinDate: todayStr };
+
+  const readiness = evaluateFlatCheckinReadiness(db, arrivingTodayRes);
+  const isFlatClean = isRoomReady && readiness.isFlatClean;
+  const isMinibarInspected = readiness.isMinibarInspected;
+  const isMinibarPendingForEarlyCheckin = readiness.isMinibarPendingForEarlyCheckin;
+  isRoomReady = Boolean(isFlatClean && !isMinibarPendingForEarlyCheckin);
+
   const amenities = getFlatAmenitiesInfo(flat);
 
   return {
@@ -3923,12 +3954,17 @@ export function handleGetFlatStatus(db, args = {}) {
     flatNumber: String(flat.number),
     flatId: flat.id,
     cleaningStatus,
+    isFlatClean,
+    isMinibarInspected,
+    isMinibarPendingForEarlyCheckin,
     isRoomReady,
     isOccupied: Boolean(activeReservation),
     currentGuestName: activeReservation?.guestName || null,
     statusDescription: isRoomReady
       ? `Flat ${flat.number} está 100% limpo, higienizado e pronto para entrada.`
-      : `Flat ${flat.number} está em higienização ou pendente de liberação pela governança.`,
+      : (isFlatClean && isMinibarPendingForEarlyCheckin
+          ? `Flat ${flat.number} já foi higienizado, mas ainda aguarda a conferência de frigobar (Anserve) para liberação do check-in antecipado (o check-in oficial libera às ${readiness.standardCheckinTime}).`
+          : `Flat ${flat.number} está em higienização ou pendente de liberação pela governança.`),
     tags: amenities?.tags || [],
     airConditionerType: amenities?.airConditionerType || "split",
     airConditionerLabel: amenities?.airConditionerLabel || "Ar-condicionado Split ❄️",
@@ -4170,6 +4206,11 @@ export function handleInformCheckout(dbOrArgs, argsOrDb = {}, optionalPhone = ""
     matchedRes.actualCheckoutAt = matchedRes.actualCheckoutAt || now;
     matchedRes.actualCheckoutTime = matchedRes.actualCheckoutTime || getBrasiliaDateParts().timeStr;
     matchedRes.updatedAt = now;
+    if (typeof globalThis.runCheckoutAutoBillingAndNfse === "function") {
+      Promise.resolve(globalThis.runCheckoutAutoBillingAndNfse(matchedRes, { triggerSource: "whatsapp_guest" })).catch(e => {
+        console.warn("[WhatsApp Guest Checkout Auto-NFS-e Error]:", e?.message || e);
+      });
+    }
   }
 
   // 3.5. Cancela lembretes pendentes de check-out, café da manhã ou estadia na fila (WhatsApp e E-mail)
@@ -7844,9 +7885,11 @@ export function validateAndRefineResponse({
               const chkLink = guestContext?.checkinUrl || guestContext?.rawCheckinUrl || "https://corpflats.com.br";
               replyText = ret(`Ótima notícia${name}! 🎉 O seu *Flat ${flatNum}* já está *100% limpo, higienizado e pronto*, aguardando apenas você fazer o seu *Check-in Online*! ⚠️ Para que a sua entrada fique liberada na recepção/portaria 24h, é necessário concluir primeiro esse procedimento pelo link: ${chkLink} — assim que finalizar, basta chegar na recepção e informar seu nome! 🏨🔑`);
             }
+          } else if (flatStatus.isFlatClean && flatStatus.isMinibarPendingForEarlyCheckin) {
+            replyText = ret(`Olá${name}! O seu *Flat ${flatNum}* já foi higienizado e está aguardando apenas a *conferência de frigobar* para liberarmos o check-in antecipado 🧊. O horário oficial de entrada é a partir das 14:00h. Assim que a conferência for concluída (ou às 14:00h), nós te avisaremos por aqui imediatamente! 🕒`);
           } else {
             const cleanDesc = flatStatus.cleaningStatus === "in_progress" ? "em higienização pela equipe de governança" : "sendo preparado pela nossa governança";
-            replyText = ret(`Olá${name}! O seu *Flat ${flatNum}* está ${cleanDesc} ✨. O horário oficial de entrada é a partir das 14:00h. Assim que a limpeza for liberada pela equipe, nós te avisaremos por aqui imediatamente! 🕒`);
+            replyText = ret(`Olá${name}! O seu *Flat ${flatNum}* está ${cleanDesc} ✨. O horário oficial de entrada é a partir das 14:00h. Assim que a limpeza e conferência forem liberadas pela equipe, nós te avisaremos por aqui imediatamente! 🕒`);
           }
         }
       } else {
@@ -8759,8 +8802,10 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
         }
         const chkLink = guestContext.checkinUrl || guestContext.rawCheckinUrl || "https://corpflats.com.br";
         return ret(`Ótima notícia${name}! 🎉 O seu *Flat ${guestContext.flatNumber}* já está *100% limpo, higienizado e pronto*, aguardando apenas você fazer o seu *Check-in Online*! ⚠️ Para que a sua entrada fique liberada na recepção/portaria 24h, é necessário concluir primeiro esse procedimento pelo link: ${chkLink} — assim que finalizar, basta chegar na recepção e informar seu nome! 🏨🔑`);
+      } else if (guestContext.isFlatClean && guestContext.isMinibarPendingForEarlyCheckin) {
+        return ret(`${greetingSalutation} O seu *Flat ${guestContext.flatNumber}* já está higienizado e aguarda apenas a *conferência de frigobar* para liberação do check-in antecipado 🧊. O horário oficial de entrada é a partir das *${kb.checkinTime}*. Assim que a conferência for concluída (ou no horário oficial das ${kb.checkinTime}), nós te avisaremos por aqui imediatamente! 🕒`);
       } else {
-        return ret(`${greetingSalutation} O seu *Flat ${guestContext.flatNumber}* está sendo finalizado com todo carinho pela nossa governança para garantir máxima higiene e conforto ✨. O horário oficial de entrada é a partir das *${kb.checkinTime}*. Assim que a limpeza for 100% liberada pela equipe, nós te avisaremos por aqui imediatamente! 🕒`);
+        return ret(`${greetingSalutation} O seu *Flat ${guestContext.flatNumber}* está sendo finalizado com todo carinho pela nossa governança para garantir máxima higiene e conforto ✨. O horário oficial de entrada é a partir das *${kb.checkinTime}*. Assim que a limpeza e a conferência de frigobar forem liberadas pela equipe, nós te avisaremos por aqui imediatamente! 🕒`);
       }
     }
     if (guestContext.stayStatus === "em_estadia") {
@@ -9564,7 +9609,7 @@ ${guestContext.hasReservation ? `- Flat atribuído: ${guestContext.flatNumber ||
 - Status da reserva: ${guestContext.isCheckoutCompleted ? "checkout_concluido (Estadia encerrada)" : guestContext.reservation?.status}${guestContext.hideFinancialForGuest ? `\n- PRIVACIDADE FINANCEIRA (SOLICITANTE DISTINTO): Esta reserva foi solicitada por ${guestContext.requesterName || "outro responsável"}. NUNCA informe valores, saldo, status de pagamento nem gere/envie PIX ou cobrança para este hóspede. Caso ele pergunte sobre pagamento da reserva, informe cordialmente que o acerto financeiro é tratado diretamente com o solicitante.` : ""}
 - Link do Pré-Check-in Digital: ${guestContext.checkinUrl ? guestContext.checkinUrl : "NÃO ENVIAR / NÃO APLICÁVEL (Hóspede já em estadia / check-out hoje / check-out concluído / sem relevância)"}
 - Status do Check-in Online: ${guestContext.isPreCheckinCompleted ? "CONCLUÍDO (Entrada já liberada na recepção: basta informar o nome)" : "PENDENTE (Obrigatório concluir o Check-in Online antes de ir à recepção; se o flat já estiver limpo, explique que está limpo e pronto aguardando apenas fazer o Check-in Online)"}
-${guestContext.isCheckoutDay && !guestContext.isCheckoutCompleted && guestContext.checkoutUrl ? `- Link de Confirmação de Check-out: ${guestContext.checkoutUrl}\n` : ""}${guestContext.minibarUrl ? `- Link do Frigobar / Autoatendimento Anserve: ${guestContext.minibarUrl}\n` : ""}- Status da higienização/limpeza hoje: ${guestContext.cleaningStatus.toUpperCase()} (Liberado/Pronto: ${guestContext.isRoomReady ? "SIM" : "NÃO"})` : "- Modo: Atendimento a novo cliente / Cotação"}
+${guestContext.isCheckoutDay && !guestContext.isCheckoutCompleted && guestContext.checkoutUrl ? `- Link de Confirmação de Check-out: ${guestContext.checkoutUrl}\n` : ""}${guestContext.minibarUrl ? `- Link do Frigobar / Autoatendimento Anserve: ${guestContext.minibarUrl}\n` : ""}- Status da higienização/limpeza hoje: ${guestContext.cleaningStatus.toUpperCase()} | Conferência de frigobar hoje: ${guestContext.isMinibarInspected ? "CONCLUÍDA" : "PENDENTE"}${guestContext.isMinibarPendingForEarlyCheckin ? " (OBRIGATÓRIA PARA EARLY CHECK-IN ANTES DAS 14:00)" : ""} (Liberado/Pronto agora: ${guestContext.isRoomReady ? "SIM" : "NÃO"})` : "- Modo: Atendimento a novo cliente / Cotação"}
 ${preAnalysis.promptBlock}
 ${conversationStateSection}
 [BASE DE CONHECIMENTO OFICIAL CORPFLATS]
@@ -12459,10 +12504,11 @@ export function resolveCrmFiscalTomador(db, {
     company: linkedCompany,
     cleanTarget,
     senderName,
-    preferType
+    preferType,
+    strictRecipientMatch: true
   });
 
-  if (!draft || !draft.tomadorCpfCnpj) return null;
+  if (!draft || !draft.tomadorCpfCnpj || draft.missingRequiredDocument) return null;
   const docDigits = onlyDigits(draft.tomadorCpfCnpj);
   if (docDigits.length !== 11 && docDigits.length !== 14) return null;
   if (preferType === "PJ" && docDigits.length !== 14) return null;
@@ -13267,16 +13313,10 @@ export async function handleWhatsAppFiscalFlow({
     }
   }
 
-  // ── R3. Restrição de Teste por Número de Telefone ───────────────────────────
-  // Durante a fase de testes, ignorar silenciosamente solicitações de nota fiscal
-  // vindas de qualquer número diferente de 22998505276 / 5522998505276.
-  if (!isDeveloperPhone(cleanTarget, db)) {
-    return { handled: false };
-  }
-
-  // Intercepta aprovação do gestor se houver pendências em db.pendingFiscalApprovals
+  // Intercepta aprovação do gestor se houver pendências em db.pendingFiscalApprovals (exclusivo gestor/dev)
   const hasExplicitManagerApprovalCmd = /\b(?:aprovar|aprovo|aprovado|autorizar|autorizo|autorizado|reprovar|recusar|nfse-app|nfse-pre)\b/i.test(messageText);
   if (
+    isDeveloperPhone(cleanTarget, db) &&
     Array.isArray(db.pendingFiscalApprovals) &&
     db.pendingFiscalApprovals.some(a => a?.status === "pending_manager") &&
     (!isAwaitingConfEarly || hasExplicitManagerApprovalCmd)
@@ -13354,6 +13394,259 @@ export async function handleWhatsAppFiscalFlow({
   };
 
   const conf = conv?.fiscalConferenceState;
+
+  // ── ETAPA 0: Coleta Automática de CPF/CNPJ Ausente no Check-out → Salva no CRM + Emite + Envia ──
+  const missingDocPending = conv?.awaitingMissingDocForCheckoutNfse || null;
+  if (missingDocPending && !isPureSocialGreeting(messageText)) {
+    const repliedCnpj = extractCnpj(messageText);
+    const repliedCpf = !repliedCnpj ? extractCpf(messageText) : null;
+    const repliedEmail = extractEmail(messageText);
+
+    if (repliedCnpj || repliedCpf) {
+      const targetRes = Array.isArray(db.reservations)
+        ? db.reservations.find(r =>
+            r && (
+              (missingDocPending.reservationId && Number(r.id) === Number(missingDocPending.reservationId)) ||
+              (missingDocPending.reservationCode && String(r.code) === String(missingDocPending.reservationCode))
+            )
+          )
+        : null;
+
+      if (repliedCnpj && !isValidCnpj(repliedCnpj)) {
+        const badCnpjMsg = `Recebi o CNPJ *${repliedCnpj}*, mas os dígitos verificadores parecem incorretos. Por favor, confira o número e me envie novamente para eu cadastrar e emitir sua nota fiscal! 🙏`;
+        return await respond(badCnpjMsg, { action: "invalid_cnpj_checkout_recovery", invalidCnpj: repliedCnpj });
+      }
+      if (repliedCpf && !isValidCpf(repliedCpf)) {
+        const badCpfMsg = `Recebi o CPF *${repliedCpf}*, mas os dígitos verificadores parecem incorretos. Por favor, confira o número e me envie novamente para eu cadastrar e emitir sua nota fiscal! 🙏`;
+        return await respond(badCpfMsg, { action: "invalid_cpf_checkout_recovery", invalidCpf: repliedCpf });
+      }
+
+      if (targetRes) {
+        const cleanDoc = onlyDigits(repliedCnpj || repliedCpf);
+        const nowIso = new Date().toISOString();
+        const pkgItemsForUpdate = missingDocPending.packageCode && Array.isArray(db.reservations)
+          ? db.reservations.filter(r =>
+              r &&
+              String(r.packageCode || r.packageId || "").trim().toUpperCase() === String(missingDocPending.packageCode).trim().toUpperCase() &&
+              !["cancelada", "cancelled", "cancelado", "expirada"].includes(String(r.status || "").toLowerCase())
+            )
+          : [targetRes];
+        const resUpdateList = pkgItemsForUpdate.length > 0 ? pkgItemsForUpdate : [targetRes];
+
+        const linkedCrmGuest = Array.isArray(db.guests)
+          ? db.guests.find(g =>
+              g && (
+                (targetRes.guestId && Number(g.id) === Number(targetRes.guestId)) ||
+                (cleanPhone(g.phone || g.phoneNumber || "") && cleanPhone(g.phone || g.phoneNumber || "").slice(-8) === cleanTarget.slice(-8))
+              )
+            )
+          : null;
+
+        if (cleanDoc.length === 14) {
+          let cnpjData = {};
+          try {
+            cnpjData = await lookupCnpj(cleanDoc, db);
+          } catch (_) {}
+          const corpName = toTitleCase(cnpjData?.razaoSocial || cnpjData?.nomeFantasia || targetRes.companyName || "Empresa");
+          const compEmail = (repliedEmail || cnpjData?.email || "").trim().toLowerCase();
+
+          if (!Array.isArray(db.companies)) db.companies = [];
+          let compRec = db.companies.find(c => c && onlyDigits(c.cnpj) === cleanDoc);
+          if (!compRec) {
+            const nextCompId = db.companies.length > 0 ? Math.max(...db.companies.map(c => Number(c.id) || 0)) + 1 : 1;
+            compRec = {
+              id: nextCompId,
+              corporateName: corpName,
+              tradeName: toTitleCase(cnpjData?.nomeFantasia || corpName),
+              cnpj: cleanDoc,
+              financialEmail: compEmail,
+              email: compEmail,
+              address: cnpjData?.logradouro || "",
+              logradouro: cnpjData?.logradouro || "",
+              number: cnpjData?.numero || "",
+              neighborhood: cnpjData?.bairro || "",
+              cep: onlyDigits(cnpjData?.cep || ""),
+              city: cnpjData?.cidade || "Campos dos Goytacazes",
+              state: (cnpjData?.uf || "RJ").toUpperCase(),
+              ibgeCode: onlyDigits(cnpjData?.codigoMunicipio || cnpjData?.ibge || "3301009"),
+              createdAt: nowIso,
+              updatedAt: nowIso
+            };
+            db.companies.push(compRec);
+          } else {
+            if (compEmail && !compRec.financialEmail) compRec.financialEmail = compEmail;
+            if (cnpjData?.logradouro && !compRec.address) {
+              compRec.address = cnpjData.logradouro;
+              compRec.logradouro = cnpjData.logradouro;
+              compRec.number = cnpjData.numero || compRec.number || "";
+              compRec.neighborhood = cnpjData.bairro || compRec.neighborhood || "";
+              compRec.cep = onlyDigits(cnpjData.cep || "") || compRec.cep || "";
+              compRec.city = cnpjData.cidade || compRec.city || "";
+              compRec.state = (cnpjData.uf || compRec.state || "").toUpperCase();
+              compRec.ibgeCode = onlyDigits(cnpjData.codigoMunicipio || cnpjData.ibge || "") || compRec.ibgeCode || "";
+            }
+            compRec.updatedAt = nowIso;
+          }
+
+          for (const rItem of resUpdateList) {
+            rItem.companyId = compRec.id;
+            rItem.companyCnpj = cleanDoc;
+            rItem.companyName = compRec.corporateName;
+            rItem.invoiceRecipientType = "company";
+            rItem.nfRecipientType = "company";
+            rItem.autoEmitInvoice = true;
+            if (compEmail) {
+              const curEm = Array.isArray(rItem.nfDeliveryEmails) ? rItem.nfDeliveryEmails : [];
+              if (!curEm.includes(compEmail)) rItem.nfDeliveryEmails = [...curEm, compEmail];
+            }
+            rItem.confirmedFiscalData = {
+              ...(rItem.confirmedFiscalData || {}),
+              invoiceRecipientType: "company",
+              tomadorTipo: "PJ",
+              tomadorNome: compRec.corporateName,
+              tomadorCpfCnpj: cleanDoc,
+              tomadorEmail: compEmail || compRec.financialEmail || rItem.confirmedFiscalData?.tomadorEmail || "",
+              tomadorEndereco: compRec.address || "",
+              tomadorNumero: compRec.number || "",
+              tomadorBairro: compRec.neighborhood || "",
+              tomadorCep: compRec.cep || "",
+              tomadorCidade: compRec.city || "Campos dos Goytacazes",
+              tomadorUf: compRec.state || "RJ",
+              tomadorCodigoMunicipio: compRec.ibgeCode || "3301009",
+              updatedAt: nowIso
+            };
+          }
+
+          if (linkedCrmGuest && !targetRes.nfHideFromGuest) {
+            linkedCrmGuest.companyId = compRec.id;
+            linkedCrmGuest.companyName = compRec.corporateName;
+            linkedCrmGuest.companyCnpj = cleanDoc;
+            linkedCrmGuest.preferredInvoiceRecipient = "company";
+            linkedCrmGuest.autoEmitInvoice = true;
+            linkedCrmGuest.updatedAt = nowIso;
+          }
+        } else {
+          // CPF (11 dígitos)
+          const isRequesterTarget = missingDocPending.expectedRecipientType === "requester" && !targetRes.requesterIsGuest1;
+          const cpfName = isRequesterTarget
+            ? (targetRes.requesterInfo?.name || senderName || "Solicitante")
+            : (targetRes.guestName || linkedCrmGuest?.fullName || linkedCrmGuest?.name || senderName || "Hóspede");
+
+          for (const rItem of resUpdateList) {
+            rItem.autoEmitInvoice = true;
+            if (isRequesterTarget) {
+              rItem.requesterInfo = { ...(rItem.requesterInfo || {}), cpf: cleanDoc, document: cleanDoc, ...(repliedEmail ? { email: repliedEmail } : {}) };
+              rItem.invoiceRecipientType = "requester";
+              rItem.nfRecipientType = "requester";
+            } else {
+              rItem.guestDocument = cleanDoc;
+              if (repliedEmail && !rItem.guestEmail) rItem.guestEmail = repliedEmail;
+              if (Array.isArray(rItem.guests) && rItem.guests[0] && !rItem.guests[0].cpf) {
+                rItem.guests[0].cpf = cleanDoc;
+              }
+              rItem.invoiceRecipientType = "guest";
+              rItem.nfRecipientType = "guest";
+            }
+            rItem.confirmedFiscalData = {
+              ...(rItem.confirmedFiscalData || {}),
+              invoiceRecipientType: isRequesterTarget ? "requester" : "guest",
+              tomadorTipo: "PF",
+              tomadorNome: toTitleCase(cpfName),
+              tomadorCpfCnpj: cleanDoc,
+              ...(repliedEmail ? { tomadorEmail: repliedEmail } : {}),
+              updatedAt: nowIso
+            };
+          }
+
+          if (!isRequesterTarget) {
+            if (linkedCrmGuest) {
+              linkedCrmGuest.documentNumber = cleanDoc;
+              linkedCrmGuest.document = cleanDoc;
+              linkedCrmGuest.cpf = cleanDoc;
+              if (repliedEmail && !linkedCrmGuest.email) linkedCrmGuest.email = repliedEmail;
+              linkedCrmGuest.preferredInvoiceRecipient = "guest";
+              linkedCrmGuest.autoEmitInvoice = true;
+              linkedCrmGuest.updatedAt = nowIso;
+            }
+            if (Array.isArray(db.guestAccounts)) {
+              for (const acc of db.guestAccounts) {
+                if (acc && ((linkedCrmGuest?.id && Number(acc.guestId) === Number(linkedCrmGuest.id)) || (cleanPhone(acc.phone || "") && cleanPhone(acc.phone || "").slice(-8) === cleanTarget.slice(-8)))) {
+                  acc.document = cleanDoc;
+                  acc.documentNumber = cleanDoc;
+                  acc.cpf = cleanDoc;
+                }
+              }
+            }
+          }
+        }
+
+        delete conv.awaitingMissingDocForCheckoutNfse;
+        conv.awaitingFiscalData = false;
+        if (typeof saveDatabase === "function") {
+          try { saveDatabase("whatsapp_missing_doc_saved"); } catch (_) {}
+        }
+
+        let autoOut = null;
+        if (typeof globalThis.runCheckoutAutoBillingAndNfse === "function") {
+          autoOut = await globalThis.runCheckoutAutoBillingAndNfse(targetRes, {
+            triggerSource: "whatsapp_doc_collected",
+            forceEmitAfterDocCollected: true
+          });
+        }
+
+        const docLabel = cleanDoc.length === 14 ? "CNPJ" : "CPF";
+        const docFmt = formatCpfOrCnpj(cleanDoc);
+        if (autoOut?.autoInvoiceEmitted && autoOut.invoice) {
+          const inv = autoOut.invoice;
+          const valFmt = formatMoneyBr(inv.valorServico || targetRes.totalAmount || 0);
+          const linkNf = inv.linkPrefeitura || inv.danfseUrl || "";
+          const emittedMsg =
+            `✅ *Cadastro atualizado e Nota Fiscal emitida com sucesso!*\n\n` +
+            `Já incluí o ${docLabel} *${docFmt}* no cadastro e emiti sua *NFS-e Nº ${inv.numeroNfse}*:\n` +
+            `• *Tomador:* ${inv.tomadorNome}\n` +
+            `• *Valor:* R$ ${valFmt}\n\n` +
+            `📄 O PDF oficial já foi disparado por aqui e por e-mail${linkNf ? `.\n🔗 *Consulta oficial:* ${linkNf}` : "."}\n\n` +
+            `Agradecemos pela preferência pela CorpFlats! 🏨✨`;
+          return await respond(emittedMsg, {
+            action: "emitted_nfse_after_doc_collection",
+            documentSaved: cleanDoc,
+            numeroNfse: inv.numeroNfse,
+            invoice: inv
+          });
+        }
+
+        if (autoOut?.retryQueued) {
+          const queuedMsg =
+            `✅ *${docLabel} ${docFmt} salvo no seu cadastro!*\n\n` +
+            `O Portal Nacional da NFS-e (Gov.br) apresentou uma instabilidade momentânea, mas sua nota já entrou na fila automática de emissão prioritária. Assim que autorizada, enviaremos o PDF oficial aqui no WhatsApp e por e-mail! 📄✨`;
+          return await respond(queuedMsg, {
+            action: "queued_nfse_after_doc_collection",
+            documentSaved: cleanDoc,
+            retryQueued: true
+          });
+        }
+
+        const fallbackSavedMsg =
+          `✅ *${docLabel} ${docFmt} salvo no seu cadastro!*\n\n` +
+          `Já atualizamos seus dados fiscais e acionamos nossa equipe financeira para concluir o envio da sua Nota Fiscal em instantes! 🙏`;
+        return await respond(fallbackSavedMsg, {
+          action: "saved_doc_checkout_recovery",
+          documentSaved: cleanDoc,
+          autoOut
+        });
+      }
+    } else if (/\b(?:empresa|cnpj|pessoa\s*jur[ií]dica|pj)\b/i.test(messageText)) {
+      missingDocPending.expectedRecipientType = "company";
+      missingDocPending.missingDocumentKind = "CNPJ";
+      const askCnpjMsg = `Perfeito! Por favor, me informe o número do *CNPJ* da empresa (e, se quiser, o e-mail financeiro) que eu já atualizo o cadastro, emito a nota fiscal e envio o PDF por aqui na hora! 🏢✨`;
+      return await respond(askCnpjMsg, { action: "prompted_cnpj_checkout_recovery" });
+    } else if (/\b(?:cpf|pessoa\s*f[ií]sica|pf|particular|meu\s*nome)\b/i.test(messageText)) {
+      missingDocPending.expectedRecipientType = "guest";
+      missingDocPending.missingDocumentKind = "CPF";
+      const askCpfMsg = `Perfeito! Por favor, me informe o número do seu *CPF* (11 dígitos) que eu já atualizo o cadastro, emito a nota fiscal e envio o PDF por aqui na hora! 👤✨`;
+      return await respond(askCpfMsg, { action: "prompted_cpf_checkout_recovery" });
+    }
+  }
 
   // Helper para recuperar nome de hóspede adicional a partir de mensagem citada (quote) ou histórico recente da conversa
   const recoverGuestNameFromContext = () => {
@@ -13501,7 +13794,7 @@ export async function handleWhatsAppFiscalFlow({
       conf.status === "awaiting_confirmation" ||
       Boolean(conf.pendingFieldEdit) ||
       (hasExplicitBackReference && conf.status !== "emitted" && conf.status !== "cancelled") ||
-      (conf.status === "scheduled_for_checkout" && (isAlterationRequest || isFiscalIntentMessage(messageText) || checkDeterministicValueChange(messageText, conf).hasValueChange))
+      (conf.status === "scheduled_for_checkout" && (isAlterationRequest || isFiscalIntentMessage(messageText) || checkDeterministicValueChange(messageText, conf).hasValueChange || Boolean(extractCnpj(messageText) || extractCpf(messageText))))
     )
   );
   const isFiscalRequest = isFiscalIntentMessage(messageText) || isAlterationRequest;
@@ -14822,8 +15115,9 @@ export async function handleWhatsAppFiscalFlow({
       );
     }
 
+    const nowIsoOpen = new Date().toISOString();
     conv.fiscalConferenceState = {
-      status: "awaiting_confirmation",
+      status: isMatchedResCheckedOut ? "awaiting_confirmation" : "scheduled_for_checkout",
       reservationId: matchedReservation?.id,
       reservationCode: matchedReservation?.code,
       flatNumber: matchedReservation?.flatNumber,
@@ -14843,8 +15137,8 @@ export async function handleWhatsAppFiscalFlow({
       descricaoServico: desc,
       valorOriginal: valTotal,
       valorServico: valTotal,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: nowIsoOpen,
+      updatedAt: nowIsoOpen
     };
     conv.awaitingFiscalData = false;
 
@@ -14862,13 +15156,15 @@ export async function handleWhatsAppFiscalFlow({
       matchedReservation.confirmedFiscalData = {
         ...(matchedReservation.confirmedFiscalData || {}),
         ...conv.fiscalConferenceState,
-        updatedAt: conv.fiscalConferenceState.updatedAt
+        updatedAt: nowIsoOpen
       };
+      matchedReservation.autoEmitInvoice = true;
     }
 
     if (guestDescOnOpen?.type === "add_guest_unnamed") {
       conv.fiscalConferenceState.pendingFieldEdit = "add_guest_to_description";
-      const askNameMsg = `Com certeza! Por favor, me informe o *nome completo* da pessoa que você deseja acrescentar como hóspede na descrição do serviço, que eu já atualizo os dados da nota para sua conferência! ✨`;
+      conv.fiscalConferenceState.status = "awaiting_confirmation";
+      const askNameMsg = `Com certeza! Já deixei a emissão automática da sua nota fiscal ativada para o check-out. Por favor, me informe o *nome completo* da pessoa que você deseja acrescentar como hóspede na descrição do serviço, que eu já atualizo os dados! ✨`;
       return await respond(askNameMsg, {
         action: "prompted_guest_name_for_description",
         conference: conv.fiscalConferenceState
@@ -14880,13 +15176,107 @@ export async function handleWhatsAppFiscalFlow({
         matchedReservation.confirmedFiscalData = {
           ...(matchedReservation.confirmedFiscalData || {}),
           ...conv.fiscalConferenceState,
-          updatedAt: conv.fiscalConferenceState.updatedAt
+          updatedAt: nowIsoOpen
         };
       }
       const updatedConfMsg = `Dados cadastrais atualizados com sucesso!\n\n${buildConferencePresentationMessage(conv.fiscalConferenceState, { isCheckedOut: isMatchedResCheckedOut })}`;
       return await respond(updatedConfMsg, {
         action: "updated_conference_data",
         conference: conv.fiscalConferenceState
+      });
+    }
+
+    // Antes do check-out: já ativa autoEmitInvoice = true imediatamente e informa que será enviada no check-out (exibindo dados p/ eventual ajuste)
+    if (!isMatchedResCheckedOut) {
+      const docFmtScheduled = formatCpfOrCnpj(conv.fiscalConferenceState.tomadorCpfCnpj);
+      const valFmtScheduled = formatMoneyBr(conv.fiscalConferenceState.valorServico);
+      const addrScheduled = conv.fiscalConferenceState.tomadorEndereco
+        ? `${conv.fiscalConferenceState.tomadorEndereco}${conv.fiscalConferenceState.tomadorNumero ? `, ${conv.fiscalConferenceState.tomadorNumero}` : ""}${conv.fiscalConferenceState.tomadorCidade ? ` - ${conv.fiscalConferenceState.tomadorCidade}/${conv.fiscalConferenceState.tomadorUf || "RJ"}` : ""}`
+        : "Endereço cadastrado";
+      const scheduledAutoMsg =
+        `✅ *Emissão Automática de Nota Fiscal Ativada para o Check-out!*\n\n` +
+        `Deixamos sua *Nota Fiscal de Serviços (NFS-e)* programada para ser *emitida e enviada automaticamente* (aqui no WhatsApp e por e-mail) assim que o seu check-out for realizado.\n\n` +
+        `📋 *Dados cadastrados para emissão:*\n` +
+        `• *Tomador:* ${conv.fiscalConferenceState.tomadorNome}\n` +
+        `• *CPF/CNPJ:* ${docFmtScheduled}\n` +
+        `• *Endereço:* ${addrScheduled}\n` +
+        `• *E-mail:* ${conv.fiscalConferenceState.tomadorEmail || "Não informado"}\n` +
+        `• *Valor Previsto:* R$ ${valFmtScheduled}\n\n` +
+        `Se estiver tudo certinho, não precisa fazer mais nada! Caso prefira emitir em outro *CPF ou CNPJ*, alterar o e-mail ou ajustar a descrição, basta responder por aqui que eu já atualizo. 🏨✨`;
+      return await respond(scheduledAutoMsg, {
+        action: "scheduled_for_checkout",
+        scheduledForCheckout: true,
+        autoEmitActivated: true,
+        conference: conv.fiscalConferenceState
+      });
+    }
+
+    // Após o check-out: se reserva paga/elegível e dados completos, emite e envia na hora!
+    if (matchedReservation && isUnpaidDirectReservationForEmission(matchedReservation, db, conv.fiscalConferenceState)) {
+      const confMsgUnpaid = buildConferencePresentationMessage(conv.fiscalConferenceState, { isCheckedOut: true });
+      return await respond(confMsgUnpaid, {
+        action: "presented_conference",
+        conference: conv.fiscalConferenceState
+      });
+    }
+
+    const immediateEmissionRes = await executeWhatsAppFiscalEmission({
+      db,
+      payload: {
+        reservationId: matchedReservation?.id,
+        reservationCode: matchedReservation?.code,
+        flatNumber: matchedReservation?.flatNumber,
+        checkinDate: matchedReservation?.checkinDate,
+        checkoutDate: (matchedReservation?.earlyCheckout && matchedReservation?.originalCheckoutDate) ? matchedReservation.originalCheckoutDate : matchedReservation?.checkoutDate,
+        guestId: matchedGuest?.id || matchedReservation?.guestId || null,
+        guestName: matchedReservation?.guestName || matchedGuest?.fullName || matchedGuest?.name || conv.fiscalConferenceState.tomadorNome,
+        companyId: matchedReservation?.companyId || linkedCompany?.id || null,
+        agencyId: matchedReservation?.agencyId || null,
+        invoiceRecipientType: conv.fiscalConferenceState.invoiceRecipientType,
+        tomadorNome: conv.fiscalConferenceState.tomadorNome,
+        tomadorCpfCnpj: conv.fiscalConferenceState.tomadorCpfCnpj,
+        tomadorEmail: conv.fiscalConferenceState.tomadorEmail,
+        tomadorTelefone: cleanTarget,
+        tomadorEndereco: conv.fiscalConferenceState.tomadorEndereco,
+        tomadorNumero: conv.fiscalConferenceState.tomadorNumero,
+        tomadorBairro: conv.fiscalConferenceState.tomadorBairro,
+        tomadorCidade: conv.fiscalConferenceState.tomadorCidade,
+        tomadorUf: conv.fiscalConferenceState.tomadorUf,
+        tomadorCep: conv.fiscalConferenceState.tomadorCep,
+        tomadorCodigoMunicipio: conv.fiscalConferenceState.tomadorCodigoMunicipio,
+        valorServico: conv.fiscalConferenceState.valorServico,
+        discriminacao: conv.fiscalConferenceState.descricaoServico,
+        descricaoServico: conv.fiscalConferenceState.descricaoServico,
+        nfHideFromGuest: Boolean(matchedReservation?.nfHideFromGuest),
+        nfDeliveryEmails: Array.isArray(matchedReservation?.nfDeliveryEmails) ? matchedReservation.nfDeliveryEmails : undefined
+      },
+      saveDatabase,
+      createNotification
+    });
+
+    if (immediateEmissionRes?.success && immediateEmissionRes.invoice) {
+      conv.fiscalConferenceState.status = "emitted";
+      conv.fiscalConferenceState.numeroNfse = immediateEmissionRes.numeroNfse;
+      conv.fiscalConferenceState.emittedAt = new Date().toISOString();
+      const pdfSentNow = await dispatchPdfViaGlobalHelper(immediateEmissionRes.invoice, { cleanTarget, db });
+      const valFmtNow = formatMoneyBr(immediateEmissionRes.invoice.valorServico || conv.fiscalConferenceState.valorServico);
+      const linkNfNow = immediateEmissionRes.linkPrefeitura || immediateEmissionRes.danfseUrl || "";
+      const immediateSuccessMsg =
+        `✅ *Nota Fiscal Emitida com Sucesso!*\n\n` +
+        `Como o seu check-out já foi concluído, emitimos a sua NFS-e na hora:\n` +
+        `• *Número da NFS-e:* ${immediateEmissionRes.numeroNfse}\n` +
+        `• *Código de Verificação:* ${immediateEmissionRes.codigoVerificacao}\n` +
+        `• *Tomador:* ${conv.fiscalConferenceState.tomadorNome} (${formatCpfOrCnpj(conv.fiscalConferenceState.tomadorCpfCnpj)})\n` +
+        `• *Valor:* R$ ${valFmtNow}\n\n` +
+        `📄 *Acesse e baixe sua nota fiscal pelo link abaixo:*\n${linkNfNow}\n\n` +
+        `Agradecemos pela preferência pela CorpFlats! 🏨✨`;
+      return await respond(immediateSuccessMsg, {
+        action: immediateEmissionRes.alreadyEmitted ? "already_emitted_resent" : "emitted_nfse",
+        alreadyEmitted: Boolean(immediateEmissionRes.alreadyEmitted),
+        pdfSent: pdfSentNow,
+        numeroNfse: immediateEmissionRes.numeroNfse,
+        codigoVerificacao: immediateEmissionRes.codigoVerificacao,
+        invoice: immediateEmissionRes.invoice
       });
     }
 
@@ -14897,35 +15287,76 @@ export async function handleWhatsAppFiscalFlow({
     });
   }
 
-  // Se o cliente já pediu explicitamente PJ ou PF na mensagem inicial, mas ainda não tem o documento no CRM:
-  if (explicitPrefType === "PJ") {
+  const checkoutAutoNotice = !isMatchedResCheckedOut
+    ? `✅ Já deixei a *emissão automática no check-out ativada* para a sua reserva!\n\n`
+    : ``;
+  const strictDraftForMissing = matchedReservation
+    ? buildOfficialNfseDraftForReservation(db, { reservation: matchedReservation, strictRecipientMatch: true, preferType: explicitPrefType })
+    : null;
+  const preferredMissingKind = explicitPrefType === "PJ"
+    ? "CNPJ"
+    : (explicitPrefType === "PF" ? "CPF" : (strictDraftForMissing?.missingDocumentKind || null));
+
+  // Se o cliente já pediu explicitamente PJ/PF (ou preferência salva no CRM exige CNPJ), mas falta o documento:
+  if (explicitPrefType === "PJ" || preferredMissingKind === "CNPJ") {
     conv.awaitingFiscalData = true;
     conv.awaitingFiscalDataAt = new Date().toISOString();
-    const replyText = `Olá${firstName ? `, ${firstName}` : ""}! Perfeito, vamos emitir a nota fiscal para a empresa! 🏢✨\n\nPor gentileza, nos envie o número do **CNPJ** da empresa e o **e-mail financeiro** (esses dados já ficarão salvos no seu cadastro para as próximas estadias).`;
-    return await respond(replyText, { action: "prompted_pj_data", awaitingFiscalData: true });
+    if (isMatchedResCheckedOut && matchedReservation) {
+      conv.awaitingMissingDocForCheckoutNfse = {
+        reservationId: matchedReservation.id,
+        reservationCode: matchedReservation.code || null,
+        expectedRecipientType: strictDraftForMissing?.expectedRecipientType || "company",
+        missingDocumentKind: "CNPJ",
+        flatNumber: String(matchedReservation.flatNumber || ""),
+        requestedAt: new Date().toISOString()
+      };
+    }
+    const replyText = `Olá${firstName ? `, ${firstName}` : ""}! ${checkoutAutoNotice}Para emitirmos a nota fiscal para a *empresa*, por gentileza nos envie o número do *CNPJ* e o *e-mail financeiro* (esses dados já ficarão salvos no cadastro${!isMatchedResCheckedOut ? " e a nota será enviada automaticamente no check-out" : " e já emito a nota na hora"}). 🏢✨`;
+    return await respond(replyText, { action: "prompted_pj_data", awaitingFiscalData: true, autoEmitActivated: true });
   }
   if (explicitPrefType === "PF") {
     conv.awaitingFiscalData = true;
     conv.awaitingFiscalDataAt = new Date().toISOString();
-    const replyText = `Olá${firstName ? `, ${firstName}` : ""}! Perfeito, vamos emitir a nota fiscal no seu CPF! 👤✨\n\nPor gentileza, nos informe seu **Nome Completo**, **CPF**, **Endereço com CEP** e **E-mail** (esses dados já ficarão salvos no seu cadastro para as próximas estadias).`;
-    return await respond(replyText, { action: "prompted_pf_data", awaitingFiscalData: true });
+    if (isMatchedResCheckedOut && matchedReservation) {
+      conv.awaitingMissingDocForCheckoutNfse = {
+        reservationId: matchedReservation.id,
+        reservationCode: matchedReservation.code || null,
+        expectedRecipientType: "guest",
+        missingDocumentKind: "CPF",
+        flatNumber: String(matchedReservation.flatNumber || ""),
+        requestedAt: new Date().toISOString()
+      };
+    }
+    const replyText = `Olá${firstName ? `, ${firstName}` : ""}! ${checkoutAutoNotice}Para emitirmos a nota fiscal no seu *CPF*, por gentileza nos informe seu *CPF* (e e-mail, se desejar) que já salvo no seu cadastro${!isMatchedResCheckedOut ? " para envio automático no check-out" : " e já emito na hora"}! 👤✨`;
+    return await respond(replyText, { action: "prompted_pf_data", awaitingFiscalData: true, autoEmitActivated: true });
   }
 
-  // Cenário E: Não possui cadastro fiscal prévio -> Solicita dados didaticamente
+  // Cenário E: Não possui cadastro fiscal prévio -> Solicita dados didaticamente (já com auto-emissão ativada!)
   conv.awaitingFiscalData = true;
   conv.awaitingFiscalDataAt = new Date().toISOString();
+  if (isMatchedResCheckedOut && matchedReservation) {
+    conv.awaitingMissingDocForCheckoutNfse = {
+      reservationId: matchedReservation.id,
+      reservationCode: matchedReservation.code || null,
+      expectedRecipientType: strictDraftForMissing?.expectedRecipientType || "guest",
+      missingDocumentKind: "CPF",
+      flatNumber: String(matchedReservation.flatNumber || ""),
+      requestedAt: new Date().toISOString()
+    };
+  }
 
-  const replyText = `Olá${firstName ? `, ${firstName}` : ""}! Com certeza podemos emitir a sua Nota Fiscal de Serviços (NFS-e)! 📄✨\n\n` +
-    `Por favor, nos informe para quem a nota deve ser emitida:\n\n` +
+  const replyText = `Olá${firstName ? `, ${firstName}` : ""}! ${checkoutAutoNotice}Com certeza podemos emitir a sua Nota Fiscal de Serviços (NFS-e)! 📄✨\n\n` +
+    `Como ainda não temos seu documento fiscal salvo, por favor nos informe para quem a nota deve ser emitida:\n\n` +
     `🏢 **Para Empresa (Pessoa Jurídica - PJ):**\n` +
-    `Basta nos informar o **CNPJ** da empresa e o **e-mail financeiro** para envio da nota.\n\n` +
+    `Basta nos informar o **CNPJ** da empresa e o **e-mail financeiro**.\n\n` +
     `👤 **Para Você (Pessoa Física - PF):**\n` +
-    `Informe seu **Nome Completo**, **CPF**, **Endereço com CEP** e **E-mail**.\n\n` +
-    `Assim que nos enviar, nosso sistema cuidará do preenchimento e conferência para você!`;
+    `Basta informar o seu **CPF** (e e-mail, se quiser receber também por lá).\n\n` +
+    `${!isMatchedResCheckedOut ? "Assim que nos enviar, salvo no seu cadastro e a nota fiscal será emitida e enviada automaticamente no check-out!" : "Assim que nos enviar, já salvo no seu cadastro, emito a nota e envio o PDF por aqui na hora!"}`;
 
   return await respond(replyText, {
     action: "requested_fiscal_data",
-    awaitingFiscalData: true
+    awaitingFiscalData: true,
+    autoEmitActivated: true
   });
 }
 

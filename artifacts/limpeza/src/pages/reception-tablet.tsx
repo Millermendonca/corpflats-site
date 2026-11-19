@@ -656,6 +656,25 @@ export default function ReceptionTablet() {
             )}
           </div>
 
+          {!checklist.isCheckinDateFuture && (
+            <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/70">
+              <span className="text-slate-400 font-medium">Frigobar hoje:</span>
+              {item.isMinibarInspected ? (
+                <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-[10px] font-bold">
+                  🧊 Conferido
+                </Badge>
+              ) : checklist.isRegularCheckinWindow ? (
+                <Badge className="bg-slate-800 text-slate-300 border-slate-700 text-[10px] font-bold">
+                  ✓ Dispensado ({checklist.standardCheckinTime || "14:00"}+)
+                </Badge>
+              ) : (
+                <Badge className="bg-amber-950 text-amber-300 border-amber-800 text-[10px] font-bold">
+                  ⏳ Conferência Pendente
+                </Badge>
+              )}
+            </div>
+          )}
+
           <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800">
             <span className="text-slate-400 font-medium">Early Check-in:</span>
             {item.earlyCheckinStatus === "Liberado" ? (
@@ -666,6 +685,14 @@ export default function ReceptionTablet() {
               >
                 ✓ Liberado ({checklist.isEarlyAuthorizedByAdmin ? "Admin" : `desde ${checklist.freeEarlyTime || "10:00"}`})
               </button>
+            ) : item.earlyCheckinStatus === "Aguardando limpeza e frigobar" ? (
+              <button
+                type="button"
+                onClick={() => openEarlyCheckinModal(item)}
+                className="font-bold text-amber-300 bg-amber-950/80 hover:bg-amber-900/80 px-2 py-0.5 rounded-md border border-amber-800 text-[10px] transition-colors"
+              >
+                ⏳ Horário OK • Limpeza e Frigobar
+              </button>
             ) : item.earlyCheckinStatus === "Aguardando limpeza" ? (
               <button
                 type="button"
@@ -673,6 +700,14 @@ export default function ReceptionTablet() {
                 className="font-bold text-amber-300 bg-amber-950/80 hover:bg-amber-900/80 px-2 py-0.5 rounded-md border border-amber-800 text-[10px] transition-colors"
               >
                 ⏳ Horário OK • Aguarda Limpeza
+              </button>
+            ) : item.earlyCheckinStatus === "Aguardando frigobar" ? (
+              <button
+                type="button"
+                onClick={() => openEarlyCheckinModal(item)}
+                className="font-bold text-amber-300 bg-amber-950/80 hover:bg-amber-900/80 px-2 py-0.5 rounded-md border border-amber-800 text-[10px] transition-colors"
+              >
+                🧊 Horário OK • Aguarda Frigobar
               </button>
             ) : item.earlyCheckinStatus === "Aguardando data" ? (
               <button
@@ -1631,19 +1666,19 @@ export default function ReceptionTablet() {
                 </div>
               </div>
 
-              {/* Checklist dos 3 Critérios */}
+              {/* Checklist dos 4 Critérios */}
               <div className="space-y-2">
                 {/* Item 1: Limpeza */}
                 <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between gap-3">
                   <div className="space-y-0.5">
                     <div className="font-bold text-slate-200">1. Limpeza do Apartamento</div>
                     <div className="text-[11px] text-slate-400">
-                      {liveEarlyChecklist.isRoomReady
+                      {(liveEarlyChecklist.isFlatClean ?? liveEarlyChecklist.isRoomReady)
                         ? "Flat limpo e liberado pela governança."
                         : "Early Check-in antes das 14:00 exige que a limpeza já tenha sido concluída."}
                     </div>
                   </div>
-                  {liveEarlyChecklist.isRoomReady ? (
+                  {(liveEarlyChecklist.isFlatClean ?? liveEarlyChecklist.isRoomReady) ? (
                     <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-[10px] font-bold shrink-0">
                       ✨ Limpo
                     </Badge>
@@ -1654,10 +1689,37 @@ export default function ReceptionTablet() {
                   )}
                 </div>
 
-                {/* Item 2: Check-in Digital */}
+                {/* Item 2: Conferência de Frigobar */}
                 <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between gap-3">
                   <div className="space-y-0.5">
-                    <div className="font-bold text-slate-200">2. Check-in Digital & FNRH</div>
+                    <div className="font-bold text-slate-200">2. Conferência de Frigobar (Anserve)</div>
+                    <div className="text-[11px] text-slate-400">
+                      {liveEarlyChecklist.isMinibarInspected
+                        ? "Conferência de frigobar registrada hoje pela equipe de abastecimento."
+                        : liveEarlyChecklist.isRegularCheckinWindow
+                          ? `Trava dispensada após o horário regular (${liveEarlyChecklist.standardCheckinTime || "14:00"}).`
+                          : `Obrigatória para Early Check-in antes das ${liveEarlyChecklist.standardCheckinTime || "14:00"} (libera automaticamente às ${liveEarlyChecklist.standardCheckinTime || "14:00"}).`}
+                    </div>
+                  </div>
+                  {liveEarlyChecklist.isMinibarInspected ? (
+                    <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-[10px] font-bold shrink-0">
+                      🧊 Conferido Hoje
+                    </Badge>
+                  ) : liveEarlyChecklist.isRegularCheckinWindow ? (
+                    <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-[10px] font-bold shrink-0">
+                      ✓ Dispensado ({liveEarlyChecklist.standardCheckinTime || "14:00"}+)
+                    </Badge>
+                  ) : (
+                    <Badge className="bg-amber-950 text-amber-300 border-amber-800 text-[10px] font-bold shrink-0">
+                      ⏳ Pendente Hoje
+                    </Badge>
+                  )}
+                </div>
+
+                {/* Item 3: Check-in Digital */}
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <div className="font-bold text-slate-200">3. Check-in Digital & FNRH</div>
                     <div className="text-[11px] text-slate-400">
                       {liveEarlyChecklist.needsReSignature
                         ? "Re-assinatura pendente devido a alteração na reserva."
@@ -1699,11 +1761,11 @@ export default function ReceptionTablet() {
                   </div>
                 </div>
 
-                {/* Item 3: Regra de Horário & Canal (Sofia) */}
+                {/* Item 4: Regra de Horário & Canal (Sofia) */}
                 <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
                   <div className="flex items-center justify-between gap-3">
                     <div className="space-y-0.5">
-                      <div className="font-bold text-slate-200">3. Horário & Canal da Reserva</div>
+                      <div className="font-bold text-slate-200">4. Horário & Canal da Reserva</div>
                       <div className="text-[11px] text-slate-400">
                         Canal: <strong className="text-sky-300">{liveEarlyChecklist.channelLabel}</strong> • Cortesia grátis a partir das{" "}
                         <strong className="text-white">{liveEarlyChecklist.freeEarlyTime}</strong> (Check-in padrão {liveEarlyChecklist.standardCheckinTime})
@@ -2541,7 +2603,11 @@ export default function ReceptionTablet() {
               {!partialCheckinItem.item.isRoomReady && (
                 <div className="p-2.5 bg-rose-950/50 border border-rose-900/70 rounded-xl text-[11px] text-rose-300 flex items-start gap-2">
                   <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                  <span>Atenção: Quarto consta como em higienização. Ao confirmar, será atualizado como limpo e ocupado.</span>
+                  <span>
+                    {partialCheckinItem.item.isFlatClean && partialCheckinItem.item.isMinibarPendingForEarlyCheckin
+                      ? "Atenção: Quarto já está limpo, mas a conferência de frigobar de hoje ainda está pendente (obrigatória para Early Check-in antes das 14:00)."
+                      : "Atenção: Quarto consta como em higienização. Ao confirmar, será atualizado como limpo e ocupado."}
+                  </span>
                 </div>
               )}
             </div>

@@ -89,6 +89,10 @@ export async function getInterBoletoToken() {
       scope: "cob.read cob.write pix.read pix.write extrato.read boleto-cobranca.read pagamento-pix.read",
       hasWrite: false,
     },
+    {
+      scope: "boleto-cobranca.read",
+      hasWrite: false,
+    },
   ];
 
   let lastErr = null;
@@ -668,49 +672,158 @@ export async function cancelInterBoleto(existingBoleto, reason = "ACERTOS") {
 }
 
 /**
- * Consulta o status de um boleto no Banco Inter
+ * Interpreta uma resposta de cobrança da API v3 do Banco Inter (detalhe individual ou item de listagem)
+ */
+function parseInterV3CobrancaStatus(body, existingBoleto = {}) {
+  const cob = body?.cobranca || body || {};
+  const pixObj = body?.pix || cob?.pix || {};
+  const sit = String(cob.situacao || body?.situacao || "").trim().toUpperCase();
+  const valorRecebido = Number(
+    cob.valorTotalRecebimento ??
+    cob.valorTotalRecebido ??
+    body?.valorTotalRecebimento ??
+    0
+  );
+  const pixPayments = Array.isArray(pixObj?.pix) ? pixObj.pix : [];
+  const pixConcluido =
+    String(pixObj?.status || "").trim().toUpperCase() === "CONCLUIDA" ||
+    pixPayments.length > 0;
+
+  if (
+    sit === "RECEBIDO" ||
+    sit === "PAGO" ||
+    sit === "MARCADO_RECEBIDO" ||
+    sit === "LIQUIDADO" ||
+    sit === "QUITADO" ||
+    valorRecebido > 0 ||
+    pixConcluido
+  ) {
+    return {
+      status: "pago",
+      situacao: sit || "RECEBIDO",
+      paidAt:
+        cob.dataHoraSituacao ||
+        cob.dataSituacao ||
+        pixPayments[0]?.horario ||
+        new Date().toISOString(),
+      paidAmount: Number(
+        valorRecebido ||
+        pixPayments[0]?.valor ||
+        cob.valorNominal ||
+        existingBoleto?.amount ||
+        0
+      ),
+      endToEndId: pixPayments[0]?.endToEndId || cob.endToEndId || undefined,
+      origemRecebimento: cob.origemRecebimento || (pixConcluido ? "PIX" : "BOLETO"),
+      remoteChecked: true,
+      raw: body,
+    };
+  }
+  if (sit === "CANCELADO" || sit === "BAIXADO" || sit === "EXPIRADO") {
+    return {
+      status: "cancelado",
+      situacao: sit,
+      remoteChecked: true,
+      raw: body,
+    };
+  }
+  return {
+    status: existingBoleto?.status || "aberto",
+    situacao: sit || "EM_ABERTO",
+    remoteChecked: true,
+    raw: body,
+  };
+}
+
+/**
+ * Consulta o status de um boleto no Banco Inter (GET por codigoSolicitacao + fallback por seuNumero/nossoNumero)
  */
 export async function checkInterBoletoRemoteStatus(existingBoleto) {
-  if (!isInterConfigured() || !existingBoleto?.codigoSolicitacao) {
+  if (!isInterConfigured() || (!existingBoleto?.codigoSolicitacao && !existingBoleto?.seuNumero && !existingBoleto?.nossoNumero)) {
     return { status: existingBoleto?.status || "aberto", remoteChecked: false };
   }
   try {
     const { token } = await getInterBoletoToken();
     const agent = buildMtlsAgent();
-    const res = await httpsRequest(
-      `${BASE_URL}/cobranca/v3/cobrancas/${encodeURIComponent(existingBoleto.codigoSolicitacao)}`,
-      {
-        method: "GET",
-        headers: { Authorization: `Bearer ${token}` },
-        agent,
+
+    // 1. Consulta direta por codigoSolicitacao (API v3 oficial)
+    if (existingBoleto?.codigoSolicitacao) {
+      const res = await httpsRequest(
+        `${BASE_URL}/cobranca/v3/cobrancas/${encodeURIComponent(existingBoleto.codigoSolicitacao)}`,
+        {
+          method: "GET",
+          headers: { Authorization: `Bearer ${token}` },
+          agent,
+        }
+      );
+      if (res.status === 200 && res.body) {
+        return parseInterV3CobrancaStatus(res.body, existingBoleto);
       }
-    );
-    if (res.status === 200 && res.body) {
-      const cob = res.body.cobranca || res.body;
-      const sit = String(cob.situacao || "").toUpperCase();
-      if (sit === "RECEBIDO" || sit === "PAGO" || sit === "MARCADO_RECEBIDO") {
-        return {
-          status: "pago",
-          paidAt: cob.dataHoraSituacao || new Date().toISOString(),
-          paidAmount: Number(cob.valorTotalRecebimento || cob.valorNominal || existingBoleto.amount || 0),
-          remoteChecked: true,
-          raw: res.body,
-        };
-      }
-      if (sit === "CANCELADO" || sit === "BAIXADO" || sit === "EXPIRADO") {
-        return {
-          status: "cancelado",
-          remoteChecked: true,
-          raw: res.body,
-        };
-      }
-      return {
-        status: existingBoleto.status,
-        remoteChecked: true,
-        raw: res.body,
-      };
     }
-  } catch (_) {}
+
+    // 2. Fallback por listagem filtrada por seuNumero / nossoNumero (captura boletos pagos quando codigoSolicitacao diverge ou não foi gravado)
+    const seuNum = String(existingBoleto?.seuNumero || "").trim();
+    const nossoNum = String(existingBoleto?.nossoNumero || "").trim();
+    if (seuNum || nossoNum) {
+      const nowMs = Date.now();
+      const brNow = new Date(nowMs - 3 * 3600000);
+      const todayIso = brNow.toISOString().slice(0, 10);
+      const issueIso = String(existingBoleto?.issueDate || existingBoleto?.createdAt || "").slice(0, 10);
+      const startDateObj = /^\d{4}-\d{2}-\d{2}$/.test(issueIso)
+        ? new Date(new Date(`${issueIso}T12:00:00Z`).getTime() - 2 * 86400000)
+        : new Date(brNow.getTime() - 60 * 86400000);
+      const dataInicial = startDateObj.toISOString().slice(0, 10);
+      const dataFinal = todayIso >= dataInicial ? todayIso : dataInicial;
+
+      const params = new URLSearchParams({
+        dataInicial,
+        dataFinal,
+        filtrarDataPor: "EMISSAO",
+        itensPorPagina: "50",
+      });
+      if (nossoNum && existingBoleto?.provider === "BANCO_INTER_V3") {
+        params.set("nossoNumero", nossoNum);
+      } else if (seuNum) {
+        params.set("seuNumero", seuNum);
+      }
+
+      const listRes = await httpsRequest(
+        `${BASE_URL}/cobranca/v3/cobrancas?${params.toString()}`,
+        {
+          method: "GET",
+          headers: { Authorization: `Bearer ${token}` },
+          agent,
+        }
+      );
+      if (listRes.status === 200 && listRes.body) {
+        const items = Array.isArray(listRes.body.cobrancas)
+          ? listRes.body.cobrancas
+          : (Array.isArray(listRes.body) ? listRes.body : []);
+        const norm = (v) => String(v || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+        const targetCod = norm(existingBoleto?.codigoSolicitacao);
+        const targetSeu = norm(seuNum);
+        const targetNosso = norm(nossoNum);
+
+        const matched = items.find((item) => {
+          const cob = item?.cobranca || item || {};
+          const bol = item?.boleto || cob?.boleto || {};
+          const itemCod = norm(cob.codigoSolicitacao);
+          const itemSeu = norm(cob.seuNumero);
+          const itemNosso = norm(bol.nossoNumero || cob.nossoNumero);
+          return Boolean(
+            (targetCod && itemCod && itemCod === targetCod) ||
+            (targetNosso && itemNosso && itemNosso === targetNosso) ||
+            (targetSeu && itemSeu && itemSeu === targetSeu)
+          );
+        });
+        if (matched) {
+          return parseInterV3CobrancaStatus(matched, existingBoleto);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[Inter Boleto] Aviso ao consultar status remoto (${existingBoleto?.code || existingBoleto?.codigoSolicitacao || ""}):`, err?.message || err);
+  }
   return { status: existingBoleto?.status || "aberto", remoteChecked: false };
 }
 

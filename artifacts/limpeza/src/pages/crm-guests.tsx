@@ -3121,7 +3121,8 @@ export default function CrmGuests() {
                         const invUrl = o.invoice?.invoiceFileUrl || o.invoiceFileUrl || "";
                         const invName = o.invoice?.invoiceFileName || o.invoiceFileName || "Nota_Fiscal_Frigobar.pdf";
                         const isPaid = o.paymentStatus === "pago" || o.paymentStatus === "lancamento_quitado" || Boolean(invUrl);
-                        const isCourtesy = o.paymentMethod === "cortesia" || o.totalAmount === 0;
+                        const isCancelled = o.paymentStatus === "cancelado" || o.status === "cancelado";
+                        const isCourtesy = !isCancelled && (o.paymentMethod === "cortesia" || o.totalAmount === 0);
                         return (
                           <div key={o.id} className="p-2.5 rounded-xl bg-muted/40 border border-border flex flex-col gap-1.5">
                             <div className="flex items-center justify-between text-xs gap-2">
@@ -3129,11 +3130,12 @@ export default function CrmGuests() {
                                 <span className="font-bold text-foreground">Flat {o.flatNumber || "—"}</span>
                                 <span className="text-muted-foreground text-[10px] font-mono">#{o.id}</span>
                                 <Badge className={`text-[9px] px-1.5 py-0 ${
+                                  isCancelled ? "bg-muted text-muted-foreground border border-border" :
                                   isPaid ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30" :
                                   isCourtesy ? "bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-500/30" :
                                   "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
                                 }`}>
-                                  {isPaid ? "Pago" : isCourtesy ? "Cortesia" : "Pendente"}
+                                  {isCancelled ? "Cancelado" : isPaid ? "Pago" : isCourtesy ? "Cortesia" : "Pendente"}
                                 </Badge>
                               </div>
                               <div className="flex items-center gap-2 shrink-0">

@@ -135,13 +135,18 @@ import {
   dispatchCatchUpGuestRulerMessages,
   reservationHasAnyContact,
   isFlatStillBeingCleanedOnCheckinDay,
+  isFlatMinibarInspectedTodayOnCheckinDay,
+  evaluateFlatCheckinReadiness,
   evaluateSelfCheckinEligibility,
   checkZapiPhoneExists,
   extractPixPayloadAmount,
   isPixPayloadStaleForAmount,
   computeCardAmountFromPix,
   invokeMaidReviewHookSafe,
-  hasPdfAlreadyBeenSentOrInFlight
+  hasPdfAlreadyBeenSentOrInFlight,
+  evaluateStayContactEligibility,
+  sanitizeRequesterStayQueues,
+  matchClientPhone
 } from "./zapi-service.mjs";
 import {
   initMaidAutomationEngine,
@@ -296,7 +301,9 @@ import {
   querySystemData,
   callGeminiAi,
   enableAutoEmitInvoiceForGuestAndReservations,
-  findExistingInvoiceForReservation
+  findExistingInvoiceForReservation,
+  isUnpaidDirectReservationForEmission,
+  getManagerWhatsAppPhone
 } from "./whatsapp-ai-service.mjs";
 import { createWbpCallbackRouter, WbpBackgroundWorker, verifyChannexHmacSignature } from "./wbp/callbacks.mjs";
 import { getIntegrationMode, isWbpEnabled, setIntegrationMode, getChannexConfig, updateChannexConfig, WBP_MODES } from "./wbp/config.mjs";
@@ -2221,8 +2228,27 @@ export function getDefaultMinibarSettings() {
     notificationManagerWhatsApp: "5522997124021",
     restockerWorkWhatsapp: "",
     lastRestockerDailySummaryDate: "",
-    operationMode: "restocker_daily_launch"
+    operationMode: "restocker_daily_launch",
+    dailyPaymentRemindersEnabled: true,
+    dailyPaymentReminderHour: 10,
+    dailyPaymentReminderLookbackDays: 15,
+    dailyPaymentReminderMaxDays: 7,
+    dailyPaymentReminderNotifyManagerOnDay7: true
   };
+}
+
+function ensureMinibarSettingsDefaults(targetDb = db) {
+  const defaults = getDefaultMinibarSettings();
+  if (!targetDb.minibarSettings || typeof targetDb.minibarSettings !== "object") {
+    targetDb.minibarSettings = { ...defaults };
+    return targetDb.minibarSettings;
+  }
+  for (const [key, val] of Object.entries(defaults)) {
+    if (targetDb.minibarSettings[key] === undefined) {
+      targetDb.minibarSettings[key] = val;
+    }
+  }
+  return targetDb.minibarSettings;
 }
 
 let db = {
@@ -2250,6 +2276,7 @@ let db = {
     updatedAt: null
   },
   minibarSettings: getDefaultMinibarSettings(),
+  minibarLastAuditReport: null,
   reviews: [],
   reviewInsights: null,
   garageAuthorizations: [],
@@ -6427,7 +6454,38 @@ export function reconcileUniversalIntegrity(incomingState = null) {
           const cur = db.minibarOrders[existingIdx];
           const incDate = incOrder.updatedAt || incOrder.paidAt || incOrder.createdAt || "";
           const curDate = cur.updatedAt || cur.paidAt || cur.createdAt || "";
-          if (incDate > curDate || (incOrder.paymentStatus === "pago" && cur.paymentStatus !== "pago") || (incOrder.invoice?.status === "anexada" && cur.invoice?.status !== "anexada")) {
+          const curWasReopened = Boolean(cur.reopenedAt);
+          const incWasReopened = Boolean(incOrder.reopenedAt);
+          const incIsStalePaidFromBeforeReopen =
+            curWasReopened &&
+            incOrder.paymentStatus === "pago" &&
+            (!incOrder.paidAt || String(incOrder.paidAt) <= String(cur.reopenedAt));
+          const curReopenIsNewer =
+            curWasReopened &&
+            (
+              incIsStalePaidFromBeforeReopen ||
+              (!incWasReopened && (!incDate || cur.reopenedAt >= incDate || curDate >= incDate)) ||
+              (incWasReopened && String(cur.reopenedAt) > String(incOrder.reopenedAt))
+            );
+          const incReopenIsNewer =
+            incWasReopened &&
+            (!curWasReopened || String(incOrder.reopenedAt) > String(cur.reopenedAt));
+          const incPaidIsAfterCurReopen =
+            incOrder.paymentStatus === "pago" &&
+            cur.paymentStatus !== "pago" &&
+            (!curWasReopened || (incOrder.paidAt && String(incOrder.paidAt) > String(cur.reopenedAt)));
+
+          if (curReopenIsNewer) {
+            if (incOrder.invoice?.status === "anexada" && cur.invoice?.status !== "anexada") {
+              db.minibarOrders[existingIdx] = { ...cur, invoice: incOrder.invoice };
+              changed = true;
+            }
+          } else if (
+            incReopenIsNewer ||
+            incDate > curDate ||
+            incPaidIsAfterCurReopen ||
+            (incOrder.invoice?.status === "anexada" && cur.invoice?.status !== "anexada")
+          ) {
             db.minibarOrders[existingIdx] = { ...cur, ...incOrder };
             changed = true;
           }
@@ -6491,7 +6549,35 @@ export function reconcileUniversalIntegrity(incomingState = null) {
     }
     if (incomingState.minibarSettings && typeof incomingState.minibarSettings === "object") {
       if (!db.minibarSettings) {
-        db.minibarSettings = incomingState.minibarSettings;
+        db.minibarSettings = { ...getDefaultMinibarSettings(), ...incomingState.minibarSettings };
+        changed = true;
+      } else {
+        const curSettingsUpd = String(db.minibarSettings.updatedAt || "");
+        const incSettingsUpd = String(incomingState.minibarSettings.updatedAt || "");
+        if (incSettingsUpd && (!curSettingsUpd || incSettingsUpd > curSettingsUpd)) {
+          db.minibarSettings = {
+            ...getDefaultMinibarSettings(),
+            ...db.minibarSettings,
+            ...incomingState.minibarSettings
+          };
+          changed = true;
+        } else {
+          const defaults = getDefaultMinibarSettings();
+          for (const [k, v] of Object.entries(defaults)) {
+            if (db.minibarSettings[k] === undefined) {
+              db.minibarSettings[k] =
+                incomingState.minibarSettings[k] !== undefined ? incomingState.minibarSettings[k] : v;
+              changed = true;
+            }
+          }
+        }
+      }
+    }
+    if (incomingState.minibarLastAuditReport && typeof incomingState.minibarLastAuditReport === "object") {
+      const curAuditAt = String(db.minibarLastAuditReport?.ranAt || "");
+      const incAuditAt = String(incomingState.minibarLastAuditReport?.ranAt || "");
+      if (!curAuditAt || (incAuditAt && incAuditAt > curAuditAt)) {
+        db.minibarLastAuditReport = { ...incomingState.minibarLastAuditReport };
         changed = true;
       }
     }
@@ -6561,7 +6647,15 @@ export function reconcileUniversalIntegrity(incomingState = null) {
           const cur = db.boletos[existingIdx];
           const incDate = incBol.updatedAt || incBol.paidAt || incBol.createdAt || "";
           const curDate = cur.updatedAt || cur.paidAt || cur.createdAt || "";
-          if (incDate > curDate || (incBol.status === "pago" && cur.status !== "pago") || (incBol.status === "cancelado" && cur.status !== "cancelado")) {
+          const curIsPaid = isBoletoStatusPaid(cur.status);
+          const incIsPaid = isBoletoStatusPaid(incBol.status);
+          const curIsCancelled = isBoletoStatusCancelled(cur.status);
+          const incIsCancelled = isBoletoStatusCancelled(incBol.status);
+          if (
+            (incIsPaid && !curIsPaid) ||
+            (incIsCancelled && !curIsPaid && !curIsCancelled) ||
+            (!curIsPaid && !curIsCancelled && incDate > curDate)
+          ) {
             db.boletos[existingIdx] = { ...cur, ...incBol };
             changed = true;
           }
@@ -12658,8 +12752,8 @@ async function _loadDatabaseImpl() {
       }
       if (!Array.isArray(db.minibarPeanutStock.movements)) db.minibarPeanutStock.movements = [];
       if (!Array.isArray(db.boletos)) db.boletos = [];
-      if (!db.minibarSettings) db.minibarSettings = getDefaultMinibarSettings();
-      else if (db.minibarSettings.pixFeePercent === undefined && (!db.minibarSettings.pixFeeFixed || Number(db.minibarSettings.pixFeeFixed) === 0)) {
+      ensureMinibarSettingsDefaults(db);
+      if (db.minibarSettings.pixFeePercent === undefined && (!db.minibarSettings.pixFeeFixed || Number(db.minibarSettings.pixFeeFixed) === 0)) {
         db.minibarSettings.pixFeePercent = 0.99;
       }
       if (db.settings) {
@@ -12866,6 +12960,7 @@ async function _loadDatabaseImpl() {
           if (didChange || didAuditReconcile || didMigrateEmails || didMigratePeriodicTasks) {
             console.log("[PostgreSQL] Estado universal reconciliado sem perdas e sincronizado na nuvem!");
           }
+          sanitizeRequesterStayQueues(db, null);
           saveDatabase("post_hydration_prune");
           // Executa DDL complementar e tabelas auxiliares de forma escalonada (5s após hidratação) para evitar pico concorrente de RAM no PostgreSQL (256MB)
           setTimeout(async () => {
@@ -12880,6 +12975,11 @@ async function _loadDatabaseImpl() {
           if (process.env.NODE_ENV !== "test") {
             setTimeout(() => {
               healContaminatedGoogleContactsPostBoot(db).catch(() => {});
+              if (typeof runBootMinibarFalsePaidAuditOnce === "function") {
+                runBootMinibarFalsePaidAuditOnce("boot_audit_pg").catch(err => {
+                  console.warn("[Minibar Boot Audit PG] Aviso:", err?.message || err);
+                });
+              }
               ensureZohoWebhookRegistered(db, saveDatabase, {
                 baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br"
               })
@@ -12960,8 +13060,8 @@ async function _loadDatabaseImpl() {
       db.minibarPeanutStock = { minAlertThreshold: 30, movements: [], updatedAt: null };
     }
     if (!Array.isArray(db.minibarPeanutStock.movements)) db.minibarPeanutStock.movements = [];
-    if (!db.minibarSettings) db.minibarSettings = getDefaultMinibarSettings();
-    else if (db.minibarSettings.pixFeePercent === undefined && (!db.minibarSettings.pixFeeFixed || Number(db.minibarSettings.pixFeeFixed) === 0)) {
+    ensureMinibarSettingsDefaults(db);
+    if (db.minibarSettings.pixFeePercent === undefined && (!db.minibarSettings.pixFeeFixed || Number(db.minibarSettings.pixFeeFixed) === 0)) {
       db.minibarSettings.pixFeePercent = 0.99;
     }
     if (ensureSystemUsers(db)) {
@@ -19849,6 +19949,7 @@ app.use([
 ], requireDevAuth);
 
 await loadDatabase();
+sanitizeRequesterStayQueues(db, saveDatabase);
 ensureUniqueRequestIds();
 reconcileCleaningRequests();
 if (ensureSystemUsers(db)) {
@@ -21802,6 +21903,11 @@ app.post("/api/public/checkout", async (req, res) => {
     await triggerCheckoutWhatsApp(db, saveDatabase, r, "link_digital").catch(e => {
       console.warn("[Digital Checkout WhatsApp Trigger Error]:", e.message);
     });
+
+    // Dispara Auto-Emissão de NFS-e / Boleto Faturado no Check-out (idempotente)
+    await runCheckoutAutoBillingAndNfse(r, { triggerSource: "link_digital" }).catch(e => {
+      console.warn("[Digital Checkout Auto-NFS-e Error]:", e?.message || e);
+    });
   }
 
   // Cancela qualquer lembrete pendente de check-out ou estadia na fila (WhatsApp e E-mail) para este flat
@@ -23109,6 +23215,9 @@ app.patch("/api/flats/:id", (req, res) => {
           });
           triggerCheckoutWhatsApp(db, saveDatabase, checkoutRes, "manual_card").catch(e => {
             console.warn("[Flat Vacancy Checkout Trigger Error]:", e.message);
+          });
+          runCheckoutAutoBillingAndNfse(checkoutRes, { triggerSource: "flat_vacancy_card" }).catch(e => {
+            console.warn("[Flat Vacancy Auto-NFS-e Error]:", e?.message || e);
           });
         } else {
           undoReservationCheckoutAndRestoreStay(db, checkoutRes, {
@@ -24752,6 +24861,9 @@ function getRequestsForDate(dateStr, isNested = false) {
         flatId: flat.id,
         flatNumber: flat.number,
         reason: "Cancelado: check-out sincronizado com governança"
+      });
+      runCheckoutAutoBillingAndNfse(pmsRes, { triggerSource: "housekeeping_sync" }).catch(e => {
+        console.warn("[Housekeeping Sync Auto-NFS-e Error]:", e?.message || e);
       });
       shouldSaveDb = true;
     }
@@ -26650,6 +26762,9 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
             triggerCheckoutWhatsApp(db, saveDatabase, checkoutRes, "card_desocupado").catch(e => {
               console.warn("[Cleaning Card Vacant Checkout Trigger Error]:", e.message);
             });
+            runCheckoutAutoBillingAndNfse(checkoutRes, { triggerSource: "cleaning_card_vacant" }).catch(e => {
+              console.warn("[Cleaning Card Vacant Auto-NFS-e Error]:", e?.message || e);
+            });
           } else {
             undoReservationCheckoutAndRestoreStay(db, checkoutRes, {
               actorUser: userAuth,
@@ -26747,6 +26862,9 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
         });
         triggerCheckoutWhatsApp(db, saveDatabase, checkoutRes, autoSource).catch(e => {
           console.warn("[Cleaning Started Checkout Trigger Error]:", e.message);
+        });
+        runCheckoutAutoBillingAndNfse(checkoutRes, { triggerSource: autoSource }).catch(e => {
+          console.warn("[Cleaning Started Auto-NFS-e Error]:", e?.message || e);
         });
       }
     } else {
@@ -43521,6 +43639,10 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       if (!r.paidAt) {
         r.paidAt = r.payments[r.payments.length - 1]?.date || new Date().toISOString();
       }
+      syncOpenBoletosForSettledReservation(r, {
+        paidAt: r.paidAt,
+        source: "Baixa Manual na Reserva"
+      });
     } else if (sumPaid > 0) {
       r.paymentStatus = "sinal_pago";
       if (!r.paidAt) {
@@ -44552,6 +44674,9 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       if (oldStatus !== "completed" && oldStatus !== "checkout" && oldStatus !== "checked_out") {
         triggerCheckoutWhatsApp(db, saveDatabase, r, "pms_edit").catch(e => {
           console.warn("[PMS Edit Checkout Trigger Error]:", e.message);
+        });
+        runCheckoutAutoBillingAndNfse(r, { triggerSource: "pms_edit" }).catch(e => {
+          console.warn("[PMS Edit Auto-NFS-e Error]:", e?.message || e);
         });
       }
     }
@@ -46194,9 +46319,12 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const currentHour = bNow.hour;
   const isPastOrExact14h = currentHour >= 14;
   const isCheckinToday = (todayStr === r.checkinDate);
+  const isMinibarInspected = isFlatMinibarInspectedTodayOnCheckinDay(db, r, todayStr);
+  const isMinibarPendingForEarlyCheckin = Boolean(isCheckinToday && !isPastOrExact14h && !isMinibarInspected);
+  const isFlatReadyForCheckin = Boolean(isFlatClean && (isPastOrExact14h || isMinibarInspected));
 
-  // Antecipação de Check-in (Regra Unificada da Sofia): Quarto limpo no dia da chegada + horário permitido (10:00 Site/Direto/WhatsApp, 12:00 OTA/Agência/B2B, ou autorizado pela Administração)
-  let canDoEarlyCheckin = !isPreReservationBlocked(r) && isCheckinToday && isFlatClean && isSofiaEarlyTimeAllowed;
+  // Antecipação de Check-in (Regra Unificada): Quarto limpo + conferência de frigobar concluída hoje (antes das 14:00) + horário permitido (10:00 Site/Direto/WhatsApp, 12:00 OTA/Agência/B2B, ou autorizado pela Administração)
+  let canDoEarlyCheckin = !isPreReservationBlocked(r) && isCheckinToday && isFlatReadyForCheckin && isSofiaEarlyTimeAllowed;
 
   const checkinTimeStr = db.settings.checkinTime || "14:00";
   const checkoutTimeStr = db.settings.checkoutTime || "12:00";
@@ -46411,7 +46539,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
 
   // Reservas B2B, Boleto Faturado a prazo e reservas já confirmadas com extensão parcial liberam check-in digital e senha da porta normalmente
   const isPortalUnlocked = Boolean(!isCancelledRes && !isExpiredPreRes && (isPaid || isB2b || isFaturadoPortal || (hasPartialPendingBalance && !isUnpaidPre)));
-  canDoEarlyCheckin = Boolean(isPortalUnlocked && !isPreReservationBlocked(r) && isCheckinToday && isFlatClean && isSofiaEarlyTimeAllowed);
+  canDoEarlyCheckin = Boolean(isPortalUnlocked && !isPreReservationBlocked(r) && isCheckinToday && isFlatReadyForCheckin && isSofiaEarlyTimeAllowed);
 
   const isPkgCodeAccess = isPackageCode(code);
   const hasPkgPortal = Boolean(r.packageId || r.packageCode);
@@ -46616,7 +46744,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       hasEarlyCheckinBenefit,
       flatNumber: r.flatNumber,
       roomCategory: "Flat Studio Executivo Completo",
-      flatCleanStatus: isFlatClean ? "limpo" : "em_preparacao",
+      flatCleanStatus: isFlatReadyForCheckin ? "limpo" : (isFlatClean && isMinibarPendingForEarlyCheckin ? "aguardando_frigobar" : "em_preparacao"),
       specialRequests: r.specialRequests || "",
       notes: r.notes || "",
       receptionNotes: hideFinancialForGuest ? "" : (r.receptionNotes || ""),
@@ -46648,6 +46776,9 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     googleMapsUrl: db.settings.googleMapsUrl || "https://share.google/LHu3541d5lhkdvbL2",
     isCheckinToday,
     isFlatClean,
+    isMinibarInspected,
+    isMinibarPendingForEarlyCheckin,
+    isFlatReady: isFlatReadyForCheckin,
     hasEarlyCheckinBenefit,
     canDoEarlyCheckin,
     canConfirmSelfCheckin: Boolean(isPortalUnlocked && !isPreReservationBlocked(r) && evaluateSelfCheckinEligibility(db, r).allowed),
@@ -46662,18 +46793,20 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       ? "⏳ Pré-reserva aguardando confirmação do pagamento. Apenas após o pagamento a reserva é confirmada, o check-in digital é liberado e os dados são enviados para a recepção/portaria."
       : (isCheckinToday
           ? (isFlatClean
-              ? ((Boolean(r.fnhrCompleted || r.preCheckinCompleted || r.hasPreCheckin || (completedCheckins >= totalGuests && totalGuests > 0) || (Array.isArray(r.guests) && r.guests.length > 0 && r.guests.some(g => g.hasCompletedCheckin))))
-                  ? (canDoEarlyCheckin && !isPastOrExact14h
-                      ? "🎉 Seu Apartamento já está limpo e inspecionado! Seu benefício de check-in antecipado (cortesia mediante disponibilidade) está liberado. Você já pode se dirigir à portaria 24h."
-                      : (isPastOrExact14h
-                          ? "✨ Check-in liberado! Seu apartamento está higienizado e pronto na portaria 24h."
-                          : "✨ Seu apartamento já está preparado e limpo. O horário oficial de check-in inicia às 14:00 na portaria 24h."))
-                  : (canDoEarlyCheckin && !isPastOrExact14h
-                      ? "🎉 Seu Apartamento já está limpo e pronto! Estamos apenas aguardando você fazer o seu Check-in Online abaixo para liberar sua entrada antecipada na portaria 24h."
-                      : (isPastOrExact14h
-                          ? "✨ Seu apartamento já está limpo e pronto! Estamos apenas aguardando você fazer o seu Check-in Online abaixo para liberar sua entrada na portaria 24h."
-                          : "✨ Seu apartamento já está preparado e limpo. Conclua o seu Check-in Online abaixo para deixar sua entrada liberada na portaria 24h a partir das 14:00.")))
-              : "🧹 Apartamento em higienização e preparação pela equipe de governança. O horário oficial de check-in é a partir das 14:00 (antecipação concedida estritamente mediante disponibilidade após a conclusão da limpeza).")
+              ? (isMinibarPendingForEarlyCheckin
+                  ? "🧊 Apartamento higienizado! Aguardando a conferência de frigobar pela equipe de abastecimento para liberar o check-in antecipado (o horário oficial de check-in é a partir das 14:00)."
+                  : ((Boolean(r.fnhrCompleted || r.preCheckinCompleted || r.hasPreCheckin || (completedCheckins >= totalGuests && totalGuests > 0) || (Array.isArray(r.guests) && r.guests.length > 0 && r.guests.some(g => g.hasCompletedCheckin))))
+                      ? (canDoEarlyCheckin && !isPastOrExact14h
+                          ? "🎉 Seu Apartamento já está limpo e inspecionado! Seu benefício de check-in antecipado (cortesia mediante disponibilidade) está liberado. Você já pode se dirigir à portaria 24h."
+                          : (isPastOrExact14h
+                              ? "✨ Check-in liberado! Seu apartamento está higienizado e pronto na portaria 24h."
+                              : "✨ Seu apartamento já está preparado, limpo e conferido. O horário oficial de check-in inicia às 14:00 na portaria 24h."))
+                      : (canDoEarlyCheckin && !isPastOrExact14h
+                          ? "🎉 Seu Apartamento já está limpo e conferido! Estamos apenas aguardando você fazer o seu Check-in Online abaixo para liberar sua entrada antecipada na portaria 24h."
+                          : (isPastOrExact14h
+                              ? "✨ Seu apartamento já está limpo e pronto! Estamos apenas aguardando você fazer o seu Check-in Online abaixo para liberar sua entrada na portaria 24h."
+                              : "✨ Seu apartamento já está preparado, limpo e conferido. Conclua o seu Check-in Online abaixo para deixar sua entrada liberada na portaria 24h a partir das 14:00."))))
+              : "🧹 Apartamento em higienização e preparação pela equipe de governança. O horário oficial de check-in é a partir das 14:00 (antecipação concedida estritamente mediante disponibilidade após a conclusão da limpeza e conferência de frigobar).")
           : `Check-in a partir das 14:00 em ${r.checkinDate}.`),
     breakfastOrder: existingBreakfastOrder || null,
     preCheckinStatus: {
@@ -46740,9 +46873,13 @@ app.post("/api/pms/guest-portal/:code/claim-early-checkin", (req, res) => {
   }
 
   if (!chk.isRoomReady) {
+    const notReadyErr = chk.isMinibarPendingForEarlyCheckin && chk.isFlatClean !== false
+      ? `O apartamento já foi higienizado, mas ainda aguarda a conferência de frigobar para liberar o Early Check-in (a partir das ${chk.standardCheckinTime || "14:00"} libera normalmente).`
+      : `O apartamento ainda está em preparação pela governança (${sanitizedSnap.cleaningLabel}${chk.isMinibarPendingForEarlyCheckin ? " • frigobar pendente" : ""}). Aguarde a conclusão da limpeza e conferência de frigobar para ativar o Early Check-in.`;
     return res.status(400).json({
-      error: `O apartamento ainda está em preparação pela governança (${sanitizedSnap.cleaningLabel}). Aguarde a conclusão da limpeza para ativar o Early Check-in.`,
-      roomNotReady: true
+      error: notReadyErr,
+      roomNotReady: true,
+      minibarPending: Boolean(chk.isMinibarPendingForEarlyCheckin)
     });
   }
 
@@ -47827,6 +47964,126 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       }
     }
 
+    if (req.body?.allowRequesterPhoneOverride !== true) {
+      const reqPhonesToGuard = [];
+      const addReqPhoneGuard = (val) => {
+        const parts = String(val || "").split(/[\/;|,]+/).map(s => s.trim()).filter(Boolean);
+        for (const p of parts) {
+          if (p.replace(/\D/g, "").length >= 8) reqPhonesToGuard.push(p);
+        }
+      };
+      const pkgSiblingsCred = (r.packageId || r.packageCode)
+        ? (db.reservations || []).filter(s =>
+            s &&
+            s.status !== "cancelada" &&
+            s.status !== "cancelled" &&
+            s.status !== "expirada" &&
+            ((r.packageId && s.packageId === r.packageId) || (r.packageCode && s.packageCode === r.packageCode))
+          )
+        : [];
+      for (const srcRes of [r, ...pkgSiblingsCred]) {
+        addReqPhoneGuard(srcRes.requesterPhone);
+        addReqPhoneGuard(srcRes.requesterInfo?.phone);
+        addReqPhoneGuard(srcRes.requesterInfo?.whatsapp);
+        addReqPhoneGuard(srcRes.agencyAgentPhone);
+        addReqPhoneGuard(srcRes.validatedRequesterWhatsapp);
+      }
+      if (r.agencyId && Array.isArray(db.agencies)) {
+        const ag = db.agencies.find(a => String(a.id) === String(r.agencyId));
+        if (ag) {
+          addReqPhoneGuard(ag.whatsapp);
+          addReqPhoneGuard(ag.phone);
+          addReqPhoneGuard(ag.agents?.[0]?.phone);
+        }
+      }
+      if (r.companyId && Array.isArray(db.companies)) {
+        const co = db.companies.find(c => String(c.id) === String(r.companyId));
+        if (co) {
+          addReqPhoneGuard(co.whatsapp);
+          addReqPhoneGuard(co.phone);
+          addReqPhoneGuard(co.telefone);
+        }
+      }
+
+      if (!useRequesterAsGuest1 && reqPhonesToGuard.some(rp => matchClientPhone(cleanPhone, rp))) {
+        return res.status(400).json({
+          error: "Você informou o WhatsApp do próprio solicitante/comprador para um flat em que o solicitante não vai se hospedar. Informe o WhatsApp real do Hóspede 1 (ou marque que o solicitante será o Hóspede 1 no Flat 1).",
+          requesterPhoneConflict: true,
+          guestIndex: 1
+        });
+      }
+
+      if (requestedOccPreview >= 2 && !g2ExplicitLaterPre && rawG2PhonePre) {
+        if (matchClientPhone(rawG2PhonePre, cleanPhone)) {
+          return res.status(400).json({
+            error: "O WhatsApp do Hóspede 2 não pode ser igual ao do Hóspede 1. Informe o número individual do acompanhante ou marque 'Informar Hóspede 2 depois'.",
+            duplicateCompanionPhone: true,
+            guestIndex: 2
+          });
+        }
+        if (reqPhonesToGuard.some(rp => matchClientPhone(rawG2PhonePre, rp))) {
+          return res.status(400).json({
+            error: "O WhatsApp do Hóspede 2 não pode ser o número do solicitante da reserva. Informe o WhatsApp real do acompanhante ou marque 'Informar Hóspede 2 depois'.",
+            requesterPhoneConflict: true,
+            guestIndex: 2
+          });
+        }
+      }
+
+      if (requestedOccPreview >= 3 && !g3ExplicitLaterPre && rawG3PhonePre) {
+        if (
+          matchClientPhone(rawG3PhonePre, cleanPhone) ||
+          (rawG2PhonePre && !g2ExplicitLaterPre && matchClientPhone(rawG3PhonePre, rawG2PhonePre))
+        ) {
+          return res.status(400).json({
+            error: "O WhatsApp do Hóspede 3 deve ser exclusivo deste acompanhante (não repita o número do Hóspede 1 ou 2).",
+            duplicateCompanionPhone: true,
+            guestIndex: 3
+          });
+        }
+        if (reqPhonesToGuard.some(rp => matchClientPhone(rawG3PhonePre, rp))) {
+          return res.status(400).json({
+            error: "O WhatsApp do Hóspede 3 não pode ser o número do solicitante da reserva.",
+            requesterPhoneConflict: true,
+            guestIndex: 3
+          });
+        }
+      }
+
+      if (pkgSiblingsCred.length > 0) {
+        const candidateGuestPhonesToCheck = [
+          cleanPhone,
+          ...(requestedOccPreview >= 2 && !g2ExplicitLaterPre && rawG2PhonePre ? [rawG2PhonePre] : []),
+          ...(requestedOccPreview >= 3 && !g3ExplicitLaterPre && rawG3PhonePre ? [rawG3PhonePre] : [])
+        ].filter(Boolean);
+        for (const other of pkgSiblingsCred) {
+          if (String(other.id) === String(r.id)) continue;
+          const otherGuestPhones = [];
+          if (!other.guestPending && !other.informGuestsLater && !isPendingGuestName(other.guestName)) {
+            const og1p = String(other.guestPhone || other.guests?.[0]?.phone || "").trim();
+            if (og1p.replace(/\D/g, "").length >= 8) otherGuestPhones.push(og1p);
+          }
+          if (Array.isArray(other.guests)) {
+            for (let gi = 1; gi < other.guests.length; gi++) {
+              const og = other.guests[gi];
+              if (!og || og.informLater || isPendingGuestName(og.name)) continue;
+              const ogp = String(og.phone || og.whatsapp || "").trim();
+              if (ogp.replace(/\D/g, "").length >= 8) otherGuestPhones.push(ogp);
+            }
+          }
+          const matchedOtherPhone = candidateGuestPhonesToCheck.some(cand =>
+            otherGuestPhones.some(op => matchClientPhone(cand, op))
+          );
+          if (matchedOtherPhone) {
+            return res.status(400).json({
+              error: `Este WhatsApp já está cadastrado para o hóspede de outro flat deste pacote (Flat ${other.flatNumber || other.code}). Informe o WhatsApp individual do hóspede deste flat.`,
+              duplicatePackageGuestPhone: true
+            });
+          }
+        }
+      }
+    }
+
     // Verifica se os telefones dos hóspedes 1, 2 e 3 possuem conta ativa no WhatsApp via Z-API
     try {
       const waCheck = await checkZapiPhoneExists(cleanPhone, db?.zapiConfig);
@@ -48744,6 +49001,83 @@ app.all(["/api/pms/guest-portal/:code/self-checkin", "/api/pms/reservations/by-c
               });
               saveDatabase();
             }).catch(err => console.warn("[Self-Checkin Hold WhatsApp Error]:", err?.message));
+          }
+        }
+      }
+      saveDatabase();
+    } else if (eligibility.isCheckinToday && eligibility.reason === "minibar_not_inspected") {
+      holdPortalMessage = `Recebemos sua sinalização! Seu apartamento já foi limpo e está aguardando apenas a conferência de frigobar pela equipe de abastecimento para liberação do check-in antecipado. Lembramos que nosso check-in oficial é a partir das ${stdTime}. Assim que a conferência for concluída (ou às ${stdTime}), avisaremos você imediatamente no WhatsApp!`;
+
+      if (r.earlySelfCheckinHoldNotifiedDate !== eligibility.todayStr) {
+        r.earlySelfCheckinHoldNotifiedDate = eligibility.todayStr;
+        r.earlySelfCheckinHoldNotifiedAt = now.toISOString();
+
+        createNotification({
+          category: "checkin",
+          title: `🧊 Hóspede Aguardando Conferência de Frigobar - Flat ${r.flatNumber}`,
+          message: `O hóspede ${r.guestName} clicou em "Já cheguei". O Flat ${r.flatNumber} já está limpo, mas aguarda conferência de frigobar (Anserve) para liberar o check-in antecipado.`,
+          severity: "warning",
+          metadata: { reservationId: r.id, flatNumber: r.flatNumber, guestName: r.guestName, pendingRelease: true, pendingMinibar: true },
+          targetUrl: "/frigobar-reposicao"
+        });
+
+        const recips = getReservationRecipients(r, db);
+        const targetPhone = cleanWhatsAppPhone(recips.guest?.phone || r.guestPhone || "");
+        if (db?.zapiConfig?.enabled && targetPhone) {
+          const waHoldText =
+            `Olá, *${firstName}*! Recebemos a sua sinalização de chegada! 🙌\n\n` +
+            `O seu *Flat ${r.flatNumber}* já foi higienizado e está passando apenas pela *conferência final de frigobar* para liberarmos o check-in antecipado.\n\n` +
+            `⏰ *Importante lembrar:* O nosso check-in oficial é *a partir das ${stdTime}*. O check-in antecipado é uma *cortesia mediante disponibilidade* após a conclusão da limpeza e da conferência de frigobar.\n\n` +
+            `✨ Assim que a conferência for finalizada (ou no horário oficial das ${stdTime}), enviaremos uma mensagem aqui no WhatsApp avisando na hora que o seu flat está liberado!`;
+
+          const policy = evaluateZapiChannelPolicy(db.zapiConfig, {
+            channelId: "guest_schedule",
+            phone: targetPhone,
+            message: waHoldText,
+            db
+          });
+          if (policy.allowed) {
+            sendZapiMessage(db.zapiConfig, {
+              phone: targetPhone,
+              message: waHoldText,
+              channelId: "guest_schedule",
+              recipientRole: "guest",
+              triggerEvent: "self_checkin_pending_minibar",
+              db
+            }).then(waRes => {
+              const sentIso = new Date().toISOString();
+              if (!Array.isArray(db.whatsappHistory)) db.whatsappHistory = [];
+              db.whatsappHistory.push({
+                id: `hold_mb_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                reservationCode: r.code,
+                reservationId: r.id || null,
+                title: "Aguardando Conferência de Frigobar • Lembrete Check-in 14:00",
+                guestName: r.guestName,
+                guestPhone: targetPhone,
+                recipientType: "guest",
+                recipientName: r.guestName,
+                triggerEvent: "self_checkin_pending_minibar",
+                message: waHoldText,
+                status: waRes?.success ? "sent" : "failed",
+                method: waRes?.method || "instant_trigger",
+                error: waRes?.error || null,
+                sentAt: sentIso
+              });
+              appendMessageToConversation(db, {
+                phone: targetPhone,
+                senderName: "CorpFlats",
+                senderPhone: db?.zapiConfig?.instanceId || "",
+                fromMe: true,
+                text: waHoldText,
+                type: "text",
+                triggerEvent: "self_checkin_pending_minibar",
+                reservationCode: r.code,
+                status: waRes?.success ? "read" : "failed",
+                timestamp: sentIso,
+                messageId: waRes?.messageId || `msg_hold_mb_${Date.now()}`
+              });
+              saveDatabase();
+            }).catch(err => console.warn("[Self-Checkin Minibar Hold WhatsApp Error]:", err?.message));
           }
         }
       }
@@ -52629,12 +52963,15 @@ app.get("/api/pms/guests", (req, res) => {
     if (invName) addToMapList(invByName, invName, inv);
   }
 
+  const canonicalCrmMinibarOrders = filterCanonicalVisibleMinibarOrders(allMinibarOrders, allMinibarOrders, {
+    includeCancelled: true
+  });
   const mbByDoc = new Map();
   const mbByPhone = new Map();
   const mbByResCode = new Map();
   const mbByResId = new Map();
   const mbByName = new Map();
-  for (const o of allMinibarOrders) {
+  for (const o of canonicalCrmMinibarOrders) {
     if (!o) continue;
     const oDoc = (o.guestDocument || "").replace(/\D/g, "");
     if (oDoc) addToMapList(mbByDoc, oDoc, o);
@@ -55111,7 +55448,10 @@ app.get("/api/pms/guests/:id", async (req, res) => {
   const guestResCodes = new Set(guestReservations.map(r => r.code).filter(Boolean));
   const guestResIds = new Set(guestReservations.map(r => String(r.id)).filter(Boolean));
   const allMinibarOrders = Array.isArray(db.minibarOrders) ? db.minibarOrders : [];
-  const guestMinibarOrders = allMinibarOrders.filter(o => {
+  const canonicalGuestPool = filterCanonicalVisibleMinibarOrders(allMinibarOrders, allMinibarOrders, {
+    includeCancelled: true
+  });
+  const guestMinibarOrders = canonicalGuestPool.filter(o => {
     if (!o) return false;
     const oDoc = (o.guestDocument || "").replace(/\D/g, "");
     const oPhone = normalizePhone(o.guestPhone || "");
@@ -56114,6 +56454,9 @@ function formatReceptionChannelLabel(r) {
 
 export function evaluateReceptionEarlyCheckin(r, {
   isRoomReady = true,
+  isFlatClean = undefined,
+  isMinibarInspected = true,
+  minibarLabel = "🧊 Conferido",
   cleaningStatus = "clean",
   cleaningLabel = "✨ Limpo",
   bNow = null,
@@ -56135,9 +56478,10 @@ export function evaluateReceptionEarlyCheckin(r, {
   const isCheckinDateToday = Boolean(!resCheckinDate || resCheckinDate === today);
   const isCheckinDateFuture = Boolean(resCheckinDate && resCheckinDate > today);
 
-  // Regra unificada da Sofia:
-  // - Site / Direto / WhatsApp: cortesia grátis a partir das 10:00 (com flat limpo)
-  // - Booking / Airbnb / Agência (OTA / B2B): cortesia grátis a partir das 12:00 (com flat limpo)
+  // Regra unificada:
+  // - Site / Direto / WhatsApp: cortesia grátis a partir das 10:00 (com flat limpo + frigobar conferido hoje)
+  // - Booking / Airbnb / Agência (OTA / B2B): cortesia grátis a partir das 12:00 (com flat limpo + frigobar conferido hoje)
+  // - A partir das 14:00 (janela regular): trava do frigobar não bloqueia, apenas a limpeza
   // - Antes desses horários: somente com autorização/pagamento registrado pela Administração
   const isOtaOrB2b = isOtaOrB2bReservation(r);
   const channelLabel = formatReceptionChannelLabel(r);
@@ -56167,6 +56511,14 @@ export function evaluateReceptionEarlyCheckin(r, {
   }
 
   const isRegularCheckinWindow = isCheckinDatePast || (isCheckinDateToday && currentTimeHHMM >= standardCheckinTime);
+  const resolvedIsFlatClean = isFlatClean !== undefined ? Boolean(isFlatClean) : Boolean(cleaningStatus === "clean");
+  const resolvedIsMinibarInspected = Boolean(isMinibarInspected);
+  const isMinibarPendingForEarlyCheckin = Boolean(
+    isCheckinDateToday && !isRegularCheckinWindow && !resolvedIsMinibarInspected
+  );
+  const effectiveIsRoomReady = Boolean(
+    isRoomReady && resolvedIsFlatClean && !isMinibarPendingForEarlyCheckin
+  );
 
   let earlyCheckinStatus = "Não liberado";
   let earlyCheckinReason = "";
@@ -56184,9 +56536,15 @@ export function evaluateReceptionEarlyCheckin(r, {
         ? `${channelLabel}: liberado grátis somente a partir das 12:00 (antes das 12:00 exige autorização da Administração)`
         : `${channelLabel}: liberado grátis a partir das 10:00 (antes das 10:00 exige autorização da Administração)`;
     }
-  } else if (!isRoomReady) {
+  } else if (!resolvedIsFlatClean && isMinibarPendingForEarlyCheckin) {
+    earlyCheckinStatus = "Aguardando limpeza e frigobar";
+    earlyCheckinReason = `Horário permitido (a partir das ${effectiveAllowedTime}), aguardando limpeza e conferência de frigobar`;
+  } else if (!resolvedIsFlatClean) {
     earlyCheckinStatus = "Aguardando limpeza";
     earlyCheckinReason = `Horário permitido (a partir das ${effectiveAllowedTime}), aguardando limpeza do flat`;
+  } else if (isMinibarPendingForEarlyCheckin) {
+    earlyCheckinStatus = "Aguardando frigobar";
+    earlyCheckinReason = `Horário permitido e flat limpo, aguardando conferência de frigobar (libera automaticamente às ${standardCheckinTime})`;
   } else {
     earlyCheckinStatus = "Liberado";
     if (isEarlyAuthorizedByAdmin && currentTimeHHMM < freeEarlyTime) {
@@ -56212,11 +56570,14 @@ export function evaluateReceptionEarlyCheckin(r, {
   if (!isCheckinDateFuture && !isTimeAllowed) {
     blockedReasons.push(`Horário atual (${currentTimeHHMM}) anterior às ${effectiveAllowedTime}${isEarlyAuthorizedByAdmin ? " (horário autorizado pela Administração)" : " sem autorização da Administração"}`);
   }
-  if (!isRoomReady) {
+  if (!resolvedIsFlatClean) {
     blockedReasons.push(`Apartamento ainda não está limpo (${cleaningLabel})`);
   }
+  if (isMinibarPendingForEarlyCheckin) {
+    blockedReasons.push(`Conferência de frigobar pendente hoje (${minibarLabel}) — exigida para Early Check-in antes das ${standardCheckinTime}`);
+  }
 
-  const canAuthorizeEntry = !isCheckinDateFuture && !isReSignatureNeeded && completedCount > 0 && isTimeAllowed && isRoomReady;
+  const canAuthorizeEntry = !isCheckinDateFuture && !isReSignatureNeeded && completedCount > 0 && isTimeAllowed && effectiveIsRoomReady;
 
   let entryMessage = "";
   let entryBadgeType = "neutral";
@@ -56234,9 +56595,15 @@ export function evaluateReceptionEarlyCheckin(r, {
       ? `Aguardando Horário Autorizado pela Administração (${effectiveAllowedTime})`
       : `Aguardando Horário (${effectiveAllowedTime}) ou Autorização da Administração`;
     entryBadgeType = "warning";
-  } else if (!isRoomReady) {
+  } else if (!resolvedIsFlatClean && isMinibarPendingForEarlyCheckin) {
+    entryMessage = `Quarto não está pronto (${cleaningLabel} • Frigobar pendente)`;
+    entryBadgeType = "error";
+  } else if (!resolvedIsFlatClean) {
     entryMessage = `Quarto não está pronto (${cleaningLabel})`;
     entryBadgeType = "error";
+  } else if (isMinibarPendingForEarlyCheckin) {
+    entryMessage = `Aguardando Conferência de Frigobar (Early Check-in antes das ${standardCheckinTime})`;
+    entryBadgeType = "warning";
   } else if (!allCheckinDone) {
     entryMessage = `Entrada Parcial Liberada (${completedCount}/${totalCount} prontos)`;
     entryBadgeType = "warning";
@@ -56263,7 +56630,11 @@ export function evaluateReceptionEarlyCheckin(r, {
     isEarlyAuthorizedByAdmin,
     earlyCheckinTime: validAuthorizedTime,
     hasPendingEarlyPayment,
-    isRoomReady: Boolean(isRoomReady),
+    isFlatClean: resolvedIsFlatClean,
+    isMinibarInspected: resolvedIsMinibarInspected,
+    isMinibarPendingForEarlyCheckin,
+    minibarLabel,
+    isRoomReady: effectiveIsRoomReady,
     cleaningStatus,
     cleaningLabel,
     completedGuestsCount: completedCount,
@@ -56353,7 +56724,11 @@ export function buildSanitizedReceptionItem(r, { now = null, bNow = null, todayC
     cleaningLabel = "⚠️ Sujo (aguardando limpeza)";
   }
 
-  const isRoomReady = cleaningStatus === "clean";
+  const isFlatClean = cleaningStatus === "clean";
+  const isMinibarInspected = r.status === "in_house"
+    ? true
+    : isFlatMinibarInspectedTodayOnCheckinDay(db, r, today);
+  const minibarLabel = isMinibarInspected ? "🧊 Conferido" : "⏳ Frigobar pendente";
   const isReSignatureNeeded = Boolean(r.needsReSignature);
 
   const count = Math.min(Math.max(Number(r.guestCount) || Number(r.adults) || (Array.isArray(r.guests) ? r.guests.length : 1) || 1, 1), 4);
@@ -56429,7 +56804,10 @@ export function buildSanitizedReceptionItem(r, { now = null, bNow = null, todayC
   const someCheckinDone = !isReSignatureNeeded && completedCount > 0;
 
   const earlyEval = evaluateReceptionEarlyCheckin(r, {
-    isRoomReady,
+    isRoomReady: isFlatClean,
+    isFlatClean,
+    isMinibarInspected,
+    minibarLabel,
     cleaningStatus,
     cleaningLabel,
     bNow: activeBNow,
@@ -56440,6 +56818,7 @@ export function buildSanitizedReceptionItem(r, { now = null, bNow = null, todayC
     totalCount,
     isReSignatureNeeded
   });
+  const isRoomReady = earlyEval.isRoomReady;
 
   let safePdfUrl = r.fnrhPdfUrl || null;
   let safeDownloadUrl = r.fnrhDownloadUrl || null;
@@ -56545,6 +56924,10 @@ export function buildSanitizedReceptionItem(r, { now = null, bNow = null, todayC
     cleaningStatus,
     cleaningLabel,
     cleaningMinutes,
+    isFlatClean,
+    isMinibarInspected,
+    isMinibarPendingForEarlyCheckin: earlyEval.isMinibarPendingForEarlyCheckin,
+    minibarLabel,
     isRoomReady,
     earlyCheckinStatus: earlyEval.earlyCheckinStatus,
     earlyCheckinReason: earlyEval.earlyCheckinReason,
@@ -57033,13 +57416,19 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
     });
   }
 
-  // Antes do horário padrão (14:00), Early Check-in exige flat limpo (a menos que Admin autenticado force).
-  // A partir das 14:00 (janela regular), caso a governança ainda não tenha dado baixa no app, aceita confirmação explícita force=true.
+  // Antes do horário padrão (14:00), Early Check-in exige flat limpo + conferência de frigobar feita hoje (a menos que Admin autenticado force).
+  // A partir das 14:00 (janela regular), a trava do frigobar não bloqueia e, caso a governança ainda não tenha dado baixa no app, aceita confirmação explícita force=true.
   const canForceCleanInRegularWindow = Boolean(req.body?.force && earlyChecklist.isRegularCheckinWindow);
   if (!earlyChecklist.isRoomReady && !canForceCleanInRegularWindow && !isVerifiedAdminOverride) {
+    const roomBlockErr = !earlyChecklist.isFlatClean && earlyChecklist.isMinibarPendingForEarlyCheckin
+      ? `Não é possível liberar Early Check-in enquanto o apartamento consta como "${sanitizedSnapshot.cleaningLabel}" e a conferência de frigobar está pendente. Aguarde limpeza e conferência de frigobar (ou horário regular às ${earlyChecklist.standardCheckinTime || "14:00"}).`
+      : earlyChecklist.isMinibarPendingForEarlyCheckin
+        ? `Não é possível liberar Early Check-in antes das ${earlyChecklist.standardCheckinTime || "14:00"} sem a conferência de frigobar feita hoje (Anserve). Aguarde a conferência ou o horário regular das ${earlyChecklist.standardCheckinTime || "14:00"}.`
+        : `Não é possível liberar Early Check-in enquanto o apartamento consta como "${sanitizedSnapshot.cleaningLabel}". Aguarde a conclusão da limpeza pela governança.`;
     return res.status(400).json({
-      error: `Não é possível liberar Early Check-in enquanto o apartamento consta como "${sanitizedSnapshot.cleaningLabel}". Aguarde a conclusão da limpeza pela governança.`,
+      error: roomBlockErr,
       roomNotReady: true,
+      minibarPending: Boolean(earlyChecklist.isMinibarPendingForEarlyCheckin),
       earlyCheckinChecklist: earlyChecklist
     });
   }
@@ -57161,6 +57550,793 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
   });
 });
 
+// ── Motor Central Unificado de Auto-Emissão de NFS-e & Boleto no Check-out ───
+let _checkoutAutoNfseTestHooks = null;
+function setCheckoutAutoNfseTestHooks(hooks = null) {
+  _checkoutAutoNfseTestHooks = hooks && typeof hooks === "object" ? hooks : null;
+}
+
+const _inFlightCheckoutAutoNfse = new Set();
+
+function normalizeFiscalChannelKey(rawChannel = "", reservation = null) {
+  const ch = String(rawChannel || reservation?.channel || "").trim().toLowerCase();
+  if (["site", "site_direto", "direct", "direta", "site_proprio", "motor", "website", "web"].includes(ch)) {
+    return "direct";
+  }
+  if (["whatsapp", "balcao", "balcão", "manual", "telefone", "presencial"].includes(ch)) {
+    return "whatsapp";
+  }
+  if (["booking", "booking.com", "booking_com"].includes(ch) || ch.includes("booking")) {
+    return "booking";
+  }
+  if (ch === "airbnb" || ch.includes("airbnb")) {
+    return "airbnb";
+  }
+  if (
+    ["b2b", "corporativo", "corporate", "agencia", "agência", "agency", "voucher"].includes(ch) ||
+    ch.includes("b2b") ||
+    reservation?.agencyId ||
+    reservation?.b2bReservationNumber ||
+    reservation?.requesterType === "agency_b2b"
+  ) {
+    return "b2b";
+  }
+  return ch || "whatsapp";
+}
+
+function normalizeNfseChannelRules(rawRules = null) {
+  const src = (rawRules && typeof rawRules === "object") ? rawRules : {};
+  const directVal = src.direct !== undefined
+    ? Boolean(src.direct)
+    : (src.site !== undefined ? Boolean(src.site) : true);
+  const autoCheckoutVal = src.autoCheckout !== undefined
+    ? Boolean(src.autoCheckout)
+    : (db?.nfseConfig?.autoEmitOnCheckout === false && src.autoCheckout === false ? false : true);
+  return {
+    ...src,
+    direct: directVal,
+    site: directVal,
+    whatsapp: src.whatsapp !== undefined ? Boolean(src.whatsapp) : true,
+    b2b: src.b2b !== undefined ? Boolean(src.b2b) : true,
+    booking: src.booking !== undefined ? Boolean(src.booking) : false,
+    airbnb: src.airbnb !== undefined ? Boolean(src.airbnb) : false,
+    autoCheckout: autoCheckoutVal
+  };
+}
+
+function isReservationCheckoutClosedForNfse(resObj) {
+  if (!resObj || typeof resObj !== "object") return false;
+  const st = String(resObj.status || "").trim().toLowerCase();
+  return Boolean(
+    resObj.checkoutDone ||
+    resObj.earlyCheckout ||
+    resObj.actualCheckoutAt ||
+    ["completed", "checked_out", "checkout", "finalizada", "concluida"].includes(st)
+  );
+}
+
+function findMatchedCrmGuestForAutoNfse(r) {
+  if (!r || !Array.isArray(db.guests)) return null;
+  const rDocDigits = onlyDigits(r.guestDocument || r.guestCpf || r.document || "");
+  const rPhoneDigits = cleanPhone(r.guestPhone || r.phone || "");
+  return db.guests.find(g => {
+    if (!g) return false;
+    if (r.guestId && Number(g.id) === Number(r.guestId)) return true;
+    const gDoc = onlyDigits(g.documentNumber || g.document || g.cpf || "");
+    const gPhone = cleanPhone(g.phone || g.phoneNumber || "");
+    const nameCompat = !r.guestName || areGuestNamesCompatible(r.guestName, g.fullName || g.name);
+    if (!nameCompat) return false;
+    return Boolean(
+      (rDocDigits.length >= 11 && gDoc === rDocDigits) ||
+      (rPhoneDigits.length >= 8 && gPhone.length >= 8 && (gPhone === rPhoneDigits || gPhone.slice(-8) === rPhoneDigits.slice(-8)))
+    );
+  }) || null;
+}
+
+async function sendCheckoutAutoNfseManagerAlert(primaryRes, { alertKey, title, message, whatsappText }) {
+  const dedupKey = `${alertKey}:${primaryRes?.id || primaryRes?.code || "res"}`;
+  if (primaryRes && primaryRes.autoInvoiceAlertSentKey === dedupKey) {
+    return;
+  }
+  if (primaryRes) {
+    primaryRes.autoInvoiceAlertSentKey = dedupKey;
+  }
+
+  try {
+    createNotification({
+      category: "fiscal",
+      title,
+      message,
+      severity: "warning",
+      type: `checkout_auto_nfse_${alertKey}`,
+      metadata: {
+        reservationId: primaryRes?.id || null,
+        reservationCode: primaryRes?.code || null,
+        flatNumber: primaryRes?.flatNumber || null,
+        alertKey
+      },
+      targetUrl: "/notas",
+      link: "/notas"
+    });
+  } catch (_) {}
+
+  if (!whatsappText) return;
+  try {
+    const managerPhone = getManagerWhatsAppPhone(db);
+    if (!managerPhone) return;
+    if (_checkoutAutoNfseTestHooks?.sendZapiMessage) {
+      await _checkoutAutoNfseTestHooks.sendZapiMessage(db.zapiConfig || {}, {
+        phone: managerPhone,
+        message: whatsappText,
+        channelId: "ai_agent",
+        recipientRole: "developer",
+        triggerEvent: `checkout_auto_nfse_${alertKey}`,
+        bypassTestMode: true,
+        db
+      });
+    } else if (process.env.NODE_ENV !== "test" && typeof sendZapiMessage === "function") {
+      await sendZapiMessage(db.zapiConfig || {}, {
+        phone: managerPhone,
+        message: whatsappText,
+        channelId: "ai_agent",
+        recipientRole: "developer",
+        triggerEvent: `checkout_auto_nfse_${alertKey}`,
+        bypassTestMode: true,
+        db
+      });
+    }
+  } catch (err) {
+    console.warn(`[Checkout Auto-NFS-e Manager Alert Error] (${alertKey}):`, err?.message || err);
+  }
+}
+
+async function runCheckoutAutoBillingAndNfse(reservation, options = {}) {
+  const result = {
+    autoInvoiceEmitted: false,
+    autoInvoiceNumber: null,
+    autoInvoicePdf: null,
+    autoBoletosEmitted: false,
+    boletos: [],
+    invoice: null,
+    faturadoPackage: null,
+    faturadoDispatchResult: null,
+    skipped: false,
+    reason: null,
+    awaitingDocument: false,
+    missingDocumentKind: null,
+    promptSent: false,
+    retryQueued: false,
+    error: null
+  };
+
+  if (!reservation || typeof reservation !== "object" || reservation.isRoomMoveHistoricalSegment) {
+    result.skipped = true;
+    result.reason = "invalid_or_historical";
+    return result;
+  }
+
+  const stLower = String(reservation.status || "").trim().toLowerCase();
+  if (["cancelada", "cancelled", "cancelado", "expirada", "no_show", "pre_reserva", "pendente"].includes(stLower)) {
+    result.skipped = true;
+    result.reason = "inactive_status";
+    return result;
+  }
+
+  const pkgCode = String(reservation.packageCode || reservation.packageId || "").trim().toUpperCase();
+  const lockKey = pkgCode ? `pkg:${pkgCode}` : `res:${reservation.id || reservation.code}`;
+  if (_inFlightCheckoutAutoNfse.has(lockKey)) {
+    result.skipped = true;
+    result.reason = "in_flight";
+    return result;
+  }
+
+  _inFlightCheckoutAutoNfse.add(lockKey);
+  try {
+    getFiscalData();
+    const channelRules = normalizeNfseChannelRules(db.nfseConfig?.channelRules);
+
+    const existingInv = findExistingInvoiceForReservation(db, {
+      reservation,
+      reservationId: reservation.id,
+      reservationCode: reservation.code
+    });
+    if (existingInv) {
+      reservation.invoiceId = existingInv.id;
+      reservation.numeroNfse = existingInv.numeroNfse;
+      reservation.autoInvoiceStatus = "emitted";
+      delete reservation.autoInvoiceLastError;
+      result.invoice = existingInv;
+    } else if (reservation.invoiceId) {
+      const linkedOld = (db.invoices || []).find(i => i && Number(i.id) === Number(reservation.invoiceId));
+      const oldSt = String(linkedOld?.status || "").toLowerCase();
+      if (!linkedOld || ["cancelada", "cancelled", "substituida", "rejeitada", "erro"].includes(oldSt)) {
+        reservation.invoiceId = null;
+        reservation.numeroNfse = null;
+      }
+    }
+
+    const reqBody = options.reqBody || {};
+    const isResFaturado = Boolean(
+      reservation.isFaturadoBoleto ||
+      reservation.paymentMethod === "faturado_boleto" ||
+      reservation.paymentMethod === "boleto_faturado" ||
+      reservation.paymentMethod === "boleto" ||
+      reservation.paymentMethod === "faturado_pj" ||
+      reservation.paymentMethod === "faturado_b2b" ||
+      reservation.b2bPaymentType === "FATURADO" ||
+      reqBody.emitBoleto === true
+    );
+    const shouldEmitBoletoOnCheckout = isResFaturado && (reservation.autoEmitBoletoOnCheckout !== false || reqBody.emitBoleto === true);
+
+    // ── Fluxo 1: Faturado / Boleto Banco Inter (+ NFS-e Hospedagem) ───────────
+    if (shouldEmitBoletoOnCheckout) {
+      try {
+        const pkgKeyCheckout = reservation.packageCode || reservation.packageId || null;
+        const alreadyHasConsolidatedPkgBoleto = Boolean(
+          pkgKeyCheckout &&
+          !reqBody.forceReissue &&
+          Array.isArray(db.boletos) &&
+          db.boletos.some(
+            (b) =>
+              b &&
+              b.status !== "cancelado" &&
+              (b.packageId === pkgKeyCheckout ||
+                (Array.isArray(b.reservationIds) && b.reservationIds.includes(Number(reservation.id))))
+          )
+        );
+        const needNfseStill = !existingInv && channelRules.autoCheckout !== false;
+        if (!alreadyHasConsolidatedPkgBoleto || needNfseStill) {
+          const faturadoPkg = await emitCheckoutFaturadoPackage(reservation, {
+            ...reqBody,
+            ...(pkgKeyCheckout
+              ? {
+                  consolidatePackage: reqBody.consolidatePackage !== false,
+                  packageId: pkgKeyCheckout
+                }
+              : {}),
+            emitNfse: channelRules.autoCheckout !== false,
+            triggerSource: "checkout_auto"
+          });
+          if (faturadoPkg) {
+            result.faturadoPackage = faturadoPkg;
+            if (Array.isArray(faturadoPkg.boletos) && faturadoPkg.boletos.length > 0) {
+              result.autoBoletosEmitted = true;
+              result.boletos = faturadoPkg.boletos;
+            }
+            if (faturadoPkg.invoice) {
+              result.invoice = faturadoPkg.invoice;
+              result.autoInvoiceEmitted = true;
+              result.autoInvoiceNumber = faturadoPkg.invoice.numeroNfse || faturadoPkg.invoice.numeroNota || null;
+              result.autoInvoicePdf = faturadoPkg.invoice.danfseUrl || faturadoPkg.invoice.linkPdf || null;
+              reservation.autoInvoiceStatus = "emitted";
+              delete reservation.autoInvoiceLastError;
+            }
+            result.faturadoDispatchResult = faturadoPkg.dispatchResult || null;
+          }
+        }
+      } catch (bolErr) {
+        console.error("[Auto-Boleto Checkout Error]", bolErr);
+        result.error = bolErr.message;
+      }
+      saveDatabase("checkout_auto_faturado");
+      return result;
+    }
+
+    // ── Fluxo 2: Auto-Emissão de NFS-e (Individual, Troca de Flat ou Pacote Multi-Flat) ──
+    if (existingInv) {
+      result.skipped = true;
+      result.reason = "already_emitted";
+      return result;
+    }
+
+    // 2.1 Chave Mestra Global ("Auto-Emissão no Check-out")
+    if (!options.forceEmitAfterDocCollected && channelRules.autoCheckout === false) {
+      reservation.autoInvoiceStatus = "skipped_disabled_global";
+      result.skipped = true;
+      result.reason = "global_auto_checkout_disabled";
+      return result;
+    }
+
+    // 2.2 Verificação de Pacote Multi-Flat
+    const activePkgItems = pkgCode
+      ? getPackageReservations(db, pkgCode).filter(x => isPackageItemActive(x) && !x.isRoomMoveHistoricalSegment)
+      : [];
+    const isMultiFlatPkg = activePkgItems.length >= 2;
+    const targetResList = isMultiFlatPkg ? activePkgItems : [reservation];
+
+    if (isMultiFlatPkg) {
+      // Verifica se alguma nota ativa já cobre o pacote inteiro
+      const existingPkgInv = (db.invoices || []).find(i => {
+        if (!i) return false;
+        const ist = String(i.status || "autorizada").toLowerCase();
+        if (["cancelada", "cancelled", "substituida", "rejeitada", "erro"].includes(ist)) return false;
+        if (i.packageId && String(i.packageId).toUpperCase() === pkgCode) return true;
+        if (i.reservationCode && String(i.reservationCode).toUpperCase() === pkgCode) return true;
+        return activePkgItems.some(item =>
+          (i.reservationId && Number(i.reservationId) === Number(item.id)) ||
+          (Array.isArray(i.reservationIds) && i.reservationIds.some(rid => Number(rid) === Number(item.id)))
+        );
+      });
+      if (existingPkgInv) {
+        for (const item of activePkgItems) {
+          item.invoiceId = existingPkgInv.id;
+          item.numeroNfse = existingPkgInv.numeroNfse;
+          item.autoInvoiceStatus = "emitted";
+          delete item.autoInvoiceLastError;
+        }
+        result.invoice = existingPkgInv;
+        result.skipped = true;
+        result.reason = "already_emitted";
+        return result;
+      }
+    }
+
+    const primaryRes = isMultiFlatPkg
+      ? (activePkgItems.find(x => x.isPackagePrimary) || activePkgItems.find(x => x.confirmedFiscalData) || activePkgItems[0])
+      : reservation;
+
+    const matchedGuest = findMatchedCrmGuestForAutoNfse(primaryRes) || findMatchedCrmGuestForAutoNfse(reservation);
+    const normalizedChannel = normalizeFiscalChannelKey(primaryRes.channel || reservation.channel, primaryRes);
+    const isChannelAutoEnabled = Boolean(channelRules[normalizedChannel]);
+    const pkgAnyAutoRequested = targetResList.some(item => Boolean(item.autoEmitInvoice || item.confirmedFiscalData));
+    const clientRequested = Boolean(
+      reservation.autoEmitInvoice ||
+      primaryRes.autoEmitInvoice ||
+      matchedGuest?.autoEmitInvoice ||
+      reservation.confirmedFiscalData ||
+      primaryRes.confirmedFiscalData ||
+      pkgAnyAutoRequested
+    );
+    const shouldAutoEmit = Boolean(options.forceEmitAfterDocCollected || isChannelAutoEnabled || clientRequested);
+
+    if (!shouldAutoEmit) {
+      reservation.autoInvoiceStatus = "skipped_rule_off";
+      result.skipped = true;
+      result.reason = "rule_off";
+      return result;
+    }
+
+    // Se for Pacote Multi-Flat, aguarda o check-out do último flat ativo para emitir 1 nota consolidada
+    if (isMultiFlatPkg && !activePkgItems.every(isReservationCheckoutClosedForNfse)) {
+      reservation.autoInvoiceStatus = "waiting_package_last_checkout";
+      delete reservation.autoInvoiceLastError;
+      saveDatabase("checkout_auto_nfse_waiting_package");
+      result.skipped = true;
+      result.reason = "waiting_package_last_checkout";
+      return result;
+    }
+
+    // 2.3 Trava de Pagamento Pendente (reservas diretas não faturadas/B2B)
+    const pkgSummaryCheck = isMultiFlatPkg
+      ? computePackageSummary(db, pkgCode, { computeCardAmountFromPix })
+      : null;
+    const isPackageUnpaidDirect = Boolean(
+      isMultiFlatPkg &&
+      pkgSummaryCheck &&
+      Number(pkgSummaryCheck.pendingAmount || 0) > 0.01 &&
+      isUnpaidDirectReservationForEmission({
+        ...primaryRes,
+        totalAmount: pkgSummaryCheck.totalAmount,
+        paidAmount: pkgSummaryCheck.paidAmount,
+        paymentStatus: pkgSummaryCheck.paidAmount > 0 ? "pago_parcial" : (primaryRes.paymentStatus || "pendente")
+      }, db, primaryRes.confirmedFiscalData)
+    );
+    const isSingleUnpaidDirect = !isMultiFlatPkg && isUnpaidDirectReservationForEmission(primaryRes, db, primaryRes.confirmedFiscalData);
+
+    if (isSingleUnpaidDirect || isPackageUnpaidDirect) {
+      const errMsg = "Auto-emissão bloqueada no check-out: reserva direta com pagamento pendente no PMS.";
+      for (const item of targetResList) {
+        item.autoInvoiceStatus = "blocked_unpaid";
+        item.autoInvoiceLastError = errMsg;
+      }
+      await sendCheckoutAutoNfseManagerAlert(primaryRes, {
+        alertKey: "blocked_unpaid",
+        title: `⚠️ Auto-Emissão NFS-e Bloqueada (Pagamento Pendente) — Flat ${primaryRes.flatNumber}`,
+        message: `${primaryRes.guestName || "Hóspede"} (${isMultiFlatPkg ? pkgCode : (primaryRes.code || primaryRes.id)}): ${errMsg}`,
+        whatsappText:
+          `⚠️ *Auto-Emissão de NFS-e Bloqueada no Check-out*\n\n` +
+          `• *Reserva:* ${isMultiFlatPkg ? `Pacote ${pkgCode}` : (primaryRes.code || primaryRes.id)} (Flat ${primaryRes.flatNumber || "—"})\n` +
+          `• *Hóspede:* ${primaryRes.guestName || "—"}\n` +
+          `• *Motivo:* Pagamento pendente registrado no PMS.\n\n` +
+          `Regularize o pagamento ou emita manualmente em /notas.`
+      });
+      saveDatabase("checkout_auto_nfse_blocked_unpaid");
+      result.skipped = true;
+      result.reason = "blocked_unpaid";
+      result.error = errMsg;
+      return result;
+    }
+
+    // 2.4 Resolução Estrita de Tomador (CPF vs Empresa/Agência/Solicitante — sem fallback cruzado!)
+    const officialDraft = buildOfficialNfseDraftForReservation(db, {
+      reservation: primaryRes,
+      strictRecipientMatch: true
+    });
+    const confFiscal = primaryRes.confirmedFiscalData || reservation.confirmedFiscalData || null;
+    const expectedRecipientType = officialDraft?.expectedRecipientType || officialDraft?.invoiceRecipientType || "guest";
+    const expectedDocKind = officialDraft?.missingDocumentKind || ((expectedRecipientType === "company" || expectedRecipientType === "agency") ? "CNPJ" : "CPF");
+    const tomadorNome = String(officialDraft?.tomadorNome || "").trim();
+    const tomadorDoc = onlyDigits(officialDraft?.tomadorCpfCnpj || "");
+    const hasValidTomadorDoc = expectedDocKind === "CNPJ"
+      ? (tomadorDoc.length === 14 && isValidCnpj(tomadorDoc))
+      : ((tomadorDoc.length === 11 && isValidCpf(tomadorDoc)) || (tomadorDoc.length === 14 && isValidCnpj(tomadorDoc) && Boolean(confFiscal?.tomadorCpfCnpj)));
+
+    const resolvedHideFromGuest = targetResList.some(item => Boolean(item?.nfHideFromGuest));
+    const guestPersonalPhonesSet = resolvedHideFromGuest
+      ? (typeof collectReservationGuestPersonalPhones === "function"
+          ? collectReservationGuestPersonalPhones(targetResList, db)
+          : new Set(targetResList.flatMap(x => [
+              x?.guestPhone,
+              x?.phone,
+              x?.requesterIsGuest1 ? (x?.requesterPhone || x?.requesterInfo?.phone) : "",
+              ...(Array.isArray(x?.guests) ? x.guests.map(g => g?.phone || g?.phoneNumber) : [])
+            ]).map(p => cleanPhone(p || "")).filter(p => p.length >= 8)))
+      : new Set();
+    const isPersonalGuestPhoneSafe = (raw) => {
+      const p = cleanPhone(raw || "");
+      if (!p || p.length < 8) return false;
+      if (typeof isGuestPersonalPhone === "function") {
+        return isGuestPersonalPhone(p, guestPersonalPhonesSet);
+      }
+      return Array.from(guestPersonalPhonesSet).some(gp => gp === p || gp.slice(-8) === p.slice(-8));
+    };
+
+    const companyId = officialDraft?.companyId || primaryRes.companyId || matchedGuest?.companyId || null;
+    const company = companyId && Array.isArray(db.companies)
+      ? db.companies.find(c => c && (Number(c.id) === Number(companyId) || String(c.id) === String(companyId)))
+      : null;
+    const agencyId = officialDraft?.agencyId || primaryRes.agencyId || null;
+    const agency = agencyId && Array.isArray(db.agencies)
+      ? db.agencies.find(a => a && (Number(a.id) === Number(agencyId) || String(a.id) === String(agencyId)))
+      : null;
+
+    const candidateNonGuestPhones = [
+      !primaryRes.requesterIsGuest1 ? (primaryRes.requesterInfo?.whatsapp || primaryRes.requesterInfo?.phone || primaryRes.requesterPhone) : "",
+      expectedRecipientType === "agency" ? (primaryRes.agencyAgentPhone || agency?.phone) : "",
+      expectedRecipientType === "company" ? company?.phone : "",
+      confFiscal?.tomadorTelefone,
+      officialDraft?.tomadorTelefone
+    ].map(p => cleanPhone(p || "")).filter(p => p.length >= 10 && (!resolvedHideFromGuest || !isPersonalGuestPhoneSafe(p)));
+
+    const safeWhatsappTargetPhone = resolvedHideFromGuest
+      ? (candidateNonGuestPhones[0] || "")
+      : (
+          cleanPhone(
+            (expectedRecipientType === "requester" ? (primaryRes.requesterInfo?.whatsapp || primaryRes.requesterInfo?.phone) : "") ||
+            confFiscal?.tomadorTelefone ||
+            officialDraft?.tomadorTelefone ||
+            primaryRes.guestPhone ||
+            matchedGuest?.phone ||
+            candidateNonGuestPhones[0] ||
+            ""
+          )
+        );
+
+    // 2.5 Falta de CPF/CNPJ válido para o tomador escolhido → Pergunta automaticamente no WhatsApp!
+    if (!tomadorNome || !hasValidTomadorDoc) {
+      const missingErr = expectedDocKind === "CNPJ"
+        ? "Auto-emissão aguardando CNPJ da empresa/agência via WhatsApp."
+        : "Auto-emissão aguardando CPF do tomador via WhatsApp.";
+      for (const item of targetResList) {
+        item.autoInvoiceStatus = "awaiting_document_whatsapp";
+        item.autoInvoiceLastError = missingErr;
+      }
+
+      const displayContactName = resolvedHideFromGuest
+        ? (primaryRes.requesterInfo?.name || company?.tradeName || company?.corporateName || agency?.tradeName || "Cliente")
+        : (primaryRes.guestName || tomadorNome || "Hóspede");
+      const firstName = String(displayContactName).trim().split(/\s+/)[0] || "Hóspede";
+      const flatsLabel = isMultiFlatPkg
+        ? targetResList.map(x => x.flatNumber).filter(Boolean).join(", ")
+        : String(primaryRes.flatNumber || "");
+      const refLabel = isMultiFlatPkg ? `Pacote ${pkgCode}` : (primaryRes.code || `#${primaryRes.id}`);
+
+      const docPromptText = expectedDocKind === "CNPJ"
+        ? `Olá, *${firstName}*! 🧾\n\n` +
+          `Confirmamos o check-out da hospedagem no *Flat ${flatsLabel}* (${refLabel}) e a sua *Nota Fiscal (NFS-e)* está configurada para emissão automática em nome da *empresa/agência*.\n\n` +
+          `Porém, não localizamos um *CNPJ* válido no cadastro. Por favor, responda esta mensagem com o número do *CNPJ* (ou me avise caso prefira emitir em um *CPF*) que eu já atualizo o cadastro, emito a nota e envio o PDF oficial por aqui na hora! ✨`
+        : `Olá, *${firstName}*! 🧾\n\n` +
+          `Confirmamos o seu check-out no *Flat ${flatsLabel}* (${refLabel}) e a sua *Nota Fiscal (NFS-e)* está configurada para emissão automática.\n\n` +
+          `Porém, não localizamos um *CPF* válido no seu cadastro. Por favor, responda esta mensagem com o seu *CPF* (ou *CNPJ*, caso prefira emitir em nome de empresa) que eu já incluo no cadastro, emito a nota e envio o PDF oficial por aqui na hora! ✨`;
+
+      let promptSent = false;
+      if (safeWhatsappTargetPhone && safeWhatsappTargetPhone.length >= 10 && !primaryRes.missingDocPromptSentAt) {
+        try {
+          let zRes = null;
+          if (_checkoutAutoNfseTestHooks?.sendZapiMessage) {
+            zRes = await _checkoutAutoNfseTestHooks.sendZapiMessage(db.zapiConfig || {}, {
+              phone: safeWhatsappTargetPhone,
+              message: docPromptText,
+              channelId: "reservations",
+              recipientRole: "guest",
+              triggerEvent: "checkout_auto_nfse_request_doc",
+              bypassTestMode: true,
+              db
+            });
+            promptSent = Boolean(zRes?.success !== false);
+          } else if (process.env.NODE_ENV !== "test" && typeof sendZapiMessage === "function") {
+            zRes = await sendZapiMessage(db.zapiConfig || {}, {
+              phone: safeWhatsappTargetPhone,
+              message: docPromptText,
+              channelId: "reservations",
+              recipientRole: "guest",
+              triggerEvent: "checkout_auto_nfse_request_doc",
+              bypassTestMode: true,
+              db
+            });
+            promptSent = Boolean(zRes?.success);
+          }
+
+          if (promptSent) {
+            primaryRes.missingDocPromptSentAt = new Date().toISOString();
+            const convPhoneWa = (typeof cleanWhatsAppPhone === "function" ? cleanWhatsAppPhone(safeWhatsappTargetPhone) : "") || safeWhatsappTargetPhone;
+            if (!Array.isArray(db.whatsappConversations)) db.whatsappConversations = [];
+            let conv = db.whatsappConversations.find(c => {
+              const cp = cleanPhone(c?.phone || "");
+              return cp.length >= 8 && (cp === cleanPhone(convPhoneWa) || cp.slice(-8) === cleanPhone(convPhoneWa).slice(-8));
+            });
+            if (!conv) {
+              conv = {
+                id: `conv_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                phone: convPhoneWa,
+                name: displayContactName,
+                messages: [],
+                unreadCount: 0,
+                lastMessageAt: new Date().toISOString()
+              };
+              db.whatsappConversations.unshift(conv);
+            }
+            conv.awaitingMissingDocForCheckoutNfse = {
+              reservationId: primaryRes.id,
+              reservationCode: primaryRes.code || null,
+              packageCode: isMultiFlatPkg ? pkgCode : null,
+              expectedRecipientType,
+              missingDocumentKind: expectedDocKind,
+              flatNumber: flatsLabel,
+              requestedAt: new Date().toISOString()
+            };
+            conv.awaitingFiscalData = true;
+            conv.awaitingFiscalDataAt = new Date().toISOString();
+            conv.fiscalLockedReservationId = primaryRes.id;
+            conv.fiscalLockedReservationCode = primaryRes.code || null;
+            if (typeof appendMessageToConversation === "function") {
+              appendMessageToConversation(db, {
+                phone: convPhoneWa,
+                senderName: db?.whatsappAiSettings?.agentName || "Sofia",
+                fromMe: true,
+                text: docPromptText,
+                type: "text",
+                triggerEvent: "checkout_auto_nfse_request_doc",
+                reservationCode: primaryRes.code || null,
+                status: "delivered",
+                timestamp: new Date().toISOString()
+              });
+            }
+          }
+        } catch (promptErr) {
+          console.warn("[Checkout Auto-NFS-e Doc Prompt Error]:", promptErr?.message || promptErr);
+        }
+      }
+
+      await sendCheckoutAutoNfseManagerAlert(primaryRes, {
+        alertKey: "missing_doc",
+        title: `📄 Auto-Emissão NFS-e: Falta ${expectedDocKind} (${refLabel})`,
+        message: promptSent
+          ? `A Sofia já perguntou o ${expectedDocKind} ao cliente no WhatsApp (${safeWhatsappTargetPhone}) para emitir a NFS-e automaticamente.`
+          : `Falta ${expectedDocKind} válido para emitir a NFS-e de ${displayContactName} e não há WhatsApp elegível para solicitação automática.`,
+        whatsappText: !promptSent
+          ? `⚠️ *Auto-Emissão de NFS-e Pendente (${expectedDocKind} ausente)*\n\n` +
+            `• *Reserva:* ${refLabel} (Flat ${flatsLabel})\n` +
+            `• *Tomador previsto (${expectedRecipientType}):* ${tomadorNome || displayContactName}\n` +
+            `• *Motivo:* Sem ${expectedDocKind} válido e sem telefone WhatsApp elegível para coleta automática.\n\n` +
+            `Complete o cadastro e emita em /notas.`
+          : null
+      });
+
+      saveDatabase("checkout_auto_nfse_awaiting_doc");
+      result.awaitingDocument = true;
+      result.missingDocumentKind = expectedDocKind;
+      result.promptSent = promptSent;
+      result.reason = "missing_document";
+      result.error = missingErr;
+      return result;
+    }
+
+    // 2.6 Cálculo do Valor de Hospedagem & Montagem do Payload Consolidado / Individual
+    let valorServico = 0;
+    let payloadFlatNumber = String(primaryRes.flatNumber || "113");
+    let payloadReservationIds = Array.isArray(officialDraft?.allReservationIds) ? officialDraft.allReservationIds : [Number(primaryRes.id)];
+    let payloadReservationCodes = Array.isArray(officialDraft?.allReservationCodes) ? officialDraft.allReservationCodes : [primaryRes.reservationCode || primaryRes.code].filter(Boolean);
+    let payloadDiscriminacao = confFiscal?.descricaoServico || officialDraft?.descricaoServico;
+    let payloadIsConsolidated = Boolean(officialDraft?.isRoomMoveConsolidated);
+
+    if (isMultiFlatPkg) {
+      const seenRmGroups = new Set();
+      const dedupPkgItems = activePkgItems.filter(item => {
+        if (!item?.roomMoveGroupId) return true;
+        if (seenRmGroups.has(item.roomMoveGroupId)) return false;
+        seenRmGroups.add(item.roomMoveGroupId);
+        return true;
+      });
+      const pkgAccommSum = Math.round(
+        dedupPkgItems.reduce((acc, item) => {
+          const bd = computeReservationAccommodationAndConsumption(item, db);
+          return acc + Number(bd?.accommodationAmount || item.totalAmount || 0);
+        }, 0) * 100
+      ) / 100;
+      valorServico = (confFiscal?.managerApprovedValue && Number(confFiscal.valorServico) > 0)
+        ? Number(confFiscal.valorServico)
+        : Number(pkgAccommSum || pkgSummaryCheck?.totalAmount || 0);
+      payloadFlatNumber = activePkgItems.map(x => x.flatNumber).filter(Boolean).join(", ");
+      payloadReservationIds = activePkgItems.map(x => Number(x.id));
+      payloadReservationCodes = activePkgItems.map(x => x.code).filter(Boolean);
+      payloadIsConsolidated = true;
+      if (!confFiscal?.descricaoServico) {
+        payloadDiscriminacao =
+          `Hospedagem consolidada Pacote ${pkgCode} (${activePkgItems.length} Flats: ${payloadFlatNumber}) - ` +
+          activePkgItems.map(x => `Flat ${x.flatNumber} (${x.guestName || "Hóspede"} | ${x.checkinDate} a ${x.checkoutDate}): R$ ${Number(x.totalAmount || 0).toFixed(2)}`).join(" | ") +
+          `.`;
+      }
+    } else {
+      const breakdown = computeReservationAccommodationAndConsumption(primaryRes, db);
+      valorServico = (confFiscal?.managerApprovedValue && Number(confFiscal.valorServico) > 0)
+        ? Number(confFiscal.valorServico)
+        : Number(breakdown.accommodationAmount || officialDraft?.valorServico || primaryRes.totalAmount || primaryRes.dailyRate || confFiscal?.valorServico || 0);
+    }
+
+    if (!valorServico || valorServico <= 0) {
+      const zeroErr = "Auto-emissão bloqueada: valor de hospedagem igual a zero.";
+      for (const item of targetResList) {
+        item.autoInvoiceStatus = "error";
+        item.autoInvoiceLastError = zeroErr;
+      }
+      await sendCheckoutAutoNfseManagerAlert(primaryRes, {
+        alertKey: "zero_amount",
+        title: `⚠️ Auto-Emissão NFS-e: Valor Zerado — Flat ${payloadFlatNumber}`,
+        message: `${primaryRes.code || primaryRes.id}: ${zeroErr}`,
+        whatsappText: `⚠️ *Auto-Emissão NFS-e Bloqueada (Valor Zerado)*\n• *Reserva:* ${isMultiFlatPkg ? pkgCode : (primaryRes.code || primaryRes.id)}\n• *Flat(s):* ${payloadFlatNumber}`
+      });
+      saveDatabase("checkout_auto_nfse_zero_amount");
+      result.error = zeroErr;
+      result.reason = "zero_amount";
+      return result;
+    }
+
+    const effectiveInvoiceCheckout = (primaryRes.earlyCheckout && primaryRes.originalCheckoutDate)
+      ? primaryRes.originalCheckoutDate
+      : primaryRes.checkoutDate;
+
+    const nfsePayload = {
+      reservationId: primaryRes.id,
+      reservationCode: isMultiFlatPkg ? pkgCode : (primaryRes.reservationCode || primaryRes.code || null),
+      packageId: isMultiFlatPkg ? pkgCode : (primaryRes.packageId || null),
+      isConsolidated: payloadIsConsolidated,
+      reservationIds: payloadReservationIds,
+      reservationCodes: payloadReservationCodes,
+      flatNumber: payloadFlatNumber,
+      checkinDate: officialDraft?.checkinDate || primaryRes.checkinDate,
+      checkoutDate: officialDraft?.checkoutDate || effectiveInvoiceCheckout,
+      guestId: officialDraft?.guestId || (matchedGuest ? Number(matchedGuest.id) : (primaryRes.guestId ? Number(primaryRes.guestId) : null)),
+      guestName: primaryRes.guestName || officialDraft?.guestName || tomadorNome,
+      guestPhone: resolvedHideFromGuest ? "" : cleanPhone(primaryRes.guestPhone || matchedGuest?.phone || ""),
+      companyId: company ? Number(company.id) : (companyId ? Number(companyId) : null),
+      agencyId: agency ? Number(agency.id) : (agencyId ? Number(agencyId) : null),
+      invoiceRecipientType: expectedRecipientType,
+      requesterIsGuest1: Boolean(primaryRes.requesterIsGuest1),
+      tomadorNome: toTitleCase(tomadorNome),
+      tomadorCpfCnpj: tomadorDoc,
+      tomadorEmail: String(officialDraft?.tomadorEmail || "").trim().toLowerCase(),
+      tomadorTelefone: resolvedHideFromGuest ? safeWhatsappTargetPhone : cleanPhone(officialDraft?.tomadorTelefone || safeWhatsappTargetPhone || ""),
+      whatsappTargetPhone: safeWhatsappTargetPhone,
+      tomadorEndereco: String(officialDraft?.tomadorEndereco || "").trim(),
+      tomadorNumero: String(officialDraft?.tomadorNumero || "").trim(),
+      tomadorComplemento: String(officialDraft?.tomadorComplemento || "").trim(),
+      tomadorBairro: String(officialDraft?.tomadorBairro || "").trim(),
+      tomadorCep: cleanCep(officialDraft?.tomadorCep || ""),
+      tomadorCidade: String(officialDraft?.tomadorCidade || "Campos dos Goytacazes").trim(),
+      tomadorUf: String(officialDraft?.tomadorUf || "RJ").trim().toUpperCase(),
+      tomadorCodigoMunicipio: String(officialDraft?.tomadorCodigoMunicipio || "3301009").trim(),
+      valorServico,
+      discriminacao: payloadDiscriminacao,
+      descricaoServico: payloadDiscriminacao,
+      nfHideFromGuest: resolvedHideFromGuest,
+      nfDeliveryEmails: Array.isArray(officialDraft?.nfDeliveryEmails) ? officialDraft.nfDeliveryEmails : (Array.isArray(primaryRes.nfDeliveryEmails) ? primaryRes.nfDeliveryEmails : undefined),
+      skipAutoWhatsapp: Boolean(resolvedHideFromGuest && !safeWhatsappTargetPhone)
+    };
+
+    const nfseOut = await executeNfseEmissionInternal(nfsePayload);
+    if (nfseOut && nfseOut.success && nfseOut.invoice) {
+      result.autoInvoiceEmitted = true;
+      result.autoInvoiceNumber = nfseOut.numeroNfse;
+      result.autoInvoicePdf = nfseOut.pdfUrl || nfseOut.danfseUrl;
+      result.invoice = nfseOut.invoice;
+
+      const emittedAtIso = new Date().toISOString();
+      for (const item of targetResList) {
+        item.invoiceId = nfseOut.invoice.id;
+        item.numeroNfse = nfseOut.numeroNfse;
+        item.autoInvoiceStatus = "emitted";
+        item.autoInvoiceEmittedAt = emittedAtIso;
+        delete item.autoInvoiceLastError;
+        delete item.missingDocPromptSentAt;
+        delete item.autoInvoiceAlertSentKey;
+        if (isMultiFlatPkg) {
+          item.consolidatedInvoiceId = nfseOut.invoice.id;
+          item.isConsolidatedInvoice = true;
+        }
+      }
+
+      if (Array.isArray(db.whatsappConversations)) {
+        const coveredIdSet = new Set(targetResList.map(x => Number(x.id)));
+        const coveredCodeSet = new Set(targetResList.map(x => String(x.code || "")).filter(Boolean));
+        if (pkgCode) coveredCodeSet.add(pkgCode);
+        for (const c of db.whatsappConversations) {
+          if (!c) continue;
+          const fc = c.fiscalConferenceState;
+          if (fc) {
+            const matchesFc =
+              (fc.reservationId && coveredIdSet.has(Number(fc.reservationId))) ||
+              (fc.reservationCode && coveredCodeSet.has(String(fc.reservationCode))) ||
+              (fc.packageCode && pkgCode && String(fc.packageCode).toUpperCase() === pkgCode);
+            if (matchesFc && fc.status !== "emitted") {
+              fc.status = "emitted";
+              fc.numeroNfse = nfseOut.numeroNfse;
+              fc.emittedAt = emittedAtIso;
+            }
+          }
+          const md = c.awaitingMissingDocForCheckoutNfse;
+          if (md) {
+            const matchesMd =
+              (md.reservationId && coveredIdSet.has(Number(md.reservationId))) ||
+              (md.reservationCode && coveredCodeSet.has(String(md.reservationCode))) ||
+              (md.packageCode && pkgCode && String(md.packageCode).toUpperCase() === pkgCode);
+            if (matchesMd) {
+              delete c.awaitingMissingDocForCheckoutNfse;
+              c.awaitingFiscalData = false;
+            }
+          }
+        }
+      }
+      saveDatabase("checkout_auto_nfse_emitted");
+      return result;
+    }
+
+    const errDetail = nfseOut?.error || "Falha ao autorizar NFS-e na SEFIN Nacional.";
+    const statusAfterFail = nfseOut?.retryQueued ? "queued_retry" : "error";
+    for (const item of targetResList) {
+      item.autoInvoiceStatus = statusAfterFail;
+      item.autoInvoiceLastError = errDetail;
+    }
+    result.retryQueued = Boolean(nfseOut?.retryQueued);
+    result.error = errDetail;
+
+    await sendCheckoutAutoNfseManagerAlert(primaryRes, {
+      alertKey: statusAfterFail,
+      title: nfseOut?.retryQueued
+        ? `⏳ NFS-e na Fila de Retentativa — Flat ${payloadFlatNumber}`
+        : `❌ Erro na Auto-Emissão de NFS-e — Flat ${payloadFlatNumber}`,
+      message: `${isMultiFlatPkg ? pkgCode : (primaryRes.code || primaryRes.id)} (${tomadorNome}): ${errDetail}`,
+      whatsappText:
+        `${nfseOut?.retryQueued ? "⏳ *NFS-e em Fila de Retentativa (SEFIN)*" : "❌ *Falha na Auto-Emissão de NFS-e no Check-out*"}\n\n` +
+        `• *Reserva:* ${isMultiFlatPkg ? `Pacote ${pkgCode}` : (primaryRes.code || primaryRes.id)} (Flat ${payloadFlatNumber})\n` +
+        `• *Tomador:* ${tomadorNome} (${tomadorDoc})\n` +
+        `• *Detalhe:* ${errDetail}\n` +
+        `${nfseOut?.retryQueued ? "\nO sistema tentará reemitir automaticamente a cada 3 minutos." : "\nVerifique os dados em /notas."}`
+    });
+    saveDatabase("checkout_auto_nfse_error");
+    return result;
+  } catch (e) {
+    console.error("[Auto-Invoice Checkout Orchestrator Error]", e);
+    reservation.autoInvoiceStatus = "error";
+    reservation.autoInvoiceLastError = e.message;
+    result.error = e.message;
+    return result;
+  } finally {
+    _inFlightCheckoutAutoNfse.delete(lockKey);
+  }
+}
+globalThis.runCheckoutAutoBillingAndNfse = (reservation, options = {}) => runCheckoutAutoBillingAndNfse(reservation, options);
+
 const handleCheckout = async (req, res) => {
   const isReceptionPublicPath = String(req.path || "").startsWith("/api/reception/");
   const authUser = getAuthUser(req);
@@ -57246,209 +58422,19 @@ const handleCheckout = async (req, res) => {
     cleanReq.vacantSetAt = new Date().toISOString();
   }
 
-  // Automatic NFS-e Check with Channel Matrix Rules
-  let autoInvoiceEmitted = false;
-  let autoInvoiceNumber = null;
-  let autoInvoicePdf = null;
-
-  getFiscalData();
-  const ch = (r.channel || "whatsapp").toLowerCase();
-  // Channel rule (true = auto-emit all from this channel, false = locked/manual only)
-  const channelRules = db.nfseConfig.channelRules || { site: true, whatsapp: true, booking: false, airbnb: false };
-  const isChannelAutoEnabled = Boolean(channelRules[ch]);
-
-  const guest = db.guests ? db.guests.find(g =>
-    areGuestNamesCompatible(r.guestName, g.fullName || g.name) && (
-      (r.guestId && g.id === r.guestId) ||
-      (r.guestDocument && (g.document === r.guestDocument || g.documentNumber === r.guestDocument || onlyDigits(g.document || g.documentNumber) === onlyDigits(r.guestDocument))) ||
-      (r.guestPhone && g.phone && cleanPhone(g.phone) === cleanPhone(r.guestPhone))
-    )
-  ) : null;
-  const clientRequested = Boolean(r.autoEmitInvoice || (guest && guest.autoEmitInvoice));
-
-  // Emite se o canal estiver ativado OU se o cliente específico tiver a flag ligada
-  const shouldAutoEmit = Boolean(isChannelAutoEnabled || clientRequested);
-
-  const companyId = r.companyId || guest?.companyId;
-  const company = companyId && db.companies
-    ? db.companies.find(c => c.id === companyId || String(c.id) === String(companyId))
-    : null;
-
-  // Trava estrita contra emissão duplicada de nota fiscal no check-out
-  const existingInvForCheckout = findExistingInvoiceForReservation(db, {
-    reservation: r,
-    reservationId: r.id,
-    reservationCode: r.code
+  // Disparo unificado de Auto-Emissão de NFS-e / Boleto Banco Inter no Check-out
+  const autoBillingOut = await runCheckoutAutoBillingAndNfse(r, {
+    triggerSource: isReceptionPublicPath ? "reception_tablet" : "reception_pms",
+    reqBody: req.body
   });
-  if (existingInvForCheckout) {
-    r.invoiceId = existingInvForCheckout.id;
-    r.numeroNfse = existingInvForCheckout.numeroNfse;
-  }
-
-  const confFiscal = r.confirmedFiscalData || null;
-
-  const isResFaturado = Boolean(
-    r.isFaturadoBoleto ||
-    r.paymentMethod === "faturado_boleto" ||
-    r.paymentMethod === "boleto_faturado" ||
-    r.paymentMethod === "boleto" ||
-    r.paymentMethod === "faturado_pj" ||
-    r.paymentMethod === "faturado_b2b" ||
-    r.b2bPaymentType === "FATURADO" ||
-    req.body?.emitBoleto === true
-  );
-  const shouldEmitBoletoOnCheckout = isResFaturado && (r.autoEmitBoletoOnCheckout !== false || req.body?.emitBoleto === true);
-
-  const isPkgOrHiddenAutoInvoiceBlocked = Boolean(
-    r.packageId ||
-    r.packageCode ||
-    r.nfHideFromGuest ||
-    r.hideFinancialForGuest ||
-    r.isConsolidatedInvoice
-  );
-  if (shouldAutoEmit && !shouldEmitBoletoOnCheckout && !isPkgOrHiddenAutoInvoiceBlocked && !r.invoiceId && !existingInvForCheckout) {
-    try {
-      const officialDraft = buildOfficialNfseDraftForReservation(db, { reservation: r });
-      const breakdown = computeReservationAccommodationAndConsumption(r, db);
-      const valor = (confFiscal?.managerApprovedValue && Number(confFiscal.valorServico) > 0)
-        ? Number(confFiscal.valorServico)
-        : Number(breakdown.accommodationAmount || officialDraft?.valorServico || r.dailyRate || confFiscal?.valorServico || 250);
-
-      const tomadorNome = confFiscal?.tomadorNome || officialDraft?.tomadorNome || r.guestName || "";
-      const tomadorDoc = onlyDigits(
-        confFiscal?.tomadorCpfCnpj ||
-        officialDraft?.tomadorCpfCnpj ||
-        r.guestDocument ||
-        guest?.documentNumber ||
-        guest?.document ||
-        company?.cnpj ||
-        ""
-      );
-
-      if (tomadorNome && (tomadorDoc.length === 11 || tomadorDoc.length === 14)) {
-        const effectiveInvoiceCheckout = (r.earlyCheckout && r.originalCheckoutDate) ? r.originalCheckoutDate : r.checkoutDate;
-        const targetNfPhone = cleanPhone(
-          confFiscal?.tomadorTelefone ||
-          officialDraft?.tomadorTelefone ||
-          r.guestPhone ||
-          guest?.phone ||
-          ""
-        );
-
-        const nfseOut = await executeNfseEmissionInternal({
-          reservationId: r.id,
-          reservationCode: r.reservationCode || r.code || null,
-          isConsolidated: Boolean(officialDraft?.isRoomMoveConsolidated),
-          reservationIds: Array.isArray(officialDraft?.allReservationIds) ? officialDraft.allReservationIds : [Number(r.id)],
-          reservationCodes: Array.isArray(officialDraft?.allReservationCodes) ? officialDraft.allReservationCodes : [r.reservationCode || r.code].filter(Boolean),
-          flatNumber: String(r.flatNumber || "113"),
-          checkinDate: officialDraft?.checkinDate || r.checkinDate,
-          checkoutDate: officialDraft?.checkoutDate || effectiveInvoiceCheckout,
-          guestId: guest ? Number(guest.id) : (r.guestId ? Number(r.guestId) : null),
-          guestName: r.guestName || officialDraft?.guestName || tomadorNome,
-          guestPhone: cleanPhone(r.guestPhone || guest?.phone || ""),
-          companyId: officialDraft?.companyId || (company ? Number(company.id) : (r.companyId ? Number(r.companyId) : null)),
-          agencyId: officialDraft?.agencyId || (r.agencyId ? Number(r.agencyId) : null),
-          invoiceRecipientType: r.invoiceRecipientType || officialDraft?.invoiceRecipientType || (tomadorDoc.length === 14 ? "company" : "guest"),
-          tomadorNome: toTitleCase(tomadorNome),
-          tomadorCpfCnpj: tomadorDoc,
-          tomadorEmail: (confFiscal?.tomadorEmail || officialDraft?.tomadorEmail || r.guestEmail || guest?.email || "").trim().toLowerCase(),
-          tomadorTelefone: targetNfPhone,
-          whatsappTargetPhone: !r.nfHideFromGuest ? targetNfPhone : "",
-          tomadorEndereco: (confFiscal?.tomadorEndereco || officialDraft?.tomadorEndereco || guest?.address || guest?.logradouro || "").trim(),
-          tomadorNumero: (confFiscal?.tomadorNumero || officialDraft?.tomadorNumero || guest?.number || "").trim(),
-          tomadorComplemento: (confFiscal?.tomadorComplemento ?? officialDraft?.tomadorComplemento ?? guest?.complement ?? "").trim(),
-          tomadorBairro: (confFiscal?.tomadorBairro || officialDraft?.tomadorBairro || guest?.neighborhood || guest?.bairro || "").trim(),
-          tomadorCep: cleanCep(confFiscal?.tomadorCep || officialDraft?.tomadorCep || guest?.cep || ""),
-          tomadorCidade: (confFiscal?.tomadorCidade || officialDraft?.tomadorCidade || guest?.city || guest?.cidade || "Campos dos Goytacazes").trim(),
-          tomadorUf: (confFiscal?.tomadorUf || officialDraft?.tomadorUf || guest?.state || guest?.uf || "RJ").trim().toUpperCase(),
-          tomadorCodigoMunicipio: (confFiscal?.tomadorCodigoMunicipio || officialDraft?.tomadorCodigoMunicipio || guest?.ibgeCode || guest?.codigoMunicipio || "3301009").trim(),
-          valorServico: valor,
-          discriminacao: confFiscal?.descricaoServico || officialDraft?.descricaoServico,
-          descricaoServico: confFiscal?.descricaoServico || officialDraft?.descricaoServico,
-          nfHideFromGuest: Boolean(r.nfHideFromGuest),
-          nfDeliveryEmails: Array.isArray(r.nfDeliveryEmails) ? r.nfDeliveryEmails : undefined,
-          skipAutoWhatsapp: Boolean(r.nfHideFromGuest)
-        });
-
-        if (nfseOut && nfseOut.success && nfseOut.invoice) {
-          autoInvoiceEmitted = true;
-          autoInvoiceNumber = nfseOut.numeroNfse;
-          autoInvoicePdf = nfseOut.pdfUrl || nfseOut.danfseUrl;
-
-          // Atualiza sessão fiscal da Sofia caso estivesse agendada para o check-out
-          if (Array.isArray(db.whatsappConversations)) {
-            for (const c of db.whatsappConversations) {
-              const fc = c?.fiscalConferenceState;
-              if (!fc) continue;
-              const matchesRes =
-                (fc.reservationId && Number(fc.reservationId) === Number(r.id)) ||
-                (fc.reservationCode && r.code && String(fc.reservationCode) === String(r.code));
-              if (matchesRes && fc.status === "scheduled_for_checkout") {
-                fc.status = "emitted";
-                fc.numeroNfse = nfseOut.numeroNfse;
-                fc.emittedAt = new Date().toISOString();
-              }
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.error("[Auto-Invoice Error]", e);
-    }
-  }
-
-  // ── Emissão e Disparo Automático de Boleto(s) Banco Inter + NFS-e no Check-out (Faturado a Prazo) ──
-  let autoBoletosEmitted = false;
-  let emittedBoletos = [];
-  let emittedInvoice = null;
-  let faturadoPackageOut = null;
-  let faturadoDispatchResult = null;
-  if (shouldEmitBoletoOnCheckout) {
-    try {
-      const pkgKeyCheckout = r.packageCode || r.packageId || null;
-      const alreadyHasConsolidatedPkgBoleto = Boolean(
-        pkgKeyCheckout &&
-        !req.body?.forceReissue &&
-        Array.isArray(db.boletos) &&
-        db.boletos.some(
-          (b) =>
-            b &&
-            b.status !== "cancelado" &&
-            (b.packageId === pkgKeyCheckout ||
-              (Array.isArray(b.reservationIds) && b.reservationIds.includes(Number(r.id))))
-        )
-      );
-      if (!alreadyHasConsolidatedPkgBoleto) {
-        const faturadoPkg = await emitCheckoutFaturadoPackage(r, {
-          ...(req.body || {}),
-          ...(pkgKeyCheckout
-            ? {
-                consolidatePackage: req.body?.consolidatePackage !== false,
-                packageId: pkgKeyCheckout
-              }
-            : {}),
-          triggerSource: "checkout_auto"
-        });
-        if (faturadoPkg) {
-          faturadoPackageOut = faturadoPkg;
-          if (Array.isArray(faturadoPkg.boletos) && faturadoPkg.boletos.length > 0) {
-            autoBoletosEmitted = true;
-            emittedBoletos = faturadoPkg.boletos;
-          }
-          if (faturadoPkg.invoice) {
-            emittedInvoice = faturadoPkg.invoice;
-            autoInvoiceEmitted = true;
-            autoInvoiceNumber = faturadoPkg.invoice.numeroNfse || faturadoPkg.invoice.numeroNota || autoInvoiceNumber;
-            autoInvoicePdf = faturadoPkg.invoice.danfseUrl || faturadoPkg.invoice.linkPdf || autoInvoicePdf;
-          }
-          faturadoDispatchResult = faturadoPkg.dispatchResult || null;
-        }
-      }
-    } catch (bolErr) {
-      console.error("[Auto-Boleto Checkout Error]", bolErr);
-    }
-  }
+  const autoInvoiceEmitted = Boolean(autoBillingOut?.autoInvoiceEmitted);
+  const autoInvoiceNumber = autoBillingOut?.autoInvoiceNumber || null;
+  const autoInvoicePdf = autoBillingOut?.autoInvoicePdf || null;
+  const autoBoletosEmitted = Boolean(autoBillingOut?.autoBoletosEmitted);
+  const emittedBoletos = Array.isArray(autoBillingOut?.boletos) ? autoBillingOut.boletos : [];
+  const emittedInvoice = autoBillingOut?.invoice || null;
+  const faturadoPackageOut = autoBillingOut?.faturadoPackage || null;
+  const faturadoDispatchResult = autoBillingOut?.faturadoDispatchResult || null;
 
   saveDatabase();
 
@@ -58032,6 +59018,35 @@ export function ensureReservationScheduledEmails(db, saveDatabase, r) {
 
   const resCode = r.code || `RES-${r.flatNumber || '00'}-${r.id}`;
   const guestEmail = r.guestEmail.trim();
+
+  const stayEmailElig = evaluateStayContactEligibility(r, db, {
+    targetType: "guest",
+    candidateEmail: guestEmail
+  });
+  if (!stayEmailElig.emailAllowedForStay) {
+    let cancelledAnyScheduledEmail = false;
+    const nowCancelIso = new Date().toISOString();
+    for (const qItem of db.emailQueue) {
+      if (!qItem || (qItem.status !== "scheduled" && qItem.status !== "pending")) continue;
+      const isTargetRes =
+        (resCode && String(qItem.reservationCode || "").toUpperCase() === String(resCode).toUpperCase()) ||
+        (r.id !== undefined && String(qItem.reservationId || "") === String(r.id)) ||
+        (resCode && String(qItem.reservationId || "").toUpperCase() === String(resCode).toUpperCase());
+      if (!isTargetRes) continue;
+      const qEv = String(qItem.triggerEvent || qItem.type || "").trim();
+      if (qEv === "checkin_welcome" || qEv === "checkout_reminder") {
+        qItem.status = "cancelled";
+        qItem.cancelReason = stayEmailElig.emailBlockedReason || stayEmailElig.blockedReason || "REQUESTER_OR_DUPLICATE_STAY_EMAIL_BLOCKED";
+        qItem.error = `Cancelado pela trava de e-mail de estadia (${qItem.cancelReason})`;
+        qItem.updatedAt = nowCancelIso;
+        cancelledAnyScheduledEmail = true;
+      }
+    }
+    if (cancelledAnyScheduledEmail && typeof saveDatabase === "function") {
+      saveDatabase();
+    }
+    return;
+  }
 
   // 1. E-mail de Pré-Check-in / Instruções de Chegada (véspera ou dia do check-in às 09:00)
   const existingWelcome = db.emailQueue.find(q =>
@@ -64460,7 +65475,29 @@ app.patch("/api/finance/receivables/:id/receive", (req, res) => {
   item.status = req.body.status || "recebido";
   item.receivedDate = req.body.receivedDate || new Date().toISOString().substring(0, 10);
   item.updatedAt = new Date().toISOString();
-  saveDatabase();
+
+  // Sincroniza baixa de Contas a Receber com o Boleto vinculado (impede lembretes após recebimento)
+  const normArStatus = String(item.status || "").trim().toLowerCase();
+  if (Array.isArray(db.boletos) && (normArStatus === "recebido" || normArStatus === "pago" || normArStatus === "paid")) {
+    const linkedBol = db.boletos.find(b =>
+      b &&
+      !isBoletoStatusPaid(b.status) &&
+      !isBoletoStatusCancelled(b.status) &&
+      (
+        (item.boletoId && Number(b.id) === Number(item.boletoId)) ||
+        (item.externalRef && String(item.externalRef) === `BOLETO_${b.id}`)
+      )
+    );
+    if (linkedBol) {
+      markBoletoAsPaid(linkedBol, {
+        paidAmount: Number(item.amount || linkedBol.amount || 0),
+        paidAt: item.receivedDate ? `${String(item.receivedDate).slice(0, 10)}T12:00:00.000Z` : new Date().toISOString(),
+        source: "Baixa em Contas a Receber"
+      });
+    }
+  }
+
+  saveDatabase("receivable_received_" + item.id);
 
   res.json({ success: true, item });
 });
@@ -65971,11 +67008,8 @@ function getFiscalData() {
   if (db.nfseConfig) {
     db.nfseConfig.ambiente = "producao";
     db.nfseConfig.padrao = "nacional_adn";
-    if (!db.nfseConfig.channelRules) {
-      db.nfseConfig.channelRules = { site: true, whatsapp: true, b2b: true, booking: false, airbnb: false };
-    } else if (db.nfseConfig.channelRules.b2b === undefined) {
-      db.nfseConfig.channelRules.b2b = true;
-    }
+    db.nfseConfig.channelRules = normalizeNfseChannelRules(db.nfseConfig.channelRules);
+    db.nfseConfig.autoEmitOnCheckout = Boolean(db.nfseConfig.channelRules.autoCheckout);
   }
   if (!db.nfseConfig || db.nfseConfig.cnpjPrestador !== "47.964.813/0001-65") {
     db.nfseConfig = {
@@ -65988,7 +67022,7 @@ function getFiscalData() {
       regimeTributario: "simples_nacional",
       aliquotaIss: 2.00,
       ambiente: "producao",
-      autoEmitOnCheckout: false,
+      autoEmitOnCheckout: true,
       certificadoA1: {
         configurado: true,
         nomeArquivo: "certificado_corpflats_2026.pfx",
@@ -65996,13 +67030,15 @@ function getFiscalData() {
         emissor: "AC Certisign Multipla G5",
         titular: "Rental Miller's LTDA:47964813000165"
       },
-      channelRules: {
+      channelRules: normalizeNfseChannelRules({
+        direct: true,
         site: true,
         whatsapp: true,
         b2b: true,
         booking: false,
-        airbnb: false
-      }
+        airbnb: false,
+        autoCheckout: true
+      })
     };
   }
 
@@ -66589,7 +67625,7 @@ app.get("/api/nfse/invoices", (req, res) => {
   res.json({
     invoices: filtered,
     config: db.nfseConfig,
-    channelRules: db.nfseConfig?.channelRules || { site: true, whatsapp: true, booking: false, airbnb: false },
+    channelRules: normalizeNfseChannelRules(db.nfseConfig?.channelRules),
     taxCatalog: TAX_CATALOG,
     certStatus: {
       ...(db.nfseConfig?.certificadoA1 || {}),
@@ -67232,7 +68268,9 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       hasPendingDoc,
       hasPendingCadastral: pendingReasons.length > 0,
       pendingReasons,
-      autoEmitInvoice: Boolean(r.autoEmitInvoice || guest?.autoEmitInvoice)
+      autoEmitInvoice: Boolean(r.autoEmitInvoice || guest?.autoEmitInvoice),
+      autoInvoiceStatus: r.autoInvoiceStatus || null,
+      autoInvoiceLastError: r.autoInvoiceLastError || null
     };
 
     pending.push(item);
@@ -68611,14 +69649,38 @@ export async function executeNfseEmissionInternal(payload) {
     });
 
     let whatsappDispatch = null;
-    if (process.env.NODE_ENV !== "test" && !newInvoice.nfHideFromGuest && !payload.skipAutoWhatsapp) {
+    const canAttemptAutoWhatsapp = Boolean(
+      !payload.skipAutoWhatsapp &&
+      (!newInvoice.nfHideFromGuest || Boolean(payload.whatsappTargetPhone))
+    );
+    if ((process.env.NODE_ENV !== "test" || _checkoutAutoNfseTestHooks?.dispatchNfseWhatsapp) && canAttemptAutoWhatsapp) {
       try {
-        whatsappDispatch = await dispatchNfseInvoiceWhatsApp(newInvoice, {
-          autoTriggered: true,
-          phone: payload.whatsappTargetPhone || undefined
-        });
+        if (_checkoutAutoNfseTestHooks?.dispatchNfseWhatsapp) {
+          whatsappDispatch = await _checkoutAutoNfseTestHooks.dispatchNfseWhatsapp(newInvoice, {
+            autoTriggered: true,
+            phone: payload.whatsappTargetPhone || undefined
+          });
+        } else {
+          whatsappDispatch = await dispatchNfseInvoiceWhatsApp(newInvoice, {
+            autoTriggered: true,
+            phone: payload.whatsappTargetPhone || undefined
+          });
+        }
       } catch (waErr) {
         console.warn("[NFS-e Auto WhatsApp Dispatch Error]:", waErr.message);
+      }
+    }
+
+    let emailDispatch = null;
+    if ((process.env.NODE_ENV !== "test" || _checkoutAutoNfseTestHooks?.sendEmailAsync) && !payload.skipAutoEmail) {
+      try {
+        emailDispatch = await dispatchNfseInvoiceEmail(newInvoice, {
+          autoTriggered: true,
+          reservation: matchedRes || null,
+          emails: Array.isArray(payload.nfDeliveryEmails) ? payload.nfDeliveryEmails : undefined
+        });
+      } catch (emErr) {
+        console.warn("[NFS-e Auto Email Dispatch Error]:", emErr.message);
       }
     }
 
@@ -68632,7 +69694,9 @@ export async function executeNfseEmissionInternal(payload) {
       linkPrefeitura: newInvoice.linkPrefeitura,
       qrCodeUrl: newInvoice.qrCodeUrl,
       whatsappSent: Boolean(whatsappDispatch?.sent || whatsappDispatch?.pdfSent),
-      whatsappPhone: whatsappDispatch?.phone || null
+      whatsappPhone: whatsappDispatch?.phone || null,
+      emailSent: Boolean(emailDispatch?.sent),
+      emailsSent: Array.isArray(emailDispatch?.emailsSent) ? emailDispatch.emailsSent : []
     };
   } catch (err) {
     console.error("[NFS-e Internal Emission Error]", err);
@@ -71111,11 +72175,24 @@ async function processSingleNfseRetryItem(item) {
       !(p.reservationId && Number(q.payload?.reservationId) === Number(p.reservationId)) &&
       !(onlyDigits(q.payload?.tomadorCpfCnpj) === onlyDigits(p.tomadorCpfCnpj) && Number(q.payload?.valorServico) === Number(p.valorServico))
     );
-    if (process.env.NODE_ENV !== "test" && !resolvedRetryHideFromGuest && !newInvoice.nfHideFromGuest && !p.nfHideFromGuest) {
+    if (process.env.NODE_ENV !== "test" && !p.skipAutoWhatsapp && (!resolvedRetryHideFromGuest && !newInvoice.nfHideFromGuest && !p.nfHideFromGuest || Boolean(p.whatsappTargetPhone))) {
       try {
-        await dispatchNfseInvoiceWhatsApp(newInvoice, { autoTriggered: true });
+        await dispatchNfseInvoiceWhatsApp(newInvoice, {
+          autoTriggered: true,
+          phone: p.whatsappTargetPhone || undefined
+        });
       } catch (waErr) {
         console.warn("[NFS-e Retry Auto WhatsApp Dispatch Error]:", waErr.message);
+      }
+    }
+    if (process.env.NODE_ENV !== "test" && !p.skipAutoEmail) {
+      try {
+        await dispatchNfseInvoiceEmail(newInvoice, {
+          autoTriggered: true,
+          emails: Array.isArray(p.nfDeliveryEmails) ? p.nfDeliveryEmails : undefined
+        });
+      } catch (emErr) {
+        console.warn("[NFS-e Retry Auto Email Dispatch Error]:", emErr.message);
       }
     }
     saveDatabase();
@@ -71848,10 +72925,18 @@ app.patch("/api/nfse/channel-rules", (req, res) => {
   getFiscalData();
   const { channel, enabled } = req.body;
   if (!channel) return res.status(400).json({ error: "Canal obrigatório" });
-  if (!db.nfseConfig.channelRules) {
-    db.nfseConfig.channelRules = { site: true, whatsapp: true, booking: false, airbnb: false };
+  db.nfseConfig.channelRules = normalizeNfseChannelRules(db.nfseConfig.channelRules);
+  const val = Boolean(enabled);
+  const key = String(channel).trim();
+  db.nfseConfig.channelRules[key] = val;
+  if (key === "direct" || key === "site") {
+    db.nfseConfig.channelRules.direct = val;
+    db.nfseConfig.channelRules.site = val;
   }
-  db.nfseConfig.channelRules[channel] = Boolean(enabled);
+  if (key === "autoCheckout" || key === "autoEmitOnCheckout") {
+    db.nfseConfig.channelRules.autoCheckout = val;
+    db.nfseConfig.autoEmitOnCheckout = val;
+  }
   saveDatabase();
   res.json({ success: true, channelRules: db.nfseConfig.channelRules });
 });
@@ -72221,6 +73306,167 @@ async function dispatchNfseInvoiceWhatsApp(inv, opts = {}) {
     zapiResult
   };
 }
+
+// Helper central de disparo da NFS-e (PDF + link oficial) por E-mail respeitando Sigilo Tarifário (nfHideFromGuest)
+async function dispatchNfseInvoiceEmail(inv, opts = {}) {
+  if (!inv) return { success: false, sent: false, emailsSent: [] };
+
+  const linkedResList = Array.isArray(db.reservations)
+    ? db.reservations.filter(r =>
+        r && (
+          (inv.reservationId && Number(r.id) === Number(inv.reservationId)) ||
+          (inv.reservationCode && String(r.code) === String(inv.reservationCode)) ||
+          (Array.isArray(inv.reservationIds) && inv.reservationIds.some(rid => Number(r.id) === Number(rid))) ||
+          (Array.isArray(inv.reservationCodes) && inv.reservationCodes.some(rc => String(r.code) === String(rc)))
+        )
+      )
+    : [];
+  const linkedRes = opts.reservation || linkedResList[0] || null;
+  const effectiveLinkedResList = linkedResList.length > 0 ? linkedResList : (linkedRes ? [linkedRes] : []);
+  const isHiddenFromGuest = Boolean(
+    inv.nfHideFromGuest ||
+    linkedRes?.nfHideFromGuest ||
+    effectiveLinkedResList.some(r => Boolean(r?.nfHideFromGuest))
+  );
+
+  const compRec = (inv.companyId || linkedRes?.companyId)
+    ? (db.companies || []).find(c => c && Number(c.id) === Number(inv.companyId || linkedRes?.companyId))
+    : null;
+  const agRec = (inv.agencyId || linkedRes?.agencyId)
+    ? (db.agencies || []).find(a => a && Number(a.id) === Number(inv.agencyId || linkedRes?.agencyId))
+    : null;
+
+  const guestPersonalEmailSet = isHiddenFromGuest
+    ? (typeof collectReservationGuestPersonalEmails === "function"
+        ? collectReservationGuestPersonalEmails(effectiveLinkedResList, db)
+        : new Set(parseEmailList(effectiveLinkedResList.flatMap(r => [
+            r?.guestEmail,
+            r?.email,
+            r?.requesterIsGuest1 ? (r?.requesterEmail || r?.requesterInfo?.email) : "",
+            ...(Array.isArray(r?.guests) ? r.guests.map(g => g?.email || g?.guestEmail) : [])
+          ]))))
+    : new Set();
+
+  const rawCandidates = parseEmailList([
+    opts.emails,
+    inv.nfDeliveryEmails,
+    ...effectiveLinkedResList.map(r => r?.nfDeliveryEmails),
+    inv.invoiceRecipientType === "company" ? [compRec?.financialEmail, compRec?.email] : "",
+    inv.invoiceRecipientType === "agency" ? [linkedRes?.agencyAgentEmail, agRec?.financialEmail, agRec?.email] : "",
+    inv.invoiceRecipientType === "requester" ? linkedRes?.requesterInfo?.email : "",
+    inv.tomadorEmail,
+    !isHiddenFromGuest ? [linkedRes?.guestEmail] : ""
+  ]);
+
+  const allowedEmails = isHiddenFromGuest
+    ? rawCandidates.filter(e => !guestPersonalEmailSet.has(e))
+    : rawCandidates;
+
+  const alreadySentSet = new Set(Array.isArray(inv.emailedRecipients) ? inv.emailedRecipients.map(e => String(e).toLowerCase()) : []);
+  const targetEmails = opts.force ? allowedEmails : allowedEmails.filter(e => !alreadySentSet.has(e));
+
+  if (targetEmails.length === 0) {
+    return {
+      success: true,
+      sent: false,
+      emailsSent: [],
+      blockedByPrivacy: Boolean(isHiddenFromGuest && rawCandidates.length > 0 && allowedEmails.length === 0)
+    };
+  }
+
+  const numNota = String(inv.numeroNfse || inv.numeroNota || inv.id);
+  const hostBase = (process.env.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/+$/, "");
+  const pdfUrl = `${hostBase}/api/nfse/pdf/${numNota}`;
+  const danfseUrl = `${hostBase}/api/nfse/danfse/${numNota}`;
+  const fileName = `NFSe_${numNota}_CorpFlats.pdf`;
+  const valorFmt = Number(inv.valorServico || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  let pdfAttachment = null;
+  try {
+    const pdfBuf = await generateNfsePdfBuffer(inv);
+    if (pdfBuf && pdfBuf.length > 0) {
+      pdfAttachment = {
+        filename: fileName,
+        content: pdfBuf,
+        contentType: "application/pdf"
+      };
+    }
+  } catch (pdfErr) {
+    console.warn("[NFS-e Email PDF Generation Error]:", pdfErr.message);
+  }
+
+  const subject = `🧾 Nota Fiscal de Serviços (NFS-e Nº ${numNota}) — CorpFlats${inv.flatNumber ? ` | Flat ${inv.flatNumber}` : ""}`;
+  const bodyHtml = wrapEmailTemplate({
+    title: `Nota Fiscal Eletrônica Emitida (NFS-e Nº ${numNota})`,
+    subtitle: `${inv.tomadorNome || "Cliente"}${inv.reservationCode ? ` • Reserva ${inv.reservationCode}` : ""}`,
+    contentHtml: `
+      <p style="font-size:14px;color:#334155;">Olá, <strong>${inv.tomadorNome || "Cliente"}</strong>!</p>
+      <p style="font-size:13.5px;color:#475569;">
+        Segue em anexo o <strong>PDF oficial da sua Nota Fiscal de Serviços Eletrônica (NFS-e Padrão Nacional)</strong> emitida pela <strong>CorpFlats (Rental Miller's LTDA)</strong>.
+      </p>
+      <div style="background:#F0F9FF;border:1px solid #BAE6FD;border-radius:10px;padding:14px;margin:14px 0;font-size:13px;color:#0C4A6E;line-height:1.6;">
+        <strong>Número da NFS-e:</strong> ${numNota}<br/>
+        <strong>Código de Verificação:</strong> ${inv.codigoVerificacao || "—"}<br/>
+        <strong>Tomador:</strong> ${inv.tomadorNome || "—"} (${inv.tomadorCpfCnpj || "—"})<br/>
+        <strong>Valor do Serviço:</strong> R$ ${valorFmt}<br/>
+        ${inv.flatNumber ? `<strong>Flat:</strong> ${inv.flatNumber}<br/>` : ""}
+        ${inv.chaveAcesso ? `<strong>Chave de Acesso Nacional:</strong> <span style="font-family:monospace;font-size:11.5px;">${inv.chaveAcesso}</span>` : ""}
+      </div>
+      <div style="margin-top:14px;">
+        <a href="${pdfUrl}" target="_blank" style="display:inline-block;background:#0F172A;color:#FFFFFF;font-size:12.5px;font-weight:700;text-decoration:none;padding:10px 16px;border-radius:8px;margin-right:8px;">📄 Baixar PDF Oficial</a>
+        <a href="${inv.linkPrefeitura || danfseUrl}" target="_blank" style="display:inline-block;background:#0284C7;color:#FFFFFF;font-size:12.5px;font-weight:700;text-decoration:none;padding:10px 16px;border-radius:8px;">🔍 Consultar no Gov.br</a>
+      </div>
+    `
+  });
+
+  const emailsSent = [];
+  if (!Array.isArray(inv.emailedRecipients)) inv.emailedRecipients = [];
+  const emailSender = _checkoutAutoNfseTestHooks?.sendEmailAsync || sendEmailAsync;
+
+  for (const recipientEmail of targetEmails) {
+    try {
+      const logOut = emailSender({
+        db,
+        saveDatabase,
+        reservationId: inv.reservationId || linkedRes?.id || null,
+        recipient: recipientEmail,
+        subject,
+        bodyHtml,
+        attachments: pdfAttachment ? [pdfAttachment] : [],
+        metadata: {
+          category: "nfse_auto_dispatch",
+          trigger: opts.autoTriggered ? "checkout_auto_nfse" : "nfse_manual_email",
+          invoiceId: inv.id,
+          numeroNfse: numNota,
+          reservationCode: inv.reservationCode || linkedRes?.code || null
+        }
+      });
+      if (logOut !== false) {
+        emailsSent.push(recipientEmail);
+        if (!inv.emailedRecipients.includes(recipientEmail)) {
+          inv.emailedRecipients.push(recipientEmail);
+        }
+      }
+    } catch (emErr) {
+      console.warn(`[NFS-e Email Dispatch Error] (${recipientEmail}):`, emErr.message);
+    }
+  }
+
+  if (emailsSent.length > 0) {
+    inv.lastEmailSentAt = new Date().toISOString();
+  }
+
+  return {
+    success: true,
+    sent: emailsSent.length > 0,
+    emailsSent,
+    blockedByPrivacy: false
+  };
+}
+globalThis.dispatchNfseInvoiceEmail = (inv, opts = {}, callerDb = null) => {
+  if (callerDb && callerDb !== db) return { success: false, sent: false, emailsSent: [] };
+  return dispatchNfseInvoiceEmail(inv, opts);
+};
 
 // Disparo Integrado do PDF Oficial da NFS-e no WhatsApp (Z-API send-document/pdf + Link Fallback)
 app.post("/api/nfse/whatsapp/:id", async (req, res) => {
@@ -75381,6 +76627,23 @@ app.post("/api/breakfast/orders/:id/whatsapp", async (req, res) => {
   const cleanPhone = cleanWhatsAppPhone(rawPhone) || rawPhone.replace(/\D/g, "");
   if (!cleanPhone) {
     return res.status(400).json({ error: "O pedido não possui telefone/WhatsApp válido cadastrado." });
+  }
+
+  const linkedRes = (db.reservations || []).find(rv =>
+    rv &&
+    ((order.reservationId !== undefined && order.reservationId !== null && String(rv.id) === String(order.reservationId)) ||
+     (order.reservationCode && String(rv.code || rv.reservationCode || "").trim().toUpperCase() === String(order.reservationCode).trim().toUpperCase()))
+  );
+  if (linkedRes) {
+    const bfPhoneElig = evaluateStayContactEligibility(linkedRes, db, {
+      targetType: "guest",
+      candidatePhone: cleanPhone
+    });
+    if (!bfPhoneElig.phoneAllowedForStay) {
+      return res.status(400).json({
+        error: "Este WhatsApp pertence ao solicitante da reserva (não-hóspede) ou está repetido em outro flat do pacote. Atualize o WhatsApp real do hóspede deste flat antes de enviar aviso do café."
+      });
+    }
   }
 
   const type = req.body?.type === "in_production" ? "in_production" : "on_the_way";
@@ -79128,7 +80391,9 @@ app.get("/api/live-ops/metrics", (req, res) => {
       });
     });
 
-    const minibarOrdersToday = (db.minibarOrders || []).filter(o => o && (o.createdAt || "").startsWith(todayStr));
+    const minibarOrdersToday = filterCanonicalVisibleMinibarOrders(db.minibarOrders || [], db.minibarOrders || []).filter(
+      o => o && String(o.paidAt || o.createdAt || "").startsWith(todayStr)
+    );
     const minibarPaidToday = minibarOrdersToday.filter(o => o.paymentStatus === "pago");
     const minibarRevenueToday = minibarPaidToday.reduce((sum, o) => sum + Number(o.totalAmount || o.total || 0), 0);
 
@@ -81564,8 +82829,82 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
       }
     }
 
-    const { pix } = req.body;
-    console.log("[Banco Inter Webhook] Notificação recebida:", JSON.stringify(req.body));
+    const rawBody = req.body;
+    const pix = rawBody?.pix;
+    console.log("[Banco Inter Webhook] Notificação recebida:", JSON.stringify(rawBody));
+
+    // 0. Suporte nativo a Webhooks da API de Cobrança v3 (Boletos / BolePix do Banco Inter)
+    const cobrancaItems = Array.isArray(rawBody)
+      ? rawBody
+      : Array.isArray(rawBody?.cobrancas)
+      ? rawBody.cobrancas
+      : (rawBody && typeof rawBody === "object" && !Array.isArray(pix) && (rawBody.codigoSolicitacao || rawBody.nossoNumero || rawBody.seuNumero || rawBody.cobranca))
+      ? [rawBody]
+      : [];
+
+    if (cobrancaItems.length > 0 && Array.isArray(db.boletos)) {
+      let cobMutated = false;
+      const normRef = (v) => String(v || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+      for (const rawItem of cobrancaItems) {
+        if (!rawItem || typeof rawItem !== "object") continue;
+        const cob = rawItem.cobranca || rawItem;
+        const bolPart = rawItem.boleto || cob.boleto || {};
+        const pixPart = rawItem.pix || cob.pix || {};
+        const codSol = normRef(cob.codigoSolicitacao || rawItem.codigoSolicitacao);
+        const seuNum = normRef(cob.seuNumero || rawItem.seuNumero);
+        const nossoNum = normRef(bolPart.nossoNumero || cob.nossoNumero || rawItem.nossoNumero);
+        const pixTx = normRef(pixPart.txid || cob.txid || rawItem.txid);
+
+        const matchedBol = db.boletos.find(b => {
+          if (!b) return false;
+          const bCod = normRef(b.codigoSolicitacao);
+          const bSeu = normRef(b.seuNumero);
+          const bNosso = normRef(b.nossoNumero);
+          const bTx = normRef(b.txId);
+          const bCode = normRef(b.code);
+          return Boolean(
+            (codSol && bCod && codSol === bCod) ||
+            (nossoNum && bNosso && nossoNum === bNosso) ||
+            (seuNum && (seuNum === bSeu || seuNum === bCode)) ||
+            (pixTx && (pixTx === bTx || pixTx === bSeu || pixTx === bCode))
+          );
+        });
+        if (!matchedBol) continue;
+
+        const sit = String(cob.situacao || rawItem.situacao || "").trim().toUpperCase();
+        const valorRecebido = Number(cob.valorTotalRecebimento ?? cob.valorTotalRecebido ?? rawItem.valorTotalRecebimento ?? 0);
+        if (
+          sit === "RECEBIDO" ||
+          sit === "PAGO" ||
+          sit === "MARCADO_RECEBIDO" ||
+          sit === "LIQUIDADO" ||
+          sit === "QUITADO" ||
+          valorRecebido > 0
+        ) {
+          if (!isBoletoStatusPaid(matchedBol.status)) {
+            markBoletoAsPaid(matchedBol, {
+              paidAmount: valorRecebido > 0 ? valorRecebido : matchedBol.amount,
+              paidAt: cob.dataHoraSituacao || cob.dataSituacao || new Date().toISOString(),
+              endToEndId: pixPart.endToEndId || cob.endToEndId || undefined,
+              source: `Banco Inter Webhook Cobrança (${cob.origemRecebimento || sit || "RECEBIDO"})`
+            });
+            cobMutated = true;
+          }
+        } else if (sit === "CANCELADO" || sit === "BAIXADO" || sit === "EXPIRADO") {
+          if (!isBoletoStatusPaid(matchedBol.status) && !isBoletoStatusCancelled(matchedBol.status)) {
+            matchedBol.status = "cancelado";
+            matchedBol.cancelledAt = cob.dataHoraSituacao || cob.dataSituacao || new Date().toISOString();
+            matchedBol.cancelReason = `BANCO_INTER_${sit}`;
+            matchedBol.updatedAt = new Date().toISOString();
+            syncBoletoWithAccountsReceivable(matchedBol);
+            cobMutated = true;
+          }
+        }
+      }
+      if (cobMutated) {
+        saveDatabase("inter_cobranca_webhook");
+      }
+    }
 
     if (Array.isArray(pix) && pix.length > 0) {
       const confirmedItems = [];
@@ -82020,6 +83359,31 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
           }
 
           const cleanWebhookTx = String(txid || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+
+          // 0.5 Verifica PRIMEIRO se o txid corresponde diretamente a um Boleto Faturado (BolePix) em aberto
+          const normBolTx = (v) => String(v || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+          const matchedBoletoFirst = (db.boletos || []).find(b =>
+            b && !isBoletoStatusPaid(b.status) && !isBoletoStatusCancelled(b.status) && (
+              (txid && (b.txId === txid || b.seuNumero === txid || b.code === txid || b.nossoNumero === txid || b.codigoSolicitacao === txid)) ||
+              (cleanWebhookTx.length >= 5 && (
+                normBolTx(b.txId) === cleanWebhookTx ||
+                normBolTx(b.seuNumero) === cleanWebhookTx ||
+                normBolTx(b.code) === cleanWebhookTx ||
+                normBolTx(b.nossoNumero) === cleanWebhookTx ||
+                normBolTx(b.codigoSolicitacao) === cleanWebhookTx
+              ))
+            )
+          );
+          if (matchedBoletoFirst) {
+            markBoletoAsPaid(matchedBoletoFirst, {
+              paidAmount: valorPago > 0 ? valorPago : matchedBoletoFirst.amount,
+              paidAt: item.horario || new Date().toISOString(),
+              endToEndId: item.endToEndId || `E2E_INTER_${Date.now()}`,
+              source: "Banco Inter Webhook (PIX do Boleto)"
+            });
+            continue;
+          }
+
           const matchesWebhookRes = (resItem) =>
             resItem.pixTxId === txid ||
             resItem.packagePixTxId === txid ||
@@ -82117,40 +83481,64 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
             });
 
             if (isFullPayment) {
+              syncOpenBoletosForSettledReservation(r, {
+                paidAt: r.paidAt,
+                endToEndId: r.pixEndToEndId,
+                source: "Banco Inter Webhook"
+              });
               confirmedItems.push({ r, wasPreReserva, isComplementaryPayment, valorPago, priorPaid });
             }
           } else {
-            // Verifica se o pagamento é referente a um Boleto Faturado (db.boletos)
-            const matchedBoleto = (db.boletos || []).find(b =>
-              b && b.status !== "pago" && (
-                (txid && (b.txId === txid || b.seuNumero === txid || b.code === txid || b.nossoNumero === txid || b.codigoSolicitacao === txid))
-              )
-            );
-            if (matchedBoleto) {
-              markBoletoAsPaid(matchedBoleto, {
-                paidAmount: valorPago > 0 ? valorPago : matchedBoleto.amount,
-                paidAt: item.horario || new Date().toISOString(),
-                endToEndId: item.endToEndId || `E2E_INTER_${Date.now()}`,
-                source: "Banco Inter Webhook"
-              });
-            } else {
-              // Verifica se o pagamento é referente a um pedido de Frigobar (db.minibarOrders)
-              const mbOrder = (db.minibarOrders || []).find(o => 
-                o.pixTxId === txid || 
-                o.id === txid || 
-                (txid && o.id && txid.includes(o.id))
-              );
-              if (mbOrder && mbOrder.paymentStatus !== "pago") {
-                mbOrder.paymentStatus = "pago";
-                mbOrder.paidAt = item.horario || new Date().toISOString();
-                mbOrder.pixEndToEndId = item.endToEndId || `E2E_INTER_${Date.now()}`;
-                createNotification({
-                  category: "checkout",
-                  title: `🍾 Frigobar Pago (PIX): R$ ${valorPago.toLocaleString("pt-BR")} (Flat ${mbOrder.flatNumber})`,
-                  message: `Pedido ${mbOrder.id} de frigobar pago via PIX Banco Inter por ${mbOrder.guestName}!`,
-                  severity: "success",
-                  metadata: { orderId: mbOrder.id, txid, amount: valorPago },
-                  targetUrl: `/anserve`
+            // Verifica se o pagamento é referente a um pedido de Frigobar (db.minibarOrders)
+            // REGRA DE INTEGRIDADE: match EXCLUSIVO por txid exato (pixTxId ou pixTxIdHistory), nunca .includes() frouxo.
+            const cleanMbTxId = String(txid || "").trim();
+            const mbOrder = cleanMbTxId
+              ? (db.minibarOrders || []).find(o =>
+                  o &&
+                  o.paymentStatus !== "cancelado" &&
+                  (String(o.pixTxId || "").trim() === cleanMbTxId ||
+                    (Array.isArray(o.pixTxIdHistory) &&
+                      o.pixTxIdHistory.some(histTx => String(histTx || "").trim() === cleanMbTxId)))
+                )
+              : null;
+            if (mbOrder && mbOrder.paymentStatus !== "pago") {
+              const expectedMbAmt = Number(mbOrder.totalAmount || 0);
+              const webhookE2e = String(item.endToEndId || "").trim();
+              if (expectedMbAmt > 0 && valorPago > 0 && valorPago < expectedMbAmt - 0.05) {
+                logAuditEvent({
+                  level: "warn",
+                  category: "financial",
+                  action: "MINIBAR_WEBHOOK_UNDERPAYMENT_IGNORED",
+                  details: {
+                    orderId: mbOrder.id,
+                    txid: cleanMbTxId,
+                    expectedAmount: expectedMbAmt,
+                    paidAmount: valorPago,
+                    endToEndId: webhookE2e || null
+                  }
+                });
+              } else if (
+                expectedMbAmt > 0 &&
+                (!isValidRealPixEndToEndId(webhookE2e) || isPixEndToEndIdAlreadyClaimed(webhookE2e, mbOrder.id))
+              ) {
+                logAuditEvent({
+                  level: "error",
+                  category: "financial",
+                  action: "MINIBAR_FALSE_SETTLEMENT_BLOCKED",
+                  details: {
+                    orderId: mbOrder.id,
+                    txid: cleanMbTxId,
+                    attemptedEndToEndId: webhookE2e || null,
+                    source: "inter_webhook"
+                  }
+                });
+              } else {
+                settleMinibarOrder(mbOrder, {
+                  paidAt: item.horario || new Date().toISOString(),
+                  pixEndToEndId: webhookE2e,
+                  amount: valorPago > 0 ? valorPago : expectedMbAmt,
+                  paymentMethod: "pix",
+                  source: "inter_webhook"
                 });
               }
             }
@@ -82202,8 +83590,14 @@ async function checkInterPixCobStatus(txid) {
     if (!txid) return null;
     const cleanTx = String(txid).trim();
     // Cobranças dinâmicas do Banco Inter possuem txid alfanumérico de 26 a 35 caracteres.
-    // TxIDs curtos (ex: RES1130468, PKG... ou STAT_...) são de QR Code estático e são conciliados via Extrato.
-    if (cleanTx.length < 26 || cleanTx.startsWith("STAT_") || cleanTx.startsWith("RES") || cleanTx.startsWith("PKG")) {
+    // TxIDs curtos ou estáticos (ex: RES1130468, PKG..., TXMB... ou STAT_...) não são cobranças dinâmicas /pix/v2/cob.
+    if (
+      cleanTx.length < 26 ||
+      cleanTx.startsWith("STAT_") ||
+      cleanTx.startsWith("TXMB") ||
+      cleanTx.startsWith("RES") ||
+      cleanTx.startsWith("PKG")
+    ) {
       return null;
     }
     const token = await getInterAccessToken();
@@ -82222,9 +83616,12 @@ async function checkInterPixCobStatus(txid) {
         res.on("end", () => {
           try {
             const json = JSON.parse(raw);
+            if (json && typeof json === "object") {
+              json._httpStatus = res.statusCode;
+            }
             resolve(json);
           } catch {
-            resolve(null);
+            resolve(res.statusCode === 404 ? { _httpStatus: 404, notFound: true } : null);
           }
         });
       });
@@ -82336,6 +83733,228 @@ async function getCachedInterExtratoCompleto() {
     return data;
   } catch (e) {
     console.warn("[Banco Inter Extrato] Falha ao obter extrato:", e.message);
+    return null;
+  }
+}
+
+const _interExtratoWindowCache = new Map();
+
+async function getCachedInterExtratoCompletoWindow(daysBack = 35) {
+  const clampedDays = Math.min(60, Math.max(3, Math.round(Number(daysBack) || 35)));
+  const now = Date.now();
+  const cached = _interExtratoWindowCache.get(clampedDays);
+  if (cached && cached.data && (now - cached.timestamp < 60000)) {
+    return cached.data;
+  }
+
+  try {
+    const token = await getInterAccessToken();
+    const httpsAgent = getInterHttpsAgent();
+
+    const brNow = new Date(now - 3 * 3600000);
+    const dFim = brNow.toISOString().substring(0, 10);
+    const dInicio = new Date(brNow.getTime() - clampedDays * 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
+    const url = `https://cdpj.partners.bancointer.com.br/banking/v2/extrato/completo?dataInicio=${dInicio}&dataFim=${dFim}`;
+
+    const data = await new Promise((resolve) => {
+      const req = https.request(url, {
+        method: "GET",
+        agent: httpsAgent,
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      }, (res) => {
+        let raw = "";
+        res.on("data", c => raw += c);
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(raw));
+          } catch {
+            resolve(null);
+          }
+        });
+      });
+      req.on("error", (err) => {
+        console.warn("[Banco Inter Extrato Boleto] Erro ao consultar:", err.message);
+        resolve(null);
+      });
+      req.end();
+    });
+
+    if (data && Array.isArray(data.transacoes)) {
+      _interExtratoWindowCache.set(clampedDays, { timestamp: now, data });
+    }
+    return data;
+  } catch (e) {
+    console.warn("[Banco Inter Extrato Boleto] Falha ao obter extrato:", e.message);
+    return null;
+  }
+}
+
+async function checkInterBankingExtratoForBoleto(bol, extratoDataOverride = null) {
+  try {
+    if (!bol) return null;
+    const issueIso = String(bol.issueDate || bol.createdAt || "").slice(0, 10);
+    let daysBack = 35;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(issueIso)) {
+      const diffDays = Math.ceil((Date.now() - new Date(`${issueIso}T12:00:00Z`).getTime()) / 86400000) + 3;
+      daysBack = Math.min(60, Math.max(7, diffDays));
+    }
+    const data = extratoDataOverride || (await getCachedInterExtratoCompletoWindow(daysBack));
+    if (!data || !Array.isArray(data.transacoes) || data.transacoes.length === 0) {
+      return null;
+    }
+
+    const enriched = enrichBoletoDynamicStatus(bol);
+    const bolAmount = Number(bol.amount || bol.valorNominal || 0);
+    if (bolAmount <= 0) return null;
+
+    const normAlnum = (v) => String(v || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+    const normDigits = (v) => String(v || "").replace(/\D/g, "");
+    const normText = (v) =>
+      String(v || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim();
+
+    const cleanTxId = normAlnum(bol.txId);
+    const cleanSeu = normAlnum(bol.seuNumero);
+    const cleanNosso = normAlnum(bol.nossoNumero);
+    const cleanCode = normAlnum(bol.code);
+    const cleanCodSol = normAlnum(bol.codigoSolicitacao);
+
+    const linkedRes = (db.reservations || []).find(r => r && doesBoletoCoverReservation(bol, r)) || null;
+    const linkedComp = bol.companyId ? (db.companies || []).find(c => c && Number(c.id) === Number(bol.companyId)) : null;
+    const linkedAg = bol.agencyId ? (db.agencies || []).find(a => a && Number(a.id) === Number(bol.agencyId)) : null;
+
+    const candidateDocs = new Set(
+      [
+        bol.payer?.cpfCnpj,
+        bol.payerDocument,
+        bol.payerDoc,
+        bol.financialResponsible?.document,
+        linkedComp?.cnpj,
+        linkedAg?.cnpj,
+        linkedRes?.companyCnpj,
+        linkedRes?.agencyCnpj,
+        linkedRes?.guestDocument,
+        linkedRes?.document,
+        linkedRes?.requesterInfo?.cpf,
+        linkedRes?.requesterInfo?.document
+      ]
+        .map(normDigits)
+        .filter(d => d.length === 11 || d.length === 14)
+    );
+
+    const candidateNames = [
+      bol.payer?.nome,
+      bol.payerName,
+      bol.companyName,
+      bol.agencyName,
+      bol.guestName,
+      bol.financialResponsible?.name,
+      linkedComp?.corporateName,
+      linkedComp?.tradeName,
+      linkedAg?.corporateName,
+      linkedAg?.tradeName,
+      linkedRes?.guestName,
+      linkedRes?.requesterInfo?.name,
+      linkedRes?.requesterName
+    ]
+      .map(normText)
+      .filter(n => n.length >= 3);
+
+    const minDateIso = /^\d{4}-\d{2}-\d{2}$/.test(issueIso)
+      ? new Date(new Date(`${issueIso}T12:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10)
+      : "";
+
+    for (const t of data.transacoes) {
+      if (!t || t.tipoOperacao !== "C") continue;
+      const txValor = Number(t.valor || 0);
+      if (txValor <= 0) continue;
+
+      const txDateIso = String(t.dataEntrada || t.dataInclusao || t.dataTransacao || "").slice(0, 10);
+      if (minDateIso && /^\d{4}-\d{2}-\d{2}$/.test(txDateIso) && txDateIso < minDateIso) {
+        continue;
+      }
+
+      const endToEndId = t.detalhes?.endToEndId || t.idTransacao || null;
+      if (endToEndId) {
+        const claimedByOtherBoleto = (db.boletos || []).some(other =>
+          other &&
+          Number(other.id) !== Number(bol.id) &&
+          isBoletoStatusPaid(other.status) &&
+          other.pixEndToEndId === endToEndId
+        );
+        if (claimedByOtherBoleto) continue;
+
+        const claimedByUnrelatedRes = (db.reservations || []).some(otherRes =>
+          otherRes &&
+          !doesBoletoCoverReservation(bol, otherRes) &&
+          otherRes.pixEndToEndId === endToEndId &&
+          (otherRes.paymentStatus === "pago_total" || otherRes.paymentStatus === "pago")
+        );
+        if (claimedByUnrelatedRes) continue;
+      }
+
+      const det = t.detalhes || {};
+      const txIdDet = normAlnum(det.txId || det.txid);
+      const nossoDet = normAlnum(det.nossoNumero);
+      const seuDet = normAlnum(det.seuNumero);
+      const codSolDet = normAlnum(det.codigoSolicitacao);
+      const descAlnum = normAlnum(`${t.titulo || ""} ${t.descricao || ""} ${det.descricaoPix || ""} ${det.nossoNumero || ""} ${det.seuNumero || ""}`);
+
+      const refMatched = Boolean(
+        (txIdDet && (
+          (cleanTxId.length >= 5 && txIdDet === cleanTxId) ||
+          (cleanSeu.length >= 5 && txIdDet === cleanSeu) ||
+          (cleanCode.length >= 5 && txIdDet === cleanCode) ||
+          (cleanNosso.length >= 6 && txIdDet === cleanNosso) ||
+          (cleanCodSol.length >= 8 && txIdDet === cleanCodSol)
+        )) ||
+        (nossoDet && cleanNosso.length >= 6 && nossoDet === cleanNosso) ||
+        (seuDet && cleanSeu.length >= 5 && seuDet === cleanSeu) ||
+        (codSolDet && cleanCodSol.length >= 8 && codSolDet === cleanCodSol) ||
+        (cleanNosso.length >= 8 && descAlnum.includes(cleanNosso)) ||
+        (cleanSeu.length >= 6 && descAlnum.includes(cleanSeu)) ||
+        (cleanCode.length >= 6 && descAlnum.includes(cleanCode))
+      );
+
+      const amountMatched =
+        Math.abs(txValor - bolAmount) < 0.05 ||
+        (enriched.daysOverdue > 0 && txValor >= bolAmount - 0.05 && txValor <= Math.max(bolAmount, Number(enriched.updatedTotalWithCharges || bolAmount)) + 1.0);
+
+      const pagadorDoc = normDigits(det.cpfCnpjPagador || det.cpfCnpj || "");
+      const docMatched = Boolean(pagadorDoc.length >= 11 && candidateDocs.has(pagadorDoc));
+
+      const pagadorNorm = normText(`${det.nomePagador || ""} ${t.descricao || ""} ${t.titulo || ""}`);
+      const nameMatched = candidateNames.some(cn => {
+        const tokens = cn.split(" ").filter(tok => tok.length >= 3 && !["ltda", "eireli", "me", "epp", "sa", "dos", "das", "para", "com", "hotel"].includes(tok));
+        if (tokens.length >= 2) {
+          return tokens.filter(tok => pagadorNorm.includes(tok)).length >= 2;
+        }
+        return tokens.length === 1 && tokens[0].length >= 4 && pagadorNorm.includes(tokens[0]);
+      });
+
+      if ((refMatched && txValor >= bolAmount * 0.85) || (amountMatched && (docMatched || nameMatched))) {
+        const isPixTx = String(t.tipoTransacao || "").toUpperCase() === "PIX";
+        console.log(`[Banco Inter Extrato Boleto] MATCH confirmado para Boleto #${bol.code}! Tipo: ${t.tipoTransacao}, Valor: ${txValor}, Pagador: ${det.nomePagador || t.descricao}`);
+        return {
+          found: true,
+          amount: txValor,
+          paidAt: t.dataInclusao || t.dataEntrada || t.dataTransacao || new Date().toISOString(),
+          endToEndId: endToEndId || undefined,
+          txId: det.txId || bol.txId || undefined,
+          source: isPixTx ? "Banco Inter Extrato (PIX do Boleto)" : "Banco Inter Extrato (Liquidação de Boleto)"
+        };
+      }
+    }
+
+    return null;
+  } catch (err) {
+    console.warn("[Banco Inter Extrato Boleto] Falha controlada:", err?.message || err);
     return null;
   }
 }
@@ -82838,10 +84457,40 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
   const chan = String(r.channel || "").toLowerCase();
   const isDirect = !chan.includes("booking") && !chan.includes("airbnb") && !chan.includes("b2b") && !r.b2bReservationNumber;
 
+  const pkgPayKey = String(r.packageId || r.packageCode || "").trim().toUpperCase();
+  const pkgPaySiblings = pkgPayKey
+    ? (db.reservations || []).filter(s =>
+        s &&
+        s.status !== "cancelada" &&
+        s.status !== "cancelled" &&
+        s.status !== "expirada" &&
+        (String(s.packageId || "").trim().toUpperCase() === pkgPayKey ||
+         String(s.packageCode || "").trim().toUpperCase() === pkgPayKey)
+      )
+    : [];
+  const alreadySentPackageReqReceipt = Boolean(
+    pkgPayKey && (
+      r.packagePaymentReceiptSentAt ||
+      pkgPaySiblings.some(s => Boolean(s.packagePaymentReceiptSentAt)) ||
+      (() => {
+        const pkgCodesSet = new Set(pkgPaySiblings.map(s => String(s.code || "").trim().toUpperCase()).filter(Boolean));
+        const pkgIdsSet = new Set(pkgPaySiblings.map(s => (s.id !== undefined && s.id !== null ? String(s.id) : "")).filter(Boolean));
+        return (db.whatsappHistory || []).some(h => {
+          if (!h || !isWaHistoryStatusDispatched(h.status)) return false;
+          if (h.triggerEvent !== "payment_confirmed" && h.templateId !== "tpl_payment_confirmed") return false;
+          if (h.recipientType !== "requester" && h.recipientRole !== "solicitante") return false;
+          const hCode = String(h.reservationCode || "").trim().toUpperCase();
+          const hId = h.reservationId ? String(h.reservationId) : "";
+          return (hCode && pkgCodesSet.has(hCode)) || (hId && (pkgIdsSet.has(hId) || pkgCodesSet.has(hId)));
+        });
+      })()
+    )
+  );
+
   if (isAfter0701) {
     // Quando a reserva para HOJE é criada ou paga após as 07:01, o hóspede deve receber a régua de entrada no mesmo dia
     // (corpflats_intro + sameday_reservation + Manual em PDF) sem duplicar payment_confirmed + sameday_reservation.
-    // Se houver Solicitante distinto com contato próprio, enviamos o comprovante financeiro apenas ao Solicitante.
+    // Se houver Solicitante distinto com contato próprio, enviamos o comprovante financeiro apenas ao Solicitante (1x por pacote).
     if (recipsPay.requester?.isDifferentFromGuest && recipsPay.requester?.hasOwnContact && isPreOrWasPre && isDirect) {
       const hasRequesterReceipt = (db.whatsappHistory || []).some(h => {
         const hCode = String(h.reservationCode || "").toUpperCase();
@@ -82850,7 +84499,7 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
         const isSameRes = (rCode && hCode === rCode) || (rId && hCode === rId);
         return isSameRes && h.triggerEvent === "payment_confirmed" && (h.recipientType === "requester" || h.recipientRole === "solicitante") && isWaHistoryStatusDispatched(h.status);
       });
-      if (!hasRequesterReceipt) {
+      if (!hasRequesterReceipt && !alreadySentPackageReqReceipt) {
         try {
           await triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", {
             ...r,
@@ -82917,7 +84566,8 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
       try {
         await triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", {
           ...r,
-          _forceInitialWelcome: true
+          _forceInitialWelcome: true,
+          _excludeRequesterTarget: Boolean(alreadySentPackageReqReceipt)
         });
         scheduleUpcomingReservationTriggers(db, saveDatabase);
       } catch (err) {
@@ -83305,6 +84955,11 @@ async function confirmReservationPayment(r, {
         if (typeof syncCleaningCardsForConfirmedReservation === "function") {
           syncCleaningCardsForConfirmedReservation(db, flatRes);
         }
+        syncOpenBoletosForSettledReservation(flatRes, {
+          paidAt: paidAt || flatRes.paidAt,
+          endToEndId: endToEndId || flatRes.pixEndToEndId,
+          source
+        });
       }
       const effectivePkgValue = Number(amount) || Number(settledPkg.summary?.totalAmount) || Number(pkgSumBefore.pendingAmount) || 0;
 
@@ -83710,6 +85365,14 @@ async function confirmReservationPayment(r, {
         }
       }
     }
+  }
+
+  if (r.paymentStatus === "pago_total") {
+    syncOpenBoletosForSettledReservation(r, {
+      paidAt: paidAt || r.paidAt,
+      endToEndId: endToEndId || r.pixEndToEndId,
+      source
+    });
   }
 
   saveDatabase();
@@ -85501,16 +87164,30 @@ function addDaysToIsoDate(baseDateStr, days = 15) {
   return target.toISOString().slice(0, 10);
 }
 
+function isBoletoStatusPaid(status) {
+  const s = String(status || "").trim().toLowerCase();
+  return s === "pago" || s === "paid" || s === "recebido" || s === "liquidado" || s === "quitado" || s === "marcado_recebido";
+}
+
+function isBoletoStatusCancelled(status) {
+  const s = String(status || "").trim().toLowerCase();
+  return s === "cancelado" || s === "cancelled" || s === "baixado" || s === "expirado";
+}
+
 function enrichBoletoDynamicStatus(boleto) {
   if (!boleto) return null;
   const todayStr = getBrasiliaDateStr();
   const dueStr = String(boleto.dueDate || boleto.dataVencimento || todayStr).slice(0, 10);
-  const rawStatus = String(boleto.status || "aberto").toLowerCase();
+  const rawStatus = String(boleto.status || "aberto").trim().toLowerCase();
   const amount = Number(boleto.amount || boleto.valorNominal || 0);
   const finePct = Number(boleto.finePct ?? boleto.multaPct ?? 2);
   const interestPct = Number(boleto.interestPct ?? boleto.jurosMonthlyPct ?? 1);
 
-  let effectiveStatus = rawStatus === "em_aberto" ? "aberto" : rawStatus;
+  let effectiveStatus = isBoletoStatusPaid(rawStatus)
+    ? "pago"
+    : isBoletoStatusCancelled(rawStatus)
+    ? "cancelado"
+    : (rawStatus === "em_aberto" ? "aberto" : rawStatus);
   let daysOverdue = 0;
   let isDueToday = false;
   let fineAmount = 0;
@@ -85813,8 +87490,8 @@ function computeReservationAccommodationAndConsumption(r, dbRef = db) {
   const consumptionFromCharges = consumptionCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
 
   // Pedidos de frigobar / consumo em db.minibarOrders vinculados à reserva (ou ao grupo de troca de flat, contados UMA única vez)
-  const minibarOrders = (dbRef?.minibarOrders || []).filter(o => {
-    if (!o || o.status === "cancelado" || o.paymentStatus === "pago") return false;
+  const matchedGroupMinibarOrders = (dbRef?.minibarOrders || []).filter(o => {
+    if (!o) return false;
     if (o.reservationId !== undefined && o.reservationId !== null && groupSegIdStrs.has(String(o.reservationId))) {
       return true;
     }
@@ -85826,7 +87503,55 @@ function computeReservationAccommodationAndConsumption(r, dbRef = db) {
     }
     return false;
   });
-  const consumptionFromMinibarOrders = minibarOrders.reduce((s, o) => s + (Number(o.totalAmount || o.amount) || 0), 0);
+  const isMbLaunchOrd = (o) =>
+    Boolean(
+      o &&
+      (o.source === "restocker_launch" ||
+        o.source === "anserve_discrepancy" ||
+        String(o.id || "").startsWith("ORD-MB-DIV-") ||
+        String(o.id || "").startsWith("ORD-MB-LANC-"))
+    );
+  const isMbAutoSplitOrd = (o) =>
+    Boolean(o && (o.isAutoSplitCheckoutOrder || String(o.id || "").startsWith("ORD-MB-SPLIT-")));
+  const hasPendingAutoSplitInGroup = matchedGroupMinibarOrders.some(o => {
+    const ps = String(o.paymentStatus || "").toLowerCase();
+    const st = String(o.status || "").toLowerCase();
+    return (
+      isMbAutoSplitOrd(o) &&
+      st !== "cancelado" &&
+      ps !== "cancelado" &&
+      ps !== "pago" &&
+      ps !== "lancamento_quitado" &&
+      Number(o.totalAmount || o.amount || 0) > 0.01
+    );
+  });
+  const hasAnyLaunchOrSplitInGroup = matchedGroupMinibarOrders.some(o => {
+    const ps = String(o.paymentStatus || "").toLowerCase();
+    const st = String(o.status || "").toLowerCase();
+    return st !== "cancelado" && ps !== "cancelado" && (isMbLaunchOrd(o) || isMbAutoSplitOrd(o));
+  });
+  const minibarOrders = matchedGroupMinibarOrders.filter(o => {
+    const ps = String(o.paymentStatus || "").toLowerCase();
+    const st = String(o.status || "").toLowerCase();
+    if (st === "cancelado" || ps === "cancelado" || ps === "pago" || ps === "lancamento_quitado") return false;
+    if (isMbLaunchOrd(o)) {
+      if (o.remainingAmount !== undefined && o.remainingAmount !== null && Number(o.remainingAmount) <= 0.01) {
+        return false;
+      }
+      if (hasPendingAutoSplitInGroup) return false;
+      return true;
+    }
+    if (isMbAutoSplitOrd(o)) {
+      return Number(o.totalAmount || o.amount || 0) > 0.01;
+    }
+    if (o.settlesLaunchOrders && hasAnyLaunchOrSplitInGroup) return false;
+    return true;
+  });
+  const getEffectiveMbOrderAmount = (o) =>
+    isMbLaunchOrd(o) && o.remainingAmount !== undefined && o.remainingAmount !== null
+      ? Math.max(0, Number(o.remainingAmount) || 0)
+      : Number(o.totalAmount || o.amount) || 0;
+  const consumptionFromMinibarOrders = minibarOrders.reduce((s, o) => s + getEffectiveMbOrderAmount(o), 0);
   const explicitConsumption = groupSegs.reduce(
     (s, seg) => s + Number(seg.extraConsumptionAmount || seg.consumptionAmount || 0),
     0
@@ -85841,8 +87566,8 @@ function computeReservationAccommodationAndConsumption(r, dbRef = db) {
     })),
     ...minibarOrders.map(o => ({
       id: o.id,
-      title: `Consumo Frigobar / Anserve${o.flatNumber ? ` (Flat ${o.flatNumber})` : ""} (${Array.isArray(o.items) ? o.items.map(i => `${i.quantity || 1}x ${i.name}`).join(", ") : "Itens"})`,
-      amount: Number(o.totalAmount || o.amount) || 0,
+      title: `Consumo Frigobar / Anserve${o.flatNumber ? ` (Flat ${o.flatNumber})` : ""} (${Array.isArray(o.items) ? o.items.map(i => `${i.quantity || 1}x ${i.productName || i.name || i.productId || "Item"}`).join(", ") : "Itens"})`,
+      amount: getEffectiveMbOrderAmount(o),
       source: "minibar_order"
     }))
   ];
@@ -86507,8 +88232,15 @@ function syncBoletoWithAccountsReceivable(boleto) {
   }
 }
 
-function markBoletoAsPaid(boleto, { paidAmount, paidAt, endToEndId, source = "Manual / Conciliação" } = {}) {
+function markBoletoAsPaid(boleto, { paidAmount, paidAt, endToEndId, source = "Manual / Conciliação", skipReservationPaymentPush = false } = {}) {
   if (!boleto) return null;
+  const _isBolPaidLocal = (st) => {
+    const s = String(st || "").trim().toLowerCase();
+    return s === "pago" || s === "paid" || s === "recebido" || s === "liquidado" || s === "quitado" || s === "marcado_recebido";
+  };
+  if (_isBolPaidLocal(boleto.status) && boleto.paidAt) {
+    return enrichBoletoDynamicStatus(boleto);
+  }
   const nowIso = paidAt || new Date().toISOString();
   const resolvedPaid = Number(paidAmount) > 0 ? Number(paidAmount) : Number(boleto.amount || boleto.valorNominal || 0);
   boleto.status = "pago";
@@ -86561,7 +88293,9 @@ function markBoletoAsPaid(boleto, { paidAmount, paidAt, endToEndId, source = "Ma
         pushAmt = Math.max(0, round2Local(sibTargetAmt - priorSibPaid));
       }
 
-      if (!sib.payments.some(p => p.id === payIdSib) && pushAmt > 0) {
+      const existingSibPaySum = round2Local(sib.payments.reduce((s, p) => s + (Number(p?.amount) || 0), 0));
+      const alreadyCoveredSib = skipReservationPaymentPush || (sib.paymentStatus === "pago_total" && existingSibPaySum >= sibTargetAmt - 0.05 && sibTargetAmt > 0);
+      if (!alreadyCoveredSib && !sib.payments.some(p => p.id === payIdSib) && pushAmt > 0) {
         sib.payments.push({
           id: payIdSib,
           amount: pushAmt,
@@ -86576,11 +88310,11 @@ function markBoletoAsPaid(boleto, { paidAmount, paidAt, endToEndId, source = "Ma
       const sibBoletos = (db.boletos || []).filter(b =>
         b && b.status !== "cancelado" && doesBoletoCoverReservation(b, sib)
       );
-      const allSibBoletosPaid = sibBoletos.length === 0 || sibBoletos.every(b => b.status === "pago");
+      const allSibBoletosPaid = sibBoletos.length === 0 || sibBoletos.every(b => _isBolPaidLocal(b.status));
       const totalPaymentsOnSib = round2Local(sib.payments.reduce((s, p) => s + (Number(p?.amount) || 0), 0));
       sib.paidAmount = Math.max(priorSibPaid, totalPaymentsOnSib, boleto.billingScope === "consumption_only" ? round2Local(priorSibPaid + pushAmt) : sibTargetAmt);
       sib.paymentStatus = allSibBoletosPaid ? "pago_total" : (sib.paidAmount > 0 ? "sinal_pago" : "pendente");
-      sib.paidAt = nowIso;
+      sib.paidAt = sib.paidAt || nowIso;
       if (sib.status === "pre_reserva" || sib.status === "pendente" || sib.status === "expirada") {
         sib.status = "confirmada";
         delete sib.expiredAt;
@@ -86592,9 +88326,14 @@ function markBoletoAsPaid(boleto, { paidAmount, paidAt, endToEndId, source = "Ma
       x && ((boleto.reservationId && Number(x.id) === Number(boleto.reservationId)) || (boleto.reservationCode && x.code === boleto.reservationCode))
     );
     if (r) {
+      const wasAlreadyPaidTotal = r.paymentStatus === "pago_total" || r.paymentStatus === "pago";
+      const wasPreBoleto = r.status === "pre_reserva" || r.status === "pendente" || r.status === "expirada" || !r.status || r.isPreReservation;
       if (!Array.isArray(r.payments)) r.payments = [];
       const payId = `pay_bol_${boleto.id}`;
-      if (!r.payments.some(p => p.id === payId)) {
+      const existingResPaySum = r.payments.reduce((s, p) => s + (Number(p?.amount) || 0), 0);
+      const resTotAmt = Number(r.totalAmount || 0);
+      const alreadyCoveredRes = skipReservationPaymentPush || (wasAlreadyPaidTotal && resTotAmt > 0 && existingResPaySum >= resTotAmt - 0.05);
+      if (!alreadyCoveredRes && !r.payments.some(p => p.id === payId)) {
         r.payments.push({
           id: payId,
           amount: resolvedPaid,
@@ -86606,18 +88345,17 @@ function markBoletoAsPaid(boleto, { paidAmount, paidAt, endToEndId, source = "Ma
       const resBoletos = (db.boletos || []).filter(b =>
         b && b.status !== "cancelado" && (Number(b.reservationId) === Number(r.id) || (r.code && b.reservationCode === r.code))
       );
-      const allBoletosPaid = resBoletos.length > 0 && resBoletos.every(b => b.status === "pago");
-      const paidSum = resBoletos.filter(b => b.status === "pago").reduce((s, b) => s + (Number(b.paidAmount || b.amount) || 0), 0);
-      const wasPreBoleto = r.status === "pre_reserva" || r.status === "pendente" || r.status === "expirada" || !r.status || r.isPreReservation;
+      const allBoletosPaid = resBoletos.length > 0 && resBoletos.every(b => _isBolPaidLocal(b.status));
+      const paidSum = resBoletos.filter(b => _isBolPaidLocal(b.status)).reduce((s, b) => s + (Number(b.paidAmount || b.amount) || 0), 0);
       r.paidAmount = Math.max(Number(r.paidAmount || 0), paidSum);
       r.paymentStatus = allBoletosPaid ? "pago_total" : "sinal_pago";
-      r.paidAt = nowIso;
+      r.paidAt = r.paidAt || nowIso;
       if (wasPreBoleto && r.paidAmount > 0) {
         r.status = "confirmada";
         delete r.expiredAt;
         delete r.expiresAt;
       }
-      if (allBoletosPaid || wasPreBoleto) {
+      if (!skipReservationPaymentPush && (!wasAlreadyPaidTotal || wasPreBoleto) && (allBoletosPaid || wasPreBoleto)) {
         ensurePaymentConfirmationDispatched(r, { wasPreReserva: wasPreBoleto }).catch(err => {
           console.warn("[Boleto Paid Confirmation Dispatch] Erro ao disparar régua após liquidação do boleto:", err.message);
         });
@@ -86648,6 +88386,250 @@ function markBoletoAsPaid(boleto, { paidAmount, paidAt, endToEndId, source = "Ma
 }
 
 /**
+ * Sincroniza automaticamente boletos em aberto vinculados a uma reserva (ou pacote) que já foi quitada
+ * por outro meio (PIX direto, Cartão, Baixa Manual ou Contas a Receber), evitando lembretes indevidos.
+ */
+function syncOpenBoletosForSettledReservation(r, { paidAt = null, endToEndId = null, source = "Reserva Quitada" } = {}) {
+  if (!r || !Array.isArray(db.boletos)) return [];
+  const openBoletos = db.boletos.filter(b =>
+    b && !isBoletoStatusPaid(b.status) && !isBoletoStatusCancelled(b.status) && doesBoletoCoverReservation(b, r)
+  );
+  if (openBoletos.length === 0) return [];
+
+  const getNonSyntheticPaidSum = (resItem) => {
+    if (!resItem) return 0;
+    const realList = Array.isArray(resItem.payments)
+      ? resItem.payments.filter(p => p && Number(p.amount) > 0 && !isSyntheticAutoQuitacaoEntry(p))
+      : [];
+    const listSum = realList.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    if (resItem.pixEndToEndId || resItem.mpPaymentId) {
+      return Math.max(listSum, Number(resItem.paidAmount || 0));
+    }
+    return listSum;
+  };
+
+  const isResGenuinelySettled = (resItem) => {
+    if (!resItem) return false;
+    const isMarkedPaid = resItem.paymentStatus === "pago_total" || resItem.paymentStatus === "pago" || resItem.paymentStatus === "paid";
+    if (!isMarkedPaid) return false;
+    const totalNeeded = Number(resItem.totalAmount || 0);
+    const realSum = getNonSyntheticPaidSum(resItem);
+    if (resItem.pixEndToEndId || resItem.mpPaymentId) {
+      return totalNeeded <= 0 || realSum >= totalNeeded - 0.05;
+    }
+    return realSum > 0 && (totalNeeded <= 0 || realSum >= totalNeeded - 0.05);
+  };
+
+  const settled = [];
+  for (const bol of openBoletos) {
+    const linkedResList = (db.reservations || []).filter(item => item && doesBoletoCoverReservation(bol, item));
+    const activeCovered = linkedResList.filter(item =>
+      !["cancelada", "cancelled", "no_show", "expirada"].includes(String(item.status || "").toLowerCase())
+    );
+    if (activeCovered.length === 0) continue;
+
+    let shouldSettle = false;
+    if (bol.billingScope === "consumption_only") {
+      const mbIds = Array.isArray(bol.minibarOrderIds) ? bol.minibarOrderIds.filter(Boolean) : [];
+      if (mbIds.length > 0) {
+        const mbObjs = mbIds.map(id => (db.minibarOrders || []).find(o => o && String(o.id) === String(id))).filter(Boolean);
+        if (mbObjs.length === mbIds.length && mbObjs.every(o => o.paymentStatus === "pago")) {
+          shouldSettle = true;
+        }
+      }
+      if (!shouldSettle && activeCovered.every(isResGenuinelySettled)) {
+        const totalRealPaid = activeCovered.reduce((s, item) => s + getNonSyntheticPaidSum(item), 0);
+        const totalExpectedWithCons = activeCovered.reduce((s, item) => {
+          const bd = computeReservationAccommodationAndConsumption(item, db);
+          return s + (Number(bd.totalWithConsumption) || Number(item.totalAmount) || 0);
+        }, 0);
+        if (totalRealPaid >= totalExpectedWithCons - 0.05 && totalExpectedWithCons > 0) {
+          shouldSettle = true;
+        }
+      }
+    } else {
+      if (activeCovered.every(isResGenuinelySettled)) {
+        shouldSettle = true;
+      }
+    }
+
+    if (shouldSettle) {
+      const updated = markBoletoAsPaid(bol, {
+        paidAmount: bol.amount,
+        paidAt: paidAt || r.paidAt || new Date().toISOString(),
+        endToEndId: endToEndId || r.pixEndToEndId || undefined,
+        source,
+        skipReservationPaymentPush: true
+      });
+      if (updated) settled.push(updated);
+    }
+  }
+  return settled;
+}
+
+/**
+ * Conciliação unificada de um boleto (local + Banco Inter Cobrança v3 + PIX Cob v2 + Extrato Completo).
+ * Sempre chamada antes de enviar lembretes, no reenvio manual e no reconciliador periódico em background.
+ */
+async function reconcileSingleBoleto(bol, { checkRemote = true, extratoDataOverride = null } = {}) {
+  if (!bol) {
+    return { paid: false, cancelled: false, reconciled: false, status: "invalido" };
+  }
+  if (isBoletoStatusPaid(bol.status)) {
+    if (bol.status !== "pago") bol.status = "pago";
+    return { paid: true, cancelled: false, reconciled: false, status: "pago", situacao: "PAGO", source: "local_status", boleto: enrichBoletoDynamicStatus(bol) };
+  }
+  if (isBoletoStatusCancelled(bol.status)) {
+    if (bol.status !== "cancelado") bol.status = "cancelado";
+    return { paid: false, cancelled: true, reconciled: false, status: "cancelado", situacao: "CANCELADO", source: "local_status", boleto: enrichBoletoDynamicStatus(bol) };
+  }
+
+  // 1. Cross-check local em Contas a Receber (db.accountsReceivable)
+  const linkedAr = (db.accountsReceivable || []).find(ar =>
+    ar && (
+      (ar.boletoId && Number(ar.boletoId) === Number(bol.id)) ||
+      (ar.externalRef && String(ar.externalRef) === `BOLETO_${bol.id}`)
+    )
+  );
+  if (linkedAr) {
+    const arSt = String(linkedAr.status || "").trim().toLowerCase();
+    if (arSt === "recebido" || arSt === "pago" || arSt === "paid") {
+      const updated = markBoletoAsPaid(bol, {
+        paidAmount: Number(linkedAr.amount || bol.amount || 0),
+        paidAt: linkedAr.paidAt || (linkedAr.receivedDate ? `${String(linkedAr.receivedDate).slice(0, 10)}T12:00:00.000Z` : new Date().toISOString()),
+        source: "Contas a Receber (Conciliação Automática)"
+      });
+      return { paid: true, cancelled: false, reconciled: true, status: "pago", situacao: "PAGO", source: "accounts_receivable", boleto: updated };
+    }
+    if (arSt === "cancelado" || arSt === "cancelled") {
+      bol.status = "cancelado";
+      bol.cancelledAt = linkedAr.updatedAt || new Date().toISOString();
+      bol.cancelReason = "CONTA_RECEBER_CANCELADA";
+      bol.updatedAt = new Date().toISOString();
+      return { paid: false, cancelled: true, reconciled: true, status: "cancelado", situacao: "CANCELADO", source: "accounts_receivable", boleto: enrichBoletoDynamicStatus(bol) };
+    }
+  }
+
+  // 2. Cross-check local nas reservas vinculadas (já quitadas ou canceladas)
+  const linkedResList = (db.reservations || []).filter(r => r && doesBoletoCoverReservation(bol, r));
+  if (linkedResList.length > 0) {
+    const activeResList = linkedResList.filter(r =>
+      !["cancelada", "cancelled", "no_show", "expirada"].includes(String(r.status || "").toLowerCase())
+    );
+    if (activeResList.length === 0) {
+      return { paid: false, cancelled: true, reservationCancelled: true, reconciled: false, status: "cancelado", situacao: "RESERVA_CANCELADA", source: "reservation_cancelled", boleto: enrichBoletoDynamicStatus(bol) };
+    }
+    syncOpenBoletosForSettledReservation(activeResList[0], {
+      source: "Reserva Quitada (Conciliação Automática)"
+    });
+    if (isBoletoStatusPaid(bol.status)) {
+      return { paid: true, cancelled: false, reconciled: true, status: "pago", situacao: "PAGO", source: "linked_reservation", boleto: enrichBoletoDynamicStatus(bol) };
+    }
+  }
+
+  // 3. Consulta remota na API de Cobrança v3 do Banco Inter (codigoSolicitacao + fallback seuNumero/nossoNumero)
+  if (checkRemote && typeof checkInterBoletoRemoteStatus === "function") {
+    try {
+      const remoteStatus = await checkInterBoletoRemoteStatus(bol);
+      if (remoteStatus && remoteStatus.status === "pago") {
+        const updated = markBoletoAsPaid(bol, {
+          paidAmount: remoteStatus.paidAmount,
+          paidAt: remoteStatus.paidAt,
+          endToEndId: remoteStatus.endToEndId,
+          source: `Banco Inter API Cobrança (${remoteStatus.origemRecebimento || remoteStatus.situacao || "RECEBIDO"})`
+        });
+        return { paid: true, cancelled: false, reconciled: true, status: "pago", situacao: remoteStatus.situacao || "PAGO", source: "inter_cobranca_v3", boleto: updated };
+      }
+      if (remoteStatus && remoteStatus.status === "cancelado") {
+        bol.status = "cancelado";
+        bol.cancelledAt = new Date().toISOString();
+        bol.cancelReason = `BANCO_INTER_${remoteStatus.situacao || "CANCELADO"}`;
+        bol.updatedAt = new Date().toISOString();
+        syncBoletoWithAccountsReceivable(bol);
+        return { paid: false, cancelled: true, reconciled: true, status: "cancelado", situacao: remoteStatus.situacao || "CANCELADO", source: "inter_cobranca_v3", boleto: enrichBoletoDynamicStatus(bol) };
+      }
+    } catch (err) {
+      console.warn(`[Boleto Reconcile] Aviso Cobrança v3 (#${bol.code}):`, err?.message || err);
+    }
+  }
+
+  // 4. Consulta remota na API PIX Cob v2 (quando houver txId dinâmico)
+  if (checkRemote && bol.txId && typeof checkInterPixCobStatus === "function") {
+    try {
+      const pixCob = await checkInterPixCobStatus(bol.txId);
+      if (pixCob && (pixCob.status === "CONCLUIDA" || (Array.isArray(pixCob.pix) && pixCob.pix.length > 0))) {
+        const updated = markBoletoAsPaid(bol, {
+          paidAmount: Number(pixCob.pix?.[0]?.valor || bol.amount),
+          paidAt: pixCob.pix?.[0]?.horario || new Date().toISOString(),
+          endToEndId: pixCob.pix?.[0]?.endToEndId,
+          source: "Banco Inter PIX do Boleto"
+        });
+        return { paid: true, cancelled: false, reconciled: true, status: "pago", situacao: "PAGO", source: "inter_pix_cob", boleto: updated };
+      }
+    } catch (err) {
+      console.warn(`[Boleto Reconcile] Aviso PIX Cob (#${bol.code}):`, err?.message || err);
+    }
+  }
+
+  // 5. Consulta remota no Extrato Bancário Completo do Banco Inter (captura PIX estático/híbrido e liquidação de boleto)
+  if (checkRemote && typeof checkInterBankingExtratoForBoleto === "function") {
+    try {
+      const extratoMatch = await checkInterBankingExtratoForBoleto(bol, extratoDataOverride);
+      if (extratoMatch && extratoMatch.found) {
+        const updated = markBoletoAsPaid(bol, {
+          paidAmount: extratoMatch.amount,
+          paidAt: extratoMatch.paidAt,
+          endToEndId: extratoMatch.endToEndId,
+          source: extratoMatch.source || "Banco Inter Extrato (Boleto/PIX)"
+        });
+        return { paid: true, cancelled: false, reconciled: true, status: "pago", situacao: "PAGO", source: "inter_extrato", boleto: updated };
+      }
+    } catch (err) {
+      console.warn(`[Boleto Reconcile] Aviso Extrato (#${bol.code}):`, err?.message || err);
+    }
+  }
+
+  const currentEnriched = enrichBoletoDynamicStatus(bol);
+  return {
+    paid: false,
+    cancelled: false,
+    reconciled: false,
+    status: currentEnriched.status,
+    situacao: currentEnriched.status === "vencido" ? "VENCIDO" : "EM_ABERTO",
+    boleto: currentEnriched
+  };
+}
+
+let _boletoAutoReconcileRunning = false;
+async function reconcileAllOpenBoletos({ checkRemote = true } = {}) {
+  if (_boletoAutoReconcileRunning) return { checked: 0, reconciledCount: 0, paidCount: 0, cancelledCount: 0 };
+  if (!Array.isArray(db.boletos) || db.boletos.length === 0) return { checked: 0, reconciledCount: 0, paidCount: 0, cancelledCount: 0 };
+
+  _boletoAutoReconcileRunning = true;
+  let checked = 0;
+  let paidCount = 0;
+  let cancelledCount = 0;
+  try {
+    const openList = db.boletos.filter(b => b && !isBoletoStatusPaid(b.status) && !isBoletoStatusCancelled(b.status));
+    for (const bol of openList) {
+      checked++;
+      const res = await reconcileSingleBoleto(bol, { checkRemote });
+      if (res.reconciled) {
+        if (res.paid) paidCount++;
+        else if (res.cancelled) cancelledCount++;
+      }
+    }
+    if (paidCount > 0 || cancelledCount > 0) {
+      saveDatabase("boletos_auto_reconciled");
+      console.log(`[Boleto Auto-Reconcile] Conciliados ${paidCount} pago(s) e ${cancelledCount} cancelado(s) de ${checked} boleto(s) em aberto.`);
+    }
+  } finally {
+    _boletoAutoReconcileRunning = false;
+  }
+  return { checked, reconciledCount: paidCount + cancelledCount, paidCount, cancelledCount };
+}
+
+/**
  * Dispara o pacote de faturamento (PDF da NFS-e + PDF do(s) Boleto(s) + Linha Digitável + PIX Copia e Cola)
  * tanto por E-mail quanto por WhatsApp para cada destinatário marcado (Hóspede, Solicitante, Empresa, Resp. Financeiro).
  */
@@ -86661,9 +88643,22 @@ async function dispatchFaturadoBillingPackage({
   reminderType = null,
   includeNfse = !isReminder
 }) {
-  const validBoletos = (Array.isArray(boletos) ? boletos : [boletos]).filter(Boolean).map(b => enrichBoletoDynamicStatus(b));
+  const _isSettledStatus = (st) => {
+    const s = String(st || "").trim().toLowerCase();
+    return s === "pago" || s === "paid" || s === "recebido" || s === "liquidado" || s === "quitado" || s === "marcado_recebido" || s === "cancelado" || s === "cancelled" || s === "baixado" || s === "expirado";
+  };
+  const rawValidBoletos = (Array.isArray(boletos) ? boletos : [boletos]).filter(Boolean).map(b => enrichBoletoDynamicStatus(b));
+  const validBoletos = isReminder
+    ? rawValidBoletos.filter(b => !_isSettledStatus(b.status))
+    : rawValidBoletos;
   if (validBoletos.length === 0) {
-    return { success: false, dispatchedTo: [], emailCount: 0, whatsappCount: 0 };
+    return {
+      success: false,
+      skippedAlreadySettled: Boolean(isReminder && rawValidBoletos.length > 0),
+      dispatchedTo: [],
+      emailCount: 0,
+      whatsappCount: 0
+    };
   }
   const shouldIncludeNfse = Boolean(includeNfse) && !isReminder;
 
@@ -87112,6 +89107,7 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
   const crmEntity = company || agency || guest || {};
 
   // 1. Verificar se já existem boletos ativos para esta reserva (ou pacote / grupo de troca) quando for disparo automático de check-out
+  let existingActiveBoletosSkip = null;
   if (options.triggerSource === "checkout_auto" && !options.forceReissue) {
     const segsToCheck = hasRmFat ? rmSummaryFat.segments : (r ? [r] : []);
     const existingActiveBoletos = (db.boletos || []).filter(b =>
@@ -87119,12 +89115,17 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
     );
     if (existingActiveBoletos.length > 0) {
       const existingInv = findExistingInvoiceForReservation(db, { reservation: r, reservationId: r?.id, reservationCode: r?.code });
-      return {
-        alreadyEmitted: true,
-        boletos: existingActiveBoletos.map(b => enrichBoletoDynamicStatus(b)),
-        invoice: existingInv || null,
-        dispatchResult: null
-      };
+      const wantsNfseHere = (options.emitNfse ?? options.emitNfseToo ?? options.emitNfseNow ?? true) !== false;
+      if (existingInv || !wantsNfseHere) {
+        return {
+          alreadyEmitted: true,
+          boletos: existingActiveBoletos.map(b => enrichBoletoDynamicStatus(b)),
+          invoice: existingInv || null,
+          dispatchResult: null
+        };
+      }
+      // Boletos já existiam, mas a NFS-e ainda não foi emitida: emite a NFS-e abaixo e retorna sem duplicar boletos!
+      existingActiveBoletosSkip = existingActiveBoletos;
     }
   }
 
@@ -87349,6 +89350,16 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
         }
       }
     }
+  }
+
+  if (existingActiveBoletosSkip) {
+    saveDatabase("checkout_faturado_nfse_catchup");
+    return {
+      alreadyEmitted: true,
+      boletos: existingActiveBoletosSkip.map(b => enrichBoletoDynamicStatus(b)),
+      invoice: invoice || null,
+      dispatchResult: null
+    };
   }
 
   // 3. Resolver parâmetros de prazo, multa, juros, baixa e separação de boletos
@@ -87694,48 +89705,97 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
 
 /**
  * Rotina de Lembretes Automáticos de Vencimento de Boletos (no dia do vencimento e em atraso)
+ * Concilia obrigatoriamente contra Contas a Receber, Reservas e Banco Inter (Cobrança v3 + PIX + Extrato)
+ * ANTES de disparar qualquer lembrete ou PDF de boleto.
  */
-async function processAutomaticBoletoReminders({ force = false } = {}) {
+async function processAutomaticBoletoReminders({ force = false, checkRemote = true } = {}) {
+  if (!force && typeof pgPool !== "undefined" && pgPool && typeof pgHydratedSuccessfully !== "undefined" && !pgHydratedSuccessfully) {
+    return { processed: 0, processedCount: 0, skippedPaidCount: 0, results: [] };
+  }
   const todayStr = getBrasiliaDateStr();
   const results = [];
-  if (!Array.isArray(db.boletos)) return { processed: 0, processedCount: 0, results };
+  let reconciledCount = 0;
+  let skippedPaidCount = 0;
+  if (!Array.isArray(db.boletos)) return { processed: 0, processedCount: 0, skippedPaidCount: 0, results };
 
   for (const bol of db.boletos) {
-    if (!bol || bol.status === "pago" || bol.status === "cancelado") continue;
+    if (!bol || isBoletoStatusPaid(bol.status) || isBoletoStatusCancelled(bol.status)) continue;
     if (bol.autoReminderEnabled === false && !force) continue;
 
-    const enriched = enrichBoletoDynamicStatus(bol);
     const dueStr = String(bol.dueDate || "").slice(0, 10);
+    const needsDueToday = dueStr === todayStr && (force || bol.lastDueTodayReminderDate !== todayStr);
+    const needsOverdue = dueStr < todayStr && (force || bol.lastOverdueReminderDate !== todayStr);
+    if (!needsDueToday && !needsOverdue) continue;
 
-    if (dueStr === todayStr && (force || bol.lastDueTodayReminderDate !== todayStr)) {
+    // TRAVA OBRIGATÓRIA PRÉ-LEMBRETE: confere quitação local (Contas a Receber / Reserva) e remota no Banco Inter
+    const recCheck = await reconcileSingleBoleto(bol, { checkRemote });
+    if (recCheck.reconciled) {
+      reconciledCount++;
+    }
+    if (
+      recCheck.paid ||
+      recCheck.cancelled ||
+      recCheck.reservationCancelled ||
+      isBoletoStatusPaid(bol.status) ||
+      isBoletoStatusCancelled(bol.status)
+    ) {
+      skippedPaidCount++;
+      console.log(`[Boleto Reminder Guard] Lembrete suprimido para Boleto #${bol.code} (${recCheck.source || bol.status}) — título já liquidado/cancelado.`);
+      continue;
+    }
+
+    const enriched = enrichBoletoDynamicStatus(bol);
+    if (needsDueToday) {
       const disp = await dispatchFaturadoBillingPackage({
         boletos: [bol],
         isReminder: true,
         reminderType: "due_today",
         includeNfse: false
       });
-      bol.lastDueTodayReminderDate = todayStr;
-      results.push({ boletoId: bol.id, code: bol.code, type: "due_today", dispatch: disp });
-    } else if (dueStr < todayStr && (force || bol.lastOverdueReminderDate !== todayStr)) {
+      if (!disp?.skippedAlreadySettled) {
+        bol.lastDueTodayReminderDate = todayStr;
+        results.push({ boletoId: bol.id, code: bol.code, type: "due_today", dispatch: disp });
+      }
+    } else if (needsOverdue) {
       const disp = await dispatchFaturadoBillingPackage({
         boletos: [bol],
         isReminder: true,
         reminderType: "overdue",
         includeNfse: false
       });
-      bol.lastOverdueReminderDate = todayStr;
-      results.push({ boletoId: bol.id, code: bol.code, type: "overdue", daysOverdue: enriched.daysOverdue, dispatch: disp });
+      if (!disp?.skippedAlreadySettled) {
+        bol.lastOverdueReminderDate = todayStr;
+        results.push({ boletoId: bol.id, code: bol.code, type: "overdue", daysOverdue: enriched.daysOverdue, dispatch: disp });
+      }
     }
   }
 
-  if (results.length > 0) {
-    saveDatabase("boleto_reminders_dispatched");
+  if (results.length > 0 || reconciledCount > 0) {
+    saveDatabase(results.length > 0 ? "boleto_reminders_dispatched" : "boleto_reminders_reconciled");
   }
-  return { processed: results.length, processedCount: results.length, todayStr, results };
+  return { processed: results.length, processedCount: results.length, reconciledCount, skippedPaidCount, todayStr, results };
+}
+
+// Conciliação periódica automática de boletos em aberto no Banco Inter (a cada 10 minutos + pós-boot)
+if (process.env.NODE_ENV !== "test") {
+  setTimeout(() => {
+    if (pgPool && !pgHydratedSuccessfully) return;
+    reconcileAllOpenBoletos({ checkRemote: true }).catch(err => {
+      console.warn("[Boleto Auto-Reconcile Boot] Erro:", err?.message || err);
+    });
+  }, 45 * 1000);
+
+  setInterval(() => {
+    if (pgPool && !pgHydratedSuccessfully) return;
+    reconcileAllOpenBoletos({ checkRemote: true }).catch(err => {
+      console.warn("[Boleto Auto-Reconcile Scheduler] Erro:", err?.message || err);
+    });
+  }, 10 * 60 * 1000);
 }
 
 // Verificação periódica automática de lembretes de boletos (a cada 6 horas)
 setInterval(() => {
+  if (pgPool && !pgHydratedSuccessfully) return;
   processAutomaticBoletoReminders({ force: false }).catch(err => {
     console.warn("[Boleto Reminder Scheduler] Erro:", err.message);
   });
@@ -88181,68 +90241,40 @@ app.post("/api/boletos/:id/reconcile", async (req, res) => {
     const bol = (db.boletos || []).find(b => b && (String(b.id) === idParam || String(b.code) === idParam));
     if (!bol) return res.status(404).json({ error: "Boleto não encontrado" });
 
-    if (bol.status === "pago") {
-      return res.json({
-        success: true,
-        reconciled: true,
-        paid: true,
-        situacao: "PAGO",
-        status: "pago",
-        boleto: enrichBoletoDynamicStatus(bol),
-        message: "Boleto já consta como liquidado."
-      });
-    }
-
-    const remoteStatus = await checkInterBoletoRemoteStatus(bol);
-    if (remoteStatus.status === "pago") {
-      const updated = markBoletoAsPaid(bol, {
-        paidAmount: remoteStatus.paidAmount,
-        paidAt: remoteStatus.paidAt,
-        source: "Banco Inter API Conciliação"
-      });
+    const rec = await reconcileSingleBoleto(bol, { checkRemote: true });
+    if (rec.reconciled) {
       saveDatabase("boleto_reconciled_" + bol.id);
-      return res.json({
-        success: true,
-        reconciled: true,
-        paid: true,
-        situacao: "PAGO",
-        status: "pago",
-        boleto: updated,
-        message: "Pagamento localizado e conciliado com sucesso no Banco Inter!"
-      });
     }
 
-    if (bol.txId) {
-      const pixCob = await checkInterPixCobStatus(bol.txId);
-      if (pixCob && (pixCob.status === "CONCLUIDA" || (Array.isArray(pixCob.pix) && pixCob.pix.length > 0))) {
-        const updated = markBoletoAsPaid(bol, {
-          paidAmount: Number(pixCob.pix?.[0]?.valor || bol.amount),
-          paidAt: pixCob.pix?.[0]?.horario || new Date().toISOString(),
-          endToEndId: pixCob.pix?.[0]?.endToEndId,
-          source: "Banco Inter PIX do Boleto"
-        });
-        saveDatabase("boleto_reconciled_pix_" + bol.id);
-        return res.json({
-          success: true,
-          reconciled: true,
-          paid: true,
-          situacao: "PAGO",
-          status: "pago",
-          boleto: updated,
-          message: "Boleto pago via QR Code PIX e conciliado com sucesso no Banco Inter!"
-        });
-      }
-    }
+    const msg = rec.paid
+      ? (rec.reconciled ? "Pagamento localizado e conciliado com sucesso!" : "Boleto já consta como liquidado.")
+      : rec.cancelled
+      ? "Boleto consta como cancelado/baixado."
+      : "Boleto consultado no Banco Inter: ainda aguarda compensação/pagamento.";
 
-    const currentEnriched = enrichBoletoDynamicStatus(bol);
     res.json({
       success: true,
-      reconciled: false,
-      paid: false,
-      situacao: currentEnriched.status === "vencido" ? "VENCIDO" : "EM_ABERTO",
-      status: currentEnriched.status,
-      boleto: currentEnriched,
-      message: "Boleto consultado no Banco Inter: ainda aguarda compensação/pagamento."
+      reconciled: Boolean(rec.reconciled || rec.paid),
+      paid: Boolean(rec.paid),
+      cancelled: Boolean(rec.cancelled),
+      situacao: rec.situacao || (rec.paid ? "PAGO" : rec.cancelled ? "CANCELADO" : "EM_ABERTO"),
+      status: rec.status,
+      source: rec.source || null,
+      boleto: rec.boleto || enrichBoletoDynamicStatus(bol),
+      message: msg
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/boletos/reconcile-all", async (req, res) => {
+  try {
+    const out = await reconcileAllOpenBoletos({ checkRemote: req.body?.checkRemote !== false });
+    res.json({
+      success: true,
+      message: `Conciliação concluída: ${out.paidCount} pago(s) e ${out.cancelledCount} cancelado(s) entre ${out.checked} boleto(s) verificados.`,
+      ...out
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -88256,6 +90288,45 @@ app.post("/api/boletos/:id/dispatch", async (req, res) => {
     if (!bol) return res.status(404).json({ error: "Boleto não encontrado" });
 
     const b = req.body || {};
+
+    // Trava anti-cobrança indevida: impede reenviar cobrança para boleto já pago ou cancelado
+    if (!b.forceSendPaid) {
+      if (isBoletoStatusPaid(bol.status)) {
+        return res.status(400).json({
+          success: false,
+          alreadyPaid: true,
+          boleto: enrichBoletoDynamicStatus(bol),
+          error: `Boleto #${bol.code} já consta como PAGO e não pode ser reenviado para cobrança.`
+        });
+      }
+      if (isBoletoStatusCancelled(bol.status)) {
+        return res.status(400).json({
+          success: false,
+          alreadyCancelled: true,
+          boleto: enrichBoletoDynamicStatus(bol),
+          error: `Boleto #${bol.code} está CANCELADO e não pode ser reenviado para cobrança.`
+        });
+      }
+      if (b.skipReconcile !== true) {
+        const preCheck = await reconcileSingleBoleto(bol, { checkRemote: true });
+        if (preCheck.paid || preCheck.cancelled || preCheck.reservationCancelled) {
+          if (preCheck.reconciled) {
+            saveDatabase("boleto_reconciled_before_dispatch_" + bol.id);
+          }
+          return res.status(409).json({
+            success: false,
+            alreadyPaid: Boolean(preCheck.paid),
+            alreadyCancelled: Boolean(preCheck.cancelled || preCheck.reservationCancelled),
+            source: preCheck.source || null,
+            boleto: preCheck.boleto || enrichBoletoDynamicStatus(bol),
+            error: preCheck.paid
+              ? `Boleto #${bol.code} já foi pago (${preCheck.source || "Banco Inter"})! Status atualizado para PAGO e cobrança cancelada.`
+              : `Boleto #${bol.code} consta como cancelado/baixado. Envio de cobrança cancelado.`
+          });
+        }
+      }
+    }
+
     if (b.financialResponsible) {
       bol.financialResponsible = { ...(bol.financialResponsible || {}), ...b.financialResponsible };
     }
@@ -94381,52 +96452,179 @@ function doesMinibarOrderMatchReservation(order, reservation) {
   return false;
 }
 
+function formatAggregatedMinibarItemsSummary(items = []) {
+  if (!Array.isArray(items) || items.length === 0) return "";
+  const aggregated = [];
+  const byKey = new Map();
+  for (const it of items) {
+    if (!it) continue;
+    const qty = Number(it.quantity) || 0;
+    if (qty <= 0) continue;
+    const label = String(it.productName || it.name || it.productId || "Item").trim();
+    const key = String(it.productId || label).trim().toLowerCase();
+    if (byKey.has(key)) {
+      byKey.get(key).quantity += qty;
+    } else {
+      const entry = { label, quantity: qty };
+      byKey.set(key, entry);
+      aggregated.push(entry);
+    }
+  }
+  return aggregated.map(entry => `${entry.quantity}x ${entry.label}`).join(", ");
+}
+
+function filterCanonicalVisibleMinibarOrders(ordersInput = [], allOrdersContext = null, options = {}) {
+  const list = Array.isArray(ordersInput) ? ordersInput : [];
+  const ctxOrders = Array.isArray(allOrdersContext)
+    ? allOrdersContext
+    : Array.isArray(db?.minibarOrders)
+    ? db.minibarOrders
+    : list;
+  const includeCancelled = Boolean(options?.includeCancelled);
+  const preserveDirectInvoicedSettledLaunch = Boolean(options?.preserveDirectInvoicedSettledLaunch);
+
+  const rmgByCode = new Map();
+  const rmgById = new Map();
+  for (const r of db?.reservations || []) {
+    if (!r || !r.roomMoveGroupId) continue;
+    const rmgKey = String(r.roomMoveGroupId).trim();
+    if (!rmgKey) continue;
+    if (r.code) rmgByCode.set(String(r.code).trim(), rmgKey);
+    if (r.id !== undefined && r.id !== null) rmgById.set(String(r.id).trim(), rmgKey);
+  }
+
+  const getOrderResKeys = (o) => {
+    const keys = [];
+    const code = o?.reservationCode ? String(o.reservationCode).trim() : "";
+    const idStr =
+      o?.reservationId !== undefined && o?.reservationId !== null && String(o.reservationId).trim() !== ""
+        ? String(o.reservationId).trim()
+        : "";
+    const histCode = o?.historicalSegmentCode ? String(o.historicalSegmentCode).trim() : "";
+    const histIdStr =
+      o?.historicalSegmentId !== undefined && o?.historicalSegmentId !== null && String(o.historicalSegmentId).trim() !== ""
+        ? String(o.historicalSegmentId).trim()
+        : "";
+    const directRmg = o?.roomMoveGroupId ? String(o.roomMoveGroupId).trim() : "";
+    const mappedRmg =
+      directRmg ||
+      (code && rmgByCode.get(code)) ||
+      (idStr && rmgById.get(idStr)) ||
+      (histCode && rmgByCode.get(histCode)) ||
+      (histIdStr && rmgById.get(histIdStr)) ||
+      "";
+
+    if (code) keys.push(`code:${code}`);
+    if (idStr) keys.push(`id:${idStr}`);
+    if (histCode) keys.push(`code:${histCode}`);
+    if (histIdStr) keys.push(`id:${histIdStr}`);
+    if (mappedRmg) keys.push(`rmg:${mappedRmg}`);
+    return keys;
+  };
+
+  const isAutoSplitOrder = (o) =>
+    Boolean(o && (o.isAutoSplitCheckoutOrder || String(o.id || "").startsWith("ORD-MB-SPLIT-")));
+
+  const resKeysWithPendingAutoSplit = new Set();
+  const resKeysWithAnyLaunchOrSplit = new Set();
+
+  for (const o of ctxOrders) {
+    if (!o) continue;
+    const pStatus = String(o.paymentStatus || "").toLowerCase();
+    const rawStatus = String(o.status || "").toLowerCase();
+    if (pStatus === "cancelado" || rawStatus === "cancelado") continue;
+    const keys = getOrderResKeys(o);
+    if (keys.length === 0) continue;
+
+    const autoSplit = isAutoSplitOrder(o);
+    const launch = isMinibarLaunchOrderRecord(o);
+
+    if (autoSplit && (pStatus === "pendente" || !pStatus) && Number(o.totalAmount || 0) > 0.01) {
+      for (const k of keys) resKeysWithPendingAutoSplit.add(k);
+    }
+    if (autoSplit || launch) {
+      for (const k of keys) resKeysWithAnyLaunchOrSplit.add(k);
+    }
+  }
+
+  return list.filter(o => {
+    if (!o) return false;
+    const pStatus = String(o.paymentStatus || "").toLowerCase();
+    const rawStatus = String(o.status || "").toLowerCase();
+
+    if (pStatus === "cancelado" || rawStatus === "cancelado") {
+      return includeCancelled;
+    }
+
+    const keys = getOrderResKeys(o);
+
+    if (pStatus === "lancamento_quitado") {
+      if (preserveDirectInvoicedSettledLaunch) {
+        const hasDirectInvoice = Boolean(
+          o.invoice?.invoiceFileUrl || o.invoice?.fileUrl || o.invoice?.status === "anexada"
+        );
+        if (hasDirectInvoice) return true;
+      }
+      return false;
+    }
+
+    if (pStatus === "pago") {
+      return true;
+    }
+
+    const autoSplit = isAutoSplitOrder(o);
+    const launch = isMinibarLaunchOrderRecord(o);
+
+    if (launch) {
+      if (o.remainingAmount !== undefined && o.remainingAmount !== null && Number(o.remainingAmount) <= 0.01) {
+        return false;
+      }
+      if (keys.some(k => resKeysWithPendingAutoSplit.has(k))) {
+        return false;
+      }
+      return true;
+    }
+
+    if (autoSplit) {
+      return Number(o.totalAmount || 0) > 0.01;
+    }
+
+    if (o.settlesLaunchOrders && keys.some(k => resKeysWithAnyLaunchOrSplit.has(k))) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
 function getVisibleReservationMinibarOrders(reservation) {
   if (!reservation) return [];
   const rawOrders = (db.minibarOrders || []).filter(
     o => o && o.paymentStatus !== "cancelado" && doesMinibarOrderMatchReservation(o, reservation)
   );
-  const hasSeparatePaidOrder = rawOrders.some(
-    o =>
-      o.paymentStatus === "pago" &&
-      !String(o.id || "").startsWith("ORD-MB-LANC-") &&
-      !String(o.id || "").startsWith("ORD-MB-DIV-")
-  );
-  return rawOrders
-    .filter(o => {
-      const hasDirectInvoice = Boolean(
-        o.invoice?.invoiceFileUrl || o.invoice?.fileUrl || o.invoice?.status === "anexada"
-      );
-      if (
-        o.paymentStatus === "lancamento_quitado" &&
-        !hasDirectInvoice &&
-        (o.settledByOrderId || hasSeparatePaidOrder)
-      ) {
-        return false;
-      }
-      return true;
-    })
-    .map(o => ({
-      id: o.id,
-      flatNumber: o.flatNumber || null,
-      historicalSegmentId: o.historicalSegmentId || null,
-      historicalSegmentCode: o.historicalSegmentCode || null,
-      source: o.source || "",
-      guestName: o.guestName || reservation.guestName,
-      guestIndex: o.guestIndex || 1,
-      createdAt: o.createdAt,
-      paidAt: o.paidAt || null,
-      totalAmount: o.totalAmount,
-      remainingAmount: o.remainingAmount,
-      paymentStatus: o.paymentStatus,
-      paymentMethod: o.paymentMethod,
-      items: o.items || [],
-      invoice: sanitizeMinibarInvoiceForResponse(o.invoice),
-      invoiceFileUrl: o.invoice?.invoiceFileUrl || o.invoice?.fileUrl || null,
-      invoiceFileName: o.invoice?.invoiceFileName || null,
-      invoiceNumber: o.invoice?.invoiceNumber || null,
-      invoiceStatus: o.invoice?.status || null
-    }));
+  return filterCanonicalVisibleMinibarOrders(rawOrders, db.minibarOrders || rawOrders, {
+    preserveDirectInvoicedSettledLaunch: true
+  }).map(o => ({
+    id: o.id,
+    flatNumber: o.flatNumber || null,
+    historicalSegmentId: o.historicalSegmentId || null,
+    historicalSegmentCode: o.historicalSegmentCode || null,
+    source: o.source || "",
+    guestName: o.guestName || reservation.guestName,
+    guestIndex: o.guestIndex || 1,
+    createdAt: o.createdAt,
+    paidAt: o.paidAt || null,
+    totalAmount: o.totalAmount,
+    remainingAmount: o.remainingAmount,
+    paymentStatus: o.paymentStatus,
+    paymentMethod: o.paymentMethod,
+    items: o.items || [],
+    invoice: sanitizeMinibarInvoiceForResponse(o.invoice),
+    invoiceFileUrl: o.invoice?.invoiceFileUrl || o.invoice?.fileUrl || null,
+    invoiceFileName: o.invoice?.invoiceFileName || null,
+    invoiceNumber: o.invoice?.invoiceNumber || null,
+    invoiceStatus: o.invoice?.status || null
+  }));
 }
 
 function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
@@ -94927,9 +97125,661 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
   };
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Blindagem de Integridade PIX, Auditoria, Reabertura e Régua de Cobrança (D+1..D+7)
+// ══════════════════════════════════════════════════════════════════════════════
+
+const MINIBAR_CRM_PENDING_TAG = "Pendência Frigobar";
+
+const _minibarTestHooks = {
+  createInterPixCob: null,
+  checkInterPixCobStatus: null,
+  getCachedInterExtratoCompleto: null,
+  getCachedInterExtratoCompletoWindow: null,
+  isInterConfigured: null,
+  forceProductionPixGuard: null,
+  checkMercadoPagoPaymentByRef: null,
+  sendZapiMessage: null,
+  sendEmailAsync: null,
+  appendMessageToConversation: null
+};
+
+function setMinibarTestHooks(hooks = null) {
+  if (!hooks) {
+    for (const k of Object.keys(_minibarTestHooks)) _minibarTestHooks[k] = null;
+    return;
+  }
+  for (const k of Object.keys(_minibarTestHooks)) {
+    if (Object.prototype.hasOwnProperty.call(hooks, k)) {
+      _minibarTestHooks[k] = hooks[k] ?? null;
+    }
+  }
+}
+
+function _callMinibarIsInterConfigured() {
+  if (typeof _minibarTestHooks.isInterConfigured === "function") {
+    return Boolean(_minibarTestHooks.isInterConfigured());
+  }
+  return Boolean(isInterConfigured());
+}
+
+function isMinibarStrictInterPixMode() {
+  if (typeof _minibarTestHooks.forceProductionPixGuard === "boolean") {
+    return _minibarTestHooks.forceProductionPixGuard;
+  }
+  return process.env.NODE_ENV !== "test" && (_callMinibarIsInterConfigured() || process.env.NODE_ENV === "production");
+}
+
+async function _callMinibarCreateInterPixCob(params) {
+  if (typeof _minibarTestHooks.createInterPixCob === "function") {
+    return await _minibarTestHooks.createInterPixCob(params);
+  }
+  return await createInterPixCob(params);
+}
+
+async function _callMinibarCheckInterPixCobStatus(txid) {
+  if (typeof _minibarTestHooks.checkInterPixCobStatus === "function") {
+    return await _minibarTestHooks.checkInterPixCobStatus(txid);
+  }
+  return await checkInterPixCobStatus(txid);
+}
+
+async function _callMinibarGetInterExtrato(daysBack = 3) {
+  if (daysBack > 3 && typeof _minibarTestHooks.getCachedInterExtratoCompletoWindow === "function") {
+    return await _minibarTestHooks.getCachedInterExtratoCompletoWindow(daysBack);
+  }
+  if (typeof _minibarTestHooks.getCachedInterExtratoCompleto === "function") {
+    return await _minibarTestHooks.getCachedInterExtratoCompleto(daysBack);
+  }
+  if (daysBack > 3) {
+    return await getCachedInterExtratoCompletoWindow(daysBack);
+  }
+  return await getCachedInterExtratoCompleto();
+}
+
+async function _callMinibarCheckMpPayment(externalRef) {
+  if (typeof _minibarTestHooks.checkMercadoPagoPaymentByRef === "function") {
+    return await _minibarTestHooks.checkMercadoPagoPaymentByRef(externalRef);
+  }
+  return await checkMercadoPagoPaymentByRef(externalRef);
+}
+
+async function _callMinibarSendZapiMessage(zapiConfig, payload) {
+  if (typeof _minibarTestHooks.sendZapiMessage === "function") {
+    return await _minibarTestHooks.sendZapiMessage(zapiConfig, payload);
+  }
+  if (typeof sendZapiMessage === "function") {
+    return await sendZapiMessage(zapiConfig, payload);
+  }
+  return { success: false, error: "sendZapiMessage indisponível" };
+}
+
+function _callMinibarSendEmailAsync(payload) {
+  if (typeof _minibarTestHooks.sendEmailAsync === "function") {
+    return _minibarTestHooks.sendEmailAsync(payload);
+  }
+  if (typeof sendEmailAsync === "function") {
+    return sendEmailAsync(payload);
+  }
+  return null;
+}
+
+function _callMinibarAppendConversation(dbRef, payload) {
+  if (typeof _minibarTestHooks.appendMessageToConversation === "function") {
+    return _minibarTestHooks.appendMessageToConversation(dbRef, payload);
+  }
+  if (typeof appendMessageToConversation === "function") {
+    return appendMessageToConversation(dbRef, payload);
+  }
+  return null;
+}
+
+function isMinibarLaunchOrderRecord(o) {
+  if (!o) return false;
+  return (
+    o.source === "restocker_launch" ||
+    o.source === "anserve_discrepancy" ||
+    String(o.id || "").startsWith("ORD-MB-DIV-") ||
+    String(o.id || "").startsWith("ORD-MB-LANC-")
+  );
+}
+
+function isValidRealPixEndToEndId(e2e) {
+  const s = String(e2e || "").trim();
+  if (!s) return false;
+  const upper = s.toUpperCase();
+  if (
+    upper.startsWith("E2E_") ||
+    upper.startsWith("E2E-") ||
+    upper.startsWith("SIM_") ||
+    upper.startsWith("MOCK_") ||
+    upper.startsWith("FAKE_") ||
+    upper.startsWith("TEST_") ||
+    upper.startsWith("MANUAL_")
+  ) {
+    return false;
+  }
+  if (/^E\d{8}\d{12}[A-Za-z0-9]{11}$/.test(s)) return true;
+  if (s.length >= 25 && /^E\d{8,}[A-Za-z0-9]+$/.test(s)) return true;
+  return false;
+}
+
+function isPixEndToEndIdAlreadyClaimed(e2e, excludeOrderId = null) {
+  const norm = String(e2e || "").trim();
+  if (!norm) return false;
+  const excl = excludeOrderId ? String(excludeOrderId) : null;
+
+  if (Array.isArray(db.minibarOrders)) {
+    for (const o of db.minibarOrders) {
+      if (!o) continue;
+      if (excl && String(o.id) === excl) continue;
+      if (o.paymentStatus === "pago" && String(o.pixEndToEndId || "").trim() === norm) {
+        return true;
+      }
+    }
+  }
+
+  if (Array.isArray(db.reservations)) {
+    for (const r of db.reservations) {
+      if (!r) continue;
+      if (String(r.pixEndToEndId || "").trim() === norm) return true;
+      if (Array.isArray(r.payments)) {
+        for (const p of r.payments) {
+          if (p && String(p.endToEndId || "").trim() === norm) return true;
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(db.boletos)) {
+    for (const b of db.boletos) {
+      if (!b) continue;
+      if (String(b.pixEndToEndId || b.endToEndId || "").trim() === norm) return true;
+    }
+  }
+
+  return false;
+}
+
+function isDynamicInterPixTxId(txid) {
+  const clean = String(txid || "").trim();
+  if (clean.length < 26) return false;
+  const upper = clean.toUpperCase();
+  if (
+    upper.startsWith("STAT_") ||
+    upper.startsWith("TXMB") ||
+    upper.startsWith("RES") ||
+    upper.startsWith("PKG")
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function getMinibarOrderVerificationStatus(order) {
+  if (!order || order.paymentStatus !== "pago") return "pending";
+  const total = Number(order.totalAmount || 0);
+  const method = String(order.paymentMethod || "").toLowerCase();
+  if (order.manualPaymentConfirmed || order.paymentVerifiedSource === "manual_admin") {
+    return "manual_confirmed";
+  }
+  if (total <= 0 || method === "cortesia") {
+    return "manual_confirmed";
+  }
+  if (method === "credit_card" || method === "cartao_credito" || order.mpPaymentId) {
+    return "verified_card";
+  }
+  if (method === "pix") {
+    return isValidRealPixEndToEndId(order.pixEndToEndId)
+      ? "verified_e2e"
+      : "unverified_synthetic_e2e";
+  }
+  return "manual_confirmed";
+}
+
+function parseInterExtratoTxTimestamp(tx) {
+  const raw = String(tx?.dataHora || tx?.dataInclusao || tx?.dataEntrada || "").trim();
+  if (!raw) return { ms: null, dateYmd: null, hasTime: false };
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return { ms: null, dateYmd: raw, hasTime: false };
+  }
+  const parsed = new Date(raw);
+  if (!isNaN(parsed.getTime())) {
+    return {
+      ms: parsed.getTime(),
+      dateYmd: getExecutionDateStr(parsed.toISOString()),
+      hasTime: true
+    };
+  }
+  return { ms: null, dateYmd: raw.slice(0, 10), hasTime: false };
+}
+
+async function verifyMinibarOrderPixPayment(order, options = {}) {
+  if (!order) {
+    return {
+      verified: false,
+      confirmedUnpaid: false,
+      networkError: false,
+      endToEndId: null,
+      paidAt: null,
+      amount: 0,
+      txid: null,
+      source: "invalid_order"
+    };
+  }
+
+  const expectedAmount = Number(order.totalAmount || 0);
+  const rawCandidates = [
+    order.pixTxId,
+    ...(Array.isArray(order.pixTxIdHistory) ? order.pixTxIdHistory : [])
+  ];
+  const candidateTxIds = Array.from(
+    new Set(rawCandidates.map(t => String(t || "").trim()).filter(Boolean))
+  );
+  const dynamicTxIds = candidateTxIds.filter(isDynamicInterPixTxId);
+  const hasNonDynamicTxIds = candidateTxIds.length > dynamicTxIds.length;
+
+  let anyDynamicCobChecked = false;
+  let anyDynamicCobConfirmedUnpaid = false;
+  let allDynamicCobsConfirmedUnpaid = dynamicTxIds.length > 0;
+  let anyCobNetworkError = false;
+
+  // Etapa A: Consulta oficial por cobrança dinâmica (/pix/v2/cob/:txid)
+  for (const txid of dynamicTxIds) {
+    anyDynamicCobChecked = true;
+    let cobData = null;
+    try {
+      cobData = await _callMinibarCheckInterPixCobStatus(txid);
+    } catch (err) {
+      console.warn("[Minibar PIX Verify] Erro na consulta /cob:", err?.message || err);
+      cobData = null;
+    }
+
+    const httpStatus = Number(cobData?._httpStatus || 0);
+    if (
+      !cobData ||
+      cobData._networkError === true ||
+      httpStatus >= 500 ||
+      httpStatus === 401 ||
+      httpStatus === 403 ||
+      httpStatus === 429
+    ) {
+      anyCobNetworkError = true;
+      allDynamicCobsConfirmedUnpaid = false;
+      continue;
+    }
+
+    const statusUpper = String(cobData.status || "").toUpperCase();
+    const pixEntries = Array.isArray(cobData.pix) ? cobData.pix : [];
+
+    if (statusUpper === "CONCLUIDA" || pixEntries.length > 0) {
+      let validPixEntry = null;
+      let totalPaidVal = 0;
+
+      if (pixEntries.length > 0) {
+        totalPaidVal = pixEntries.reduce((sum, p) => sum + (Number(p?.valor) || 0), 0);
+        validPixEntry = pixEntries.find(
+          p =>
+            p &&
+            isValidRealPixEndToEndId(p.endToEndId) &&
+            !isPixEndToEndIdAlreadyClaimed(p.endToEndId, order.id)
+        );
+      }
+
+      const fallbackE2e = !validPixEntry && cobData.endToEndId ? String(cobData.endToEndId).trim() : "";
+      const chosenE2e = validPixEntry?.endToEndId
+        ? String(validPixEntry.endToEndId).trim()
+        : (isValidRealPixEndToEndId(fallbackE2e) && !isPixEndToEndIdAlreadyClaimed(fallbackE2e, order.id)
+            ? fallbackE2e
+            : "");
+      const paidVal = totalPaidVal > 0 ? totalPaidVal : Number(cobData.valor?.original || expectedAmount);
+
+      if (chosenE2e && paidVal >= expectedAmount - 0.05) {
+        return {
+          verified: true,
+          confirmedUnpaid: false,
+          networkError: false,
+          endToEndId: chosenE2e,
+          paidAt: validPixEntry?.horario || cobData.horario || new Date().toISOString(),
+          amount: Number(paidVal.toFixed(2)),
+          txid,
+          source: "inter_cob_api"
+        };
+      }
+
+      // Cobrança marcada CONCLUIDA mas sem E2E real inédito ou valor insuficiente:
+      // jamais liquidar com E2E já reivindicado por outro pedido.
+      anyDynamicCobConfirmedUnpaid = true;
+      continue;
+    }
+
+    if (
+      httpStatus === 404 ||
+      cobData.notFound === true ||
+      statusUpper === "ATIVA" ||
+      statusUpper.startsWith("REMOVIDA") ||
+      statusUpper === "EXPIRADA" ||
+      statusUpper === "CANCELADA"
+    ) {
+      anyDynamicCobConfirmedUnpaid = true;
+      continue;
+    }
+
+    anyCobNetworkError = true;
+    allDynamicCobsConfirmedUnpaid = false;
+  }
+
+  // Etapa B: Fallback secundário no Extrato Completo EXCLUSIVAMENTE por txId EXATO (nunca apenas por valor)
+  const shouldScanExtrato =
+    !anyDynamicCobChecked || anyCobNetworkError || hasNonDynamicTxIds || candidateTxIds.length === 0;
+
+  let extratoSucceeded = false;
+  let extratoNetworkError = false;
+
+  if (shouldScanExtrato) {
+    let extrato = null;
+    try {
+      extrato = await _callMinibarGetInterExtrato(options.extratoLookbackDays || 3);
+    } catch (extErr) {
+      console.warn("[Minibar PIX Verify] Erro ao consultar extrato:", extErr?.message || extErr);
+      extrato = null;
+    }
+
+    if (extrato && Array.isArray(extrato.transacoes)) {
+      extratoSucceeded = true;
+      const normTx = v => String(v || "").trim().toUpperCase();
+      const candidateTxSet = new Set(candidateTxIds.map(normTx).filter(Boolean));
+
+      if (candidateTxSet.size > 0) {
+        const orderRefIso = order.pixCreatedAt || order.createdAt || "";
+        const orderRefMs = orderRefIso ? new Date(orderRefIso).getTime() : NaN;
+        const minTxMs = Number.isFinite(orderRefMs) && orderRefMs > 0 ? orderRefMs - 5 * 60 * 1000 : 0;
+        const orderRefYmd = orderRefIso ? getExecutionDateStr(orderRefIso) : "";
+
+        for (const t of extrato.transacoes) {
+          if (!t) continue;
+          if (t.tipoTransacao !== "PIX" || t.tipoOperacao !== "C") continue;
+
+          // Exige txId EXATO em t.detalhes?.txId (PROIBIDO match por valor sem txId!)
+          const txRaw = String(t.detalhes?.txId || t.detalhes?.txid || "").trim();
+          const txNorm = normTx(txRaw);
+          if (!txNorm || !candidateTxSet.has(txNorm)) continue;
+
+          const txAmount = Number(t.valor || 0);
+          if (Math.abs(txAmount - expectedAmount) > 0.05) continue;
+
+          const txTime = parseInterExtratoTxTimestamp(t);
+          if (txTime.hasTime && txTime.ms !== null && minTxMs > 0 && txTime.ms < minTxMs) {
+            continue;
+          }
+          if (!txTime.hasTime && txTime.dateYmd && orderRefYmd && txTime.dateYmd < orderRefYmd) {
+            continue;
+          }
+
+          const realE2e = String(t.detalhes?.endToEndId || t.idTransacao || "").trim();
+          if (!isValidRealPixEndToEndId(realE2e)) continue;
+          if (isPixEndToEndIdAlreadyClaimed(realE2e, order.id)) continue;
+
+          return {
+            verified: true,
+            confirmedUnpaid: false,
+            networkError: false,
+            endToEndId: realE2e,
+            paidAt: t.dataHora || t.dataInclusao || t.dataEntrada || new Date().toISOString(),
+            amount: Number(txAmount.toFixed(2)),
+            txid: txRaw,
+            source: "inter_extrato_exact_txid"
+          };
+        }
+      }
+    } else {
+      extratoNetworkError = true;
+    }
+  }
+
+  // Consolida diagnóstico: distingue "confirmado não pago" vs "erro de rede/API"
+  if (
+    anyDynamicCobChecked &&
+    !anyCobNetworkError &&
+    anyDynamicCobConfirmedUnpaid &&
+    allDynamicCobsConfirmedUnpaid &&
+    (!hasNonDynamicTxIds || extratoSucceeded)
+  ) {
+    return {
+      verified: false,
+      confirmedUnpaid: true,
+      networkError: false,
+      endToEndId: null,
+      paidAt: null,
+      amount: 0,
+      txid: candidateTxIds[0] || null,
+      source: "inter_cob_confirmed_unpaid"
+    };
+  }
+
+  if (!anyDynamicCobChecked && extratoSucceeded && !extratoNetworkError) {
+    return {
+      verified: false,
+      confirmedUnpaid: true,
+      networkError: false,
+      endToEndId: null,
+      paidAt: null,
+      amount: 0,
+      txid: candidateTxIds[0] || null,
+      source: "inter_extrato_no_matching_txid"
+    };
+  }
+
+  return {
+    verified: false,
+    confirmedUnpaid: false,
+    networkError: true,
+    endToEndId: null,
+    paidAt: null,
+    amount: 0,
+    txid: candidateTxIds[0] || null,
+    source: "inter_network_error"
+  };
+}
+
+function findOrCreateCrmGuestForMinibarTarget({
+  guestId = null,
+  guestName = "",
+  guestPhone = "",
+  guestEmail = "",
+  guestDocument = "",
+  reservationCode = "",
+  createIfMissing = false
+} = {}) {
+  if (!Array.isArray(db.guests)) db.guests = [];
+  const cleanDoc = String(guestDocument || "").replace(/\D/g, "");
+  const cleanPhone = cleanWhatsAppPhone(String(guestPhone || ""));
+  const cleanPhoneTail = cleanPhone.length >= 10 ? cleanPhone.slice(-10) : cleanPhone;
+  const cleanEmail = String(guestEmail || "").trim().toLowerCase();
+
+  let crmGuest = db.guests.find(g => {
+    if (!g) return false;
+    if (guestId && Number(g.id) === Number(guestId)) return true;
+    if (cleanDoc.length >= 11 && String(g.document || g.documentNumber || "").replace(/\D/g, "") === cleanDoc) {
+      return true;
+    }
+    if (cleanPhoneTail.length >= 10) {
+      const gPhone = cleanWhatsAppPhone(String(g.phone || ""));
+      if (gPhone && (gPhone === cleanPhone || gPhone.slice(-10) === cleanPhoneTail)) return true;
+    }
+    if (cleanEmail && cleanEmail.includes("@") && String(g.email || "").trim().toLowerCase() === cleanEmail) {
+      return true;
+    }
+    return false;
+  });
+
+  if (!crmGuest && createIfMissing && guestName && !/^\d+º\s*h[óo]spede/i.test(String(guestName).trim())) {
+    const nextId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g?.id) || 0)) + 1 : 1;
+    crmGuest = {
+      id: nextId,
+      name: String(guestName).trim(),
+      fullName: String(guestName).trim(),
+      phone: String(guestPhone || "").trim(),
+      email: String(guestEmail || "").trim(),
+      document: cleanDoc,
+      documentNumber: cleanDoc,
+      city: "",
+      notes: reservationCode ? `Cadastro vinculado ao consumo de frigobar (${reservationCode})` : "",
+      tags: [],
+      clientType: "avulso",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    db.guests.push(crmGuest);
+  }
+
+  return crmGuest || null;
+}
+
+function normalizeTagKey(tag) {
+  return String(tag || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function hasCrmGuestTag(guest, tagLabel = MINIBAR_CRM_PENDING_TAG) {
+  if (!guest || !Array.isArray(guest.tags)) return false;
+  const target = normalizeTagKey(tagLabel);
+  return guest.tags.some(t => normalizeTagKey(t) === target);
+}
+
+function addCrmGuestTag(guest, tagLabel = MINIBAR_CRM_PENDING_TAG) {
+  if (!guest) return false;
+  if (!Array.isArray(guest.tags)) guest.tags = [];
+  if (hasCrmGuestTag(guest, tagLabel)) return false;
+  guest.tags.push(tagLabel);
+  guest.updatedAt = new Date().toISOString();
+  return true;
+}
+
+function removeCrmGuestTag(guest, tagLabel = MINIBAR_CRM_PENDING_TAG) {
+  if (!guest || !Array.isArray(guest.tags)) return false;
+  const target = normalizeTagKey(tagLabel);
+  const before = guest.tags.length;
+  guest.tags = guest.tags.filter(t => normalizeTagKey(t) !== target);
+  if (guest.tags.length !== before) {
+    guest.updatedAt = new Date().toISOString();
+    return true;
+  }
+  return false;
+}
+
+function applyPaymentDeductionToLaunchOrders(order, pendingLaunchOrders, nowIso) {
+  if (!order || !Array.isArray(pendingLaunchOrders) || pendingLaunchOrders.length === 0) return;
+
+  let amountToDeduct = Number(order.totalAmount || 0);
+  const payerGuestIdx = Number(order.guestIndex || 1);
+
+  const selectedItems =
+    Array.isArray(order.selectedLaunchItems) && order.selectedLaunchItems.length > 0
+      ? order.selectedLaunchItems
+      : order.partialMode === "items" || order.partialMode === "full" || !order.partialMode
+      ? order.items || []
+      : [];
+
+  for (const sel of selectedItems) {
+    if (!sel || sel.productId === "split_share" || sel.productId === "partial_payment") continue;
+    let qtyToMark = Number(sel.quantity) || 0;
+    if (qtyToMark <= 0) continue;
+
+    for (const lOrd of pendingLaunchOrders) {
+      if (sel.launchOrderId && lOrd.id !== sel.launchOrderId) continue;
+      for (const lIt of lOrd.items || []) {
+        if (lIt.productId !== sel.productId) continue;
+        const totalQ = Number(lIt.quantity) || 0;
+        const curPaid = Number(lIt.paidQuantity) || 0;
+        const curRem = lIt.remainingQuantity !== undefined ? Number(lIt.remainingQuantity) : Math.max(0, totalQ - curPaid);
+        if (curRem <= 0) continue;
+        const take = Math.min(curRem, qtyToMark);
+        lIt.paidQuantity = curPaid + take;
+        lIt.remainingQuantity = Math.max(0, totalQ - lIt.paidQuantity);
+        if (!lIt.paidByGuest || typeof lIt.paidByGuest !== "object") {
+          lIt.paidByGuest = {};
+        }
+        lIt.paidByGuest[payerGuestIdx] = (lIt.paidByGuest[payerGuestIdx] || 0) + take;
+        qtyToMark -= take;
+
+        const itemValue = Number((take * Number(lIt.unitPrice || 0)).toFixed(2));
+        const curOrdRem =
+          lOrd.remainingAmount !== undefined ? Number(lOrd.remainingAmount) : Number(lOrd.totalAmount || 0);
+        const deductOnThisOrd = Math.min(curOrdRem, amountToDeduct, itemValue);
+        if (deductOnThisOrd > 0) {
+          lOrd.remainingAmount = Number(Math.max(0, curOrdRem - deductOnThisOrd).toFixed(2));
+          lOrd.updatedAt = nowIso;
+          amountToDeduct = Number(Math.max(0, amountToDeduct - deductOnThisOrd).toFixed(2));
+        }
+        if (qtyToMark <= 0) break;
+      }
+      if (qtyToMark <= 0) break;
+    }
+  }
+
+  for (const lOrd of pendingLaunchOrders) {
+    if (amountToDeduct <= 0.009) break;
+    const curRem =
+      lOrd.remainingAmount !== undefined ? Number(lOrd.remainingAmount) : Number(lOrd.totalAmount || 0);
+    if (curRem <= 0) continue;
+
+    const deductHere = Math.min(curRem, amountToDeduct);
+    const nextRem = Number(Math.max(0, curRem - deductHere).toFixed(2));
+    lOrd.remainingAmount = nextRem;
+    lOrd.updatedAt = nowIso;
+    amountToDeduct = Number(Math.max(0, amountToDeduct - deductHere).toFixed(2));
+  }
+
+  for (const lOrd of pendingLaunchOrders) {
+    const curRem =
+      lOrd.remainingAmount !== undefined ? Number(lOrd.remainingAmount) : Number(lOrd.totalAmount || 0);
+    if (curRem <= 0.01) {
+      lOrd.remainingAmount = 0;
+      lOrd.paymentStatus = "lancamento_quitado";
+      lOrd.discrepancyResolvedAt = nowIso;
+      lOrd.settledByOrderId = order.id;
+      for (const lIt of lOrd.items || []) {
+        lIt.paidQuantity = Number(lIt.quantity) || 0;
+        lIt.remainingQuantity = 0;
+      }
+    }
+  }
+}
+
 function settleMinibarOrder(order, paymentDetails = {}) {
   if (!order) return null;
   const nowIso = paymentDetails.paidAt || new Date().toISOString();
+  const effectiveMethod = String(paymentDetails.paymentMethod || order.paymentMethod || "").toLowerCase();
+  const totalAmt = Number(order.totalAmount || 0);
+  const isManualAdmin = Boolean(paymentDetails.manualAdminConfirmation);
+
+  // TRAVA CENTRAL DE INTEGRIDADE: PIX pago (> R$ 0) sem confirmação manual admin EXIGE endToEndId real e inédito do Banco Central.
+  if (effectiveMethod === "pix" && totalAmt > 0 && !isManualAdmin) {
+    const candidateE2e = String(paymentDetails.pixEndToEndId || order.pixEndToEndId || "").trim();
+    const e2eValid = isValidRealPixEndToEndId(candidateE2e);
+    const e2eClaimed = e2eValid ? isPixEndToEndIdAlreadyClaimed(candidateE2e, order.id) : false;
+    if (!e2eValid || e2eClaimed) {
+      logAuditEvent({
+        level: "error",
+        category: "financial",
+        action: "MINIBAR_FALSE_SETTLEMENT_BLOCKED",
+        details: {
+          orderId: order.id,
+          reservationCode: order.reservationCode || "",
+          flatNumber: order.flatNumber || "",
+          totalAmount: totalAmt,
+          attemptedEndToEndId: candidateE2e || null,
+          reason: !e2eValid ? "INVALID_OR_SYNTHETIC_E2E" : "E2E_ALREADY_CLAIMED",
+          source: paymentDetails.source || "unknown"
+        }
+      });
+      return null;
+    }
+  }
 
   order.paymentStatus = "pago";
   order.paidAt = nowIso;
@@ -94945,13 +97795,26 @@ function settleMinibarOrder(order, paymentDetails = {}) {
   if (paymentDetails.amount && Number(paymentDetails.amount) > 0) {
     order.paidAmount = Number(paymentDetails.amount);
   }
+  order.paymentVerifiedSource =
+    paymentDetails.source ||
+    (isManualAdmin
+      ? "manual_admin"
+      : effectiveMethod === "credit_card" || effectiveMethod === "cartao_credito"
+      ? "mercadopago"
+      : "verified");
+  if (isManualAdmin) {
+    order.manualPaymentConfirmed = true;
+    order.manualPaymentDetails = {
+      confirmedBy: String(paymentDetails.actorName || "Administrador").trim(),
+      confirmedAt: nowIso,
+      paymentMethod: effectiveMethod || "pix_avulso",
+      amount: Number(paymentDetails.amount || order.totalAmount || 0),
+      notes: String(paymentDetails.notes || "").trim()
+    };
+  }
   order.updatedAt = new Date().toISOString();
 
-  const isDirectLaunchOrder =
-    order.source === "restocker_launch" ||
-    order.source === "anserve_discrepancy" ||
-    String(order.id || "").startsWith("ORD-MB-DIV-") ||
-    String(order.id || "").startsWith("ORD-MB-LANC-");
+  const isDirectLaunchOrder = isMinibarLaunchOrderRecord(order);
 
   // 1. Se o próprio pedido quitado era um lançamento direto (pagamento integral in-place), zera seu saldo pendente
   if (isDirectLaunchOrder) {
@@ -94971,98 +97834,14 @@ function settleMinibarOrder(order, paymentDetails = {}) {
         o &&
         o.id !== order.id &&
         o.paymentStatus === "pendente" &&
-        (o.source === "restocker_launch" ||
-          o.source === "anserve_discrepancy" ||
-          String(o.id || "").startsWith("ORD-MB-DIV-") ||
-          String(o.id || "").startsWith("ORD-MB-LANC-")) &&
+        isMinibarLaunchOrderRecord(o) &&
         ((order.reservationCode && o.reservationCode === order.reservationCode) ||
           (order.reservationId && String(o.reservationId) === String(order.reservationId)) ||
           (!order.reservationCode && String(o.flatNumber) === String(order.flatNumber)))
     );
 
     if (pendingLaunchOrders.length > 0) {
-      let amountToDeduct = Number(order.totalAmount || 0);
-      const payerGuestIdx = Number(order.guestIndex || 1);
-
-      // Abate quantidades e valores diretamente nos lançamentos dos itens selecionados quando aplicável
-      const selectedItems = Array.isArray(order.selectedLaunchItems) && order.selectedLaunchItems.length > 0
-        ? order.selectedLaunchItems
-        : (order.partialMode === "items" || order.partialMode === "full" || !order.partialMode)
-        ? (order.items || [])
-        : [];
-
-      for (const sel of selectedItems) {
-        if (!sel || sel.productId === "split_share" || sel.productId === "partial_payment") continue;
-        let qtyToMark = Number(sel.quantity) || 0;
-        if (qtyToMark <= 0) continue;
-
-        for (const lOrd of pendingLaunchOrders) {
-          if (sel.launchOrderId && lOrd.id !== sel.launchOrderId) continue;
-          for (const lIt of lOrd.items || []) {
-            if (lIt.productId !== sel.productId) continue;
-            const totalQ = Number(lIt.quantity) || 0;
-            const curPaid = Number(lIt.paidQuantity) || 0;
-            const curRem = lIt.remainingQuantity !== undefined ? Number(lIt.remainingQuantity) : Math.max(0, totalQ - curPaid);
-            if (curRem <= 0) continue;
-            const take = Math.min(curRem, qtyToMark);
-            lIt.paidQuantity = curPaid + take;
-            lIt.remainingQuantity = Math.max(0, totalQ - lIt.paidQuantity);
-            if (!lIt.paidByGuest || typeof lIt.paidByGuest !== "object") {
-              lIt.paidByGuest = {};
-            }
-            lIt.paidByGuest[payerGuestIdx] = (lIt.paidByGuest[payerGuestIdx] || 0) + take;
-            qtyToMark -= take;
-
-            const itemValue = Number((take * Number(lIt.unitPrice || 0)).toFixed(2));
-            const curOrdRem =
-              lOrd.remainingAmount !== undefined
-                ? Number(lOrd.remainingAmount)
-                : Number(lOrd.totalAmount || 0);
-            const deductOnThisOrd = Math.min(curOrdRem, amountToDeduct, itemValue);
-            if (deductOnThisOrd > 0) {
-              lOrd.remainingAmount = Number(Math.max(0, curOrdRem - deductOnThisOrd).toFixed(2));
-              lOrd.updatedAt = nowIso;
-              amountToDeduct = Number(Math.max(0, amountToDeduct - deductOnThisOrd).toFixed(2));
-            }
-            if (qtyToMark <= 0) break;
-          }
-          if (qtyToMark <= 0) break;
-        }
-      }
-
-      // Abate eventual saldo residual em R$ (ex: modo half_and_half ou custom_amount) em ordem cronológica (FIFO)
-      for (const lOrd of pendingLaunchOrders) {
-        if (amountToDeduct <= 0.009) break;
-        const curRem =
-          lOrd.remainingAmount !== undefined
-            ? Number(lOrd.remainingAmount)
-            : Number(lOrd.totalAmount || 0);
-        if (curRem <= 0) continue;
-
-        const deductHere = Math.min(curRem, amountToDeduct);
-        const nextRem = Number(Math.max(0, curRem - deductHere).toFixed(2));
-        lOrd.remainingAmount = nextRem;
-        lOrd.updatedAt = nowIso;
-        amountToDeduct = Number(Math.max(0, amountToDeduct - deductHere).toFixed(2));
-      }
-
-      // Verifica lançamentos integralmente quitados
-      for (const lOrd of pendingLaunchOrders) {
-        const curRem =
-          lOrd.remainingAmount !== undefined
-            ? Number(lOrd.remainingAmount)
-            : Number(lOrd.totalAmount || 0);
-        if (curRem <= 0.01) {
-          lOrd.remainingAmount = 0;
-          lOrd.paymentStatus = "lancamento_quitado";
-          lOrd.discrepancyResolvedAt = nowIso;
-          lOrd.settledByOrderId = order.id;
-          for (const lIt of lOrd.items || []) {
-            lIt.paidQuantity = Number(lIt.quantity) || 0;
-            lIt.remainingQuantity = 0;
-          }
-        }
-      }
+      applyPaymentDeductionToLaunchOrders(order, pendingLaunchOrders, nowIso);
     }
   }
 
@@ -95071,12 +97850,10 @@ function settleMinibarOrder(order, paymentDetails = {}) {
     o =>
       o &&
       o.paymentStatus === "pendente" &&
-      (o.source === "restocker_launch" ||
-        o.source === "anserve_discrepancy" ||
-        String(o.id || "").startsWith("ORD-MB-DIV-") ||
-        String(o.id || "").startsWith("ORD-MB-LANC-")) &&
+      isMinibarLaunchOrderRecord(o) &&
       ((order.reservationCode && o.reservationCode === order.reservationCode) ||
-        String(o.flatNumber) === String(order.flatNumber)) &&
+        (order.reservationId && String(o.reservationId) === String(order.reservationId)) ||
+        (!order.reservationCode && String(o.flatNumber) === String(order.flatNumber))) &&
       Number(o.remainingAmount ?? o.totalAmount ?? 0) > 0.01
   );
 
@@ -95098,8 +97875,7 @@ function settleMinibarOrder(order, paymentDetails = {}) {
     }
   }
 
-  const isDiscrepancyOrder =
-    isDirectLaunchOrder || Boolean(order.settlesLaunchOrders);
+  const isDiscrepancyOrder = isDirectLaunchOrder || Boolean(order.settlesLaunchOrders);
 
   if (Array.isArray(db.minibarInspections)) {
     for (const insp of db.minibarInspections) {
@@ -95110,7 +97886,8 @@ function settleMinibarOrder(order, paymentDetails = {}) {
         insp.hasDiscrepancy &&
         !insp.discrepancyPaid &&
         ((order.reservationCode && insp.reservationCode === order.reservationCode) ||
-          String(insp.flatNumber) === String(order.flatNumber));
+          (order.reservationId && String(insp.reservationId) === String(order.reservationId)) ||
+          (!order.reservationCode && String(insp.flatNumber) === String(order.flatNumber)));
 
       if (matchesOrder || matchesResCleared) {
         insp.discrepancyPaid = true;
@@ -95129,9 +97906,10 @@ function settleMinibarOrder(order, paymentDetails = {}) {
       (order.reservationId && String(r.id) === String(order.reservationId))
   );
 
+  let postSettleStatement = null;
   if (reservation) {
-    // Re-sincroniza eventuais ordens auto-split remanescentes da reserva
     const flatStr = String(order.flatNumber || reservation.flatNumber || reservation.flatId || "").trim();
+    postSettleStatement = buildReservationMinibarStatement(reservation, flatStr);
     const hasPendingSplits = (db.minibarOrders || []).some(
       o =>
         o &&
@@ -95140,8 +97918,7 @@ function settleMinibarOrder(order, paymentDetails = {}) {
         (o.reservationCode === reservation.code || String(o.reservationId) === String(reservation.id))
     );
     if (hasPendingSplits) {
-      const updatedStmt = buildReservationMinibarStatement(reservation, flatStr);
-      syncReservationAutoSplitOrders(reservation, flatStr, updatedStmt);
+      syncReservationAutoSplitOrders(reservation, flatStr, postSettleStatement);
     }
     if (!Array.isArray(reservation.minibarPayments)) {
       reservation.minibarPayments = [];
@@ -95161,6 +97938,7 @@ function settleMinibarOrder(order, paymentDetails = {}) {
         guestIndex: order.guestIndex || 1,
         guestRole: order.guestRole || "titular",
         isDiscrepancySettlement: isDiscrepancyOrder,
+        manualPaymentConfirmed: Boolean(order.manualPaymentConfirmed),
         items: (order.items || []).map(it => ({
           productId: it.productId,
           productName: it.productName || it.name,
@@ -95171,30 +97949,59 @@ function settleMinibarOrder(order, paymentDetails = {}) {
     }
 
     if (Array.isArray(reservation.timeline)) {
+      const methodLabel = isManualAdmin
+        ? `Baixa Manual (${order.paymentMethod || "admin"})`
+        : order.paymentMethod === "pix"
+        ? "PIX"
+        : "Cartão";
       reservation.timeline.unshift({
         id: `tl_mb_${order.id}`,
         type: "minibar_payment",
         title: `🧊 Consumo de Frigobar Pago (${order.guestName})`,
-        description: `Pedido ${order.id} no valor de R$ ${Number(order.totalAmount || 0).toFixed(2)} pago via ${
-          order.paymentMethod === "pix" ? "PIX" : "Cartão"
-        }.`,
+        description: `Pedido ${order.id} no valor de R$ ${Number(order.totalAmount || 0).toFixed(2)} pago via ${methodLabel}.`,
         timestamp: nowIso
       });
     }
   }
 
-  // 3. Atualiza ficha do hóspede consumidor no CRM (db.guests)
+  // 3. Atualiza ficha do hóspede consumidor no CRM (db.guests) e remove tag "Pendência Frigobar" se quitado
+  const payerIdx = Number(order.guestIndex || 1);
+  const payerShareAfter = postSettleStatement
+    ? (postSettleStatement.splitBreakdown?.shares || []).find(s => Number(s.guestIndex) === payerIdx)
+    : null;
+  const isGuestShareCleared =
+    !hasAnyRemainingLaunch ||
+    (postSettleStatement && postSettleStatement.pendingBalance <= 0.01) ||
+    (payerShareAfter && Number(payerShareAfter.amount || 0) <= 0.01);
+
   if (Array.isArray(db.guests)) {
-    const cleanDoc = String(order.fiscalPreferences?.documentNumber || order.guestDocument || "").replace(/\D/g, "");
-    const cleanPhone = String(order.guestPhone || "").replace(/\D/g, "");
-    const crmGuest = db.guests.find(
-      g =>
-        (order.guestId && Number(g.id) === Number(order.guestId)) ||
-        (cleanDoc.length >= 11 && String(g.document || g.documentNumber || "").replace(/\D/g, "") === cleanDoc) ||
-        (cleanPhone.length >= 10 && String(g.phone || "").replace(/\D/g, "") === cleanPhone)
-    );
+    const crmGuest = findOrCreateCrmGuestForMinibarTarget({
+      guestId: order.guestId || (payerIdx === 1 ? reservation?.guestId : null),
+      guestName: order.guestName || reservation?.guestName,
+      guestPhone: order.guestPhone || (payerIdx === 1 ? reservation?.guestPhone : ""),
+      guestEmail: order.fiscalPreferences?.email || order.guestEmail || (payerIdx === 1 ? reservation?.guestEmail : ""),
+      guestDocument: order.fiscalPreferences?.documentNumber || order.guestDocument || (payerIdx === 1 ? reservation?.guestDocument : ""),
+      createIfMissing: false
+    });
     if (crmGuest) {
       crmGuest.lastMinibarConsumptionAt = nowIso;
+      if (isGuestShareCleared) {
+        removeCrmGuestTag(crmGuest, MINIBAR_CRM_PENDING_TAG);
+      }
+    }
+    // Se a reserva inteira zerou saldo, remove a tag também de eventuais outros hóspedes da reserva
+    if (reservation && (!hasAnyRemainingLaunch || (postSettleStatement && postSettleStatement.pendingBalance <= 0.01))) {
+      for (const gSlot of getReservationAllGuests(reservation)) {
+        const gCrm = findOrCreateCrmGuestForMinibarTarget({
+          guestId: gSlot.guestId,
+          guestName: gSlot.name,
+          guestPhone: gSlot.phone,
+          guestEmail: gSlot.email,
+          guestDocument: gSlot.document || gSlot.cpf,
+          createIfMissing: false
+        });
+        if (gCrm) removeCrmGuestTag(gCrm, MINIBAR_CRM_PENDING_TAG);
+      }
     }
   }
 
@@ -95204,7 +98011,7 @@ function settleMinibarOrder(order, paymentDetails = {}) {
       category: "checkout",
       title: `🧊 Frigobar Pago: R$ ${Number(order.totalAmount || 0).toFixed(2)} (Flat ${order.flatNumber})`,
       message: `Pedido ${order.id} pago por ${order.guestName} (${
-        order.paymentMethod === "pix" ? "PIX" : "Cartão"
+        isManualAdmin ? "Baixa Manual" : order.paymentMethod === "pix" ? "PIX" : "Cartão"
       }). Disponível na Fila de Notas Fiscais da Anserve.`,
       severity: "success",
       metadata: { orderId: order.id, flatNumber: order.flatNumber, amount: order.totalAmount, isDiscrepancyOrder },
@@ -95214,6 +98021,1150 @@ function settleMinibarOrder(order, paymentDetails = {}) {
 
   saveDatabase("minibar_order_settled");
   return order;
+}
+
+function reopenMinibarOrderToPending(order, { reason = "", actorName = "Sistema", source = "admin_manual" } = {}) {
+  if (!order) return null;
+  const nowIso = new Date().toISOString();
+  const cleanReason = String(reason || "Reaberto para pagamento pendente").trim();
+
+  if (!Array.isArray(order.reopenHistory)) order.reopenHistory = [];
+  order.reopenHistory.push({
+    reopenedAt: nowIso,
+    reason: cleanReason,
+    actorName: String(actorName || "Sistema").trim(),
+    source: String(source || "admin_manual").trim(),
+    previousStatus: order.paymentStatus || null,
+    previousPaidAt: order.paidAt || null,
+    previousPaymentMethod: order.paymentMethod || null,
+    previousPixTxId: order.pixTxId || null,
+    previousPixEndToEndId: order.pixEndToEndId || null,
+    previousMpPaymentId: order.mpPaymentId || null,
+    previousManualPaymentConfirmed: Boolean(order.manualPaymentConfirmed)
+  });
+
+  // Reverte o pedido e limpa os campos de pagamento com null explícito (garante merge seguro)
+  order.paymentStatus = "pendente";
+  order.reopenedAt = nowIso;
+  order.paidAt = null;
+  order.paidAmount = null;
+  order.pixEndToEndId = null;
+  order.mpPaymentId = null;
+  order.pixTxId = null;
+  order.pixCopiaECola = null;
+  order.pixExpiresAt = null;
+  order.pixIsDynamic = false;
+  order.manualPaymentConfirmed = false;
+  order.manualPaymentDetails = null;
+  order.paymentVerifiedSource = null;
+  order.updatedAt = nowIso;
+
+  const isDirectLaunch = isMinibarLaunchOrderRecord(order);
+  const restoredLaunchOrderIds = [];
+
+  const reservation = (db.reservations || []).find(
+    r =>
+      r &&
+      ((order.reservationCode && r.code === order.reservationCode) ||
+        (order.reservationId && String(r.id) === String(order.reservationId)))
+  );
+
+  if (isDirectLaunch) {
+    order.remainingAmount = Number(order.totalAmount || 0);
+    order.discrepancyResolvedAt = null;
+    order.settledByOrderId = null;
+    for (const it of order.items || []) {
+      it.paidQuantity = 0;
+      it.remainingQuantity = Number(it.quantity) || 0;
+      it.paidByGuest = {};
+    }
+    restoredLaunchOrderIds.push(order.id);
+  } else {
+    // Recalcula de forma determinística todos os lançamentos pais da reserva usando apenas pedidos que continuam pagos
+    const resLaunchOrders = (db.minibarOrders || []).filter(
+      o =>
+        o &&
+        o.id !== order.id &&
+        o.paymentStatus !== "cancelado" &&
+        isMinibarLaunchOrderRecord(o) &&
+        ((order.reservationCode && o.reservationCode === order.reservationCode) ||
+          (order.reservationId && String(o.reservationId) === String(order.reservationId)) ||
+          (!order.reservationCode && String(o.flatNumber) === String(order.flatNumber)))
+    );
+
+    if (resLaunchOrders.length > 0) {
+      for (const lOrd of resLaunchOrders) {
+        lOrd.paymentStatus = "pendente";
+        lOrd.remainingAmount = Number(lOrd.totalAmount || 0);
+        lOrd.discrepancyResolvedAt = null;
+        lOrd.settledByOrderId = null;
+        lOrd.reopenedAt = nowIso;
+        lOrd.updatedAt = nowIso;
+        for (const lIt of lOrd.items || []) {
+          lIt.paidQuantity = 0;
+          lIt.remainingQuantity = Number(lIt.quantity) || 0;
+          lIt.paidByGuest = {};
+        }
+        restoredLaunchOrderIds.push(lOrd.id);
+      }
+
+      // Reaplica outros pagamentos legitimamente pagos que ainda existam na reserva
+      const remainingPaidSettlements = (db.minibarOrders || [])
+        .filter(
+          o =>
+            o &&
+            o.id !== order.id &&
+            o.paymentStatus === "pago" &&
+            !isMinibarLaunchOrderRecord(o) &&
+            ((order.reservationCode && o.reservationCode === order.reservationCode) ||
+              (order.reservationId && String(o.reservationId) === String(order.reservationId)) ||
+              (!order.reservationCode && String(o.flatNumber) === String(order.flatNumber)))
+        )
+        .sort((a, b) => String(a.paidAt || a.createdAt || "").localeCompare(String(b.paidAt || b.createdAt || "")));
+
+      for (const paidOrd of remainingPaidSettlements) {
+        const stillOpenLaunches = resLaunchOrders.filter(
+          l => l.paymentStatus === "pendente" && Number(l.remainingAmount ?? l.totalAmount ?? 0) > 0.01
+        );
+        if (stillOpenLaunches.length > 0) {
+          applyPaymentDeductionToLaunchOrders(paidOrd, stillOpenLaunches, paidOrd.paidAt || nowIso);
+        }
+      }
+    } else {
+      order.remainingAmount = Number(order.totalAmount || 0);
+    }
+  }
+
+  // Reverte discrepancyPaid / discrepancyResolved nas inspeções vinculadas à reserva
+  const hasAnyRemainingLaunchNow = (db.minibarOrders || []).some(
+    o =>
+      o &&
+      o.paymentStatus === "pendente" &&
+      isMinibarLaunchOrderRecord(o) &&
+      ((order.reservationCode && o.reservationCode === order.reservationCode) ||
+        (order.reservationId && String(o.reservationId) === String(order.reservationId)) ||
+        (!order.reservationCode && String(o.flatNumber) === String(order.flatNumber))) &&
+      Number(o.remainingAmount ?? o.totalAmount ?? 0) > 0.01
+  );
+
+  if (Array.isArray(db.minibarInspections)) {
+    for (const insp of db.minibarInspections) {
+      if (!insp) continue;
+      const matchesDirect = insp.chargeOrderId === order.id;
+      const matchesRes =
+        hasAnyRemainingLaunchNow &&
+        insp.hasDiscrepancy &&
+        ((order.reservationCode && insp.reservationCode === order.reservationCode) ||
+          (order.reservationId && String(insp.reservationId) === String(order.reservationId)) ||
+          (!order.reservationCode && String(insp.flatNumber) === String(order.flatNumber)));
+      if (matchesDirect || matchesRes) {
+        insp.discrepancyPaid = false;
+        insp.discrepancyPaidAt = null;
+        insp.discrepancyPaidBy = null;
+        insp.discrepancyResolved = false;
+        insp.updatedAt = nowIso;
+      }
+    }
+  }
+
+  if (reservation) {
+    if (Array.isArray(reservation.minibarPayments)) {
+      reservation.minibarPayments = reservation.minibarPayments.filter(mp => mp && mp.orderId !== order.id);
+    }
+    if (Array.isArray(reservation.timeline)) {
+      reservation.timeline.unshift({
+        id: `tl_mb_reopen_${order.id}_${Date.now()}`,
+        type: "minibar_reopen",
+        title: `🔄 Pedido de Frigobar Reaberto (${order.id})`,
+        description: `Pedido ${order.id} (R$ ${Number(order.totalAmount || 0).toFixed(2)}) reaberto como pendente por ${actorName}. Motivo: ${cleanReason}`,
+        timestamp: nowIso
+      });
+    }
+
+    if (!reservation.minibarReminderState || typeof reservation.minibarReminderState !== "object") {
+      reservation.minibarReminderState = {};
+    }
+    const guestKey = String(order.guestIndex || 1);
+    const existingRemState = reservation.minibarReminderState[guestKey];
+    if (!existingRemState) {
+      reservation.minibarReminderState[guestKey] = {
+        reminderCount: 0,
+        lastSentDate: null,
+        lastSentAt: null,
+        paused: false,
+        pausedAt: null,
+        pausedReason: "",
+        formalNoticeSentAt: null,
+        reopenedAt: nowIso,
+        history: []
+      };
+    } else {
+      existingRemState.reopenedAt = nowIso;
+      if (!existingRemState.lastSentDate) {
+        existingRemState.reminderCount = 0;
+      }
+    }
+
+    const flatStr = String(order.flatNumber || reservation.flatNumber || reservation.flatId || "").trim();
+    const updatedStmt = buildReservationMinibarStatement(reservation, flatStr);
+    syncReservationAutoSplitOrders(reservation, flatStr, updatedStmt);
+  }
+
+  logAuditEvent({
+    level: "warn",
+    category: "financial",
+    action: "MINIBAR_ORDER_REOPENED",
+    actor: { id: 0, name: String(actorName || "Sistema"), role: "admin" },
+    details: {
+      orderId: order.id,
+      reservationCode: order.reservationCode || "",
+      flatNumber: order.flatNumber || "",
+      totalAmount: Number(order.totalAmount || 0),
+      reason: cleanReason,
+      source,
+      restoredLaunchOrderIds
+    }
+  });
+
+  saveDatabase("minibar_order_reopened");
+  return {
+    reopened: true,
+    order,
+    reservationCode: order.reservationCode || reservation?.code || null,
+    restoredLaunchOrderIds
+  };
+}
+
+async function auditAndReopenFalsePaidMinibarOrders({ lookbackDays = 15, triggeredBy = "boot_audit" } = {}) {
+  ensureMinibarSettingsDefaults(db);
+  const days = Math.max(
+    1,
+    Math.min(90, Number(lookbackDays ?? db.minibarSettings?.dailyPaymentReminderLookbackDays) || 15)
+  );
+  const nowMs = Date.now();
+  const cutoffMs = nowMs - days * 24 * 60 * 60 * 1000;
+
+  const candidates = (db.minibarOrders || []).filter(o => {
+    if (!o) return false;
+    if (o.paymentStatus !== "pago") return false;
+    if (String(o.paymentMethod || "").toLowerCase() !== "pix") return false;
+    if (Number(o.totalAmount || 0) <= 0) return false;
+    if (o.manualPaymentConfirmed) return false;
+    if (isValidRealPixEndToEndId(o.pixEndToEndId)) return false;
+    const orderMs = new Date(o.paidAt || o.updatedAt || o.createdAt || 0).getTime();
+    if (Number.isFinite(orderMs) && orderMs > 0 && orderMs < cutoffMs) return false;
+    return true;
+  });
+
+  const report = {
+    ranAt: new Date().toISOString(),
+    triggeredBy: String(triggeredBy || "boot_audit"),
+    lookbackDays: days,
+    scannedCount: candidates.length,
+    reopenedCount: 0,
+    backfilledCount: 0,
+    verifiedBackfilledCount: 0,
+    flaggedWithInvoiceCount: 0,
+    skippedOnNetworkErrorCount: 0,
+    reopenedOrders: [],
+    backfilledOrders: [],
+    flaggedWithInvoiceOrders: [],
+    skippedOrders: []
+  };
+
+  const hasCustomVerifyHooks = Boolean(
+    typeof _minibarTestHooks.checkInterPixCobStatus === "function" ||
+      typeof _minibarTestHooks.getCachedInterExtratoCompleto === "function" ||
+      typeof _minibarTestHooks.getCachedInterExtratoCompletoWindow === "function"
+  );
+  const interAvailable = hasCustomVerifyHooks || _callMinibarIsInterConfigured();
+
+  for (const order of candidates) {
+    const hasInvoice = Boolean(
+      order.invoice?.status === "anexada" || order.invoice?.invoiceFileUrl || order.invoice?.fileUrl
+    );
+    if (hasInvoice) {
+      report.flaggedWithInvoiceCount += 1;
+      report.flaggedWithInvoiceOrders.push({
+        id: order.id,
+        flatNumber: order.flatNumber || "",
+        reservationCode: order.reservationCode || "",
+        guestName: order.guestName || "Hóspede",
+        totalAmount: Number(order.totalAmount || 0),
+        invoiceNumber: order.invoice?.invoiceNumber || ""
+      });
+      continue;
+    }
+
+    if (!interAvailable) {
+      report.skippedOnNetworkErrorCount += 1;
+      report.skippedOrders.push({
+        id: order.id,
+        flatNumber: order.flatNumber || "",
+        reservationCode: order.reservationCode || "",
+        reason: "inter_not_configured"
+      });
+      continue;
+    }
+
+    const verifyRes = await verifyMinibarOrderPixPayment(order, {
+      extratoLookbackDays: Math.max(days, 15)
+    });
+
+    if (verifyRes.verified && verifyRes.endToEndId) {
+      order.pixEndToEndId = verifyRes.endToEndId;
+      order.paymentVerifiedSource = "inter_audit_backfill";
+      order.updatedAt = new Date().toISOString();
+      report.backfilledCount += 1;
+      report.verifiedBackfilledCount = report.backfilledCount;
+      report.backfilledOrders.push({
+        id: order.id,
+        flatNumber: order.flatNumber || "",
+        reservationCode: order.reservationCode || "",
+        guestName: order.guestName || "Hóspede",
+        totalAmount: Number(order.totalAmount || 0),
+        endToEndId: verifyRes.endToEndId
+      });
+    } else if (verifyRes.confirmedUnpaid && !verifyRes.networkError) {
+      reopenMinibarOrderToPending(order, {
+        reason: "Auditoria Banco Inter: pagamento PIX não confirmado no banco (E2E sintético/ausente).",
+        actorName: triggeredBy === "boot_audit" || triggeredBy === "boot_audit_pg" ? "Auditoria Automática" : triggeredBy,
+        source: triggeredBy
+      });
+      report.reopenedCount += 1;
+      report.reopenedOrders.push({
+        id: order.id,
+        flatNumber: order.flatNumber || "",
+        reservationCode: order.reservationCode || "",
+        guestName: order.guestName || "Hóspede",
+        totalAmount: Number(order.totalAmount || 0),
+        reason: verifyRes.source
+      });
+    } else {
+      report.skippedOnNetworkErrorCount += 1;
+      report.skippedOrders.push({
+        id: order.id,
+        flatNumber: order.flatNumber || "",
+        reservationCode: order.reservationCode || "",
+        reason: verifyRes.source || "inter_network_error"
+      });
+    }
+  }
+
+  db.minibarLastAuditReport = report;
+  saveDatabase("minibar_false_paid_audit");
+
+  if (report.reopenedCount > 0 || report.flaggedWithInvoiceCount > 0) {
+    const title = `🛡️ Auditoria PIX Frigobar: ${report.reopenedCount} reaberto(s)`;
+    const summaryMsg =
+      `Auditoria dos últimos ${days} dias concluída: ${report.reopenedCount} pedido(s) falso-pago(s) reaberto(s) como pendente, ` +
+      `${report.backfilledCount} E2E real(is) preenchido(s), ${report.flaggedWithInvoiceCount} sinalizado(s) com NF anexada` +
+      `${report.skippedOnNetworkErrorCount > 0 ? `, ${report.skippedOnNetworkErrorCount} ignorado(s) por falha de comunicação` : ""}.`;
+
+    if (typeof createNotification === "function") {
+      createNotification({
+        category: "financial",
+        title,
+        message: summaryMsg,
+        severity: report.reopenedCount > 0 ? "warning" : "info",
+        metadata: {
+          reopenedCount: report.reopenedCount,
+          backfilledCount: report.backfilledCount,
+          flaggedWithInvoiceCount: report.flaggedWithInvoiceCount,
+          triggeredBy
+        },
+        targetUrl: "/anserve"
+      });
+    }
+
+    if (report.reopenedCount > 0) {
+      const managerPhone = String(
+        db.minibarSettings?.notificationManagerWhatsApp ||
+          db.settings?.adminPhone ||
+          db.settings?.ownerPhone ||
+          ""
+      ).trim();
+      if (cleanWhatsAppPhone(managerPhone).length >= 10) {
+        const zapiConfig = db.zapiConfig || db.settings?.zapiConfig || {};
+        const reopenedLines = report.reopenedOrders
+          .slice(0, 10)
+          .map(ro => `• Flat ${ro.flatNumber} (${ro.reservationCode || ro.id}) — ${ro.guestName} — R$ ${Number(ro.totalAmount).toFixed(2)}`)
+          .join("\n");
+        _callMinibarSendZapiMessage(zapiConfig, {
+          phone: managerPhone,
+          message: `${title}\n\n${summaryMsg}\n\n${reopenedLines}\n\n🔗 Acesse o painel de Cobranças & Avisos em /anserve.`,
+          channelId: "internal_ops",
+          triggerEvent: "minibar_audit_reopen_summary",
+          db
+        }).catch(() => {});
+      }
+    }
+  }
+
+  return report;
+}
+
+let _bootMinibarAuditTriggered = false;
+async function runBootMinibarFalsePaidAuditOnce(triggeredBy = "boot_audit") {
+  if (_bootMinibarAuditTriggered) return null;
+  _bootMinibarAuditTriggered = true;
+  return await auditAndReopenFalsePaidMinibarOrders({
+    lookbackDays: db.minibarSettings?.dailyPaymentReminderLookbackDays || 15,
+    triggeredBy
+  });
+}
+
+let _isReconcilingMinibarPayments = false;
+async function reconcilePendingMinibarPayments() {
+  if (_isReconcilingMinibarPayments) return { settledCount: 0, checkedCount: 0 };
+  _isReconcilingMinibarPayments = true;
+  let checkedCount = 0;
+  let settledCount = 0;
+  try {
+    const cutoffMs = Date.now() - 15 * 24 * 60 * 60 * 1000;
+    const pendingOrders = (db.minibarOrders || []).filter(o => {
+      if (!o || o.paymentStatus !== "pendente") return false;
+      if (Number(o.totalAmount || 0) <= 0) return false;
+      const refMs = new Date(o.updatedAt || o.createdAt || 0).getTime();
+      if (Number.isFinite(refMs) && refMs > 0 && refMs < cutoffMs) return false;
+      const hasDynPix =
+        o.paymentMethod === "pix" &&
+        (isDynamicInterPixTxId(o.pixTxId) ||
+          (Array.isArray(o.pixTxIdHistory) && o.pixTxIdHistory.some(isDynamicInterPixTxId)));
+      const hasMp =
+        (o.paymentMethod === "credit_card" || o.paymentMethod === "cartao_credito") &&
+        Boolean(o.mpPreferenceId);
+      return hasDynPix || hasMp;
+    });
+
+    for (const ord of pendingOrders) {
+      checkedCount += 1;
+      try {
+        if (ord.paymentMethod === "pix") {
+          const v = await verifyMinibarOrderPixPayment(ord);
+          if (v && v.verified && v.endToEndId) {
+            const settled = settleMinibarOrder(ord, {
+              paidAt: v.paidAt || new Date().toISOString(),
+              pixEndToEndId: v.endToEndId,
+              amount: v.amount || ord.totalAmount,
+              paymentMethod: "pix",
+              source: "inter_bg_reconciler"
+            });
+            if (settled) settledCount += 1;
+          }
+        } else if (ord.mpPreferenceId) {
+          const mpApproved = await _callMinibarCheckMpPayment("MB-" + ord.id);
+          if (mpApproved) {
+            const settled = settleMinibarOrder(ord, {
+              paidAt: mpApproved.date_approved || new Date().toISOString(),
+              mpPaymentId: String(mpApproved.id),
+              amount: mpApproved.transaction_amount || ord.totalAmount,
+              paymentMethod: ord.paymentMethod,
+              source: "mercadopago_bg_reconciler"
+            });
+            if (settled) settledCount += 1;
+          }
+        }
+      } catch (ordErr) {
+        console.warn(`[Minibar Reconciler] Aviso pedido ${ord.id}:`, ordErr?.message || ordErr);
+      }
+    }
+    return { checkedCount, settledCount };
+  } finally {
+    _isReconcilingMinibarPayments = false;
+  }
+}
+
+function getBrasiliaContextFromNow(nowOverride = null) {
+  if (!nowOverride) return getBrasiliaNow();
+  const d = nowOverride instanceof Date ? nowOverride : new Date(nowOverride);
+  if (isNaN(d.getTime())) return getBrasiliaNow();
+  const dateStr = BRAZIL_DATE_FORMATTER.format(d);
+  const timeParts = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  }).formatToParts(d);
+  const hour = Number(timeParts.find(p => p.type === "hour")?.value || "0");
+  const minute = Number(timeParts.find(p => p.type === "minute")?.value || "0");
+  const second = Number(timeParts.find(p => p.type === "second")?.value || "0");
+  return {
+    date: dateStr,
+    hour,
+    minute,
+    second,
+    timeStr: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`
+  };
+}
+
+function resolveReservationMinibarReferenceDateYmd(reservation, flatStr) {
+  const actualOutIso = getReservationCanonicalActualCheckoutIso(reservation);
+  const resCode = reservation.code || (reservation.id ? `RES-${reservation.id}` : "");
+  const finalInspections = (db.minibarInspections || [])
+    .filter(
+      i =>
+        i &&
+        (!flatStr || !i.flatNumber || String(i.flatNumber).trim() === flatStr) &&
+        ((resCode && i.reservationCode === resCode) ||
+          (reservation.id && String(i.reservationId) === String(reservation.id))) &&
+        isCompletedPostCheckoutMinibarInspectionRecord(i, reservation, actualOutIso)
+    )
+    .sort((a, b) => String(b.inspectedAt || b.launchDate || "").localeCompare(String(a.inspectedAt || a.launchDate || "")));
+
+  const latestInsp = finalInspections[0] || null;
+  const candidate =
+    latestInsp?.inspectedAt ||
+    latestInsp?.launchDate ||
+    reservation.finalMinibarInspectionAt ||
+    actualOutIso ||
+    reservation.checkoutDate ||
+    getBrasiliaNow().date;
+
+  return getExecutionDateStr(candidate);
+}
+
+function collectPendingMinibarCollectionTargets({ lookbackDays, nowOverride = null } = {}) {
+  ensureMinibarSettingsDefaults(db);
+  const cfg = db.minibarSettings;
+  const effectiveLookback = Math.max(
+    1,
+    Math.min(365, Number(lookbackDays ?? cfg.dailyPaymentReminderLookbackDays) || 15)
+  );
+  const maxDays = Math.max(1, Math.min(30, Number(cfg.dailyPaymentReminderMaxDays) || 7));
+  const brNow = getBrasiliaContextFromNow(nowOverride);
+  const todayStr = brNow.date;
+  const serverBaseUrl = (process.env.SERVER_BASE_URL || db.settings?.baseUrl || "https://corpflats.com.br").replace(/\/+$/, "");
+
+  const targets = [];
+
+  for (const r of db.reservations || []) {
+    if (!r || r.isRoomMoveHistoricalSegment) continue;
+    const stLower = String(r.status || "").toLowerCase();
+    if (stLower === "cancelada" || stLower === "cancelled") continue;
+
+    const flatStr = String(r.flatNumber || r.flatId || "").trim();
+    const statement = buildReservationMinibarStatement(r, flatStr);
+    if (!statement || !statement.isCheckedOut || !statement.hasFinalCheckoutInspection) continue;
+    if (Number(statement.pendingBalance || 0) <= 0.01) continue;
+
+    const referenceDateYmd = resolveReservationMinibarReferenceDateYmd(r, flatStr);
+    const rawDaysDiff = calcDaysDiff(todayStr, referenceDateYmd);
+
+    // Verifica se algum pedido desta reserva foi reaberto dentro da janela de lookbackDays
+    const resOrders = (db.minibarOrders || []).filter(o => o && doesMinibarOrderMatchReservation(o, r));
+    const latestReopenedIso = resOrders
+      .map(o => o.reopenedAt)
+      .filter(Boolean)
+      .sort()
+      .pop() || null;
+    const latestReopenedYmd = latestReopenedIso ? getExecutionDateStr(latestReopenedIso) : null;
+    const daysSinceReopened = latestReopenedYmd ? calcDaysDiff(todayStr, latestReopenedYmd) : null;
+
+    const withinReferenceWindow = rawDaysDiff <= effectiveLookback;
+    const withinReopenWindow = daysSinceReopened !== null && daysSinceReopened <= effectiveLookback;
+    if (!withinReferenceWindow && !withinReopenWindow) continue;
+
+    const splitMode = statement.splitBreakdown?.mode || "titular";
+    const shares = (statement.splitBreakdown?.shares || []).filter(s => Number(s.amount || 0) > 0.01);
+
+    for (const share of shares) {
+      const guestIndex = Number(share.guestIndex || 1);
+      const guestKey = String(guestIndex);
+      const remState = (r.minibarReminderState && r.minibarReminderState[guestKey]) || {};
+
+      const guestPhone = String(share.phone || (guestIndex === 1 ? r.guestPhone : "") || "").trim();
+      const guestEmail = String(share.email || (guestIndex === 1 ? r.guestEmail : "") || "").trim();
+      const guestDocument = String(share.document || share.cpf || (guestIndex === 1 ? r.guestDocument : "") || "").trim();
+
+      const crmGuest = findOrCreateCrmGuestForMinibarTarget({
+        guestId: share.guestId || (guestIndex === 1 ? r.guestId : null),
+        guestName: share.guestName || r.guestName,
+        guestPhone,
+        guestEmail,
+        guestDocument,
+        createIfMissing: false
+      });
+
+      const rawItems = Array.isArray(share.items) ? share.items : [];
+      const isGenericSplitOnly =
+        rawItems.length > 0 && rawItems.every(it => it.productId === "split_share" || it.productId === "partial_payment");
+
+      const displayItems = isGenericSplitOnly
+        ? (statement.pendingLaunchedItems || []).map(it => ({
+            productId: it.productId,
+            productName: it.productName,
+            quantity: Number(it.remainingQuantity ?? it.quantity) || 1,
+            unitPrice: Number(it.unitPrice || 0),
+            totalPrice: Number(it.remainingTotalPrice ?? it.totalPrice) || 0,
+            launchDateBr: it.launchDateBr || ""
+          }))
+        : rawItems.map(it => ({
+            productId: it.productId,
+            productName: it.productName,
+            quantity: Number(it.quantity) || 1,
+            unitPrice: Number(it.unitPrice || 0),
+            totalPrice: Number(it.totalPrice || 0),
+            launchDateBr: it.launchDateBr || ""
+          }));
+
+      const itemsSummaryBase = displayItems
+        .map(it => `${it.quantity}x ${it.productName}`)
+        .join(", ");
+      const itemsSummary =
+        splitMode === "half_and_half" && itemsSummaryBase
+          ? `${itemsSummaryBase} (Divisão Meio a Meio)`
+          : itemsSummaryBase || "Consumo de Frigobar";
+
+      const pendingOrdId = share.pendingOrderId || statement.primaryPendingOrder?.id || null;
+      const ordQuery =
+        share.pendingOrderId && !((db.minibarOrders || []).some(o => o && o.id === share.pendingOrderId && o.paymentStatus === "pago"))
+          ? `&ord=${encodeURIComponent(share.pendingOrderId)}`
+          : "";
+      const paymentUrl = `${serverBaseUrl}/minha-reserva/${encodeURIComponent(r.code)}/frigobar?guestIndex=${guestIndex}${ordQuery}`;
+
+      const reminderCount = Number(remState.reminderCount || 0);
+      const nextStep = Math.min(maxDays, reminderCount + 1);
+
+      targets.push({
+        targetKey: `${r.code}::G${guestIndex}`,
+        reservationId: r.id,
+        reservationCode: r.code,
+        flatNumber: flatStr,
+        guestIndex,
+        guestId: share.guestId || crmGuest?.id || null,
+        guestName: share.guestName || r.guestName || "Hóspede",
+        guestRole: share.role || (guestIndex > 1 ? "acompanhante" : "titular"),
+        guestPhone,
+        guestEmail,
+        guestDocument,
+        splitMode,
+        pendingAmount: Number(Number(share.amount).toFixed(2)),
+        totalReservationPending: Number(Number(statement.pendingBalance).toFixed(2)),
+        items: displayItems,
+        itemsSummary,
+        referenceDateYmd,
+        referenceDateBr: formatMinibarDateBr(referenceDateYmd),
+        daysSinceReference: Math.max(0, rawDaysDiff),
+        reminderCount,
+        maxDays,
+        nextStep,
+        lastSentDate: remState.lastSentDate || null,
+        lastSentAt: remState.lastSentAt || null,
+        formalNoticeSentAt: remState.formalNoticeSentAt || null,
+        paused: Boolean(remState.paused),
+        pausedAt: remState.pausedAt || null,
+        pausedReason: remState.pausedReason || "",
+        crmTagged: hasCrmGuestTag(crmGuest, MINIBAR_CRM_PENDING_TAG),
+        paymentUrl,
+        pendingOrderId: pendingOrdId,
+        history: Array.isArray(remState.history) ? remState.history : []
+      });
+    }
+  }
+
+  return targets.sort((a, b) => {
+    if (a.paused !== b.paused) return a.paused ? 1 : -1;
+    if (b.daysSinceReference !== a.daysSinceReference) return b.daysSinceReference - a.daysSinceReference;
+    return String(a.flatNumber).localeCompare(String(b.flatNumber));
+  });
+}
+
+function buildMinibarCollectionMessages(target, { stepNumber, maxDays, pendingAmount }) {
+  const firstName = String(target.guestName || "Hóspede").trim().split(/\s+/)[0] || "Hóspede";
+  const amountFmt = Number(pendingAmount || 0).toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+  const isFormalDay7 = stepNumber >= maxDays;
+  const isObjectiveMid = !isFormalDay7 && stepNumber >= 4;
+
+  const itemsBulletLines =
+    Array.isArray(target.items) && target.items.length > 0
+      ? target.items
+          .map(
+            it =>
+              `• ${it.quantity}x ${it.productName}${it.launchDateBr ? ` (${it.launchDateBr})` : ""}${
+                target.splitMode !== "half_and_half" && Number(it.totalPrice) > 0
+                  ? ` — R$ ${Number(it.totalPrice).toFixed(2)}`
+                  : ""
+              }`
+          )
+          .join("\n")
+      : `• ${target.itemsSummary || "Consumo de Frigobar"}`;
+
+  const itemsHtmlRows =
+    Array.isArray(target.items) && target.items.length > 0
+      ? target.items
+          .map(
+            it =>
+              `<li style="margin:4px 0;">${it.quantity}x ${it.productName}${
+                it.launchDateBr ? ` (${it.launchDateBr})` : ""
+              }${
+                target.splitMode !== "half_and_half" && Number(it.totalPrice) > 0
+                  ? ` — <strong>R$ ${Number(it.totalPrice).toFixed(2)}</strong>`
+                  : ""
+              }</li>`
+          )
+          .join("")
+      : `<li>${target.itemsSummary || "Consumo de Frigobar"}</li>`;
+
+  const splitNoteWa =
+    target.splitMode === "half_and_half"
+      ? `\n📌 _Valor referente à sua cota na divisão meio a meio (total do flat: R$ ${Number(target.totalReservationPending).toFixed(2)})._\n`
+      : target.splitMode === "by_item"
+      ? `\n📌 _Valor referente exclusivamente aos itens atribuídos a você na reserva._\n`
+      : "";
+
+  const splitNoteHtml =
+    target.splitMode === "half_and_half"
+      ? `<p style="font-size:13px;color:#475569;">Valor referente à sua cota na divisão meio a meio (total do flat: R$ ${Number(target.totalReservationPending).toFixed(2)}).</p>`
+      : target.splitMode === "by_item"
+      ? `<p style="font-size:13px;color:#475569;">Valor referente exclusivamente aos itens atribuídos a você na reserva.</p>`
+      : "";
+
+  let whatsappText = "";
+  let emailSubject = "";
+  let emailBodyInner = "";
+
+  if (isFormalDay7) {
+    whatsappText =
+      `*NOTIFICAÇÃO FORMAL DE REGULARIZAÇÃO AMIGÁVEL — CORPFLATS*\n\n` +
+      `Prezado(a) ${target.guestName},\n\n` +
+      `Conforme avisos anteriores, informamos de forma objetiva e respeitosa que permanece em aberto o saldo referente ao consumo de frigobar da sua estadia no *Flat ${target.flatNumber}* (Reserva *${target.reservationCode}*, conferência em ${target.referenceDateBr}):\n` +
+      `${itemsBulletLines}\n` +
+      `${splitNoteWa}\n` +
+      `💰 *Valor em aberto:* R$ ${amountFmt}\n\n` +
+      `Concedemos o prazo final de *48 horas* para quitação amigável, via PIX ou Cartão de Crédito (com emissão da respectiva Nota Fiscal), através do link oficial abaixo:\n` +
+      `🔗 ${target.paymentUrl}\n\n` +
+      `Encerrado este prazo sem a devida regularização ou manifestação, o débito será encaminhado ao nosso departamento financeiro/cobrança para adoção das medidas administrativas e legais cabíveis, incluindo restrição cadastral para futuras hospedagens na CorpFlats, eventual inclusão em órgãos de proteção ao crédito (SPC/Serasa) e protesto em cartório, nos termos da legislação vigente.\n\n` +
+      `Caso o pagamento já tenha sido efetuado ou haja qualquer divergência quanto aos itens apontados, pedimos a gentileza de responder imediatamente a esta mensagem enviando o comprovante ou relato para verificação e baixa imediata.\n\n` +
+      `Atenciosamente,\nDepartamento Financeiro — CorpFlats`;
+
+    emailSubject = `Notificação Formal (Prazo 48h) — Pendência de Frigobar Flat ${target.flatNumber} (Reserva ${target.reservationCode})`;
+    emailBodyInner = `
+      <h2 style="color:#991b1b;margin-top:0;">Notificação Formal de Regularização Amigável</h2>
+      <p>Prezado(a) <strong>${target.guestName}</strong>,</p>
+      <p>Conforme avisos anteriores, informamos de forma objetiva e respeitosa que permanece em aberto o saldo referente ao consumo de frigobar da sua estadia no <strong>Flat ${target.flatNumber}</strong> (Reserva <strong>${target.reservationCode}</strong>, conferência em ${target.referenceDateBr}):</p>
+      <ul style="padding-left:20px;color:#1e293b;">${itemsHtmlRows}</ul>
+      ${splitNoteHtml}
+      <p style="font-size:16px;"><strong>Valor em aberto: R$ ${amountFmt}</strong></p>
+      <p>Concedemos o prazo final de <strong>48 horas</strong> para quitação amigável, via PIX ou Cartão de Crédito (com emissão da respectiva Nota Fiscal), pelo link oficial abaixo:</p>
+      <p style="margin:20px 0;"><a href="${target.paymentUrl}" style="background:#b91c1c;color:#ffffff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;">Regularizar Pendência Agora</a></p>
+      <p style="font-size:13px;color:#334155;line-height:1.6;">Encerrado este prazo sem a devida regularização ou manifestação, o débito será encaminhado ao nosso departamento financeiro/cobrança para adoção das medidas administrativas e legais cabíveis, incluindo restrição cadastral para futuras hospedagens na CorpFlats, eventual inclusão em órgãos de proteção ao crédito (SPC/Serasa) e protesto em cartório, nos termos da legislação vigente.</p>
+      <p style="font-size:13px;color:#334155;">Caso o pagamento já tenha sido efetuado ou haja qualquer divergência quanto aos itens apontados, pedimos a gentileza de responder imediatamente a este e-mail enviando o comprovante para verificação e baixa imediata.</p>
+      <p>Atenciosamente,<br/><strong>Departamento Financeiro — CorpFlats</strong></p>
+    `;
+  } else if (isObjectiveMid) {
+    whatsappText =
+      `Olá, ${firstName}!\n\n` +
+      `Identificamos que o saldo referente ao consumo de frigobar do *Flat ${target.flatNumber}* (Reserva ${target.reservationCode}, conferido em ${target.referenceDateBr}) ainda consta em aberto:\n` +
+      `${itemsBulletLines}\n` +
+      `${splitNoteWa}\n` +
+      `💰 *Valor pendente:* R$ ${amountFmt}\n\n` +
+      `Pedimos a gentileza de efetuar a quitação via PIX ou Cartão pelo link abaixo (com emissão automática da Nota Fiscal):\n` +
+      `🔗 ${target.paymentUrl}\n\n` +
+      `Se você já efetuou o pagamento ou tiver alguma dúvida sobre o extrato, basta responder por aqui com o comprovante para conferência imediata.`;
+
+    emailSubject = `Pendência em aberto — Consumo de Frigobar Flat ${target.flatNumber} (Reserva ${target.reservationCode})`;
+    emailBodyInner = `
+      <p>Olá, <strong>${firstName}</strong>!</p>
+      <p>Identificamos que o saldo referente ao consumo de frigobar do <strong>Flat ${target.flatNumber}</strong> (Reserva ${target.reservationCode}, conferido em ${target.referenceDateBr}) ainda permanece em aberto:</p>
+      <ul style="padding-left:20px;color:#1e293b;">${itemsHtmlRows}</ul>
+      ${splitNoteHtml}
+      <p style="font-size:16px;"><strong>Valor pendente: R$ ${amountFmt}</strong></p>
+      <p style="margin:20px 0;"><a href="${target.paymentUrl}" style="background:#0f172a;color:#ffffff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;">Pagar via PIX ou Cartão</a></p>
+      <p style="font-size:13px;color:#475569;">Caso o pagamento já tenha sido realizado ou haja qualquer dúvida, responda este e-mail com o comprovante para verificação imediata.</p>
+      <p>Atenciosamente,<br/><strong>Equipe CorpFlats</strong></p>
+    `;
+  } else {
+    whatsappText =
+      `Olá, ${firstName}! Tudo bem? 😊\n` +
+      `Esperamos que você tenha tido uma excelente estadia no *Flat ${target.flatNumber}* da CorpFlats!\n\n` +
+      `Passando apenas para lembrar com carinho que o consumo de frigobar da sua estadia (conferido em ${target.referenceDateBr}) ainda consta em aberto:\n` +
+      `${itemsBulletLines}\n` +
+      `${splitNoteWa}\n` +
+      `💰 *Valor em aberto:* R$ ${amountFmt}\n\n` +
+      `Para sua comodidade, o pagamento pode ser feito em instantes via PIX ou Cartão (com emissão da Nota Fiscal) pelo link abaixo:\n` +
+      `🔗 ${target.paymentUrl}\n\n` +
+      `Caso já tenha realizado o pagamento ou tenha alguma dúvida, é só nos responder por aqui. Tenha um ótimo dia! ✨`;
+
+    emailSubject = `Lembrete cordial — Consumo de Frigobar Flat ${target.flatNumber} (CorpFlats)`;
+    emailBodyInner = `
+      <p>Olá, <strong>${firstName}</strong>! Tudo bem?</p>
+      <p>Esperamos que você tenha tido uma excelente estadia no <strong>Flat ${target.flatNumber}</strong> da CorpFlats!</p>
+      <p>Passando apenas para lembrar que o consumo de frigobar da sua estadia (conferido em ${target.referenceDateBr}) ainda consta em aberto:</p>
+      <ul style="padding-left:20px;color:#1e293b;">${itemsHtmlRows}</ul>
+      ${splitNoteHtml}
+      <p style="font-size:16px;"><strong>Valor em aberto: R$ ${amountFmt}</strong></p>
+      <p style="margin:20px 0;"><a href="${target.paymentUrl}" style="background:#0284c7;color:#ffffff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;">Acessar Link de Pagamento</a></p>
+      <p style="font-size:13px;color:#475569;">Caso já tenha efetuado o pagamento ou tenha qualquer dúvida, basta responder este e-mail. Agradecemos a preferência!</p>
+      <p>Atenciosamente,<br/><strong>Equipe CorpFlats</strong></p>
+    `;
+  }
+
+  const emailHtml = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:0 auto;color:#0f172a;line-height:1.5;">${emailBodyInner}</div>`;
+  return { whatsappText, emailSubject, emailHtml, isFormalDay7 };
+}
+
+let _isRunningDailyMinibarReminders = false;
+
+async function processDailyMinibarPaymentReminders({
+  force = false,
+  targetReservationCode = null,
+  targetGuestIndex = null,
+  actorName = "Sistema",
+  nowOverride = null
+} = {}) {
+  if (_isRunningDailyMinibarReminders && !force) {
+    return { success: true, skipped: true, reason: "ALREADY_RUNNING", sentCount: 0, settledBeforeSendCount: 0, results: [] };
+  }
+  _isRunningDailyMinibarReminders = true;
+  try {
+    ensureMinibarSettingsDefaults(db);
+    const cfg = db.minibarSettings;
+    const brNow = getBrasiliaContextFromNow(nowOverride);
+    const todayStr = brNow.date;
+    const reminderHour = Number.isFinite(Number(cfg.dailyPaymentReminderHour))
+      ? Number(cfg.dailyPaymentReminderHour)
+      : 10;
+    const maxDays = Math.max(1, Math.min(30, Number(cfg.dailyPaymentReminderMaxDays) || 7));
+    const lookbackDays = Math.max(1, Math.min(90, Number(cfg.dailyPaymentReminderLookbackDays) || 15));
+
+    if (!force) {
+      if (cfg.dailyPaymentRemindersEnabled === false) {
+        return { success: true, skipped: true, reason: "DISABLED", sentCount: 0, settledBeforeSendCount: 0, results: [] };
+      }
+      if (brNow.hour < reminderHour) {
+        return {
+          success: true,
+          skipped: true,
+          reason: "BEFORE_SCHEDULED_HOUR",
+          scheduledHour: reminderHour,
+          currentHour: brNow.hour,
+          sentCount: 0,
+          settledBeforeSendCount: 0,
+          results: []
+        };
+      }
+    }
+
+    const targets = collectPendingMinibarCollectionTargets({
+      lookbackDays: force && targetReservationCode ? 365 : lookbackDays,
+      nowOverride
+    }).filter(t => {
+      if (targetReservationCode && String(t.reservationCode) !== String(targetReservationCode)) return false;
+      if (targetGuestIndex !== null && targetGuestIndex !== undefined && Number(t.guestIndex) !== Number(targetGuestIndex)) {
+        return false;
+      }
+      return true;
+    });
+
+    const results = [];
+    let sentCount = 0;
+    let settledBeforeSendCount = 0;
+    const zapiConfig =
+      db.zapiConfig && db.zapiConfig.instanceId && db.zapiConfig.token
+        ? db.zapiConfig
+        : db.settings?.zapiConfig || db.zapiConfig || {};
+
+    for (const target of targets) {
+      const reservation = (db.reservations || []).find(
+        r => r && (r.code === target.reservationCode || String(r.id) === String(target.reservationId))
+      );
+      if (!reservation) continue;
+
+      if (!reservation.minibarReminderState || typeof reservation.minibarReminderState !== "object") {
+        reservation.minibarReminderState = {};
+      }
+      const guestKey = String(target.guestIndex || 1);
+      if (!reservation.minibarReminderState[guestKey]) {
+        reservation.minibarReminderState[guestKey] = {
+          reminderCount: 0,
+          lastSentDate: null,
+          lastSentAt: null,
+          paused: false,
+          pausedAt: null,
+          pausedReason: "",
+          formalNoticeSentAt: null,
+          history: []
+        };
+      }
+      const state = reservation.minibarReminderState[guestKey];
+
+      if (!force) {
+        if (todayStr <= target.referenceDateYmd) continue; // Somente a partir de D+1
+        if (state.paused) continue;
+        if ((Number(state.reminderCount) || 0) >= maxDays) continue;
+        if (state.lastSentDate === todayStr) continue;
+      }
+
+      // Pré-checagem obrigatória ao vivo no Banco Inter e Mercado Pago antes de qualquer disparo
+      const openOrders = (db.minibarOrders || []).filter(
+        o => o && o.paymentStatus === "pendente" && doesMinibarOrderMatchReservation(o, reservation)
+      );
+      for (const ord of openOrders) {
+        if (
+          ord.paymentMethod === "pix" &&
+          (ord.pixTxId || (Array.isArray(ord.pixTxIdHistory) && ord.pixTxIdHistory.length > 0))
+        ) {
+          try {
+            const v = await verifyMinibarOrderPixPayment(ord);
+            if (v && v.verified && v.endToEndId) {
+              settleMinibarOrder(ord, {
+                paidAt: v.paidAt || new Date().toISOString(),
+                pixEndToEndId: v.endToEndId,
+                amount: v.amount || ord.totalAmount,
+                paymentMethod: "pix",
+                source: "pre_reminder_inter_check"
+              });
+            }
+          } catch (_) {}
+        } else if (
+          (ord.paymentMethod === "credit_card" || ord.paymentMethod === "cartao_credito") &&
+          ord.mpPreferenceId
+        ) {
+          try {
+            const mp = await _callMinibarCheckMpPayment("MB-" + ord.id);
+            if (mp) {
+              settleMinibarOrder(ord, {
+                paidAt: mp.date_approved || new Date().toISOString(),
+                mpPaymentId: String(mp.id),
+                amount: mp.transaction_amount || ord.totalAmount,
+                paymentMethod: ord.paymentMethod,
+                source: "pre_reminder_mp_check"
+              });
+            }
+          } catch (_) {}
+        }
+      }
+
+      // Reavalia saldo pendente após pré-check ao vivo
+      const freshStmt = buildReservationMinibarStatement(reservation, target.flatNumber);
+      const freshShare = (freshStmt.splitBreakdown?.shares || []).find(
+        s => Number(s.guestIndex) === Number(target.guestIndex)
+      );
+      if (freshStmt.pendingBalance <= 0.01 || !freshShare || Number(freshShare.amount || 0) <= 0.01) {
+        settledBeforeSendCount += 1;
+        results.push({
+          targetKey: target.targetKey,
+          reservationCode: target.reservationCode,
+          guestIndex: target.guestIndex,
+          guestName: target.guestName,
+          status: "settled_on_precheck",
+          message: "Pagamento confirmado na verificação ao vivo; envio de cobrança cancelado automaticamente."
+        });
+        continue;
+      }
+
+      // Reinício seguro: sempre progride passo a passo a partir de reminderCount + 1 (nunca pula direto para D+7)
+      const stepNumber = Math.min(maxDays, (Number(state.reminderCount) || 0) + 1);
+      const isFormalDay7 = stepNumber >= maxDays;
+      const triggerEvent = isFormalDay7 ? "minibar_payment_formal_notice" : "minibar_payment_reminder";
+
+      const { whatsappText, emailSubject, emailHtml } = buildMinibarCollectionMessages(target, {
+        stepNumber,
+        maxDays,
+        pendingAmount: freshShare.amount
+      });
+
+      let whatsappSent = false;
+      let emailSent = false;
+
+      if (cleanWhatsAppPhone(target.guestPhone).length >= 10) {
+        try {
+          const waRes = await _callMinibarSendZapiMessage(zapiConfig, {
+            phone: target.guestPhone,
+            message: whatsappText,
+            channelId: "guest",
+            recipientRole: "guest",
+            triggerEvent,
+            db
+          });
+          if (!waRes || waRes.success !== false) {
+            whatsappSent = true;
+            _callMinibarAppendConversation(db, {
+              phone: target.guestPhone,
+              text: whatsappText,
+              type: "text",
+              sender: isFormalDay7 ? "CorpFlats (Financeiro)" : "Sofia (IA)"
+            });
+          }
+        } catch (waErr) {
+          console.warn(`[Minibar Reminder WA] Erro ao enviar para ${target.guestPhone}:`, waErr?.message || waErr);
+        }
+      }
+
+      if (target.guestEmail && target.guestEmail.includes("@") && target.guestEmail.includes(".")) {
+        try {
+          _callMinibarSendEmailAsync({
+            db,
+            saveDatabase,
+            reservationId: reservation.code || reservation.id,
+            recipient: target.guestEmail,
+            subject: emailSubject,
+            bodyHtml: emailHtml,
+            type: "email",
+            direction: "outbound",
+            metadata: {
+              trigger: triggerEvent,
+              reservationCode: reservation.code,
+              flatNumber: target.flatNumber,
+              guestIndex: target.guestIndex,
+              stepNumber,
+              pendingAmount: Number(freshShare.amount)
+            }
+          });
+          emailSent = true;
+        } catch (mailErr) {
+          console.warn(`[Minibar Reminder Email] Erro ao enviar para ${target.guestEmail}:`, mailErr?.message || mailErr);
+        }
+      }
+
+      const sentIso = nowOverride ? new Date(nowOverride).toISOString() : new Date().toISOString();
+      state.reminderCount = stepNumber;
+      state.lastSentDate = todayStr;
+      state.lastSentAt = sentIso;
+      if (isFormalDay7) {
+        state.formalNoticeSentAt = sentIso;
+      }
+      if (!Array.isArray(state.history)) state.history = [];
+      const sentChannels = [];
+      if (whatsappSent) sentChannels.push("whatsapp");
+      if (emailSent) sentChannels.push("email");
+      state.history.push({
+        step: stepNumber,
+        stepNumber,
+        type: isFormalDay7 ? "formal_notice" : "reminder",
+        formalNotice: isFormalDay7,
+        date: todayStr,
+        sentAt: sentIso,
+        amount: Number(Number(freshShare.amount).toFixed(2)),
+        channels: sentChannels,
+        whatsappSent,
+        emailSent,
+        triggeredBy: force ? String(actorName || "Administrador") : "auto_scheduler"
+      });
+      if (state.history.length > 30) state.history = state.history.slice(-30);
+
+      let crmTaggedNow = false;
+      let managerNotifiedNow = false;
+
+      if (isFormalDay7) {
+        const crmGuest = findOrCreateCrmGuestForMinibarTarget({
+          guestId: target.guestId,
+          guestName: target.guestName,
+          guestPhone: target.guestPhone,
+          guestEmail: target.guestEmail,
+          guestDocument: target.guestDocument,
+          reservationCode: target.reservationCode,
+          createIfMissing: true
+        });
+        if (crmGuest) {
+          addCrmGuestTag(crmGuest, MINIBAR_CRM_PENDING_TAG);
+          crmTaggedNow = true;
+        }
+
+        const notifTitle = `⚠️ D+${maxDays} Frigobar (Aviso Formal) — Flat ${target.flatNumber}`;
+        const notifBody =
+          `Notificação formal de 48h enviada para ${target.guestName} (Reserva ${target.reservationCode}, Flat ${target.flatNumber}) ` +
+          `referente à pendência de R$ ${Number(freshShare.amount).toFixed(2)}. Tag "${MINIBAR_CRM_PENDING_TAG}" aplicada no CRM.`;
+
+        if (typeof createNotification === "function") {
+          createNotification({
+            category: "financial",
+            title: notifTitle,
+            message: notifBody,
+            severity: "warning",
+            metadata: {
+              reservationCode: target.reservationCode,
+              flatNumber: target.flatNumber,
+              guestIndex: target.guestIndex,
+              guestName: target.guestName,
+              pendingAmount: Number(freshShare.amount),
+              stepNumber
+            },
+            targetUrl: "/anserve"
+          });
+        }
+
+        if (cfg.dailyPaymentReminderNotifyManagerOnDay7 !== false) {
+          const managerPhone = String(
+            cfg.notificationManagerWhatsApp || db.settings?.adminPhone || db.settings?.ownerPhone || ""
+          ).trim();
+          if (cleanWhatsAppPhone(managerPhone).length >= 10) {
+            try {
+              const mgrRes = await _callMinibarSendZapiMessage(zapiConfig, {
+                phone: managerPhone,
+                message: `${notifTitle}\n\n${notifBody}\n\n📦 Itens: ${target.itemsSummary}\n🔗 Link do hóspede: ${target.paymentUrl}`,
+                channelId: "internal_ops",
+                triggerEvent: "minibar_payment_day7_manager_alert",
+                db
+              });
+              if (!mgrRes || mgrRes.success !== false) {
+                managerNotifiedNow = true;
+              }
+            } catch (_) {}
+          }
+        }
+      }
+
+      logAuditEvent({
+        level: isFormalDay7 ? "warn" : "info",
+        category: "financial",
+        action: isFormalDay7 ? "MINIBAR_FORMAL_NOTICE_SENT" : "MINIBAR_REMINDER_SENT",
+        actor: { id: 0, name: force ? String(actorName || "Administrador") : "Sistema", role: "admin" },
+        details: {
+          reservationCode: target.reservationCode,
+          flatNumber: target.flatNumber,
+          guestIndex: target.guestIndex,
+          guestName: target.guestName,
+          stepNumber,
+          maxDays,
+          pendingAmount: Number(freshShare.amount),
+          whatsappSent,
+          emailSent,
+          crmTaggedNow,
+          managerNotifiedNow
+        }
+      });
+
+      sentCount += 1;
+      results.push({
+        targetKey: target.targetKey,
+        reservationCode: target.reservationCode,
+        guestIndex: target.guestIndex,
+        guestName: target.guestName,
+        stepNumber,
+        maxDays,
+        isFormalNotice: isFormalDay7,
+        pendingAmount: Number(Number(freshShare.amount).toFixed(2)),
+        whatsappSent,
+        emailSent,
+        crmTagged: crmTaggedNow,
+        managerNotified: managerNotifiedNow,
+        status: "sent",
+        message: isFormalDay7
+          ? `Aviso formal (Dia ${stepNumber}/${maxDays}) disparado e tag "${MINIBAR_CRM_PENDING_TAG}" aplicada no CRM.`
+          : `Lembrete (Dia ${stepNumber}/${maxDays}) disparado com sucesso.`
+      });
+    }
+
+    if (sentCount > 0 || settledBeforeSendCount > 0) {
+      saveDatabase("minibar_daily_payment_reminders");
+    }
+
+    return {
+      success: true,
+      date: todayStr,
+      sentCount,
+      settledBeforeSendCount,
+      results
+    };
+  } finally {
+    _isRunningDailyMinibarReminders = false;
+  }
 }
 
 async function notifyAdminMinibarInvoiceFailure(order, channelLabel, errorReason) {
@@ -96240,6 +100191,9 @@ app.post("/api/public/minibar/confirm-checkout", async (req, res) => {
       await triggerCheckoutWhatsApp(db, saveDatabase, r, "link_digital").catch(e => {
         console.warn("[Minibar Confirm Checkout WhatsApp Trigger Error]:", e.message);
       });
+      await runCheckoutAutoBillingAndNfse(r, { triggerSource: "minibar_portal" }).catch(e => {
+        console.warn("[Minibar Confirm Checkout Auto-NFS-e Error]:", e?.message || e);
+      });
     }
 
     if (matchingResList.length === 0 || matchingResList.some(r => r && !r.isRoomMoveHistoricalSegment)) {
@@ -96341,25 +100295,11 @@ app.post("/api/minibar/orders", async (req, res) => {
     // Suporte a quitação direta de ordem pré-existente (ex: ORD-MB-DIV-... ou ORD-MB-LANC-...)
     let existingOrder = incomingOrderId ? (db.minibarOrders || []).find(o => o.id === incomingOrderId) : null;
     const incomingGuestIdx = Number(consumerGuest?.index || consumerGuest?.guestIndex || 0);
-    if (
-      existingOrder &&
-      existingOrder.paymentStatus === "pago" &&
-      (!incomingGuestIdx || !existingOrder.guestIndex || Number(existingOrder.guestIndex) === incomingGuestIdx)
-    ) {
-      return res.json({
-        success: true,
-        orderId: existingOrder.id,
-        totalAmount: existingOrder.totalAmount,
-        paymentStatus: "pago",
-        alreadyPaid: true,
-        order: existingOrder
-      });
-    }
 
     const reservationCode = rawResCode || existingOrder?.reservationCode;
     const flatNumber = rawFlatNumber || existingOrder?.flatNumber;
 
-    // Localiza a reserva
+    // Localiza a reserva e calcula o extrato ANTES de avaliar se existingOrder já está pago
     let reservation = null;
     if (reservationCode) {
       reservation = findReservationByLocatorOrContact(reservationCode) ||
@@ -96372,6 +100312,43 @@ app.post("/api/minibar/orders", async (req, res) => {
     const flatStr = String(flatNumber || reservation?.flatNumber || reservation?.flatId || "").trim();
     const finalResCode = reservation?.code || reservationCode || "";
     const statement = reservation ? buildReservationMinibarStatement(reservation, flatStr) : null;
+
+    let ignoredStalePaidOrder = false;
+    if (existingOrder && existingOrder.paymentStatus === "pago") {
+      let hasPendingForRequest = false;
+      if (statement) {
+        if (partialMode === "configured_split") {
+          const shareForReq = (statement.splitBreakdown?.shares || []).find(
+            s => Number(s.guestIndex) === (incomingGuestIdx || 1)
+          );
+          hasPendingForRequest = shareForReq
+            ? Number(shareForReq.amount || 0) > 0.01
+            : Number(statement.pendingBalance || 0) > 0.01;
+        } else {
+          hasPendingForRequest = Number(statement.pendingBalance || 0) > 0.01;
+        }
+      }
+      const sameGuestScope =
+        !incomingGuestIdx || !existingOrder.guestIndex || Number(existingOrder.guestIndex) === incomingGuestIdx;
+      const isVerifiedPaidOrder =
+        getMinibarOrderVerificationStatus(existingOrder) !== "unverified_synthetic_e2e";
+
+      if (!hasPendingForRequest && sameGuestScope && isVerifiedPaidOrder) {
+        return res.json({
+          success: true,
+          orderId: existingOrder.id,
+          totalAmount: existingOrder.totalAmount,
+          paymentStatus: "pago",
+          alreadyPaid: true,
+          order: sanitizeMinibarOrderForResponse(existingOrder)
+        });
+      }
+
+      // Há saldo pendente na reserva/cota (ou pedido anterior era de outro hóspede / não verificado):
+      // ignora o ?ord= antigo pago e segue para criar/atualizar um pedido pendente real!
+      existingOrder = null;
+      ignoredStalePaidOrder = true;
+    }
 
     // Trava de pagamento antes do check-out e da conferência pós check-out
     const isSettlingRestockerLaunch =
@@ -96635,9 +100612,37 @@ app.post("/api/minibar/orders", async (req, res) => {
       totalAmount = Number(existingOrder.remainingAmount ?? existingOrder.totalAmount) || 0;
     } else {
       const effectiveItems = Array.isArray(items) && items.length > 0 ? items : (existingOrder?.items || []);
-      if (!Array.isArray(effectiveItems) || effectiveItems.length === 0) {
+      if (
+        (!Array.isArray(effectiveItems) || effectiveItems.length === 0) &&
+        ignoredStalePaidOrder &&
+        statement &&
+        statement.pendingBalance > 0.01 &&
+        Array.isArray(statement.pendingLaunchedItems) &&
+        statement.pendingLaunchedItems.length > 0
+      ) {
+        for (const pIt of statement.pendingLaunchedItems) {
+          const remQ = Number(pIt.remainingQuantity ?? pIt.quantity) || 0;
+          if (remQ <= 0) continue;
+          const uPrice = Number(pIt.unitPrice || 0);
+          const itemTotal = Number((remQ * uPrice).toFixed(2));
+          const mappedItem = {
+            productId: pIt.productId,
+            productName: pIt.productName || pIt.productId,
+            quantity: remQ,
+            unitPrice: uPrice,
+            totalPrice: itemTotal,
+            isCourtesy: false,
+            launchOrderId: pIt.launchOrderId || pIt.orderId || null,
+            launchDate: pIt.launchDate || null
+          };
+          orderItems.push(mappedItem);
+          recordedSelectedLaunchItems.push(mappedItem);
+        }
+        totalAmount = Number(Number(statement.pendingBalance).toFixed(2));
+        settlesLaunchOrders = true;
+      } else if (!Array.isArray(effectiveItems) || effectiveItems.length === 0) {
         return res.status(400).json({ success: false, error: "Nenhum item selecionado para o pedido." });
-      }
+      } else {
       for (const it of effectiveItems) {
         const prod = (db.minibarProducts || []).find(p => p.id === it.productId);
         if (!prod) continue;
@@ -96765,6 +100770,7 @@ app.post("/api/minibar/orders", async (req, res) => {
             isCourtesy: false
           });
         }
+      }
       }
     }
 
@@ -96939,38 +100945,134 @@ app.post("/api/minibar/orders", async (req, res) => {
       });
     }
 
-    // Padrão: PIX Banco Inter
-    let cob = null;
-    try {
-      cob = await createInterPixCob({
-        amount: totalAmount,
-        description: `Consumo de Frigobar Flat ${flatStr}`,
-        debtorName: finalGuestName,
-        debtorDocument: cleanDoc,
-        reservationCode: orderId
-      });
-    } catch (interErr) {
-      console.warn("[Minibar Inter PIX] Falha no mTLS ou API real. Gerando mock/simulado:", interErr.message);
-    }
+    // Padrão: PIX Banco Inter (cobrança dinâmica rastreável por txid + trava de produção)
+    let txid = null;
+    let copiaECola = null;
+    let pixIsDynamic = false;
+    let pixCreatedAt = new Date().toISOString();
+    let expiresAt = new Date(Date.now() + 86400000).toISOString();
 
-    let txid = cob?.txid;
-    let copiaECola = cob?.pixCopiaECola;
-    if (!txid || !copiaECola) {
-      txid = "TXMB" + crypto.randomBytes(12).toString("hex").toUpperCase();
+    const existingHasDynamicPixForSameAmount = Boolean(
+      existingOrder &&
+        existingOrder.paymentStatus === "pendente" &&
+        (isDynamicInterPixTxId(existingOrder.pixTxId) ||
+          (Array.isArray(existingOrder.pixTxIdHistory) && existingOrder.pixTxIdHistory.some(isDynamicInterPixTxId))) &&
+        Math.abs(Number(existingOrder.totalAmount || 0) - totalAmount) < 0.01
+    );
+
+    if (existingHasDynamicPixForSameAmount) {
       try {
-        copiaECola = generateStaticPixPayload({
-          pixKey: db.settings?.interConfig?.pixKey || "47964813000165",
-          amount: totalAmount,
-          merchantName: "CORPFLATS LTDA",
-          merchantCity: "CAMPOS DOS GOYTACAZES",
-          txid
-        });
-      } catch (_) {
-        copiaECola = `00020126580014br.gov.bcb.pix0136${txid}520400005303986540${totalAmount.toFixed(2)}5802BR5915CORPFLATS LTDA6014CAMPOS62070503***6304`;
+        const liveVerify = await verifyMinibarOrderPixPayment(existingOrder);
+        if (liveVerify && liveVerify.verified && liveVerify.endToEndId) {
+          const settledExisting = settleMinibarOrder(existingOrder, {
+            paidAt: liveVerify.paidAt || new Date().toISOString(),
+            pixEndToEndId: liveVerify.endToEndId,
+            amount: liveVerify.amount || existingOrder.totalAmount,
+            paymentMethod: "pix",
+            source: liveVerify.source || "inter_cob_pre_reissue"
+          });
+          if (settledExisting) {
+            return res.json({
+              success: true,
+              orderId: existingOrder.id,
+              totalAmount: existingOrder.totalAmount,
+              paymentMethod: "pix",
+              paymentStatus: "pago",
+              alreadyPaid: true,
+              order: sanitizeMinibarOrderForResponse(existingOrder)
+            });
+          }
+        }
+      } catch (_) {}
+
+      const existingExpMs = existingOrder.pixExpiresAt ? new Date(existingOrder.pixExpiresAt).getTime() : 0;
+      if (
+        existingOrder.pixIsDynamic &&
+        isDynamicInterPixTxId(existingOrder.pixTxId) &&
+        existingOrder.pixCopiaECola &&
+        existingExpMs > Date.now() + 120000
+      ) {
+        txid = existingOrder.pixTxId;
+        copiaECola = existingOrder.pixCopiaECola;
+        pixIsDynamic = true;
+        pixCreatedAt = existingOrder.pixCreatedAt || existingOrder.updatedAt || new Date().toISOString();
+        expiresAt = existingOrder.pixExpiresAt;
       }
     }
 
-    const expiresAt = new Date(Date.now() + 86400000).toISOString();
+    if (!txid || !copiaECola) {
+      let cob = null;
+      let interCobError = null;
+      try {
+        cob = await _callMinibarCreateInterPixCob({
+          amount: totalAmount,
+          description: `Consumo de Frigobar Flat ${flatStr}`,
+          debtorName: finalGuestName,
+          debtorDocument: cleanDoc,
+          reservationCode: orderId
+        });
+      } catch (interErr) {
+        interCobError = interErr;
+        console.warn("[Minibar Inter PIX] Falha ao gerar cobrança dinâmica:", interErr?.message || interErr);
+      }
+
+      if (cob?.txid && cob?.pixCopiaECola) {
+        txid = String(cob.txid).trim();
+        copiaECola = String(cob.pixCopiaECola).trim();
+        pixIsDynamic = isDynamicInterPixTxId(txid);
+        pixCreatedAt = cob.createdAt || new Date().toISOString();
+      } else {
+        // TRAVA DE PRODUÇÃO: Nunca gerar PIX estático/mock sem rastreio dinâmico em produção ou quando Inter está configurado
+        if (isMinibarStrictInterPixMode()) {
+          logAuditEvent({
+            level: "error",
+            category: "financial",
+            action: "MINIBAR_INTER_PIX_UNAVAILABLE",
+            details: {
+              orderId,
+              reservationCode: finalResCode,
+              flatNumber: flatStr,
+              totalAmount,
+              error: interCobError?.message || "Resposta da API Banco Inter sem txid/pixCopiaECola"
+            }
+          });
+          return res.status(503).json({
+            success: false,
+            code: "INTER_PIX_UNAVAILABLE",
+            error:
+              "Não foi possível gerar o QR Code PIX no Banco Inter neste momento. Tente novamente em instantes ou escolha pagar com Cartão de Crédito."
+          });
+        }
+
+        // Fallback estático/simulado exclusivo para ambiente de teste ou dev local sem credenciais Inter
+        txid = "TXMB" + crypto.randomBytes(12).toString("hex").toUpperCase();
+        pixIsDynamic = false;
+        pixCreatedAt = new Date().toISOString();
+        try {
+          copiaECola = generateStaticPixPayload({
+            pixKey: db.settings?.interConfig?.pixKey || "47964813000165",
+            amount: totalAmount,
+            merchantName: "CORPFLATS LTDA",
+            merchantCity: "CAMPOS DOS GOYTACAZES",
+            txid
+          });
+        } catch (_) {
+          copiaECola = `00020126580014br.gov.bcb.pix0136${txid}520400005303986540${totalAmount.toFixed(2)}5802BR5915CORPFLATS LTDA6014CAMPOS62070503***6304`;
+        }
+      }
+    }
+
+    const mergedTxHistory = Array.from(
+      new Set(
+        [
+          ...(Array.isArray(existingOrder?.pixTxIdHistory) ? existingOrder.pixTxIdHistory : []),
+          existingOrder?.pixTxId,
+          txid
+        ]
+          .map(v => String(v || "").trim())
+          .filter(Boolean)
+      )
+    );
 
     if (existingOrder) {
       existingOrder.paymentMethod = "pix";
@@ -96983,6 +101085,9 @@ app.post("/api/minibar/orders", async (req, res) => {
       existingOrder.guestDocument = cleanDoc;
       existingOrder.guestEmail = cleanEmail;
       existingOrder.pixTxId = txid;
+      existingOrder.pixTxIdHistory = mergedTxHistory;
+      existingOrder.pixCreatedAt = pixCreatedAt;
+      existingOrder.pixIsDynamic = pixIsDynamic;
       existingOrder.pixCopiaECola = copiaECola;
       existingOrder.pixExpiresAt = expiresAt;
       existingOrder.fiscalPreferences = fiscalPreferences;
@@ -97001,8 +101106,9 @@ app.post("/api/minibar/orders", async (req, res) => {
         paymentStatus: "pendente",
         pixQrCode: copiaECola,
         pixCopiaECola: copiaECola,
+        pixIsDynamic,
         expiresAt,
-        order: existingOrder
+        order: sanitizeMinibarOrderForResponse(existingOrder)
       });
     }
 
@@ -97027,6 +101133,9 @@ app.post("/api/minibar/orders", async (req, res) => {
       paymentStatus: "pendente",
       source: "guest_mobile",
       pixTxId: txid,
+      pixTxIdHistory: mergedTxHistory,
+      pixCreatedAt,
+      pixIsDynamic,
       pixCopiaECola: copiaECola,
       pixExpiresAt: expiresAt,
       fiscalPreferences,
@@ -97048,8 +101157,9 @@ app.post("/api/minibar/orders", async (req, res) => {
       paymentStatus: "pendente",
       pixQrCode: copiaECola,
       pixCopiaECola: copiaECola,
+      pixIsDynamic,
       expiresAt,
-      order: newOrder
+      order: sanitizeMinibarOrderForResponse(newOrder)
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -97065,40 +101175,39 @@ app.get("/api/minibar/orders/:id/status", async (req, res) => {
       return res.status(404).json({ success: false, error: "Pedido não encontrado." });
     }
 
-    // Se estiver pendente, faz polling ativo
+    // Se estiver pendente, faz polling ativo determinístico (NUNCA casa apenas por valor no extrato)
     if (order.paymentStatus === "pendente") {
       if (order.paymentMethod === "credit_card" || order.paymentMethod === "cartao_credito") {
         try {
-          const mpApproved = await checkMercadoPagoPaymentByRef("MB-" + order.id);
+          const mpApproved = await _callMinibarCheckMpPayment("MB-" + order.id);
           if (mpApproved) {
             settleMinibarOrder(order, {
               paidAt: mpApproved.date_approved || new Date().toISOString(),
               mpPaymentId: String(mpApproved.id),
+              amount: mpApproved.transaction_amount || order.totalAmount,
               paymentMethod: order.paymentMethod,
               source: "mercadopago_polling"
             });
           }
         } catch (_) {}
-      } else if (order.paymentMethod === "pix" && order.pixTxId) {
+      } else if (
+        order.paymentMethod === "pix" &&
+        (order.pixTxId || (Array.isArray(order.pixTxIdHistory) && order.pixTxIdHistory.length > 0))
+      ) {
         try {
-          const extrato = await getCachedInterExtratoCompleto();
-          if (extrato && Array.isArray(extrato.transacoes)) {
-            const found = extrato.transacoes.find(t =>
-              t.tipoTransacao === "PIX" &&
-              t.tipoOperacao === "C" &&
-              (String(t.codigoTransacao || t.txid || "").includes(order.pixTxId) ||
-               Math.abs(Number(t.valor) - Number(order.totalAmount)) < 0.01)
-            );
-            if (found) {
-              settleMinibarOrder(order, {
-                paidAt: found.dataHora || new Date().toISOString(),
-                pixEndToEndId: found.endToEndId || `E2E_${Date.now()}`,
-                paymentMethod: "pix",
-                source: "inter_pix_polling"
-              });
-            }
+          const verifyRes = await verifyMinibarOrderPixPayment(order);
+          if (verifyRes && verifyRes.verified && verifyRes.endToEndId) {
+            settleMinibarOrder(order, {
+              paidAt: verifyRes.paidAt || new Date().toISOString(),
+              pixEndToEndId: verifyRes.endToEndId,
+              amount: verifyRes.amount || order.totalAmount,
+              paymentMethod: "pix",
+              source: verifyRes.source || "inter_pix_polling"
+            });
           }
-        } catch (_) {}
+        } catch (pollErr) {
+          console.warn("[Minibar PIX Polling] Aviso:", pollErr?.message || pollErr);
+        }
       }
     }
 
@@ -98424,6 +102533,15 @@ app.post("/api/minibar/inspections", async (req, res) => {
 
     saveDatabase("minibar_inspection_recorded");
 
+    // ── WhatsApp: Dispara ou agenda "Quarto Pronto" se o flat já está limpo e aguardava apenas a conferência de frigobar ──
+    if (!isSkipMark) {
+      const flatObjForRoomReady = (db.flats || []).find(f => String(f.number) === flatStr);
+      const reqBaseUrlForRoomReady = `${req.protocol}://${req.get("host")}`;
+      triggerRoomReadyWhatsApp(db, saveDatabase, flatObjForRoomReady?.id ?? null, flatStr, reqBaseUrlForRoomReady).catch(e =>
+        console.warn("[Room Ready WhatsApp - Minibar Inspection] Erro ao notificar:", e.message)
+      );
+    }
+
     res.json({
       success: true,
       inspectionId: inspection.id,
@@ -99379,19 +103497,15 @@ app.get("/api/minibar/invoices/pending", (req, res) => {
       .map(enrichMinibarOrderForInvoiceScreen)
       .sort((a, b) => String(b.paidAt || b.createdAt || "").localeCompare(String(a.paidAt || a.createdAt || "")));
 
-    const resWithAutoSplit = new Set(
-      (db.minibarOrders || [])
-        .filter(o => o && o.paymentStatus === "pendente" && Boolean(o.isAutoSplitCheckoutOrder) && o.reservationCode)
-        .map(o => o.reservationCode)
-    );
-    const preConfiguredCheckoutSplits = (db.minibarOrders || [])
+    const preConfiguredCheckoutSplits = filterCanonicalVisibleMinibarOrders(db.minibarOrders || [], db.minibarOrders || [])
       .filter(
         o =>
           o &&
           o.paymentStatus === "pendente" &&
           Number(o.totalAmount) > 0 &&
           (Boolean(o.isAutoSplitCheckoutOrder) ||
-            (o.source === "anserve_discrepancy" && (!o.reservationCode || !resWithAutoSplit.has(o.reservationCode))))
+            String(o.id || "").startsWith("ORD-MB-SPLIT-") ||
+            o.source === "anserve_discrepancy")
       )
       .map(enrichMinibarOrderForInvoiceScreen);
 
@@ -99421,19 +103535,15 @@ app.get("/api/minibar/invoices/hub", (req, res) => {
     const pendingInvoices = allPaidOrders.filter(o => !o.invoice || o.invoice.status !== "anexada");
     const issuedInvoices = allPaidOrders.filter(o => o.invoice && o.invoice.status === "anexada");
     const separatePaymentsPendingCount = pendingInvoices.filter(o => o.splitPaymentInfo?.isSeparatePayment).length;
-    const resWithAutoSplit = new Set(
-      (db.minibarOrders || [])
-        .filter(o => o && o.paymentStatus === "pendente" && Boolean(o.isAutoSplitCheckoutOrder) && o.reservationCode)
-        .map(o => o.reservationCode)
-    );
-    const preConfiguredCheckoutSplits = (db.minibarOrders || [])
+    const preConfiguredCheckoutSplits = filterCanonicalVisibleMinibarOrders(db.minibarOrders || [], db.minibarOrders || [])
       .filter(
         o =>
           o &&
           o.paymentStatus === "pendente" &&
           Number(o.totalAmount) > 0 &&
           (Boolean(o.isAutoSplitCheckoutOrder) ||
-            (o.source === "anserve_discrepancy" && (!o.reservationCode || !resWithAutoSplit.has(o.reservationCode))))
+            String(o.id || "").startsWith("ORD-MB-SPLIT-") ||
+            o.source === "anserve_discrepancy")
       )
       .map(enrichMinibarOrderForInvoiceScreen);
 
@@ -100374,7 +104484,7 @@ app.get("/api/minibar/settings", (req, res) => {
     if (!isTestBypass && !isMinibarAdmin(userAuth)) {
       return res.status(403).json({ success: false, error: "Acesso restrito ao Gestor Anserve e Administração CorpFlats." });
     }
-    if (!db.minibarSettings) db.minibarSettings = getDefaultMinibarSettings();
+    ensureMinibarSettingsDefaults(db);
     const checkoutSummary = buildTodayCheckoutsSummaryForRestockers(db);
     res.json({
       success: true,
@@ -100393,12 +104503,18 @@ app.put("/api/minibar/settings", (req, res) => {
     if (!isTestBypass && !isMinibarAdmin(userAuth)) {
       return res.status(403).json({ success: false, error: "Acesso restrito ao Gestor Anserve e Administração CorpFlats." });
     }
-    if (!db.minibarSettings) db.minibarSettings = getDefaultMinibarSettings();
+    ensureMinibarSettingsDefaults(db);
     const {
       restockerWorkWhatsapp,
       anservePin,
       operationMode,
-      autoNotifySofiaOnDiscrepancy
+      autoNotifySofiaOnDiscrepancy,
+      dailyPaymentRemindersEnabled,
+      dailyPaymentReminderHour,
+      dailyPaymentReminderLookbackDays,
+      dailyPaymentReminderMaxDays,
+      dailyPaymentReminderNotifyManagerOnDay7,
+      notificationManagerWhatsApp
     } = req.body || {};
 
     if (restockerWorkWhatsapp !== undefined) {
@@ -100413,11 +104529,508 @@ app.put("/api/minibar/settings", (req, res) => {
     if (autoNotifySofiaOnDiscrepancy !== undefined) {
       db.minibarSettings.autoNotifySofiaOnDiscrepancy = Boolean(autoNotifySofiaOnDiscrepancy);
     }
+    if (dailyPaymentRemindersEnabled !== undefined) {
+      db.minibarSettings.dailyPaymentRemindersEnabled = Boolean(dailyPaymentRemindersEnabled);
+    }
+    if (dailyPaymentReminderHour !== undefined) {
+      const h = parseInt(dailyPaymentReminderHour, 10);
+      if (!isNaN(h)) {
+        db.minibarSettings.dailyPaymentReminderHour = Math.max(0, Math.min(23, h));
+      }
+    }
+    if (dailyPaymentReminderLookbackDays !== undefined) {
+      const d = parseInt(dailyPaymentReminderLookbackDays, 10);
+      if (!isNaN(d)) {
+        db.minibarSettings.dailyPaymentReminderLookbackDays = Math.max(1, Math.min(90, d));
+      }
+    }
+    if (dailyPaymentReminderMaxDays !== undefined) {
+      const m = parseInt(dailyPaymentReminderMaxDays, 10);
+      if (!isNaN(m)) {
+        db.minibarSettings.dailyPaymentReminderMaxDays = Math.max(1, Math.min(30, m));
+      }
+    }
+    if (dailyPaymentReminderNotifyManagerOnDay7 !== undefined) {
+      db.minibarSettings.dailyPaymentReminderNotifyManagerOnDay7 = Boolean(dailyPaymentReminderNotifyManagerOnDay7);
+    }
+    if (notificationManagerWhatsApp !== undefined) {
+      db.minibarSettings.notificationManagerWhatsApp = cleanWhatsAppPhone(notificationManagerWhatsApp);
+    }
+    db.minibarSettings.updatedAt = new Date().toISOString();
 
     saveDatabase("minibar_settings_updated");
     res.json({
       success: true,
       settings: db.minibarSettings
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── Painel de Cobranças Pós-Check-out, Auditoria PIX e Reabertura Manual ───────
+app.get("/api/minibar/collections/overview", (req, res) => {
+  try {
+    const userAuth = getAuthUser(req);
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+    if (!isTestBypass && !isMinibarAdmin(userAuth)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito ao Gestor Anserve e Administração CorpFlats." });
+    }
+    ensureMinibarSettingsDefaults(db);
+    const cfg = db.minibarSettings;
+    const lookbackDays = req.query?.lookbackDays
+      ? Math.max(1, Math.min(90, parseInt(req.query.lookbackDays, 10) || 15))
+      : Number(cfg.dailyPaymentReminderLookbackDays) || 15;
+
+    const pendingTargets = collectPendingMinibarCollectionTargets({ lookbackDays });
+
+    const cutoffRecentMs = Date.now() - Math.max(lookbackDays, 60) * 24 * 60 * 60 * 1000;
+    const mapPaidOrderSummary = o => {
+      const vStatus = getMinibarOrderVerificationStatus(o);
+      const hasInvoice = Boolean(
+        o.invoice?.status === "anexada" || o.invoice?.invoiceFileUrl || o.invoice?.fileUrl
+      );
+      return {
+        id: o.id,
+        flatNumber: o.flatNumber || "",
+        reservationCode: o.reservationCode || "",
+        guestName: o.guestName || "Hóspede",
+        guestIndex: Number(o.guestIndex || 1),
+        totalAmount: Number(Number(o.totalAmount || 0).toFixed(2)),
+        paymentMethod: o.paymentMethod || "",
+        paymentStatus: o.paymentStatus || "",
+        paidAt: o.paidAt || o.updatedAt || o.createdAt || null,
+        pixTxId: o.pixTxId || null,
+        pixEndToEndId: o.pixEndToEndId || null,
+        manualPaymentConfirmed: Boolean(o.manualPaymentConfirmed),
+        hasInvoice,
+        invoiceStatus: o.invoice?.status || "pendente",
+        itemsSummary: (o.items || []).map(it => `${it.quantity}x ${it.productName || it.productId}`).join(", "),
+        verificationStatus: vStatus,
+        verificationWarning:
+          vStatus === "unverified_synthetic_e2e"
+            ? hasInvoice
+              ? "PIX sem E2E real do Banco Central (NF já anexada — revise antes de reabrir)"
+              : "PIX pago sem E2E real do Banco Central (possível falso-pago)"
+            : null
+      };
+    };
+
+    const allPaidOrders = (db.minibarOrders || [])
+      .filter(o => o && o.paymentStatus === "pago" && Number(o.totalAmount || 0) > 0)
+      .sort((a, b) => String(b.paidAt || b.updatedAt || b.createdAt || "").localeCompare(String(a.paidAt || a.updatedAt || a.createdAt || "")));
+
+    const suspiciousPaidOrders = allPaidOrders
+      .filter(o => getMinibarOrderVerificationStatus(o) === "unverified_synthetic_e2e")
+      .map(mapPaidOrderSummary);
+
+    const recentPaidOrders = allPaidOrders
+      .filter(o => {
+        const ms = new Date(o.paidAt || o.updatedAt || o.createdAt || 0).getTime();
+        return !Number.isFinite(ms) || ms <= 0 || ms >= cutoffRecentMs;
+      })
+      .slice(0, 50)
+      .map(mapPaidOrderSummary);
+
+    const summary = {
+      pendingTargetsCount: pendingTargets.length,
+      pendingTotalAmount: Number(
+        pendingTargets.reduce((sum, t) => sum + Number(t.pendingAmount || 0), 0).toFixed(2)
+      ),
+      pausedCount: pendingTargets.filter(t => t.paused).length,
+      day7EscalatedCount: pendingTargets.filter(
+        t => t.reminderCount >= t.maxDays || Boolean(t.formalNoticeSentAt)
+      ).length,
+      suspiciousPaidOrdersCount: suspiciousPaidOrders.length
+    };
+
+    res.json({
+      success: true,
+      settings: {
+        dailyPaymentRemindersEnabled: cfg.dailyPaymentRemindersEnabled !== false,
+        dailyPaymentReminderHour: Number(cfg.dailyPaymentReminderHour ?? 10),
+        dailyPaymentReminderLookbackDays: Number(cfg.dailyPaymentReminderLookbackDays ?? 15),
+        dailyPaymentReminderMaxDays: Number(cfg.dailyPaymentReminderMaxDays ?? 7),
+        dailyPaymentReminderNotifyManagerOnDay7: cfg.dailyPaymentReminderNotifyManagerOnDay7 !== false,
+        notificationManagerWhatsApp: cfg.notificationManagerWhatsApp || ""
+      },
+      summary,
+      pendingTargets,
+      suspiciousPaidOrders,
+      recentPaidOrders,
+      lastAuditReport: db.minibarLastAuditReport || null
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/minibar/collections/send-now", async (req, res) => {
+  try {
+    const userAuth = getAuthUser(req);
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+    if (!isTestBypass && !isMinibarAdmin(userAuth)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito ao Gestor Anserve e Administração CorpFlats." });
+    }
+    const { reservationCode, guestIndex } = req.body || {};
+    if (!reservationCode) {
+      return res.status(400).json({ success: false, error: "Código da reserva (reservationCode) é obrigatório." });
+    }
+    const actorName = userAuth?.name || userAuth?.username || "Administrador";
+    const result = await processDailyMinibarPaymentReminders({
+      force: true,
+      targetReservationCode: String(reservationCode).trim(),
+      targetGuestIndex: guestIndex !== undefined && guestIndex !== null ? Number(guestIndex) : null,
+      actorName
+    });
+    if (!result.results || result.results.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: "Nenhuma pendência de frigobar elegível encontrada para esta reserva/hóspede."
+      });
+    }
+    const firstRes = result.results[0] || {};
+    const settledOnPrecheck = firstRes.status === "settled_on_precheck" || result.settledBeforeSendCount > 0;
+    res.json({
+      success: true,
+      ...result,
+      settledOnPrecheck,
+      alreadyPaid: settledOnPrecheck,
+      stepNumber: firstRes.stepNumber ?? null,
+      whatsappSent: Boolean(firstRes.whatsappSent),
+      emailSent: Boolean(firstRes.emailSent),
+      message: firstRes.message || (settledOnPrecheck ? "Pagamento confirmado no banco; cobrança cancelada." : "Cobrança enviada com sucesso."),
+      result: {
+        ...firstRes,
+        settledOnPrecheck,
+        alreadyPaid: settledOnPrecheck
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/minibar/collections/pause", (req, res) => {
+  try {
+    const userAuth = getAuthUser(req);
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+    if (!isTestBypass && !isMinibarAdmin(userAuth)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito ao Gestor Anserve e Administração CorpFlats." });
+    }
+    const { reservationCode, guestIndex = 1, paused = true, reason = "" } = req.body || {};
+    if (!reservationCode) {
+      return res.status(400).json({ success: false, error: "Código da reserva (reservationCode) é obrigatório." });
+    }
+    const reservation = (db.reservations || []).find(
+      r => r && (r.code === reservationCode || String(r.id) === String(reservationCode))
+    );
+    if (!reservation) {
+      return res.status(404).json({ success: false, error: "Reserva não encontrada." });
+    }
+    if (!reservation.minibarReminderState || typeof reservation.minibarReminderState !== "object") {
+      reservation.minibarReminderState = {};
+    }
+    const guestKey = String(Number(guestIndex) || 1);
+    if (!reservation.minibarReminderState[guestKey]) {
+      reservation.minibarReminderState[guestKey] = {
+        reminderCount: 0,
+        lastSentDate: null,
+        lastSentAt: null,
+        paused: false,
+        pausedAt: null,
+        pausedReason: "",
+        formalNoticeSentAt: null,
+        history: []
+      };
+    }
+    const state = reservation.minibarReminderState[guestKey];
+    const nowIso = new Date().toISOString();
+    state.paused = Boolean(paused);
+    state.pausedAt = state.paused ? nowIso : null;
+    state.pausedReason = state.paused ? String(reason || "").trim() : "";
+
+    logAuditEvent({
+      level: "info",
+      category: "financial",
+      action: state.paused ? "MINIBAR_REMINDER_PAUSED" : "MINIBAR_REMINDER_RESUMED",
+      actor: userAuth
+        ? { id: userAuth.id, name: userAuth.name || userAuth.username || "admin", role: userAuth.role }
+        : { id: 0, name: "system", role: "admin" },
+      details: {
+        reservationCode: reservation.code,
+        guestIndex: Number(guestKey),
+        paused: state.paused,
+        reason: state.pausedReason
+      }
+    });
+
+    saveDatabase("minibar_reminder_pause_toggled");
+    res.json({
+      success: true,
+      reservationCode: reservation.code,
+      guestIndex: Number(guestKey),
+      state
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/minibar/collections/manual-settle", (req, res) => {
+  try {
+    const userAuth = getAuthUser(req);
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+    if (!isTestBypass && !isMinibarAdmin(userAuth)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito ao Gestor Anserve e Administração CorpFlats." });
+    }
+    const {
+      reservationCode,
+      guestIndex = 1,
+      orderId = null,
+      paymentMethod = "pix_avulso",
+      amount = null,
+      notes = ""
+    } = req.body || {};
+
+    const actorName = userAuth?.name || userAuth?.username || "Administrador";
+    const cleanMethod = String(paymentMethod || "pix_avulso").trim() || "pix_avulso";
+    const cleanNotes = String(notes || "").trim();
+    const nowIso = new Date().toISOString();
+
+    if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
+    const existingOrder = orderId ? db.minibarOrders.find(o => o && o.id === orderId) : null;
+
+    // Caso A: Admin confirmando manualmente um pedido já marcado como "pago" (ex: pedido suspeito sem E2E real)
+    if (existingOrder && existingOrder.paymentStatus === "pago") {
+      existingOrder.manualPaymentConfirmed = true;
+      existingOrder.paymentVerifiedSource = "manual_admin";
+      existingOrder.manualPaymentDetails = {
+        confirmedBy: actorName,
+        confirmedAt: nowIso,
+        paymentMethod: cleanMethod,
+        amount: Number(amount || existingOrder.totalAmount || 0),
+        notes: cleanNotes || "Confirmado manualmente no painel administrativo"
+      };
+      existingOrder.updatedAt = nowIso;
+
+      logAuditEvent({
+        level: "info",
+        category: "financial",
+        action: "MINIBAR_MANUAL_PAYMENT_CONFIRMED",
+        actor: userAuth
+          ? { id: userAuth.id, name: actorName, role: userAuth.role }
+          : { id: 0, name: actorName, role: "admin" },
+        details: {
+          orderId: existingOrder.id,
+          reservationCode: existingOrder.reservationCode || "",
+          paymentMethod: cleanMethod,
+          notes: cleanNotes
+        }
+      });
+
+      saveDatabase("minibar_manual_payment_confirmed");
+      return res.json({
+        success: true,
+        order: sanitizeMinibarOrderForResponse(existingOrder),
+        message: "Pagamento confirmado manualmente com sucesso."
+      });
+    }
+
+    // Caso B: Baixa manual de pendência / pedido em aberto
+    const effectiveResCode = reservationCode || existingOrder?.reservationCode || "";
+    const reservation = effectiveResCode
+      ? (db.reservations || []).find(
+          r => r && (r.code === effectiveResCode || String(r.id) === String(effectiveResCode))
+        )
+      : existingOrder?.reservationId
+      ? (db.reservations || []).find(r => r && String(r.id) === String(existingOrder.reservationId))
+      : null;
+
+    if (!reservation && !existingOrder) {
+      return res.status(404).json({ success: false, error: "Reserva ou pedido não encontrado para baixa manual." });
+    }
+
+    const flatStr = String(existingOrder?.flatNumber || reservation?.flatNumber || reservation?.flatId || "").trim();
+    const statement = reservation ? buildReservationMinibarStatement(reservation, flatStr) : null;
+    const reqGuestIdx = Number(guestIndex || existingOrder?.guestIndex || 1);
+    const share = (statement?.splitBreakdown?.shares || []).find(s => Number(s.guestIndex) === reqGuestIdx) || null;
+
+    const parsedAmt = Number(amount);
+    const effectiveAmount =
+      Number.isFinite(parsedAmt) && parsedAmt > 0
+        ? Number(parsedAmt.toFixed(2))
+        : share && Number(share.amount) > 0
+        ? Number(Number(share.amount).toFixed(2))
+        : existingOrder && Number(existingOrder.remainingAmount ?? existingOrder.totalAmount) > 0
+        ? Number(Number(existingOrder.remainingAmount ?? existingOrder.totalAmount).toFixed(2))
+        : statement && Number(statement.pendingBalance) > 0
+        ? Number(Number(statement.pendingBalance).toFixed(2))
+        : 0;
+
+    if (effectiveAmount <= 0) {
+      return res.status(400).json({ success: false, error: "Não há saldo pendente para dar baixa manual." });
+    }
+
+    let targetOrder = null;
+    if (
+      existingOrder &&
+      existingOrder.paymentStatus === "pendente" &&
+      !isMinibarLaunchOrderRecord(existingOrder) &&
+      Math.abs(Number(existingOrder.totalAmount || 0) - effectiveAmount) <= 0.05
+    ) {
+      targetOrder = existingOrder;
+      targetOrder.settlesLaunchOrders = true;
+    } else {
+      const guestName =
+        share?.guestName ||
+        existingOrder?.guestName ||
+        (reqGuestIdx === 1 ? reservation?.guestName : `Hóspede ${reqGuestIdx}`) ||
+        "Hóspede CorpFlats";
+      const guestPhone = share?.phone || existingOrder?.guestPhone || (reqGuestIdx === 1 ? reservation?.guestPhone || "" : "");
+      const guestEmail = share?.email || existingOrder?.guestEmail || (reqGuestIdx === 1 ? reservation?.guestEmail || "" : "");
+      const guestDocument = String(
+        share?.document || share?.cpf || existingOrder?.guestDocument || (reqGuestIdx === 1 ? reservation?.guestDocument || "" : "")
+      ).replace(/\D/g, "");
+
+      const manualItems =
+        Array.isArray(share?.orderItems) && share.orderItems.length > 0
+          ? share.orderItems.map(it => ({ ...it }))
+          : [
+              {
+                productId: "manual_settlement",
+                productName: `Baixa Manual de Frigobar (${guestName})`,
+                quantity: 1,
+                unitPrice: effectiveAmount,
+                totalPrice: effectiveAmount,
+                isCourtesy: false
+              }
+            ];
+
+      const splitMode = statement?.splitBreakdown?.mode || "titular";
+      targetOrder = {
+        id: `ORD-MB-MANUAL-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        flatNumber: flatStr,
+        reservationId: reservation?.id || existingOrder?.reservationId || null,
+        reservationCode: reservation?.code || effectiveResCode,
+        guestId: share?.guestId || (reqGuestIdx === 1 ? reservation?.guestId || null : null),
+        guestIndex: reqGuestIdx,
+        guestRole: reqGuestIdx > 1 ? "acompanhante" : "titular",
+        guestName,
+        guestPhone,
+        guestDocument,
+        guestEmail,
+        items: manualItems,
+        selectedLaunchItems: Array.isArray(share?.selectedLaunchItems) ? share.selectedLaunchItems.map(it => ({ ...it })) : [],
+        partialMode: splitMode === "half_and_half" ? "equal_split" : splitMode === "by_item" ? "items" : "full",
+        settlesLaunchOrders: true,
+        totalAmount: effectiveAmount,
+        paymentMethod: cleanMethod,
+        paymentStatus: "pendente",
+        source: "manual_admin_settlement",
+        fiscalPreferences: {
+          invoiceDescriptionType: "detailed",
+          documentType: guestDocument.length === 14 ? "cnpj" : "cpf",
+          documentNumber: guestDocument,
+          companyName: "",
+          email: guestEmail,
+          phone: guestPhone,
+          payerName: guestName
+        },
+        invoice: { status: cleanMethod === "cortesia_admin" ? "nao_aplicavel" : "pendente" },
+        notes: cleanNotes,
+        createdAt: nowIso,
+        updatedAt: nowIso
+      };
+      db.minibarOrders.push(targetOrder);
+    }
+
+    const settled = settleMinibarOrder(targetOrder, {
+      paidAt: nowIso,
+      paymentMethod: cleanMethod,
+      amount: effectiveAmount,
+      manualAdminConfirmation: true,
+      actorName,
+      notes: cleanNotes,
+      source: "manual_admin"
+    });
+
+    logAuditEvent({
+      level: "info",
+      category: "financial",
+      action: "MINIBAR_MANUAL_SETTLEMENT",
+      actor: userAuth
+        ? { id: userAuth.id, name: actorName, role: userAuth.role }
+        : { id: 0, name: actorName, role: "admin" },
+      details: {
+        orderId: targetOrder.id,
+        reservationCode: targetOrder.reservationCode || "",
+        guestIndex: reqGuestIdx,
+        paymentMethod: cleanMethod,
+        amount: effectiveAmount,
+        notes: cleanNotes
+      }
+    });
+
+    res.json({
+      success: true,
+      order: sanitizeMinibarOrderForResponse(settled || targetOrder),
+      message: "Baixa manual registrada com sucesso."
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/minibar/orders/:id/reopen", (req, res) => {
+  try {
+    const userAuth = getAuthUser(req);
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+    if (!isTestBypass && !isMinibarAdmin(userAuth)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito ao Gestor Anserve e Administração CorpFlats." });
+    }
+    const orderId = String(req.params.id || "").trim();
+    const order = (db.minibarOrders || []).find(o => o && String(o.id) === orderId);
+    if (!order) {
+      return res.status(404).json({ success: false, error: "Pedido de frigobar não encontrado." });
+    }
+    if (order.paymentStatus !== "pago") {
+      return res.status(400).json({ success: false, error: "Apenas pedidos com status 'pago' podem ser reabertos." });
+    }
+    const reason = String(req.body?.reason || "Reabertura manual administrativa").trim();
+    const actorName = userAuth?.name || userAuth?.username || "Administrador";
+    const result = reopenMinibarOrderToPending(order, {
+      reason,
+      actorName,
+      source: "admin_manual"
+    });
+    res.json({
+      success: true,
+      message: `Pedido ${order.id} reaberto como pendente com sucesso.`,
+      order: sanitizeMinibarOrderForResponse(order),
+      restoredLaunchOrderIds: result?.restoredLaunchOrderIds || []
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/minibar/collections/audit-false-paid", async (req, res) => {
+  try {
+    const userAuth = getAuthUser(req);
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+    if (!isTestBypass && !isMinibarAdmin(userAuth)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito ao Gestor Anserve e Administração CorpFlats." });
+    }
+    const lookbackDays = req.body?.lookbackDays ?? db.minibarSettings?.dailyPaymentReminderLookbackDays ?? 15;
+    const actorName = userAuth?.name || userAuth?.username || "admin_manual_audit";
+    const report = await auditAndReopenFalsePaidMinibarOrders({
+      lookbackDays,
+      triggeredBy: actorName
+    });
+    res.json({
+      success: true,
+      report
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -100952,7 +105565,8 @@ app.get("/api/minibar/anserve-reports", (req, res) => {
     const { startDate, endDate, flatNumber, status, productId } = req.query;
     const productsCatalog = db.minibarProducts || [];
 
-    const filteredOrders = (db.minibarOrders || []).filter(o => {
+    const canonicalOrders = filterCanonicalVisibleMinibarOrders(db.minibarOrders || [], db.minibarOrders || []);
+    const filteredOrders = canonicalOrders.filter(o => {
       if (!o) return false;
       const d = String(o.paidAt || o.createdAt || "").split("T")[0];
       if (startDate && d < startDate) return false;
@@ -100986,7 +105600,14 @@ app.get("/api/minibar/anserve-reports", (req, res) => {
 
     const enrichedOrders = filteredOrders.map(ord => {
       const isPaid = ord.paymentStatus === "pago";
-      const amt = Number(ord.totalAmount) || 0;
+      const isPending = ord.paymentStatus === "pendente" || !ord.paymentStatus;
+      const amt =
+        !isPaid &&
+        isMinibarLaunchOrderRecord(ord) &&
+        ord.remainingAmount !== undefined &&
+        ord.remainingAmount !== null
+          ? Math.max(0, Number(ord.remainingAmount) || 0)
+          : Number(ord.totalAmount) || 0;
       let orderCost = 0;
       let orderUnits = 0;
 
@@ -101030,7 +105651,7 @@ app.get("/api/minibar/anserve-reports", (req, res) => {
         totalUnitsSold += orderUnits;
         if (ord.paymentMethod === "pix") byPaymentMethod.pix += amt;
         else byPaymentMethod.credit_card += amt;
-      } else {
+      } else if (isPending) {
         totalPendingRevenue += amt;
         totalOrdersPending += 1;
         byPaymentMethod.pendente += amt;
@@ -101048,6 +105669,9 @@ app.get("/api/minibar/anserve-reports", (req, res) => {
         consumerGuestRole: ord.consumerGuestRole || "1º Hóspede (Titular)",
         paymentMethod: ord.paymentMethod,
         paymentStatus: ord.paymentStatus,
+        pixEndToEndId: ord.pixEndToEndId || null,
+        manualPaymentConfirmed: Boolean(ord.manualPaymentConfirmed),
+        paymentVerificationStatus: getMinibarOrderVerificationStatus(ord),
         source: ord.source || "guest_qr",
         totalAmount: Number(amt.toFixed(2)),
         totalCost: Number(orderCost.toFixed(2)),
@@ -101059,7 +105683,7 @@ app.get("/api/minibar/anserve-reports", (req, res) => {
         deliveryMonitor: ord.invoice?.deliveryMonitor || null,
         invoiceDescriptionType: ord.fiscalPreferences?.invoiceDescriptionType || "detailed",
         documentNumber: ord.fiscalPreferences?.documentNumber || ord.guestDocument || "",
-        itemsSummary: (ord.items || []).map(it => `${it.quantity}x ${it.productName || it.productId}`).join(", "),
+        itemsSummary: formatAggregatedMinibarItemsSummary(ord.items || []),
         items: ord.items || []
       };
     });
@@ -102053,6 +106677,9 @@ const httpServer = app.listen(PORT, "0.0.0.0", () => {
     setTimeout(() => {
       if (!pgPool) {
         healContaminatedGoogleContactsPostBoot(db).catch(() => {});
+        runBootMinibarFalsePaidAuditOnce("boot_audit_local").catch(err => {
+          console.warn("[Minibar Boot Audit Local] Aviso:", err?.message || err);
+        });
         ensureZohoWebhookRegistered(db, saveDatabase, {
           baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br"
         })
@@ -102071,6 +106698,26 @@ const httpServer = app.listen(PORT, "0.0.0.0", () => {
           });
       }
     }, 3000);
+
+    // Worker periódico de reconciliação PIX/Cartão de Frigobar em background (60s)
+    setTimeout(() => {
+      setInterval(() => {
+        if (pgPool && !pgHydratedSuccessfully) return;
+        reconcilePendingMinibarPayments().catch(err => {
+          console.warn("[Minibar Background Reconciler] Aviso:", err?.message || err);
+        });
+      }, 60000);
+    }, 20000);
+
+    // Motor periódico de avisos diários de cobrança de Frigobar pós-check-out (D+1 a D+7, a cada 15 min)
+    setTimeout(() => {
+      setInterval(() => {
+        if (pgPool && !pgHydratedSuccessfully) return;
+        processDailyMinibarPaymentReminders({ force: false }).catch(err => {
+          console.warn("[Minibar Daily Reminder Scheduler] Aviso:", err?.message || err);
+        });
+      }, 15 * 60 * 1000);
+    }, 45000);
 
     // Motor periódico de Credenciamento e Lembretes (24h, Manhã Check-in 08h, Meio-dia 12h, Contingência 13h)
     setTimeout(() => {
@@ -102142,5 +106789,26 @@ export {
   normalizeChannexBookingRevision,
   isB2bReservation,
   computeLinenTracking,
-  getRequestsForDate
+  getRequestsForDate,
+  isValidRealPixEndToEndId,
+  isPixEndToEndIdAlreadyClaimed,
+  getMinibarOrderVerificationStatus,
+  verifyMinibarOrderPixPayment,
+  settleMinibarOrder,
+  reopenMinibarOrderToPending,
+  auditAndReopenFalsePaidMinibarOrders,
+  reconcilePendingMinibarPayments,
+  collectPendingMinibarCollectionTargets,
+  processDailyMinibarPaymentReminders,
+  setMinibarTestHooks,
+  buildReservationMinibarStatement,
+  runCheckoutAutoBillingAndNfse,
+  normalizeFiscalChannelKey,
+  normalizeNfseChannelRules,
+  dispatchNfseInvoiceEmail,
+  setCheckoutAutoNfseTestHooks,
+  filterCanonicalVisibleMinibarOrders,
+  formatAggregatedMinibarItemsSummary,
+  getVisibleReservationMinibarOrders,
+  computeReservationAccommodationAndConsumption
 };
