@@ -938,8 +938,6 @@ const GUEST_TRANSLATABLE_PORTAL_PREFIXES = [
   "/saida",
   "/cafe",
   "/breakfast",
-  "/frigobar/flat/",
-  "/minibar/",
   "/minha-conta",
   "/minhaconta",
   "/perfil",
@@ -955,9 +953,6 @@ function isGuestTranslatablePortalPath(cleanLowerPath) {
     cleanLowerPath === "/frigobar"
   ) {
     return false;
-  }
-  if (/^\/frigobar\/[a-z0-9_-]+$/i.test(cleanLowerPath)) {
-    return true;
   }
   return GUEST_TRANSLATABLE_PORTAL_PREFIXES.some(
     (p) => cleanLowerPath === p || cleanLowerPath.startsWith(p.endsWith("/") ? p : `${p}/`)

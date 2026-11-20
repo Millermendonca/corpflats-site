@@ -415,11 +415,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
       id: "frigobar",
       title: "🧊 Frigobar & Anserve",
       items: [
-        { href: "/frigobar", label: "Estratégico & Cardápio (Admin)", icon: Sparkles, description: "Insights 360°, cardápio, estoque padrão, equipe e QR Codes" },
-        { href: "/anserve", label: "Painel do Gestor Anserve", icon: Building2, description: "Vendas, repasse líquido, equipe e histórico de lançamentos" },
+        { href: "/frigobar", label: "Gestão de Frigobar", icon: Sparkles, description: "Vendas, repasse, cobranças, inadimplência, passagens, cardápio, equipe e insights" },
         { href: "/frigobar-notas", label: "Central de Notas Fiscais", icon: FileText, description: "Emissão e anexo de Notas Fiscais do frigobar por flat" },
         { href: "/frigobar-reposicao", label: "App da Repositora", icon: Package, description: "Fila diária de check-outs, lançamento de consumo e reposição" },
-        { href: "/frigobar-gestao", label: "Relatórios & Estoque Anserve", icon: BarChart3, description: "Métricas de saída, consumo de cortesias e auditoria" },
       ]
     },
 
@@ -433,7 +431,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         { href: "/zapi-conexao", label: "Conexão Z-API (WhatsApp)", icon: Smartphone, description: "Instância, QR Code, credenciais e status de conexão", devOnly: true },
         { href: "/jornada-reservas", label: "Mapa da Jornada (Fluxograma)", icon: Workflow, description: "Fluxograma completo de mensagens WhatsApp e e-mails por etapa da reserva", devOnly: true },
         { href: "/monitor-servidor", label: "Monitor do Servidor & IA", icon: Activity, description: "Telemetria de CPU, RAM em tempo real, RCA e Render stream", devOnly: true },
-        { href: "/ia-status", label: "Status da IA", icon: Bot, description: "Monitoramento dos modelos Gemini, OpenAI e latências", devOnly: true },
+        { href: "/ia-status", label: "Status da IA", icon: Bot, description: "Saúde dos motores Gemini, latências, chaves e módulos de IA", devOnly: true },
         { href: "/logs", label: "Logs & Auditoria Fail-Safe", icon: ScrollText, description: "Auditoria fail-safe de eventos e erros", devOnly: true },
       ]
     }

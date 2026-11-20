@@ -3,14 +3,12 @@ import { useLocation } from "wouter";
 import { useGetMe } from "@workspace/api-client-react";
 import {
   Sparkles,
-  Building2,
   FileText,
-  Package,
-  ExternalLink
+  Package
 } from "lucide-react";
 
 export interface MinibarEcosystemNavProps {
-  currentScreen: "admin" | "anserve" | "notas" | "reposicao";
+  currentScreen: "gestao" | "admin" | "anserve" | "notas" | "reposicao";
   pendingInvoicesCount?: number;
 }
 
@@ -27,24 +25,20 @@ export function MinibarEcosystemNav({
   const isFaturamento = isGestor || role === "anserve_faturamento";
   const isRepositora = isGestor || role === "anserve_repositora";
 
+  const normalizedScreen =
+    currentScreen === "admin" || currentScreen === "anserve" ? "gestao" : currentScreen;
+
   const navItems = [
     {
-      id: "admin" as const,
-      label: "Estratégico & Cardápio",
-      subLabel: "Diretoria CorpFlats",
-      href: "/frigobar-admin",
+      id: "gestao" as const,
+      label: "Gestão de Frigobar",
+      subLabel: isAdminOrDev
+        ? "Vendas, Cobranças, Cardápio & Insights"
+        : "Vendas, Cobranças, Passagens & Equipe",
+      href: "/frigobar",
       icon: Sparkles,
-      visible: isAdminOrDev,
-      activeClass: "bg-primary text-primary-foreground border-primary shadow-sm"
-    },
-    {
-      id: "anserve" as const,
-      label: "Gestor Anserve",
-      subLabel: "Vendas, Repasse & Equipe",
-      href: "/anserve",
-      icon: Building2,
       visible: isGestor,
-      activeClass: "bg-teal-600 text-white border-teal-500 shadow-sm"
+      activeClass: "bg-primary text-primary-foreground border-primary shadow-sm"
     },
     {
       id: "notas" as const,
@@ -67,13 +61,16 @@ export function MinibarEcosystemNav({
     }
   ].filter((item) => item.visible);
 
-  // Se o usuário tiver acesso a apenas 1 tela (ex: apenas repositora ou apenas faturamento), não precisa exibir seletor de múltiplas telas
+  // Se o usuário tiver acesso a apenas 1 tela (ex: apenas repositora ou apenas faturamento), oculta o seletor
   if (navItems.length <= 1) {
     return null;
   }
 
   return (
-    <div className="w-full bg-card/90 backdrop-blur-sm border border-border rounded-2xl p-2 shadow-xs print:hidden">
+    <nav
+      aria-label="Navegação do Ecossistema de Frigobar"
+      className="w-full bg-card/90 backdrop-blur-sm border border-border rounded-2xl p-2 shadow-xs print:hidden"
+    >
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 px-2 py-0.5">
           <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">
@@ -81,14 +78,15 @@ export function MinibarEcosystemNav({
           </span>
         </div>
 
-        <div className="grid grid-cols-2 lg:flex lg:flex-wrap items-center gap-1.5 flex-1 sm:justify-end">
+        <div className="grid grid-cols-1 sm:grid-cols-3 lg:flex lg:flex-wrap items-center gap-1.5 flex-1 sm:justify-end">
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = item.id === currentScreen;
+            const isActive = item.id === normalizedScreen;
             return (
               <button
                 key={item.id}
                 type="button"
+                aria-current={isActive ? "page" : undefined}
                 onClick={() => setLocation(item.href)}
                 className={`flex items-center justify-between sm:justify-start gap-2 px-3 py-2 rounded-xl border text-left transition-all min-w-0 ${
                   isActive
@@ -128,6 +126,6 @@ export function MinibarEcosystemNav({
           })}
         </div>
       </div>
-    </div>
+    </nav>
   );
 }

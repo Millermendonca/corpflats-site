@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo";
 import { DirectBookingPerkCard } from "@/components/direct-booking-perk-card";
 import { FrigobarPicture, warmFrigobarThumbnailsIdle } from "@/components/frigobar-picture";
@@ -173,32 +172,24 @@ function formatDocMask(value: string): string {
 
 function isGuestPlaceholderName(name?: string): boolean {
   const trimmed = (name || "").trim();
-  return !trimmed || /^h[óo]spede\s*\d*/i.test(trimmed) || /^\d+º\s*h[óo]spede/i.test(trimmed);
+  return (
+    !trimmed ||
+    /^h[óo]spede\s*(titular|\d*)$/i.test(trimmed) ||
+    /^\d+º\s*h[óo]spede/i.test(trimmed) ||
+    /^acompanhante\s*\d*$/i.test(trimmed)
+  );
 }
 
 export default function GuestMinibar() {
   const [, setLocation] = useLocation();
 
-  // Rotas por QR Code no Flat
-  const [, paramsFlatDirect] = useRoute("/frigobar/flat/:flatNumber");
-  const [, paramsFlatShort] = useRoute("/frigobar/:flatNumber");
-  const [, paramsMinibarFlatDirect] = useRoute("/minibar/flat/:flatNumber");
-  const [, paramsMinibarFlatShort] = useRoute("/minibar/:flatNumber");
-
-  // Rotas Diretas pela Reserva
+  // Rotas Diretas pela Reserva (acesso exclusivo via link da reserva)
   const [, paramsResCodeFrigobar] = useRoute("/minha-reserva/:code/frigobar");
   const [, paramsResCodeMinibar] = useRoute("/minha-reserva/:code/minibar");
   const [, paramsPortalFrigobar] = useRoute("/portal-hospede/:code/frigobar");
   const [, paramsGuestFrigobar] = useRoute("/guest-portal/:code/frigobar");
 
-  // Identificação dos Parâmetros
-  const flatFromUrl =
-    paramsFlatDirect?.flatNumber ||
-    paramsFlatShort?.flatNumber ||
-    paramsMinibarFlatDirect?.flatNumber ||
-    paramsMinibarFlatShort?.flatNumber ||
-    "";
-
+  // Identificação do Código da Reserva
   const codeFromUrl =
     paramsResCodeFrigobar?.code ||
     paramsResCodeMinibar?.code ||
@@ -207,7 +198,7 @@ export default function GuestMinibar() {
     "";
 
   // Estados de Etapa
-  const [step, setStep] = useState<"loading" | "otp_gate" | "manual_lookup" | "catalog" | "checkout" | "payment" | "success">("loading");
+  const [step, setStep] = useState<"loading" | "manual_lookup" | "catalog" | "checkout" | "payment" | "success">("loading");
 
   // Contexto da Reserva e Extrato de Lançamentos Diários
   const [reservation, setReservation] = useState<MinibarReservation | null>(null);
@@ -268,12 +259,7 @@ export default function GuestMinibar() {
     cpf: ""
   });
 
-  // Estados do Portão OTP (4 Dígitos)
-  const [otpValue, setOtpValue] = useState("");
-  const [otpLoading, setOtpLoading] = useState(false);
-  const [otpError, setOtpError] = useState<string | null>(null);
-
-  // Busca Manual (quando entra em /frigobar sem flat e sem code)
+  // Busca Manual (quando entra sem código de reserva na URL)
   const [manualInput, setManualInput] = useState("");
   const [manualError, setManualError] = useState<string | null>(null);
 
@@ -297,10 +283,24 @@ export default function GuestMinibar() {
 
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Só libera opções de divisão quando há 2+ hóspedes reais cadastrados e a reserva não é para 1 pessoa
+  const realRegisteredGuests = useMemo(
+    () => reservationGuests.filter((g) => !isGuestPlaceholderName(g.name)),
+    [reservationGuests]
+  );
+
+  const canSplitBill = useMemo(() => {
+    if (typeof splitBreakdown?.canSplitBill === "boolean") {
+      return splitBreakdown.canSplitBill;
+    }
+    const declaredNum = Number(reservation?.numGuests ?? 0);
+    return declaredNum !== 1 && realRegisteredGuests.length >= 2;
+  }, [splitBreakdown?.canSplitBill, reservation?.numGuests, realRegisteredGuests.length]);
+
   // Cota configurada para o hóspede selecionado de acordo com a divisão salva na reserva
   const activeGuestConfiguredShare = useMemo(() => {
     const shares: any[] = Array.isArray(splitBreakdown?.shares) ? splitBreakdown.shares : [];
-    if (splitMode === "titular") {
+    if (!canSplitBill || splitMode === "titular") {
       return shares.find((s) => Number(s.guestIndex) === 1) || shares[0] || null;
     }
     const found = shares.find((s) => Number(s.guestIndex) === Number(selectedGuestIndex));
@@ -308,7 +308,7 @@ export default function GuestMinibar() {
     const firstPending = shares.find((s) => Number(s.amount || 0) > 0);
     if (firstPending) return firstPending;
     return found || shares[0] || null;
-  }, [splitBreakdown, selectedGuestIndex, splitMode]);
+  }, [splitBreakdown, selectedGuestIndex, splitMode, canSplitBill]);
 
   // Hóspede consumidor ativo selecionado (para pagamento / emissão da NF)
   const activeConsumerGuest = useMemo<FlatGuestSlot>(() => {
@@ -382,8 +382,15 @@ export default function GuestMinibar() {
     setTotalLaunchedAmount(Number(data.totalLaunchedAmount) || 0);
     setTotalPaidAmount(Number(data.totalPaidAmount) || 0);
 
+    const incomingCanSplit =
+      typeof data.splitBreakdown?.canSplitBill === "boolean"
+        ? data.splitBreakdown.canSplitBill
+        : typeof data.canSplitBill === "boolean"
+        ? data.canSplitBill
+        : true;
+
     if (data.splitConfig) {
-      const m = data.splitConfig.mode;
+      const m = incomingCanSplit ? data.splitConfig.mode : "titular";
       if (m === "half_and_half" || m === "by_item" || m === "titular") {
         setSplitMode(m);
       }
@@ -393,7 +400,7 @@ export default function GuestMinibar() {
     }
     if (data.splitBreakdown) {
       setSplitBreakdown(data.splitBreakdown);
-      const m = data.splitBreakdown.mode;
+      const m = incomingCanSplit ? data.splitBreakdown.mode : "titular";
       if (m === "half_and_half" || m === "by_item" || m === "titular") {
         setSplitMode(m);
       }
@@ -506,7 +513,7 @@ export default function GuestMinibar() {
     guestUpdate?: { index: number; name: string; phone: string; email: string; cpf: string };
   }) => {
     const resCode = reservation?.reservationCode || codeFromUrl;
-    const flatNum = reservation?.flatNumber || flatFromUrl;
+    const flatNum = reservation?.flatNumber || "";
     if (!resCode && !flatNum) return;
 
     setIsSavingSplit(true);
@@ -556,6 +563,9 @@ export default function GuestMinibar() {
 
   // Alterar modo rápido de divisão ("titular" | "half_and_half" | "by_item")
   const handleSelectSplitMode = async (newMode: SplitMode) => {
+    if (!canSplitBill && newMode !== "titular") {
+      return;
+    }
     setSplitMode(newMode);
     setPartialMode("configured_split");
     setEditingGuestIndex(null);
@@ -567,18 +577,6 @@ export default function GuestMinibar() {
       } else {
         setSelectedGuestIndex(1);
       }
-    }
-    // Se escolheu dividir meio a meio ou marcar por item e só há 1 hóspede listado, garante pelo menos o 2º slot visível
-    if ((newMode === "half_and_half" || newMode === "by_item") && reservationGuests.length < 2) {
-      const defaultSecondGuest = {
-        index: 2,
-        name: "2º Hóspede",
-        phone: "",
-        email: "",
-        cpf: ""
-      };
-      await saveSplitConfigRealtime({ mode: newMode, guestUpdate: defaultSecondGuest });
-      return;
     }
     await saveSplitConfigRealtime({ mode: newMode });
   };
@@ -751,7 +749,7 @@ export default function GuestMinibar() {
   // Carrega contexto direto por código de reserva
   const loadContextByReservationCode = async (code: string) => {
     setStep("loading");
-    setOtpError(null);
+    setManualError(null);
     try {
       let querySuffix = "";
       if (typeof window !== "undefined") {
@@ -765,69 +763,12 @@ export default function GuestMinibar() {
         applyContextResponse(data, code);
         setStep("catalog");
       } else {
-        setOtpError(data.error || "Reserva não encontrada ou encerrada.");
+        setManualError(data.error || "Reserva não encontrada ou encerrada.");
         setStep("manual_lookup");
       }
     } catch {
-      setOtpError("Erro de comunicação ao carregar os dados da reserva.");
+      setManualError("Erro de comunicação ao carregar os dados da reserva.");
       setStep("manual_lookup");
-    }
-  };
-
-  // Carrega contexto direto por número do flat (sem exigir 4 dígitos de CPF/celular)
-  const loadContextByFlatNumber = async (flatNum: string) => {
-    setStep("loading");
-    setOtpError(null);
-    setManualError(null);
-    try {
-      const res = await fetch("/api/minibar/flat-context", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          flatNumber: flatNum
-        })
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        applyContextResponse(data, data.reservationCode || flatNum);
-        setStep("catalog");
-      } else {
-        setManualError(data.error || `Nenhuma reserva ativa ou recente encontrada para o Flat ${flatNum}.`);
-        setStep("manual_lookup");
-      }
-    } catch {
-      setManualError("Erro de comunicação ao carregar o extrato do flat.");
-      setStep("manual_lookup");
-    }
-  };
-
-  // Carrega contexto por flat e 4 dígitos (mantido apenas por compatibilidade reversa)
-  const verifyFlatContextWithDigits = async (flatNum: string, digits: string) => {
-    if (digits.length !== 4) return;
-    setOtpLoading(true);
-    setOtpError(null);
-
-    try {
-      const res = await fetch("/api/minibar/flat-context", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          flatNumber: flatNum,
-          last4Digits: digits
-        })
-      });
-
-      const data = await res.json();
-      if (res.ok && data.success) {
-        applyContextResponse(data, data.reservationCode || flatNum);
-        setStep("catalog");
-      } else {
-        setOtpError(data.error || "Erro ao validar contexto do flat.");
-      }
-    } catch {
-      setOtpError("Falha na conexão ao validar os dígitos. Verifique sua internet.");
-    } finally {
-      setOtpLoading(false);
     }
   };
 
@@ -863,46 +804,28 @@ export default function GuestMinibar() {
   // Recarrega extrato silenciosamente
   const refreshCurrentContextSilently = async () => {
     const code = reservation?.reservationCode || codeFromUrl;
-    if (code) {
-      try {
-        const res = await fetch(
-          `/api/minibar/reservation-context/${encodeURIComponent(code)}?guestIndex=${encodeURIComponent(
-            String(selectedGuestIndex || 1)
-          )}`
-        );
-        const data = await res.json();
-        if (res.ok && data.success) {
-          applyContextResponse(data, code);
-        }
-      } catch (_) {}
-      return;
-    }
-    const flatNum = reservation?.flatNumber || flatFromUrl;
-    if (flatNum) {
-      try {
-        const res = await fetch("/api/minibar/flat-context", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ flatNumber: flatNum })
-        });
-        const data = await res.json();
-        if (res.ok && data.success) {
-          applyContextResponse(data, data.reservationCode || flatNum);
-        }
-      } catch (_) {}
-    }
+    if (!code) return;
+    try {
+      const res = await fetch(
+        `/api/minibar/reservation-context/${encodeURIComponent(code)}?guestIndex=${encodeURIComponent(
+          String(selectedGuestIndex || 1)
+        )}`
+      );
+      const data = await res.json();
+      if (res.ok && data.success) {
+        applyContextResponse(data, code);
+      }
+    } catch (_) {}
   };
 
-  // Inicialização Baseada na URL (acesso direto por código da reserva ou número do flat, sem OTP)
+  // Inicialização Baseada na URL (acesso exclusivo por código da reserva)
   useEffect(() => {
     if (codeFromUrl) {
       loadContextByReservationCode(codeFromUrl);
-    } else if (flatFromUrl) {
-      loadContextByFlatNumber(flatFromUrl);
     } else {
       setStep("manual_lookup");
     }
-  }, [codeFromUrl, flatFromUrl]);
+  }, [codeFromUrl]);
 
   // Leitura de ordem pendente (?ord=) ou retorno de pagamento Mercado Pago (?payment=success&orderId=)
   useEffect(() => {
@@ -1202,7 +1125,7 @@ export default function GuestMinibar() {
     const orderPayload = {
       orderId: urlOrdId,
       reservationCode: reservation?.reservationCode || codeFromUrl,
-      flatNumber: reservation?.flatNumber || flatFromUrl,
+      flatNumber: reservation?.flatNumber || "",
       requireCheckout: true,
       partialMode: isPayingAllItems ? "full" : partialMode,
       selectedLaunchItems: paymentSelectionSummary.selectedLaunchItemsPayload,
@@ -1309,99 +1232,7 @@ export default function GuestMinibar() {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 2. TELA: PORTÃO OTP DE 4 DÍGITOS (Acesso por QR Code no Flat)
-  // ─────────────────────────────────────────────────────────────────────────────
-  if (step === "otp_gate") {
-    const flatDisplay = flatFromUrl || "do Flat";
-
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-100 flex flex-col items-center justify-center p-4 sm:p-6">
-        <Card className="w-full max-w-md bg-slate-900/95 border-slate-800 shadow-2xl rounded-3xl backdrop-blur-xl p-6 sm:p-8 space-y-6">
-          <div className="text-center space-y-2">
-            <div className="flex items-center justify-center gap-2.5 mb-2">
-              <CorpFlatsIcon className="w-11 h-11" />
-              <div className="text-left">
-                <CorpFlatsWordmark className="text-base text-white block leading-none" />
-                <span className="text-[10px] text-[#E5C98B] font-semibold">Soho Residence</span>
-              </div>
-            </div>
-            <h1 className="text-2xl font-black text-white tracking-tight pt-1">
-              Frigobar Flat {flatDisplay}
-            </h1>
-            <p className="text-xs text-slate-400 leading-relaxed px-2">
-              Digite os <strong>4 últimos dígitos do seu celular ou CPF</strong> para consultar o extrato diário do frigobar e realizar seu pagamento individual após o check-out.
-            </p>
-          </div>
-
-          <div className="space-y-4 pt-2">
-            <div className="flex flex-col items-center justify-center space-y-3">
-              <Label className="text-xs text-slate-300 font-semibold tracking-wide uppercase">
-                4 Últimos Dígitos do Seu Celular ou CPF
-              </Label>
-              <InputOTP
-                maxLength={4}
-                value={otpValue}
-                onChange={(val) => {
-                  setOtpValue(val);
-                  setOtpError(null);
-                  if (val.length === 4) {
-                    verifyFlatContextWithDigits(flatFromUrl, val);
-                  }
-                }}
-                disabled={otpLoading}
-                containerClassName="justify-center"
-              >
-                <InputOTPGroup className="gap-2.5">
-                  <InputOTPSlot index={0} className="w-12 h-14 text-xl font-black bg-slate-800/90 border-slate-700 text-cyan-400 rounded-xl" />
-                  <InputOTPSlot index={1} className="w-12 h-14 text-xl font-black bg-slate-800/90 border-slate-700 text-cyan-400 rounded-xl" />
-                  <InputOTPSlot index={2} className="w-12 h-14 text-xl font-black bg-slate-800/90 border-slate-700 text-cyan-400 rounded-xl" />
-                  <InputOTPSlot index={3} className="w-12 h-14 text-xl font-black bg-slate-800/90 border-slate-700 text-cyan-400 rounded-xl" />
-                </InputOTPGroup>
-              </InputOTP>
-            </div>
-
-            {otpError && (
-              <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-xs text-rose-300 flex items-start gap-2.5 animate-in fade-in">
-                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                <span>{otpError}</span>
-              </div>
-            )}
-
-            <Button
-              onClick={() => verifyFlatContextWithDigits(flatFromUrl, otpValue)}
-              disabled={otpValue.length !== 4 || otpLoading}
-              className="w-full h-12 bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-slate-950 font-bold rounded-2xl shadow-lg shadow-cyan-600/20 text-sm transition-all flex items-center justify-center gap-2"
-            >
-              {otpLoading ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>Identificando Hóspede...</span>
-                </>
-              ) : (
-                <>
-                  <Lock className="w-4 h-4" />
-                  <span>Ver Extrato do Frigobar</span>
-                  <ArrowRight className="w-4 h-4 ml-1" />
-                </>
-              )}
-            </Button>
-          </div>
-
-          <div className="border-t border-slate-800/80 pt-4 text-center">
-            <button
-              onClick={() => setStep("manual_lookup")}
-              className="text-xs text-cyan-400 hover:underline inline-flex items-center gap-1 font-medium"
-            >
-              <span>Não é o Flat {flatDisplay}? Digitar outro código de reserva</span>
-            </button>
-          </div>
-        </Card>
-      </div>
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // 3. TELA: BUSCA MANUAL (Se entrou em /frigobar sem parâmetros de flat ou código)
+  // 2. TELA: BUSCA MANUAL POR CÓDIGO DA RESERVA
   // ─────────────────────────────────────────────────────────────────────────────
   if (step === "manual_lookup") {
     return (
@@ -1413,15 +1244,15 @@ export default function GuestMinibar() {
             </div>
             <h1 className="text-xl font-black text-white">Localizar Frigobar</h1>
             <p className="text-xs text-slate-400">
-              Digite o número do seu Flat (ex: 204) ou o código da sua reserva (ex: RES-605) para acessar seu extrato de consumo.
+              Digite o código da sua reserva (ex: RES-605) para acessar o extrato e realizar o pagamento do frigobar.
             </p>
           </div>
 
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label className="text-xs text-slate-300 font-semibold">Número do Flat ou Código da Reserva</Label>
+              <Label className="text-xs text-slate-300 font-semibold">Código da Reserva</Label>
               <Input
-                placeholder="Ex: 204 ou RES-605"
+                placeholder="Ex: RES-605"
                 value={manualInput}
                 onChange={(e) => setManualInput(e.target.value)}
                 className="h-12 bg-slate-800 border-slate-700 text-white placeholder:text-slate-500 rounded-xl"
@@ -1436,17 +1267,14 @@ export default function GuestMinibar() {
             )}
 
             <Button
+              type="button"
               onClick={() => {
                 const val = manualInput.trim();
                 if (!val) {
-                  setManualError("Por favor, digite o número do flat ou o código.");
+                  setManualError("Por favor, digite o código da sua reserva.");
                   return;
                 }
-                if (val.toUpperCase().startsWith("RES-") || val.length >= 6) {
-                  loadContextByReservationCode(val);
-                } else {
-                  loadContextByFlatNumber(val);
-                }
+                loadContextByReservationCode(val);
               }}
               className="w-full h-12 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold rounded-xl"
             >
@@ -1677,8 +1505,8 @@ export default function GuestMinibar() {
               </Button>
             </div>
 
-            {/* ── Seletor Rápido de Divisão (Exibido apenas quando há saldo pendente > R$ 0,00) ── */}
-            {pendingBalance > 0 && (
+            {/* ── Seletor Rápido de Divisão (Exibido apenas quando há saldo pendente > R$ 0,00 e 2+ hóspedes reais cadastrados) ── */}
+            {pendingBalance > 0 && canSplitBill && (
               <div className="space-y-2">
                 <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
                   <Users className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
@@ -1787,6 +1615,7 @@ export default function GuestMinibar() {
                           item.itemKey || `${item.orderId}_${item.productId}_${idx}`;
                         const remQty = item.remainingQuantity ?? item.quantity;
                         const canAssignItem =
+                          canSplitBill &&
                           pendingBalance > 0 &&
                           splitMode === "by_item" &&
                           !item.isCourtesy &&
@@ -1943,8 +1772,8 @@ export default function GuestMinibar() {
               </div>
             )}
 
-            {/* ── Hóspedes do Flat — Cobrança e Nota Fiscal por Consumidor (Visível apenas nos modos de divisão com saldo pendente) ── */}
-            {pendingBalance > 0 && splitMode !== "titular" && (
+            {/* ── Hóspedes do Flat — Cobrança e Nota Fiscal por Consumidor (Visível apenas nos modos de divisão com saldo pendente e 2+ hóspedes reais) ── */}
+            {pendingBalance > 0 && canSplitBill && splitMode !== "titular" && (
               <div className="pt-3 border-t border-slate-800 space-y-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-bold text-slate-200">

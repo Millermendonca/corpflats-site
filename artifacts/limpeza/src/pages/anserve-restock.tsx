@@ -1463,7 +1463,9 @@ export default function AnserveRestockPage() {
             ? "Consumo de cortesia e passagem salvos! ✅"
             : "Passagem registrada com sucesso! ✅",
           description: data.whatsappSofiaAlertSent
-            ? `Cobrança do saldo pendente (R$ ${Number(data.statement?.pendingBalance || 0).toFixed(2)}) enviada automaticamente para o WhatsApp do hóspede!`
+            ? data.postCheckoutNotificationType === "courtesy_only_no_charge"
+              ? "Aviso enviado no WhatsApp do hóspede informando que não houve consumo cobrável (apenas itens de cortesia)."
+              : `Cobrança do saldo pendente (R$ ${Number(data.statement?.pendingBalance || 0).toFixed(2)}) enviada automaticamente para o WhatsApp do hóspede!`
             : isUnoccupied
             ? "Gravado apenas no sistema/relatório (nenhum WhatsApp disparado)."
             : hasCourtesyCorrection
@@ -1625,6 +1627,8 @@ export default function AnserveRestockPage() {
             : data.whatsappSofiaAlertSent
             ? data.postCheckoutNotificationType === "daily_summary"
               ? `Resumo diário (R$ ${dailyLaunchCalculation.totalAmount.toFixed(2)}) e link de acompanhamento enviados ao WhatsApp do(s) hóspede(s)!`
+              : data.postCheckoutNotificationType === "courtesy_only_no_charge"
+              ? "Aviso enviado no WhatsApp do hóspede informando que não houve consumo cobrável (apenas itens de cortesia)."
               : data.postCheckoutNotificationType === "remaining_balance"
               ? `Diferença do último dia lançada! Mensagem com o saldo restante (R$ ${Number(data.statement?.pendingBalance || 0).toFixed(2)}) enviada ao WhatsApp do hóspede!`
               : `Total da estadia (R$ ${Number(data.statement?.pendingBalance || dailyLaunchCalculation.totalAmount).toFixed(2)}) enviado ao WhatsApp do hóspede com link de pagamento!`

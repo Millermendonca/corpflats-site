@@ -97,11 +97,9 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     id: "frigobar",
     title: "🧊 Frigobar & Anserve",
     items: [
-      { href: "/frigobar", label: "Gestão de Frigobar (CorpFlats)", description: "Catálogo, gabarito por flat, QR Codes e extrato de repasse" },
-      { href: "/anserve", label: "Painel de Supervisão Anserve", description: "Fila de NFs, emissão, anexo e conferência geral" },
-      { href: "/frigobar-notas", label: "Emissão de Notas Fiscais (Frigobar)", description: "Tela exclusiva p/ emissão e anexo de Notas Fiscais do frigobar por flat" },
-      { href: "/frigobar-reposicao", label: "Portal da Repositora", description: "Conferência rápida, lançamento diário e reposição" },
-      { href: "/frigobar-gestao", label: "Relatórios & Estoque Anserve", description: "Métricas de saída, consumo de cortesias e auditoria" }
+      { href: "/frigobar", label: "Gestão de Frigobar", description: "Vendas, repasse, cobranças, inadimplência, passagens, cardápio, equipe e insights" },
+      { href: "/frigobar-notas", label: "Central de Notas Fiscais", description: "Emissão, anexo e envio automático de Notas Fiscais do frigobar por flat" },
+      { href: "/frigobar-reposicao", label: "App da Repositora", description: "Conferência rápida, lançamento diário e reposição nos flats" }
     ]
   },
 
@@ -162,10 +160,9 @@ export const ANSERVE_FATURAMENTO_MODULES: string[] = [
 ];
 
 export const ANSERVE_GESTOR_MODULES: string[] = [
-  "/anserve",
+  "/frigobar",
   "/frigobar-notas",
-  "/frigobar-reposicao",
-  "/frigobar-gestao"
+  "/frigobar-reposicao"
 ];
 
 export const ADMIN_MODULES: string[] = [...OPERATIONAL_MODULES];
@@ -401,8 +398,9 @@ export const ROUTE_ALIASES: Record<string, string> = {
   // Reservar
   "/booking": "/reservar",
 
-  // Frigobar & Anserve
-  "/frigobar-gestao": "/anserve",
+  // Frigobar & Anserve (Central Unificada em /frigobar)
+  "/anserve": "/frigobar",
+  "/frigobar-gestao": "/frigobar",
   "/anserve/reposicao": "/frigobar-reposicao",
   "/anserve/notas": "/frigobar-notas",
   "/notas-frigobar": "/frigobar-notas",
@@ -492,10 +490,8 @@ export function hasModuleAccess(
     // Garante que perfis Admin/Dev padrão enxerguem Frigobar, Anserve e Painel Ao Vivo mesmo se allowedModules foi salvo antes da criação
     const frigobarAndOpsModules = [
       "/frigobar",
-      "/anserve",
       "/frigobar-notas",
       "/frigobar-reposicao",
-      "/frigobar-gestao",
       "/painel-aovivo",
     ];
     if (
@@ -517,7 +513,7 @@ export function hasModuleAccess(
 
   if (
     user.role === "anserve_gestor" &&
-    ["/anserve", "/frigobar-notas", "/frigobar-reposicao", "/frigobar-gestao"].includes(canonical)
+    ["/frigobar", "/frigobar-notas", "/frigobar-reposicao"].includes(canonical)
   ) {
     return true;
   }

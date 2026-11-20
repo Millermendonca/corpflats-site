@@ -120,7 +120,6 @@ const AjudaWbpPage = lazyWithRetry(() => import('@/pages/ajuda-wbp'));
 const EquipePage = lazyWithRetry(() => import('@/pages/equipe'));
 const FlatXrayHub = lazyWithRetry(() => import('@/pages/flat-xray-hub'));
 const AnserveRestock = lazyWithRetry(() => import('@/pages/anserve-restock'));
-const AnserveDashboard = lazyWithRetry(() => import('@/pages/anserve-dashboard'));
 const MinibarAdmin = lazyWithRetry(() => import('@/pages/minibar-admin'));
 const MinibarInvoices = lazyWithRetry(() => import('@/pages/minibar-invoices'));
 const HrDashboard = lazyWithRetry(() => import('@/pages/hr-dashboard'));
@@ -455,28 +454,24 @@ function Router() {
         <Route path="/portal-hospede/:code/cafe" component={GuestBreakfast} />
         <Route path="/guest-portal/:code/cafe" component={GuestBreakfast} />
 
-        {/* Minibar / Frigobar: Portais Anserve e Admin CorpFlats */}
+        {/* Minibar / Frigobar: Central Unificada, Central de NFs e App da Repositora */}
         <Route path="/frigobar-reposicao" component={AnserveRestock} />
         <Route path="/anserve/reposicao" component={AnserveRestock} />
         <AdminRoute path="/frigobar-notas" component={MinibarInvoices} moduleName="a Central de Emissão de Notas Fiscais do Frigobar" />
         <AdminRoute path="/anserve/notas" component={MinibarInvoices} moduleName="a Central de Emissão de Notas Fiscais do Frigobar" />
         <AdminRoute path="/notas-frigobar" component={MinibarInvoices} moduleName="a Central de Emissão de Notas Fiscais do Frigobar" />
-        <AdminRoute path="/anserve" component={AnserveDashboard} moduleName="o Painel de Supervisão Anserve" />
-        <AdminRoute path="/frigobar-gestao" component={AnserveDashboard} moduleName="o Painel de Gestão Anserve" />
-        <AdminRoute path="/frigobar-admin" component={MinibarAdmin} moduleName="a Gestão de Frigobar CorpFlats" />
-        <AdminRoute path="/frigobar" component={MinibarAdmin} moduleName="a Gestão de Frigobar CorpFlats" />
-        <AdminRoute path="/minibar-admin" component={MinibarAdmin} moduleName="a Gestão de Frigobar CorpFlats" />
-        <AdminRoute path="/admin/frigobar" component={MinibarAdmin} moduleName="a Gestão de Frigobar CorpFlats" />
+        <AdminRoute path="/frigobar" component={MinibarAdmin} moduleName="a Gestão de Frigobar" />
+        <AdminRoute path="/frigobar-admin" component={MinibarAdmin} moduleName="a Gestão de Frigobar" />
+        <AdminRoute path="/minibar-admin" component={MinibarAdmin} moduleName="a Gestão de Frigobar" />
+        <AdminRoute path="/admin/frigobar" component={MinibarAdmin} moduleName="a Gestão de Frigobar" />
+        <AdminRoute path="/anserve" component={MinibarAdmin} moduleName="a Gestão de Frigobar" />
+        <AdminRoute path="/frigobar-gestao" component={MinibarAdmin} moduleName="a Gestão de Frigobar" />
 
-        {/* Public Minibar / Frigobar Guest Routes (Precedência Obrigatória no Wouter) */}
+        {/* Public Minibar / Frigobar Guest Routes (Exclusivamente via Link da Reserva) */}
         <Route path="/minha-reserva/:code/frigobar" component={GuestMinibar} />
         <Route path="/minha-reserva/:code/minibar" component={GuestMinibar} />
         <Route path="/portal-hospede/:code/frigobar" component={GuestMinibar} />
         <Route path="/guest-portal/:code/frigobar" component={GuestMinibar} />
-        <Route path="/frigobar/flat/:flatNumber" component={GuestMinibar} />
-        <Route path="/minibar/flat/:flatNumber" component={GuestMinibar} />
-        <Route path="/frigobar/:flatNumber" component={GuestMinibar} />
-        <Route path="/minibar/:flatNumber" component={GuestMinibar} />
         <Route path="/solicitante/:code" component={RequesterPortal} />
         <Route path="/solicitante" component={RequesterPortal} />
         <Route path="/minha-reserva/:code" component={GuestPortalWrapper} />
@@ -774,7 +769,6 @@ const PUBLIC_GUEST_PATH_PREFIXES = [
   "/solicitante",
   "/checkout",
   "/cafe",
-  "/frigobar/",
   "/credenciamento",
   "/verificar-ficha",
   "/servico/",

@@ -3797,7 +3797,9 @@ export const GUEST_ONLY_STAY_AND_POST_EVENTS = new Set([
   "minibar_discrepancy",
   "minibar_invoice",
   "minibar_payment_reminder",
-  "minibar_payment_formal_notice"
+  "minibar_payment_formal_notice",
+  "minibar_payment_confirmed",
+  "minibar_courtesy_only_checkout"
 ]);
 
 export const GUEST_ONLY_TEMPLATE_IDS = new Set([

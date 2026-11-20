@@ -25,6 +25,7 @@ import {
   Send,
   ShieldAlert,
   ShieldCheck,
+  Sliders,
   Tag,
   User,
   Wallet
@@ -36,6 +37,12 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  MinibarDelinquencyStats,
+  type MinibarDelinquencyPeriod,
+  type MinibarDelinquencyStatsData
+} from "@/components/minibar/minibar-delinquency-stats";
 import {
   Dialog,
   DialogContent,
@@ -45,6 +52,12 @@ import {
   DialogFooter
 } from "@/components/ui/dialog";
 
+export const DEFAULT_PAYMENT_CONFIRMATION_WA_TEMPLATE =
+  "Olá, {primeiro_nome}! ✅ Confirmamos a quitação do seu consumo de frigobar no *Flat {flat}* — *R$ {valor}* ({metodo}). Obrigado!";
+
+export const DEFAULT_COURTESY_ONLY_WA_TEMPLATE =
+  "Olá, {primeiro_nome}! 😊 Conferimos o frigobar do *Flat {flat}* após seu check-out: não houve consumo cobrável. Os itens consumidos ({itens_cortesia}) são cortesia do nosso Kit de Boas-Vindas. Obrigado pela estadia!";
+
 export interface CollectionsSettings {
   dailyPaymentRemindersEnabled: boolean;
   dailyPaymentReminderHour: number;
@@ -52,6 +65,10 @@ export interface CollectionsSettings {
   dailyPaymentReminderMaxDays: number;
   dailyPaymentReminderNotifyManagerOnDay7: boolean;
   notificationManagerWhatsApp?: string;
+  sendPaymentConfirmationWhatsApp?: boolean;
+  paymentConfirmationWhatsAppTemplate?: string;
+  sendCourtesyOnlyCheckoutWhatsApp?: boolean;
+  courtesyOnlyCheckoutWhatsAppTemplate?: string;
 }
 
 export interface CollectionsSummary {
@@ -165,6 +182,7 @@ export interface MinibarAuditReport {
 export interface MinibarCollectionsPanelProps {
   onDataChanged?: () => void;
   onOverviewLoaded?: (summary: CollectionsSummary) => void;
+  canConfigureRules?: boolean;
 }
 
 type ManualPaymentMethod =
@@ -329,10 +347,19 @@ function renderVerificationBadge(order: PaidCollectionOrder) {
 
 export function MinibarCollectionsPanel({
   onDataChanged,
-  onOverviewLoaded
+  onOverviewLoaded,
+  canConfigureRules = true
 }: MinibarCollectionsPanelProps) {
   const { toast } = useToast();
   const uid = useId();
+
+  // Sub-abas internas da tela de Cobranças & Inadimplência
+  const [subTab, setSubTab] = useState<"pendencias" | "auditoria" | "configuracoes">("pendencias");
+
+  // Estatísticas de inadimplência
+  const [delinquencyPeriod, setDelinquencyPeriod] = useState<MinibarDelinquencyPeriod>("30d");
+  const [delinquencyStats, setDelinquencyStats] = useState<MinibarDelinquencyStatsData | null>(null);
+  const [loadingDelinquencyPeriod, setLoadingDelinquencyPeriod] = useState(false);
 
   // Core overview state
   const [loading, setLoading] = useState(true);
@@ -359,6 +386,14 @@ export function MinibarCollectionsPanel({
   const [maxDays, setMaxDays] = useState("7");
   const [notifyManagerOnDay7, setNotifyManagerOnDay7] = useState(true);
   const [managerWhatsApp, setManagerWhatsApp] = useState("");
+  const [sendPaymentConfirmationWa, setSendPaymentConfirmationWa] = useState(true);
+  const [paymentConfirmationTemplate, setPaymentConfirmationTemplate] = useState(
+    DEFAULT_PAYMENT_CONFIRMATION_WA_TEMPLATE
+  );
+  const [sendCourtesyOnlyWa, setSendCourtesyOnlyWa] = useState(true);
+  const [courtesyOnlyTemplate, setCourtesyOnlyTemplate] = useState(
+    DEFAULT_COURTESY_ONLY_WA_TEMPLATE
+  );
   const [settingsErrors, setSettingsErrors] = useState<{
     hour?: string;
     lookback?: string;
@@ -419,11 +454,16 @@ export function MinibarCollectionsPanel({
   const onOverviewLoadedRef = useRef(onOverviewLoaded);
   onOverviewLoadedRef.current = onOverviewLoaded;
 
-  const fetchOverview = useCallback(async (showSpinner = false) => {
+  const delinquencyPeriodRef = useRef<MinibarDelinquencyPeriod>(delinquencyPeriod);
+  delinquencyPeriodRef.current = delinquencyPeriod;
+
+  const fetchOverview = useCallback(async (showSpinner = false, periodOverride?: MinibarDelinquencyPeriod) => {
+    const activePeriod = periodOverride || delinquencyPeriodRef.current || "30d";
     if (showSpinner) setRefreshing(true);
+    if (periodOverride) setLoadingDelinquencyPeriod(true);
     setLoadError(null);
     try {
-      const res = await fetch("/api/minibar/collections/overview", {
+      const res = await fetch(`/api/minibar/collections/overview?period=${encodeURIComponent(activePeriod)}`, {
         credentials: "include"
       });
       const data = await res.json().catch(() => ({}));
@@ -438,6 +478,16 @@ export function MinibarCollectionsPanel({
         setMaxDays(String(data.settings.dailyPaymentReminderMaxDays ?? 7));
         setNotifyManagerOnDay7(Boolean(data.settings.dailyPaymentReminderNotifyManagerOnDay7 ?? true));
         setManagerWhatsApp(String(data.settings.notificationManagerWhatsApp || ""));
+        setSendPaymentConfirmationWa(data.settings.sendPaymentConfirmationWhatsApp !== false);
+        setPaymentConfirmationTemplate(
+          String(data.settings.paymentConfirmationWhatsAppTemplate || "").trim() ||
+            DEFAULT_PAYMENT_CONFIRMATION_WA_TEMPLATE
+        );
+        setSendCourtesyOnlyWa(data.settings.sendCourtesyOnlyCheckoutWhatsApp !== false);
+        setCourtesyOnlyTemplate(
+          String(data.settings.courtesyOnlyCheckoutWhatsAppTemplate || "").trim() ||
+            DEFAULT_COURTESY_ONLY_WA_TEMPLATE
+        );
       }
 
       const nextSummary: CollectionsSummary = {
@@ -451,6 +501,7 @@ export function MinibarCollectionsPanel({
       };
 
       setSummary(nextSummary);
+      setDelinquencyStats(data.delinquencyStats || null);
       setPendingTargets(Array.isArray(data.pendingTargets) ? data.pendingTargets : []);
       setSuspiciousPaidOrders(Array.isArray(data.suspiciousPaidOrders) ? data.suspiciousPaidOrders : []);
       setRecentPaidOrders(Array.isArray(data.recentPaidOrders) ? data.recentPaidOrders : []);
@@ -461,8 +512,21 @@ export function MinibarCollectionsPanel({
     } finally {
       setLoading(false);
       setRefreshing(false);
+      setLoadingDelinquencyPeriod(false);
     }
   }, []);
+
+  const handleDelinquencyPeriodChange = (nextPeriod: MinibarDelinquencyPeriod) => {
+    setDelinquencyPeriod(nextPeriod);
+    delinquencyPeriodRef.current = nextPeriod;
+    fetchOverview(false, nextPeriod);
+  };
+
+  useEffect(() => {
+    if (!canConfigureRules && subTab === "configuracoes") {
+      setSubTab("pendencias");
+    }
+  }, [canConfigureRules, subTab]);
 
   useEffect(() => {
     fetchOverview(false);
@@ -512,7 +576,13 @@ export function MinibarCollectionsPanel({
           dailyPaymentReminderHour: parsedHour,
           dailyPaymentReminderLookbackDays: parsedLookback,
           dailyPaymentReminderMaxDays: parsedMaxDays,
-          dailyPaymentReminderNotifyManagerOnDay7: notifyManagerOnDay7
+          dailyPaymentReminderNotifyManagerOnDay7: notifyManagerOnDay7,
+          sendPaymentConfirmationWhatsApp: sendPaymentConfirmationWa,
+          paymentConfirmationWhatsAppTemplate:
+            paymentConfirmationTemplate.trim() || DEFAULT_PAYMENT_CONFIRMATION_WA_TEMPLATE,
+          sendCourtesyOnlyCheckoutWhatsApp: sendCourtesyOnlyWa,
+          courtesyOnlyCheckoutWhatsAppTemplate:
+            courtesyOnlyTemplate.trim() || DEFAULT_COURTESY_ONLY_WA_TEMPLATE
         })
       });
       const data = await res.json().catch(() => ({}));
@@ -938,7 +1008,36 @@ export function MinibarCollectionsPanel({
     return Number.isFinite(v) && v >= 0 ? formatBRL(v) : "R$ 0,00";
   }, [manualAmount]);
 
+  const paymentConfirmationPreview = useMemo(() => {
+    const raw = paymentConfirmationTemplate.trim() || DEFAULT_PAYMENT_CONFIRMATION_WA_TEMPLATE;
+    return raw
+      .replace(/\{primeiro_nome\}/gi, "João")
+      .replace(/\{nome\}/gi, "João Silva")
+      .replace(/\{flat\}/gi, "211")
+      .replace(/\{valor\}/gi, "19,00")
+      .replace(/\{metodo\}/gi, "PIX")
+      .replace(/\{reserva\}/gi, "RES-211-0964")
+      .replace(/\{saldo_restante\}/gi, "0,00")
+      .replace(/\s*\(\s*\)/g, "")
+      .trim();
+  }, [paymentConfirmationTemplate]);
+
+  const courtesyOnlyPreview = useMemo(() => {
+    const raw = courtesyOnlyTemplate.trim() || DEFAULT_COURTESY_ONLY_WA_TEMPLATE;
+    return raw
+      .replace(/\{primeiro_nome\}/gi, "João")
+      .replace(/\{nome\}/gi, "João Silva")
+      .replace(/\{flat\}/gi, "211")
+      .replace(/\{itens_cortesia\}/gi, "2x Copo d'Água Mineral 200ml e 1x Amendoim Mendorato 27g")
+      .replace(/\{reserva\}/gi, "RES-211-0964")
+      .trim();
+  }, [courtesyOnlyTemplate]);
+
   const settingsHeadingId = `${uid}-settings-heading`;
+  const confirmWaSwitchId = `${uid}-confirm-wa-switch`;
+  const confirmWaTplId = `${uid}-confirm-wa-tpl`;
+  const courtesyWaSwitchId = `${uid}-courtesy-wa-switch`;
+  const courtesyWaTplId = `${uid}-courtesy-wa-tpl`;
   const suspiciousCaptionId = `${uid}-suspicious-caption`;
   const recentPaidCaptionId = `${uid}-recent-paid-caption`;
   const switchEnabledId = `${uid}-reminders-enabled`;
@@ -981,11 +1080,10 @@ export function MinibarCollectionsPanel({
         <div className="space-y-1 min-w-0">
           <h2 className="text-sm sm:text-base font-black text-foreground flex items-center gap-2">
             <Bell className="w-5 h-5 text-amber-600 shrink-0" />
-            <span>Cobranças Pós-Check-out, Avisos Diários (D+1 a D+7) & Integridade PIX</span>
+            <span>Cobranças Pós-Check-out, Inadimplência & Integridade PIX</span>
           </h2>
           <p className="text-xs text-muted-foreground leading-relaxed">
-            Régua automática por cota de hóspede (WhatsApp Sofia + E-mail) com pré-checagem ao vivo no Banco Inter e
-            proteção contra baixas sem código E2E real do Banco Central.
+            Acompanhe taxas de inadimplência, cobre cotas em aberto com pré-checagem ao vivo no Banco Inter e audite pagamentos PIX.
           </p>
         </div>
 
@@ -1023,281 +1121,74 @@ export function MinibarCollectionsPanel({
         </div>
       )}
 
-      {/* SEÇÃO A: CONFIGURAÇÃO DOS AVISOS DIÁRIOS (D+1 A D+7) & AUDITORIA INTER */}
-      <Card className="rounded-3xl border border-border overflow-hidden">
-        <CardHeader className="p-4 sm:p-5 border-b border-border bg-muted/20">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div>
-              <CardTitle id={settingsHeadingId} className="text-sm font-black flex items-center gap-2">
-                <Clock className="w-4 h-4 text-primary shrink-0" />
-                <span>A. Configuração dos Avisos Diários (D+1 a D+7)</span>
-              </CardTitle>
-              <CardDescription className="text-xs mt-0.5">
-                Lembretes cordiais nos dias 1–3, aviso objetivo nos dias 4–6 e notificação formal CDC + tag CRM no último
-                dia.
-              </CardDescription>
-            </div>
-            <Badge
-              className={
-                remindersEnabled
-                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 text-[11px] font-bold gap-1 self-start sm:self-center"
-                  : "bg-slate-500/15 text-slate-600 dark:text-slate-300 border border-slate-500/30 text-[11px] font-bold gap-1 self-start sm:self-center"
-              }
+      {/* 3 Sub-abas Limpas: Pendências & Inadimplência | Pagos & Auditoria PIX | Configurar Régua (Admin) */}
+      <Tabs
+        value={subTab}
+        onValueChange={(v) => setSubTab(v as "pendencias" | "auditoria" | "configuracoes")}
+        className="w-full min-w-0 space-y-5"
+      >
+        <TabsList
+          aria-label="Seções de cobranças e inadimplência"
+          className="w-full bg-muted/50 p-1.5 rounded-2xl border border-border flex items-center flex-nowrap overflow-x-auto snap-x snap-proximity h-auto gap-1.5"
+        >
+          <TabsTrigger
+            value="pendencias"
+            className="rounded-xl text-xs font-bold px-3.5 py-2.5 flex items-center justify-center gap-2 shrink-0 sm:flex-1 snap-start relative data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:inset-x-3 data-[state=active]:after:bottom-0 data-[state=active]:after:border-b-2 data-[state=active]:after:border-primary"
+          >
+            <Bell className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>1. Pendências & Inadimplência</span>
+            {summary.pendingTargetsCount > 0 && (
+              <Badge className="bg-amber-500 text-slate-950 text-[10px] font-black py-0 px-1.5 shrink-0">
+                {summary.pendingTargetsCount}
+              </Badge>
+            )}
+          </TabsTrigger>
+
+          <TabsTrigger
+            value="auditoria"
+            className="rounded-xl text-xs font-bold px-3.5 py-2.5 flex items-center justify-center gap-2 shrink-0 sm:flex-1 snap-start relative data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:inset-x-3 data-[state=active]:after:bottom-0 data-[state=active]:after:border-b-2 data-[state=active]:after:border-primary"
+          >
+            <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>2. Pagos & Auditoria PIX</span>
+            {suspiciousPaidOrders.length > 0 && (
+              <Badge className="bg-rose-600 text-white text-[10px] font-black py-0 px-1.5 shrink-0">
+                !{suspiciousPaidOrders.length}
+              </Badge>
+            )}
+          </TabsTrigger>
+
+          {canConfigureRules && (
+            <TabsTrigger
+              value="configuracoes"
+              className="rounded-xl text-xs font-bold px-3.5 py-2.5 flex items-center justify-center gap-2 shrink-0 sm:flex-1 snap-start relative data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:inset-x-3 data-[state=active]:after:bottom-0 data-[state=active]:after:border-b-2 data-[state=active]:after:border-primary"
             >
-              {remindersEnabled ? (
-                <>
-                  <Bell className="w-3 h-3" />
-                  <span>Automação Ativa</span>
-                </>
-              ) : (
-                <>
-                  <BellOff className="w-3 h-3" />
-                  <span>Automação Pausada</span>
-                </>
-              )}
-            </Badge>
-          </div>
-        </CardHeader>
-
-        <CardContent className="p-4 sm:p-5 space-y-4">
-          <form aria-labelledby={settingsHeadingId} onSubmit={handleSaveSettings} noValidate className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-              {/* Toggle Global */}
-              <div className="p-3.5 rounded-2xl border border-border bg-muted/20 flex items-center justify-between gap-3">
-                <div className="space-y-0.5">
-                  <Label htmlFor={switchEnabledId} className="text-xs font-bold cursor-pointer block">
-                    Avisos Diários
-                  </Label>
-                  <span className="text-[11px] text-muted-foreground block">
-                    {remindersEnabled ? "Ligado (envio automático)" : "Desligado (somente manual)"}
-                  </span>
-                </div>
-                <Switch
-                  id={switchEnabledId}
-                  checked={remindersEnabled}
-                  onCheckedChange={setRemindersEnabled}
-                />
-              </div>
-
-              {/* Horário */}
-              <div className="space-y-1.5">
-                <Label htmlFor={hourId} className="text-xs font-bold">
-                  Horário de Envio (0–23h)
-                </Label>
-                <Input
-                  ref={hourInputRef}
-                  id={hourId}
-                  name="dailyPaymentReminderHour"
-                  type="number"
-                  inputMode="numeric"
-                  min={0}
-                  max={23}
-                  value={reminderHour}
-                  onChange={(e) => {
-                    setReminderHour(e.target.value);
-                    if (settingsErrors.hour) setSettingsErrors((prev) => ({ ...prev, hour: undefined }));
-                  }}
-                  aria-invalid={Boolean(settingsErrors.hour)}
-                  aria-describedby={hourHelpId}
-                  className="h-9 rounded-xl text-xs font-bold"
-                />
-                <p
-                  id={hourHelpId}
-                  className={`text-[10px] ${
-                    settingsErrors.hour ? "text-rose-600 font-semibold" : "text-muted-foreground"
-                  }`}
-                >
-                  {settingsErrors.hour || `Horário de Brasília (padrão: 10h)`}
-                </p>
-              </div>
-
-              {/* Janela de Dias */}
-              <div className="space-y-1.5">
-                <Label htmlFor={lookbackId} className="text-xs font-bold">
-                  Janela de Pendências (dias)
-                </Label>
-                <Input
-                  ref={lookbackInputRef}
-                  id={lookbackId}
-                  name="dailyPaymentReminderLookbackDays"
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={90}
-                  value={lookbackDays}
-                  onChange={(e) => {
-                    setLookbackDays(e.target.value);
-                    if (settingsErrors.lookback) setSettingsErrors((prev) => ({ ...prev, lookback: undefined }));
-                  }}
-                  aria-invalid={Boolean(settingsErrors.lookback)}
-                  aria-describedby={lookbackHelpId}
-                  className="h-9 rounded-xl text-xs font-bold"
-                />
-                <p
-                  id={lookbackHelpId}
-                  className={`text-[10px] ${
-                    settingsErrors.lookback ? "text-rose-600 font-semibold" : "text-muted-foreground"
-                  }`}
-                >
-                  {settingsErrors.lookback || "Retroativo a partir da conferência (padrão: 15)"}
-                </p>
-              </div>
-
-              {/* Máximo de Dias */}
-              <div className="space-y-1.5">
-                <Label htmlFor={maxDaysId} className="text-xs font-bold">
-                  Duração da Régua (dias)
-                </Label>
-                <Input
-                  ref={maxDaysInputRef}
-                  id={maxDaysId}
-                  name="dailyPaymentReminderMaxDays"
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={30}
-                  value={maxDays}
-                  onChange={(e) => {
-                    setMaxDays(e.target.value);
-                    if (settingsErrors.maxDays) setSettingsErrors((prev) => ({ ...prev, maxDays: undefined }));
-                  }}
-                  aria-invalid={Boolean(settingsErrors.maxDays)}
-                  aria-describedby={maxDaysHelpId}
-                  className="h-9 rounded-xl text-xs font-bold"
-                />
-                <p
-                  id={maxDaysHelpId}
-                  className={`text-[10px] ${
-                    settingsErrors.maxDays ? "text-rose-600 font-semibold" : "text-muted-foreground"
-                  }`}
-                >
-                  {settingsErrors.maxDays || "D+1 até D+N • Aviso Formal no último dia (padrão: 7)"}
-                </p>
-              </div>
-
-              {/* Alerta Gestor no D+7 */}
-              <div className="p-3.5 rounded-2xl border border-border bg-muted/20 flex items-center justify-between gap-3">
-                <div className="space-y-0.5 min-w-0">
-                  <Label htmlFor={notifyManagerId} className="text-xs font-bold cursor-pointer block">
-                    Alertar Gestor no D+{Number(maxDays) || 7}
-                  </Label>
-                  <span className="text-[10px] text-muted-foreground block truncate" title={managerWhatsApp || ""}>
-                    {managerWhatsApp ? `WhatsApp: ${managerWhatsApp}` : "Usa WhatsApp da gerência"}
-                  </span>
-                </div>
-                <Switch
-                  id={notifyManagerId}
-                  checked={notifyManagerOnDay7}
-                  onCheckedChange={setNotifyManagerOnDay7}
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center justify-between gap-2.5 pt-1">
-              <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2">
-                <Button
-                  type="submit"
-                  size="sm"
-                  disabled={savingSettings}
-                  className="rounded-xl text-xs font-bold h-9 gap-1.5"
-                >
-                  {savingSettings ? (
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Save className="w-3.5 h-3.5" />
-                  )}
-                  <span>{savingSettings ? "Salvando..." : "Salvar Configurações"}</span>
-                </Button>
-
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={handleRunAudit}
-                  disabled={runningAudit}
-                  className="rounded-xl text-xs font-bold h-9 gap-1.5 border-amber-500/40 text-amber-800 dark:text-amber-300 hover:bg-amber-500/10"
-                >
-                  <ShieldCheck className={`w-3.5 h-3.5 ${runningAudit ? "animate-spin" : ""}`} />
-                  <span>{runningAudit ? "Auditando no Banco Inter..." : "Auditar PIX no Banco Inter"}</span>
-                </Button>
-              </div>
-
-              <span className="text-[11px] text-muted-foreground">
-                Pendências antigas sempre iniciam no <strong>Dia 1</strong> (nunca pulam direto para o aviso formal).
-              </span>
-            </div>
-          </form>
-
-          {/* Resultado da Última Auditoria */}
-          {lastAuditReport && (
-            <div
-              role="status"
-              aria-live="polite"
-              className="p-3.5 rounded-2xl border border-indigo-500/30 bg-indigo-500/5 space-y-2 text-xs"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="font-bold text-foreground flex items-center gap-1.5">
-                  <ShieldCheck className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                  <span>Última Auditoria PIX (Banco Inter)</span>
-                </div>
-                <span className="text-[11px] text-muted-foreground">
-                  {formatDateTimeBr(lastAuditReport.ranAt)}
-                  {lastAuditReport.triggeredBy ? ` • origem: ${lastAuditReport.triggeredBy}` : ""}
-                  {lastAuditReport.lookbackDays ? ` • janela: ${lastAuditReport.lookbackDays}d` : ""}
-                </span>
-              </div>
-
-              <div className="flex flex-wrap gap-2 text-[11px]">
-                <Badge variant="outline" className="font-semibold">
-                  Analisados: {Number(lastAuditReport.scannedCount ?? 0)}
-                </Badge>
-                <Badge
-                  className={
-                    Number(lastAuditReport.reopenedCount ?? 0) > 0
-                      ? "bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/30 font-bold"
-                      : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 font-semibold"
-                  }
-                >
-                  Reabertos: {Number(lastAuditReport.reopenedCount ?? 0)}
-                </Badge>
-                <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 font-semibold">
-                  E2E Confirmados: {Number(lastAuditReport.verifiedBackfilledCount ?? lastAuditReport.backfilledCount ?? 0)}
-                </Badge>
-                {Number(lastAuditReport.flaggedWithInvoiceCount ?? 0) > 0 && (
-                  <Badge className="bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30 font-semibold">
-                    Com NF p/ Revisão: {Number(lastAuditReport.flaggedWithInvoiceCount)}
-                  </Badge>
-                )}
-                {Number(lastAuditReport.skippedOnNetworkErrorCount ?? 0) > 0 && (
-                  <Badge variant="secondary" className="font-semibold">
-                    Ignorados (erro rede): {Number(lastAuditReport.skippedOnNetworkErrorCount)}
-                  </Badge>
-                )}
-              </div>
-
-              {lastAuditReport.message && (
-                <p className="text-[11px] text-muted-foreground">{lastAuditReport.message}</p>
-              )}
-
-              {Array.isArray(lastAuditReport.reopenedOrders) && lastAuditReport.reopenedOrders.length > 0 && (
-                <div className="text-[11px] text-amber-800 dark:text-amber-300">
-                  <strong>Pedidos reabertos:</strong>{" "}
-                  {lastAuditReport.reopenedOrders
-                    .map(
-                      (o) =>
-                        `${o.id}${o.flatNumber ? ` (Flat ${o.flatNumber})` : ""}${
-                          o.totalAmount ? ` ${formatBRL(o.totalAmount)}` : ""
-                        }`
-                    )
-                    .join(" • ")}
-                </div>
-              )}
-            </div>
+              <Sliders className="w-4 h-4 text-primary shrink-0" />
+              <span>3. Configurar Régua</span>
+              <Badge
+                variant="outline"
+                className={
+                  remindersEnabled
+                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px] font-bold py-0 px-1.5 shrink-0"
+                    : "bg-slate-500/15 text-slate-600 dark:text-slate-300 border-slate-500/30 text-[10px] font-bold py-0 px-1.5 shrink-0"
+                }
+              >
+                {remindersEnabled ? "Ativa" : "Pausada"}
+              </Badge>
+            </TabsTrigger>
           )}
-        </CardContent>
-      </Card>
+        </TabsList>
 
-      {/* SEÇÃO B: ALERTA DE INTEGRIDADE (PEDIDOS PAGOS SEM E2E REAL) */}
+        {/* SUB-ABA 1: PENDÊNCIAS & INADIMPLÊNCIA */}
+        <TabsContent value="pendencias" className="w-full min-w-0 space-y-5 mt-0">
+          {/* Painel Completo de Estatísticas de Inadimplência */}
+          <MinibarDelinquencyStats
+            stats={delinquencyStats}
+            period={delinquencyPeriod}
+            loading={loadingDelinquencyPeriod}
+            onPeriodChange={handleDelinquencyPeriodChange}
+          />
+
+          {/* ALERTA DE INTEGRIDADE (PEDIDOS PAGOS SEM E2E REAL) */}
       {suspiciousPaidOrders.length > 0 && (
         <Card className="rounded-3xl border-2 border-amber-500/50 bg-amber-500/5 overflow-hidden">
           <CardHeader className="p-4 sm:p-5 border-b border-amber-500/30 bg-amber-500/10">
@@ -1305,7 +1196,7 @@ export function MinibarCollectionsPanel({
               <div className="space-y-0.5">
                 <CardTitle className="text-sm font-black text-amber-900 dark:text-amber-200 flex items-center gap-2">
                   <ShieldAlert className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
-                  <span>B. Alerta de Integridade — Pagamentos PIX sem E2E Real do Banco Central</span>
+                  <span>Alerta de Integridade — Pagamentos PIX sem E2E Real do Banco Central</span>
                   <Badge className="bg-rose-600 text-white text-[10px] font-black">
                     {suspiciousPaidOrders.length}
                   </Badge>
@@ -1475,7 +1366,7 @@ export function MinibarCollectionsPanel({
               <div>
                 <CardTitle className="text-sm font-black flex items-center gap-2">
                   <Send className="w-4 h-4 text-amber-600 shrink-0" />
-                  <span>C. Cobranças Pendentes Pós-Check-out (por Hóspede / Cota)</span>
+                  <span>Cobranças Pendentes Pós-Check-out (por Hóspede / Cota)</span>
                   <Badge variant="secondary" className="text-[10px]">
                     {filteredPendingTargets.length}
                   </Badge>
@@ -1856,14 +1747,114 @@ export function MinibarCollectionsPanel({
           </CardContent>
         </Card>
       </div>
+        </TabsContent>
 
-      {/* SEÇÃO D: PEDIDOS PAGOS RECENTES (REABERTURA MANUAL & AUDITORIA E2E) */}
+        {/* SUB-ABA 2: PAGOS & AUDITORIA PIX */}
+        <TabsContent value="auditoria" className="w-full min-w-0 space-y-5 mt-0">
+          {/* Card de Auditoria Bancária no Banco Inter */}
+          <Card className="rounded-3xl border border-border overflow-hidden">
+            <CardHeader className="p-4 sm:p-5 border-b border-border bg-muted/20">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <CardTitle className="text-sm font-black flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                    <span>Auditoria PIX no Banco Inter</span>
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Confere pagamentos PIX recentes contra a API do Banco Inter, confirma códigos E2E reais e sinaliza ou reabre possíveis falsos-pagos.
+                  </CardDescription>
+                </div>
+
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={handleRunAudit}
+                  disabled={runningAudit}
+                  className="rounded-xl text-xs font-bold h-9 gap-1.5 border-amber-500/40 text-amber-800 dark:text-amber-300 hover:bg-amber-500/10 shrink-0"
+                >
+                  <ShieldCheck className={`w-3.5 h-3.5 ${runningAudit ? "animate-spin" : ""}`} />
+                  <span>{runningAudit ? "Auditando no Banco Inter..." : "Auditar PIX no Banco Inter"}</span>
+                </Button>
+              </div>
+            </CardHeader>
+
+            {lastAuditReport && (
+              <CardContent className="p-4 sm:p-5">
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="p-3.5 rounded-2xl border border-indigo-500/30 bg-indigo-500/5 space-y-2 text-xs"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-bold text-foreground flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                      <span>Última Auditoria PIX (Banco Inter)</span>
+                    </div>
+                    <span className="text-[11px] text-muted-foreground">
+                      {formatDateTimeBr(lastAuditReport.ranAt)}
+                      {lastAuditReport.triggeredBy ? ` • origem: ${lastAuditReport.triggeredBy}` : ""}
+                      {lastAuditReport.lookbackDays ? ` • janela: ${lastAuditReport.lookbackDays}d` : ""}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 text-[11px]">
+                    <Badge variant="outline" className="font-semibold">
+                      Analisados: {Number(lastAuditReport.scannedCount ?? 0)}
+                    </Badge>
+                    <Badge
+                      className={
+                        Number(lastAuditReport.reopenedCount ?? 0) > 0
+                          ? "bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/30 font-bold"
+                          : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 font-semibold"
+                      }
+                    >
+                      Reabertos: {Number(lastAuditReport.reopenedCount ?? 0)}
+                    </Badge>
+                    <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 font-semibold">
+                      E2E Confirmados: {Number(lastAuditReport.verifiedBackfilledCount ?? lastAuditReport.backfilledCount ?? 0)}
+                    </Badge>
+                    {Number(lastAuditReport.flaggedWithInvoiceCount ?? 0) > 0 && (
+                      <Badge className="bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30 font-semibold">
+                        Com NF p/ Revisão: {Number(lastAuditReport.flaggedWithInvoiceCount)}
+                      </Badge>
+                    )}
+                    {Number(lastAuditReport.skippedOnNetworkErrorCount ?? 0) > 0 && (
+                      <Badge variant="secondary" className="font-semibold">
+                        Ignorados (erro rede): {Number(lastAuditReport.skippedOnNetworkErrorCount)}
+                      </Badge>
+                    )}
+                  </div>
+
+                  {lastAuditReport.message && (
+                    <p className="text-[11px] text-muted-foreground">{lastAuditReport.message}</p>
+                  )}
+
+                  {Array.isArray(lastAuditReport.reopenedOrders) && lastAuditReport.reopenedOrders.length > 0 && (
+                    <div className="text-[11px] text-amber-800 dark:text-amber-300">
+                      <strong>Pedidos reabertos:</strong>{" "}
+                      {lastAuditReport.reopenedOrders
+                        .map(
+                          (o) =>
+                            `${o.id}${o.flatNumber ? ` (Flat ${o.flatNumber})` : ""}${
+                              o.totalAmount ? ` ${formatBRL(o.totalAmount)}` : ""
+                            }`
+                        )
+                        .join(" • ")}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            )}
+          </Card>
+
+          {/* PEDIDOS PAGOS RECENTES (REABERTURA MANUAL & AUDITORIA E2E) */}
       <Card className="rounded-3xl border border-border overflow-hidden">
         <CardHeader className="p-4 sm:p-5 border-b border-border bg-card space-y-3">
           <div>
             <CardTitle className="text-sm font-black flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>D. Pedidos Pagos Recentes (Verificação E2E & Reabertura Manual)</span>
+              <span>Pedidos Pagos Recentes (Verificação E2E & Reabertura Manual)</span>
               <Badge variant="secondary" className="text-[10px]">
                 {filteredRecentPaidOrders.length}
               </Badge>
@@ -2006,6 +1997,347 @@ export function MinibarCollectionsPanel({
           </table>
         </div>
       </Card>
+        </TabsContent>
+
+        {/* SUB-ABA 3: CONFIGURAR RÉGUA (EXCLUSIVO ADMIN/DEV CORPFLATS) */}
+        {canConfigureRules && (
+          <TabsContent value="configuracoes" className="w-full min-w-0 space-y-5 mt-0">
+            <Card className="rounded-3xl border border-border overflow-hidden">
+              <CardHeader className="p-4 sm:p-5 border-b border-border bg-muted/20">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <CardTitle id={settingsHeadingId} className="text-sm font-black flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-primary shrink-0" />
+                      <span>Configuração dos Avisos Diários (D+1 a D+7) & Mensagens WhatsApp</span>
+                    </CardTitle>
+                    <CardDescription className="text-xs mt-0.5">
+                      Lembretes cordiais nos dias 1–3, aviso objetivo nos dias 4–6 e notificação formal CDC + tag CRM no último dia.
+                    </CardDescription>
+                  </div>
+                  <Badge
+                    className={
+                      remindersEnabled
+                        ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 text-[11px] font-bold gap-1 self-start sm:self-center"
+                        : "bg-slate-500/15 text-slate-600 dark:text-slate-300 border border-slate-500/30 text-[11px] font-bold gap-1 self-start sm:self-center"
+                    }
+                  >
+                    {remindersEnabled ? (
+                      <>
+                        <Bell className="w-3 h-3" />
+                        <span>Automação Ativa</span>
+                      </>
+                    ) : (
+                      <>
+                        <BellOff className="w-3 h-3" />
+                        <span>Automação Pausada</span>
+                      </>
+                    )}
+                  </Badge>
+                </div>
+              </CardHeader>
+
+              <CardContent className="p-4 sm:p-5 space-y-4">
+                <form aria-labelledby={settingsHeadingId} onSubmit={handleSaveSettings} noValidate className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                    {/* Toggle Global */}
+                    <div className="p-3.5 rounded-2xl border border-border bg-muted/20 flex items-center justify-between gap-3">
+                      <div className="space-y-0.5">
+                        <Label htmlFor={switchEnabledId} className="text-xs font-bold cursor-pointer block">
+                          Avisos Diários
+                        </Label>
+                        <span className="text-[11px] text-muted-foreground block">
+                          {remindersEnabled ? "Ligado (envio automático)" : "Desligado (somente manual)"}
+                        </span>
+                      </div>
+                      <Switch
+                        id={switchEnabledId}
+                        checked={remindersEnabled}
+                        onCheckedChange={setRemindersEnabled}
+                      />
+                    </div>
+
+                    {/* Horário */}
+                    <div className="space-y-1.5">
+                      <Label htmlFor={hourId} className="text-xs font-bold">
+                        Horário de Envio (0–23h)
+                      </Label>
+                      <Input
+                        ref={hourInputRef}
+                        id={hourId}
+                        name="dailyPaymentReminderHour"
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        max={23}
+                        value={reminderHour}
+                        onChange={(e) => {
+                          setReminderHour(e.target.value);
+                          if (settingsErrors.hour) setSettingsErrors((prev) => ({ ...prev, hour: undefined }));
+                        }}
+                        aria-invalid={Boolean(settingsErrors.hour)}
+                        aria-describedby={hourHelpId}
+                        className="h-9 rounded-xl text-xs font-bold"
+                      />
+                      <p
+                        id={hourHelpId}
+                        className={`text-[10px] ${
+                          settingsErrors.hour ? "text-rose-600 font-semibold" : "text-muted-foreground"
+                        }`}
+                      >
+                        {settingsErrors.hour || `Horário de Brasília (padrão: 10h)`}
+                      </p>
+                    </div>
+
+                    {/* Janela de Dias */}
+                    <div className="space-y-1.5">
+                      <Label htmlFor={lookbackId} className="text-xs font-bold">
+                        Janela de Pendências (dias)
+                      </Label>
+                      <Input
+                        ref={lookbackInputRef}
+                        id={lookbackId}
+                        name="dailyPaymentReminderLookbackDays"
+                        type="number"
+                        inputMode="numeric"
+                        min={1}
+                        max={90}
+                        value={lookbackDays}
+                        onChange={(e) => {
+                          setLookbackDays(e.target.value);
+                          if (settingsErrors.lookback) setSettingsErrors((prev) => ({ ...prev, lookback: undefined }));
+                        }}
+                        aria-invalid={Boolean(settingsErrors.lookback)}
+                        aria-describedby={lookbackHelpId}
+                        className="h-9 rounded-xl text-xs font-bold"
+                      />
+                      <p
+                        id={lookbackHelpId}
+                        className={`text-[10px] ${
+                          settingsErrors.lookback ? "text-rose-600 font-semibold" : "text-muted-foreground"
+                        }`}
+                      >
+                        {settingsErrors.lookback || "Retroativo a partir da conferência (padrão: 15)"}
+                      </p>
+                    </div>
+
+                    {/* Máximo de Dias */}
+                    <div className="space-y-1.5">
+                      <Label htmlFor={maxDaysId} className="text-xs font-bold">
+                        Duração da Régua (dias)
+                      </Label>
+                      <Input
+                        ref={maxDaysInputRef}
+                        id={maxDaysId}
+                        name="dailyPaymentReminderMaxDays"
+                        type="number"
+                        inputMode="numeric"
+                        min={1}
+                        max={30}
+                        value={maxDays}
+                        onChange={(e) => {
+                          setMaxDays(e.target.value);
+                          if (settingsErrors.maxDays) setSettingsErrors((prev) => ({ ...prev, maxDays: undefined }));
+                        }}
+                        aria-invalid={Boolean(settingsErrors.maxDays)}
+                        aria-describedby={maxDaysHelpId}
+                        className="h-9 rounded-xl text-xs font-bold"
+                      />
+                      <p
+                        id={maxDaysHelpId}
+                        className={`text-[10px] ${
+                          settingsErrors.maxDays ? "text-rose-600 font-semibold" : "text-muted-foreground"
+                        }`}
+                      >
+                        {settingsErrors.maxDays || "D+1 até D+N • Aviso Formal no último dia (padrão: 7)"}
+                      </p>
+                    </div>
+
+                    {/* Alerta Gestor no D+7 */}
+                    <div className="p-3.5 rounded-2xl border border-border bg-muted/20 flex items-center justify-between gap-3">
+                      <div className="space-y-0.5 min-w-0">
+                        <Label htmlFor={notifyManagerId} className="text-xs font-bold cursor-pointer block">
+                          Alertar Gestor no D+{Number(maxDays) || 7}
+                        </Label>
+                        <span className="text-[10px] text-muted-foreground block truncate" title={managerWhatsApp || ""}>
+                          {managerWhatsApp ? `WhatsApp: ${managerWhatsApp}` : "Usa WhatsApp da gerência"}
+                        </span>
+                      </div>
+                      <Switch
+                        id={notifyManagerId}
+                        checked={notifyManagerOnDay7}
+                        onCheckedChange={setNotifyManagerOnDay7}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Mensagem Curta de Confirmação de Quitação no WhatsApp */}
+                  <div className="p-3.5 sm:p-4 rounded-2xl border border-emerald-500/25 bg-emerald-500/5 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                      <div className="flex items-start gap-2.5 min-w-0">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                        <div className="space-y-0.5 min-w-0">
+                          <Label htmlFor={confirmWaSwitchId} className="text-xs font-black text-foreground cursor-pointer block">
+                            Confirmação de Quitação no WhatsApp do Hóspede
+                          </Label>
+                          <span className="text-[11px] text-muted-foreground block">
+                            Dispara automaticamente uma mensagem curta assim que o pagamento do consumo (PIX, Cartão ou Baixa Manual) for confirmado.
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0 self-start sm:self-center">
+                        <span className="text-[11px] font-bold text-muted-foreground">
+                          {sendPaymentConfirmationWa ? "Ativa" : "Desativada"}
+                        </span>
+                        <Switch
+                          id={confirmWaSwitchId}
+                          checked={sendPaymentConfirmationWa}
+                          onCheckedChange={setSendPaymentConfirmationWa}
+                        />
+                      </div>
+                    </div>
+
+                    {sendPaymentConfirmationWa && (
+                      <div className="space-y-2 pt-1">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <Label htmlFor={confirmWaTplId} className="text-[11px] font-bold text-foreground">
+                            Texto da Mensagem (editável)
+                          </Label>
+                          <button
+                            type="button"
+                            onClick={() => setPaymentConfirmationTemplate(DEFAULT_PAYMENT_CONFIRMATION_WA_TEMPLATE)}
+                            className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:underline inline-flex items-center gap-1"
+                          >
+                            <RotateCcw className="w-3 h-3" />
+                            <span>Restaurar padrão</span>
+                          </button>
+                        </div>
+                        <Textarea
+                          id={confirmWaTplId}
+                          rows={2}
+                          value={paymentConfirmationTemplate}
+                          onChange={(e) => setPaymentConfirmationTemplate(e.target.value)}
+                          placeholder={DEFAULT_PAYMENT_CONFIRMATION_WA_TEMPLATE}
+                          className="rounded-xl text-xs bg-background resize-y min-h-[60px]"
+                        />
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                          <span>
+                            Variáveis:{" "}
+                            <code className="px-1 py-0.5 rounded bg-muted font-mono">{"{primeiro_nome}"}</code>{" "}
+                            <code className="px-1 py-0.5 rounded bg-muted font-mono">{"{flat}"}</code>{" "}
+                            <code className="px-1 py-0.5 rounded bg-muted font-mono">{"{valor}"}</code>{" "}
+                            <code className="px-1 py-0.5 rounded bg-muted font-mono">{"{metodo}"}</code>{" "}
+                            <code className="px-1 py-0.5 rounded bg-muted font-mono">{"{reserva}"}</code>
+                          </span>
+                        </div>
+                        <div className="p-2.5 rounded-xl bg-background/90 border border-border text-[11px] text-foreground flex items-start gap-2">
+                          <MessageSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                          <div className="min-w-0">
+                            <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground block">
+                              Prévia no WhatsApp:
+                            </span>
+                            <span className="break-words whitespace-pre-wrap">{paymentConfirmationPreview}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Mensagem Pós-Check-out para Consumo Apenas de Cortesia (Sem Cobrança) */}
+                  <div className="p-3.5 sm:p-4 rounded-2xl border border-sky-500/25 bg-sky-500/5 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                      <div className="flex items-start gap-2.5 min-w-0">
+                        <CheckCircle2 className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
+                        <div className="space-y-0.5 min-w-0">
+                          <Label htmlFor={courtesyWaSwitchId} className="text-xs font-black text-foreground cursor-pointer block">
+                            Aviso Pós-Check-out (Somente Cortesia / Sem Cobrança)
+                          </Label>
+                          <span className="text-[11px] text-muted-foreground block">
+                            Quando a conferência final fechar em R$ 0,00 e o hóspede tiver consumido apenas itens do Kit de Boas-Vindas, envia aviso ao titular informando que os itens são cortesia.
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0 self-start sm:self-center">
+                        <span className="text-[11px] font-bold text-muted-foreground">
+                          {sendCourtesyOnlyWa ? "Ativa" : "Desativada"}
+                        </span>
+                        <Switch
+                          id={courtesyWaSwitchId}
+                          checked={sendCourtesyOnlyWa}
+                          onCheckedChange={setSendCourtesyOnlyWa}
+                        />
+                      </div>
+                    </div>
+
+                    {sendCourtesyOnlyWa && (
+                      <div className="space-y-2 pt-1">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <Label htmlFor={courtesyWaTplId} className="text-[11px] font-bold text-foreground">
+                            Texto da Mensagem (editável)
+                          </Label>
+                          <button
+                            type="button"
+                            onClick={() => setCourtesyOnlyTemplate(DEFAULT_COURTESY_ONLY_WA_TEMPLATE)}
+                            className="text-[10px] font-bold text-sky-700 dark:text-sky-300 hover:underline inline-flex items-center gap-1"
+                          >
+                            <RotateCcw className="w-3 h-3" />
+                            <span>Restaurar padrão</span>
+                          </button>
+                        </div>
+                        <Textarea
+                          id={courtesyWaTplId}
+                          rows={2}
+                          value={courtesyOnlyTemplate}
+                          onChange={(e) => setCourtesyOnlyTemplate(e.target.value)}
+                          placeholder={DEFAULT_COURTESY_ONLY_WA_TEMPLATE}
+                          className="rounded-xl text-xs bg-background resize-y min-h-[60px]"
+                        />
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                          <span>
+                            Variáveis:{" "}
+                            <code className="px-1 py-0.5 rounded bg-muted font-mono">{"{primeiro_nome}"}</code>{" "}
+                            <code className="px-1 py-0.5 rounded bg-muted font-mono">{"{flat}"}</code>{" "}
+                            <code className="px-1 py-0.5 rounded bg-muted font-mono">{"{itens_cortesia}"}</code>{" "}
+                            <code className="px-1 py-0.5 rounded bg-muted font-mono">{"{reserva}"}</code>
+                          </span>
+                        </div>
+                        <div className="p-2.5 rounded-xl bg-background/90 border border-border text-[11px] text-foreground flex items-start gap-2">
+                          <MessageSquare className="w-3.5 h-3.5 text-sky-600 shrink-0 mt-0.5" />
+                          <div className="min-w-0">
+                            <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground block">
+                              Prévia no WhatsApp:
+                            </span>
+                            <span className="break-words whitespace-pre-wrap">{courtesyOnlyPreview}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center justify-between gap-2.5 pt-1">
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={savingSettings}
+                      className="rounded-xl text-xs font-bold h-9 gap-1.5"
+                    >
+                      {savingSettings ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Save className="w-3.5 h-3.5" />
+                      )}
+                      <span>{savingSettings ? "Salvando..." : "Salvar Configurações"}</span>
+                    </Button>
+
+                    <span className="text-[11px] text-muted-foreground">
+                      Pendências antigas sempre iniciam no <strong>Dia 1</strong> (nunca pulam direto para o aviso formal).
+                    </span>
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
+      </Tabs>
 
       {/* DIALOG 1: PAUSAR AVISOS */}
       <Dialog open={Boolean(pauseModalTarget)} onOpenChange={(open) => !open && setPauseModalTarget(null)}>

@@ -1279,10 +1279,8 @@ export const ALL_CANONICAL_MODULES = [
   "/avaliacoes-ia",
   "/editor-site",
   "/frigobar",
-  "/anserve",
   "/frigobar-notas",
   "/frigobar-reposicao",
-  "/frigobar-gestao",
   // 6. 🛠️ Engenharia & Dev
   "/configuracoes",
   "/zapi-conexao",
@@ -1352,7 +1350,7 @@ export function getDefaultModulesForRole(role) {
     case "admin":
       return [...OPERATIONAL_MODULES];
     case "anserve_gestor":
-      return ["/anserve", "/frigobar-notas", "/frigobar-reposicao", "/frigobar-gestao"];
+      return ["/frigobar", "/frigobar-notas", "/frigobar-reposicao"];
     case "anserve_faturamento":
       return ["/frigobar-notas"];
     case "anserve_repositora":
@@ -1367,8 +1365,9 @@ export function getDefaultModulesForRole(role) {
 }
 
 export const ROUTE_ALIASES = {
-  // Frigobar / Anserve
-  "/frigobar-gestao": "/anserve",
+  // Frigobar / Anserve (Central Unificada em /frigobar)
+  "/anserve": "/frigobar",
+  "/frigobar-gestao": "/frigobar",
   "/anserve/reposicao": "/frigobar-reposicao",
   "/anserve/notas": "/frigobar-notas",
   "/notas-frigobar": "/frigobar-notas",
@@ -1592,10 +1591,8 @@ export function hasModuleAccess(user, path) {
   if (!isCustomRestricted) {
     const frigobarAndOpsModules = [
       "/frigobar",
-      "/anserve",
       "/frigobar-notas",
       "/frigobar-reposicao",
-      "/frigobar-gestao",
       "/painel-aovivo",
       "/rh",
       "/disparo-inteligente"
@@ -1605,7 +1602,7 @@ export function hasModuleAccess(user, path) {
     }
   }
 
-  if (user.role === "anserve_gestor" && ["/anserve", "/frigobar-notas", "/frigobar-reposicao", "/frigobar-gestao"].includes(canonical)) {
+  if (user.role === "anserve_gestor" && ["/frigobar", "/frigobar-notas", "/frigobar-reposicao"].includes(canonical)) {
     return true;
   }
   if (user.role === "anserve_faturamento" && canonical === "/frigobar-notas") {
@@ -1871,14 +1868,14 @@ export function ensureSystemUsers(database) {
       }
 
       if ((u.role === "dev" || u.role === "admin") && !uIsCustom) {
-        for (const reqMod of ["/frigobar", "/anserve", "/frigobar-reposicao", "/frigobar-gestao"]) {
+        for (const reqMod of ["/frigobar", "/frigobar-notas", "/frigobar-reposicao"]) {
           if (!u.allowedModules.includes(reqMod)) {
             u.allowedModules.push(reqMod);
             changed = true;
           }
         }
       } else if (u.role === "anserve_gestor") {
-        for (const reqMod of ["/anserve", "/frigobar-reposicao", "/frigobar-gestao"]) {
+        for (const reqMod of ["/frigobar", "/frigobar-notas", "/frigobar-reposicao"]) {
           if (!u.allowedModules.includes(reqMod)) {
             u.allowedModules.push(reqMod);
             changed = true;
@@ -2215,6 +2212,12 @@ export function getDefaultMinibarStock() {
   };
 }
 
+export const DEFAULT_MINIBAR_PAYMENT_CONFIRMATION_WA_TEMPLATE =
+  "Olá, {primeiro_nome}! ✅ Confirmamos a quitação do seu consumo de frigobar no *Flat {flat}* — *R$ {valor}* ({metodo}). Obrigado!";
+
+export const DEFAULT_MINIBAR_COURTESY_ONLY_WA_TEMPLATE =
+  "Olá, {primeiro_nome}! 😊 Conferimos o frigobar do *Flat {flat}* após seu check-out: não houve consumo cobrável. Os itens consumidos ({itens_cortesia}) são cortesia do nosso Kit de Boas-Vindas. Obrigado pela estadia!";
+
 export function getDefaultMinibarSettings() {
   return {
     anservePin: "1234",
@@ -2233,7 +2236,11 @@ export function getDefaultMinibarSettings() {
     dailyPaymentReminderHour: 10,
     dailyPaymentReminderLookbackDays: 15,
     dailyPaymentReminderMaxDays: 7,
-    dailyPaymentReminderNotifyManagerOnDay7: true
+    dailyPaymentReminderNotifyManagerOnDay7: true,
+    sendPaymentConfirmationWhatsApp: true,
+    paymentConfirmationWhatsAppTemplate: DEFAULT_MINIBAR_PAYMENT_CONFIRMATION_WA_TEMPLATE,
+    sendCourtesyOnlyCheckoutWhatsApp: true,
+    courtesyOnlyCheckoutWhatsAppTemplate: DEFAULT_MINIBAR_COURTESY_ONLY_WA_TEMPLATE
   };
 }
 
@@ -16551,6 +16558,242 @@ export function checkYouthLocalRisk({ birthDate, city, address, phone, state, or
   };
 }
 
+// ── Telemetria leve em memória de chamadas reais de IA (para /ia-status) ─────
+const _aiRuntimeTelemetry = {
+  maxEntries: 30,
+  calls: []
+};
+
+function recordAiRuntimeCall({
+  module = "gemini_core",
+  model = "unknown",
+  protocol = "generateContent (v1beta)",
+  ok = false,
+  status = null,
+  latencyMs = 0,
+  error = null,
+  keySource = null
+} = {}) {
+  _aiRuntimeTelemetry.calls.unshift({
+    at: new Date().toISOString(),
+    module,
+    model,
+    protocol,
+    ok: Boolean(ok),
+    status: status ?? (ok ? 200 : null),
+    latencyMs: Math.max(0, Math.round(Number(latencyMs) || 0)),
+    error: error ? String(error).slice(0, 260) : null,
+    keySource
+  });
+  if (_aiRuntimeTelemetry.calls.length > _aiRuntimeTelemetry.maxEntries) {
+    _aiRuntimeTelemetry.calls.length = _aiRuntimeTelemetry.maxEntries;
+  }
+}
+
+function maskGeminiKey(rawKey) {
+  const k = String(rawKey || "").trim();
+  if (!k) return null;
+  if (k.length <= 10) return `${k.slice(0, 3)}•••${k.slice(-2)}`;
+  return `${k.slice(0, 6)}•••${k.slice(-4)}`;
+}
+
+function detectGeminiKeyType(rawKey) {
+  const k = String(rawKey || "").trim();
+  if (!k) return null;
+  if (k.startsWith("AQ.")) return "AI Studio / Pré-pago (AQ.*)";
+  if (k.startsWith("AIza")) return "Google API Key (AIza*)";
+  return "Chave Personalizada";
+}
+
+function resolvePrimaryGeminiKeyInfo() {
+  const envGemini = String(process.env.GEMINI_API_KEY || "").trim();
+  const dbSettings = String(db.settings?.geminiApiKey || "").trim();
+  const dbWhatsapp = String(db.whatsappAiSettings?.geminiApiKey || "").trim();
+  const envGoogleAi = String(process.env.GOOGLE_AI_API_KEY || "").trim();
+
+  let primaryKey = "";
+  let primarySourceId = null;
+  let primarySourceLabel = null;
+  if (envGemini) {
+    primaryKey = envGemini;
+    primarySourceId = "env_gemini";
+    primarySourceLabel = "Render ENV (GEMINI_API_KEY)";
+  } else if (dbSettings) {
+    primaryKey = dbSettings;
+    primarySourceId = "db_settings";
+    primarySourceLabel = "Configurações (/configuracoes)";
+  } else if (envGoogleAi) {
+    primaryKey = envGoogleAi;
+    primarySourceId = "env_google_ai";
+    primarySourceLabel = "Render ENV (GOOGLE_AI_API_KEY)";
+  }
+
+  let b2bKey = "";
+  let b2bSourceId = null;
+  let b2bSourceLabel = null;
+  if (dbWhatsapp) {
+    b2bKey = dbWhatsapp;
+    b2bSourceId = "db_whatsapp";
+    b2bSourceLabel = "WhatsApp IA Settings";
+  } else if (dbSettings) {
+    b2bKey = dbSettings;
+    b2bSourceId = "db_settings";
+    b2bSourceLabel = "Configurações (/configuracoes)";
+  } else if (envGemini) {
+    b2bKey = envGemini;
+    b2bSourceId = "env_gemini";
+    b2bSourceLabel = "Render ENV (GEMINI_API_KEY)";
+  } else if (envGoogleAi) {
+    b2bKey = envGoogleAi;
+    b2bSourceId = "env_google_ai";
+    b2bSourceLabel = "Render ENV (GOOGLE_AI_API_KEY)";
+  }
+
+  const hasOverrideConflict = Boolean(envGemini && dbSettings && envGemini !== dbSettings);
+  const overrideMessage = hasOverrideConflict
+    ? `A variável GEMINI_API_KEY do Render (${maskGeminiKey(envGemini)}) tem prioridade sobre a chave salva em /configuracoes (${maskGeminiKey(dbSettings)}) nos motores principais (Sofia, Copiloto, OCR, Avaliações e Compras). Alterações feitas apenas em /configuracoes não substituem a variável de ambiente do Render.`
+    : null;
+
+  const sources = [
+    {
+      id: "env_gemini",
+      label: "Render ENV — GEMINI_API_KEY",
+      location: "Variável de ambiente do servidor (prioridade máxima)",
+      configured: Boolean(envGemini),
+      masked: maskGeminiKey(envGemini),
+      length: envGemini.length,
+      keyType: detectGeminiKeyType(envGemini),
+      isActiveForPrimary: primarySourceId === "env_gemini",
+      isActiveForB2b: b2bSourceId === "env_gemini"
+    },
+    {
+      id: "db_settings",
+      label: "Configurações do Sistema",
+      location: "Banco de dados (db.settings.geminiApiKey via /configuracoes)",
+      configured: Boolean(dbSettings),
+      masked: maskGeminiKey(dbSettings),
+      length: dbSettings.length,
+      keyType: detectGeminiKeyType(dbSettings),
+      isActiveForPrimary: primarySourceId === "db_settings",
+      isActiveForB2b: b2bSourceId === "db_settings"
+    },
+    {
+      id: "db_whatsapp",
+      label: "WhatsApp IA Settings",
+      location: "Banco de dados (db.whatsappAiSettings.geminiApiKey)",
+      configured: Boolean(dbWhatsapp),
+      masked: maskGeminiKey(dbWhatsapp),
+      length: dbWhatsapp.length,
+      keyType: detectGeminiKeyType(dbWhatsapp),
+      isActiveForPrimary: false,
+      isActiveForB2b: b2bSourceId === "db_whatsapp"
+    },
+    {
+      id: "env_google_ai",
+      label: "Render ENV — GOOGLE_AI_API_KEY",
+      location: "Variável de ambiente alternativa (fallback)",
+      configured: Boolean(envGoogleAi),
+      masked: maskGeminiKey(envGoogleAi),
+      length: envGoogleAi.length,
+      keyType: detectGeminiKeyType(envGoogleAi),
+      isActiveForPrimary: primarySourceId === "env_google_ai",
+      isActiveForB2b: b2bSourceId === "env_google_ai"
+    }
+  ];
+
+  return {
+    primaryKey,
+    primarySourceId,
+    primarySourceLabel,
+    b2bKey,
+    b2bSourceId,
+    b2bSourceLabel,
+    dbSettingsKey: dbSettings,
+    hasOverrideConflict,
+    overrideMessage,
+    sources
+  };
+}
+
+function classifyGeminiHttpResult(status, rawBody, networkError = null) {
+  if (networkError) {
+    return {
+      code: "network_error",
+      diagnosis: "Timeout ou falha de rede ao contatar a API do Google",
+      actionHint: "Verifique a conectividade de saída do servidor Render ou tente novamente em instantes.",
+      rawError: String(networkError).slice(0, 400)
+    };
+  }
+  if (status >= 200 && status < 300) {
+    return {
+      code: "operational",
+      diagnosis: `Operacional (HTTP ${status})`,
+      actionHint: null,
+      rawError: null
+    };
+  }
+
+  let message = String(rawBody || "").trim();
+  try {
+    const parsed = JSON.parse(message);
+    if (parsed?.error?.message) {
+      message = String(parsed.error.message);
+    }
+  } catch {}
+  const cleanMsg = message.replace(/\s+/g, " ").trim().slice(0, 400);
+  const low = cleanMsg.toLowerCase();
+
+  if (status === 402 || low.includes("prepayment credits") || low.includes("billing") || low.includes("credits are depleted")) {
+    return {
+      code: "billing_depleted",
+      diagnosis: "Créditos pré-pagos esgotados (HTTP 402)",
+      actionHint: "Recarregue os créditos ou habilite faturamento no Google AI Studio (https://ai.studio/projects) ou substitua a variável GEMINI_API_KEY no Render.",
+      rawError: cleanMsg || `HTTP ${status}`
+    };
+  }
+  if (status === 429 || low.includes("quota") || low.includes("rate limit") || low.includes("resource_exhausted")) {
+    return {
+      code: "quota_exceeded",
+      diagnosis: "Limite de cota / Rate Limit atingido (HTTP 429)",
+      actionHint: "A cota por minuto ou diária desta chave foi excedida. Aguarde a renovação ou revise os limites no Google AI Studio.",
+      rawError: cleanMsg || `HTTP ${status}`
+    };
+  }
+  if (status === 401 || status === 403 || low.includes("api key not valid") || low.includes("permission")) {
+    return {
+      code: "auth_error",
+      diagnosis: `Chave inválida ou sem permissão (HTTP ${status})`,
+      actionHint: "Confira se a chave está ativa, sem restrições bloqueando o Render e com a Generative Language API habilitada.",
+      rawError: cleanMsg || `HTTP ${status}`
+    };
+  }
+  if (status === 404 || low.includes("not found") || low.includes("not supported")) {
+    return {
+      code: "model_not_found",
+      diagnosis: "Modelo não disponível para esta chave/endpoint (HTTP 404)",
+      actionHint: "O modelo consultado não está liberado nesta conta ou versão de API; o motor principal usa fallback automático.",
+      rawError: cleanMsg || `HTTP ${status}`
+    };
+  }
+  if (status >= 500) {
+    return {
+      code: "provider_outage",
+      diagnosis: `Instabilidade temporária nos servidores do Google (HTTP ${status})`,
+      actionHint: "Os módulos com fallback heurístico seguem operando até a normalização do provedor.",
+      rawError: cleanMsg || `HTTP ${status}`
+    };
+  }
+  return {
+    code: "provider_outage",
+    diagnosis: `Erro na API Gemini (HTTP ${status})`,
+    actionHint: "Verifique os detalhes retornados pelo Google abaixo.",
+    rawError: cleanMsg || `HTTP ${status}`
+  };
+}
+
+let _aiStatusOverviewCache = { result: null, ts: 0 };
+const AI_STATUS_OVERVIEW_CACHE_MS = 5 * 60 * 1000;
+
 // ── Helper Universal para Chamadas Google Gemini AI com Auto-Discovery de Modelos ──
 let _geminiListModelsCache = { key: null, expiresAt: 0, candidates: null };
 
@@ -16658,11 +16901,15 @@ async function getGeminiCandidateEndpoints(apiKey) {
   return candidates;
 }
 
-async function callGeminiGenerateContent(apiKey, contents) {
+async function callGeminiGenerateContent(apiKey, contents, telemetryModule = "gemini_core") {
   const candidates = await getGeminiCandidateEndpoints(apiKey);
+  const keyInfo = resolvePrimaryGeminiKeyInfo();
   let lastError = null;
+  let lastStatus = null;
+  const startedAll = Date.now();
 
   for (const { ver, model } of candidates) {
+    const attemptStart = Date.now();
     try {
       const payload = { contents };
       if (model.startsWith("gemini-2.5-flash")) {
@@ -16685,6 +16932,7 @@ async function callGeminiGenerateContent(apiKey, contents) {
         });
       }
 
+      const latencyMs = Date.now() - attemptStart;
       if (response.ok) {
         const data = await response.json();
         // Mantém o modelo principal configurado sem sobrescrever por fallbacks lite
@@ -16694,12 +16942,36 @@ async function callGeminiGenerateContent(apiKey, contents) {
           db.settings.geminiApiVersion = ver;
           saveDatabase();
         }
-        return { ok: true, data, model, ver };
+        recordAiRuntimeCall({
+          module: telemetryModule,
+          model,
+          protocol: `generateContent (${ver})`,
+          ok: true,
+          status: response.status,
+          latencyMs,
+          keySource: keyInfo.primarySourceLabel
+        });
+        return { ok: true, data, model, ver, latencyMs, status: response.status };
       } else {
         const errJson = await response.json().catch(() => ({}));
         const msg = errJson.error?.message || `Status ${response.status}`;
         lastError = msg;
+        lastStatus = response.status;
         console.warn(`[Gemini Candidate] ${model} (${ver}) -> Status ${response.status}: ${msg}`);
+        // Erros definitivos de faturamento ou chave inválida não melhoram tentando outros modelos com a mesma chave
+        if (response.status === 401 || response.status === 402 || response.status === 403) {
+          recordAiRuntimeCall({
+            module: telemetryModule,
+            model,
+            protocol: `generateContent (${ver})`,
+            ok: false,
+            status: response.status,
+            latencyMs,
+            error: msg,
+            keySource: keyInfo.primarySourceLabel
+          });
+          return { ok: false, error: msg, status: response.status, model, ver, latencyMs };
+        }
         // Continua tentando os próximos modelos candidatos (ex: se 2.5 tem cota 0, tenta 2.0-flash / lite)
         continue;
       }
@@ -16709,7 +16981,19 @@ async function callGeminiGenerateContent(apiKey, contents) {
     }
   }
 
-  return { ok: false, error: lastError || "Não foi possível conectar a nenhum modelo Gemini." };
+  const totalLatencyMs = Date.now() - startedAll;
+  recordAiRuntimeCall({
+    module: telemetryModule,
+    model: candidates[0]?.model || "gemini-2.5-flash",
+    protocol: "generateContent (v1beta)",
+    ok: false,
+    status: lastStatus,
+    latencyMs: totalLatencyMs,
+    error: lastError || "Falha em todos os candidatos Gemini",
+    keySource: keyInfo.primarySourceLabel
+  });
+
+  return { ok: false, error: lastError || "Não foi possível conectar a nenhum modelo Gemini.", status: lastStatus, latencyMs: totalLatencyMs };
 }
 
 // ── Helpers Periciais Determinísticos de Comparação de Identidade ────────────
@@ -19867,11 +20151,11 @@ export function resolveEffectiveAllowedModules(userObj) {
     )
   );
   if ((userObj.role === "dev" || userObj.role === "admin") && !isCustomRestricted) {
-    for (const m of ["/frigobar", "/anserve", "/frigobar-reposicao", "/frigobar-gestao", "/painel-aovivo", "/rh", "/disparo-inteligente"]) {
+    for (const m of ["/frigobar", "/frigobar-notas", "/frigobar-reposicao", "/painel-aovivo", "/rh", "/disparo-inteligente"]) {
       if (!base.includes(m)) base.push(m);
     }
   } else if (userObj.role === "anserve_gestor") {
-    for (const m of ["/anserve", "/frigobar-notas", "/frigobar-reposicao", "/frigobar-gestao"]) {
+    for (const m of ["/frigobar", "/frigobar-notas", "/frigobar-reposicao"]) {
       if (!base.includes(m)) base.push(m);
     }
   } else if (userObj.role === "anserve_repositora") {
@@ -19945,6 +20229,7 @@ app.use([
   "/api/integrations/inter/test-connection",
   "/api/integrations/mercadopago/config",
   "/api/admin/server-monitor",
+  "/api/admin/ai-status",
   "/api/shopping-list/ai-test"
 ], requireDevAuth);
 
@@ -21346,7 +21631,7 @@ async function sendNewUserWelcomeCredentialsWhatsApp(userObj, plainPassword) {
       },
       anserve_gestor: {
         label: "Gestor / Supervisor Anserve",
-        url: `${serverBaseUrl}/frigobar-gestao`
+        url: `${serverBaseUrl}/frigobar`
       },
       camareira: {
         label: "Governança / Camareira",
@@ -59441,6 +59726,8 @@ app.post("/api/settings/gemini", (req, res) => {
   if (!apiKey || apiKey.trim().length < 10) return res.status(400).json({ error: "Chave inválida. Informe a chave completa do Google AI Studio." });
   if (!db.settings) db.settings = {};
   db.settings.geminiApiKey = apiKey.trim();
+  _aiStatusOverviewCache = { result: null, ts: 0 };
+  _geminiListModelsCache = { key: null, expiresAt: 0, candidates: null };
   saveDatabase();
   const key = apiKey.trim();
   const keyMasked = key.substring(0, 6) + "••••••••••••••••••••••••••" + key.slice(-4);
@@ -59458,18 +59745,23 @@ app.post("/api/settings/gemini/test", async (req, res) => {
     saveDatabase();
   }
 
-  const result = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: "Responda apenas: OK" }] }]);
+  const result = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: "Responda apenas: OK" }] }], "settings_test");
   if (result.ok) {
     const reply = result.data.candidates?.[0]?.content?.parts?.[0]?.text || "OK";
     res.json({
       success: true,
-      message: `Conectado com sucesso! Modelo ativo: ${result.model} (${result.ver}) • Resposta: "${reply.trim()}"`,
+      message: `Conectado com sucesso! Modelo ativo: ${result.model} (${result.ver}) • ${result.latencyMs ?? 0}ms • Resposta: "${reply.trim()}"`,
       model: result.model,
-      apiVersion: result.ver
+      apiVersion: result.ver,
+      latencyMs: result.latencyMs ?? null
     });
   } else {
     const rawErr = result.error || "";
-    if (rawErr.includes("Quota exceeded") || rawErr.includes("429") || rawErr.includes("rate-limit") || rawErr.includes("limit: 0")) {
+    if (result.status === 402 || rawErr.toLowerCase().includes("prepayment credits") || rawErr.toLowerCase().includes("credits are depleted")) {
+      res.status(400).json({
+        error: `Créditos pré-pagos esgotados (HTTP 402) na chave ativa. Recarregue créditos em https://ai.studio/projects ou atualize a variável GEMINI_API_KEY no Render. Detalhe: ${rawErr}`
+      });
+    } else if (rawErr.includes("Quota exceeded") || rawErr.includes("429") || rawErr.includes("rate-limit") || rawErr.includes("limit: 0")) {
       res.status(400).json({
         error: `A sua chave é válida, porém a cota gratuita do Google Gemini para esta chave atingiu o limite temporário (Rate Limit por minuto ou dia). O sistema está operando normalmente com o motor heurístico local de análise de sentimento e defeitos enquanto a cota é restabelecida.`
       });
@@ -82125,6 +82417,8 @@ Mantenha um tom profissional, ágil e focado na tomada de decisão gerencial.`;
 
   let geminiRes = null;
   if (apiKey) {
+    const copilotStart = Date.now();
+    const keyInfo = resolvePrimaryGeminiKeyInfo();
     try {
       geminiRes = await callGeminiAi({
         apiKey,
@@ -82136,7 +82430,27 @@ Mantenha um tom profissional, ágil e focado na tomada de decisão gerencial.`;
         customPrompt: true,
         requesterRole: "admin"
       });
+      recordAiRuntimeCall({
+        module: "admin_copilot",
+        model: geminiRes?.model || db?.zapiConfig?.aiAgent?.preferredModel || db?.settings?.geminiModel || "gemini-2.5-pro",
+        protocol: "generateContent (v1beta)",
+        ok: Boolean(geminiRes?.ok && geminiRes?.text),
+        status: geminiRes?.ok ? 200 : (geminiRes?.geminiDiagnostics?.[0]?.status || null),
+        latencyMs: Date.now() - copilotStart,
+        error: geminiRes?.ok ? null : (geminiRes?.error || geminiRes?.geminiDiagnostics?.[0]?.error || "Fallback local acionado"),
+        keySource: keyInfo.primarySourceLabel
+      });
     } catch (gErr) {
+      recordAiRuntimeCall({
+        module: "admin_copilot",
+        model: db?.zapiConfig?.aiAgent?.preferredModel || "gemini-2.5-pro",
+        protocol: "generateContent (v1beta)",
+        ok: false,
+        status: null,
+        latencyMs: Date.now() - copilotStart,
+        error: gErr.message,
+        keySource: keyInfo.primarySourceLabel
+      });
       console.warn("[Admin Copilot] Erro na chamada Gemini:", gErr.message);
     }
   }
@@ -90760,15 +91074,6 @@ export function resolveSpaOpenGraphMetadata(req, dbRef = db) {
     }
   }
 
-  // 2.1 Extrair número do flat em rotas de frigobar (/frigobar/113, /frigobar/flat/113, /minibar/113)
-  if (!flatNumber) {
-    const minibarFlatMatch = String(req.path || "").match(/^\/(?:frigobar\/flat|frigobar|minibar)\/([a-zA-Z0-9_\-]+)/i);
-    const excludedMinibarSegs = new Set(["admin", "notas", "reposicao", "gestao", "anserve"]);
-    if (minibarFlatMatch && minibarFlatMatch[1] && !excludedMinibarSegs.has(minibarFlatMatch[1].toLowerCase())) {
-      flatNumber = minibarFlatMatch[1];
-    }
-  }
-
   const pageUrl = `https://corpflats.com.br${req.originalUrl || req.url || req.path || "/"}`;
 
   // 3. Avaliação Google (Redirecionamento Imediato + Card 5 Estrelas)
@@ -92593,69 +92898,116 @@ function autoCategorizeRules(name) {
 // Categorização principal com Gemini AI + fallback para keywords
 const ALL_CATEGORIES = ["Carnes","Frios","Laticínios","Padaria","Bebidas","Secos & Grãos","Hortifrúti","Temperos","Mercearia","Conservas","Congelados","Café da Manhã","Limpeza","Higiene","Governança","Descartáveis","Eletrônicos","Geral"];
 
-// Tenta chamar Gemini com um método de auth, retorna resposta ou null
-async function callGemini(prompt, apiKey, method) {
-  const baseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent";
-  const url = method === "key" ? `${baseUrl}?key=${apiKey}` : baseUrl;
-  const headers = { "Content-Type": "application/json" };
-  if (method === "bearer") headers["Authorization"] = `Bearer ${apiKey}`;
+async function autoCategorizeDetailed(name) {
+  const cleanName = String(name || "").trim();
+  const fallbackSerialized = autoCategorizeRules(cleanName);
+  const fallbackCategories = parseCategories(fallbackSerialized);
+  const keyInfo = resolvePrimaryGeminiKeyInfo();
+  const apiKey = keyInfo.primaryKey;
 
-  const resp = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0, maxOutputTokens: 100 },
-    }),
-  });
-
-  if (!resp.ok) {
-    const errBody = await resp.text().catch(() => "");
-    console.warn(`[AI] ${method} auth failed: HTTP ${resp.status} — ${errBody.slice(0, 150)}`);
-    return null;
+  if (!apiKey) {
+    return {
+      ok: false,
+      categories: [],
+      serialized: null,
+      usedModel: null,
+      latencyMs: 0,
+      status: null,
+      code: "unconfigured",
+      diagnosis: "Chave de API Gemini não configurada",
+      actionHint: "Configure GEMINI_API_KEY no Render ou em /configuracoes.",
+      rawError: null,
+      fallbackSerialized,
+      fallbackCategories
+    };
   }
-  return resp.json();
-}
 
-async function autoCategorize(name) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return autoCategorizeRules(name);
-
-  try {
-    const prompt = `Você é um categorizador de produtos de supermercado e itens de uso doméstico/hoteleiro no Brasil.
+  const prompt = `Você é um categorizador de produtos de supermercado e itens de uso doméstico/hoteleiro no Brasil.
 Dado o nome de um produto, retorne APENAS um array JSON com as categorias mais adequadas.
 Categorias disponíveis: ${ALL_CATEGORIES.join(", ")}.
-Produto: "${name}"
+Produto: "${cleanName}"
 Regras:
 - Use apenas categorias da lista acima (respeitando acentos e maiúsculas)
 - Pode usar múltiplas categorias se o produto se encaixar em mais de uma
 - Se não souber, use ["Geral"]
 - Retorne SOMENTE o array JSON, sem texto extra, sem markdown`;
 
-    // Tenta ?key= primeiro, depois Bearer — cobre todos os formatos de chave
-    let data = await callGemini(prompt, apiKey, "key");
-    if (!data) data = await callGemini(prompt, apiKey, "bearer");
-    if (!data) throw new Error("Both auth methods failed");
+  const startedAt = Date.now();
+  try {
+    const aiRes = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: prompt }] }], "shopping_list");
+    const latencyMs = aiRes.latencyMs ?? (Date.now() - startedAt);
+    if (!aiRes.ok) {
+      const classified = classifyGeminiHttpResult(aiRes.status || 500, aiRes.error || "");
+      return {
+        ok: false,
+        categories: [],
+        serialized: null,
+        usedModel: aiRes.model || db.settings?.geminiModel || "gemini-2.5-flash",
+        latencyMs,
+        status: aiRes.status || null,
+        ...classified,
+        fallbackSerialized,
+        fallbackCategories
+      };
+    }
 
-    const text = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+    const parts = aiRes.data?.candidates?.[0]?.content?.parts || [];
+    const text = parts
+      .filter(p => typeof p?.text === "string" && !p.thought)
+      .map(p => p.text)
+      .join("")
+      .trim();
 
     const match = text.match(/\[[\s\S]*?\]/);
-    if (!match) throw new Error(`No JSON array in response: "${text.slice(0, 100)}"`);
+    if (!match) throw new Error(`Resposta sem array JSON válido: "${text.slice(0, 100)}"`);
     const cats = JSON.parse(match[0]);
-    if (!Array.isArray(cats) || cats.length === 0) throw new Error("Empty categories");
+    if (!Array.isArray(cats) || cats.length === 0) throw new Error("Array de categorias vazio");
 
     const valid = cats.filter(c => ALL_CATEGORIES.includes(c));
-    if (valid.length === 0) throw new Error(`No valid categories. Got: ${JSON.stringify(cats)}`);
+    if (valid.length === 0) throw new Error(`Nenhuma categoria válida retornada: ${JSON.stringify(cats)}`);
 
     if (valid.some(c => FOOD_SUBCATEGORIES.has(c))) valid.push("Alimentos");
 
-    const result = JSON.stringify([...new Set(valid)]);
-    console.log(`[AI] "${name}" → ${result}`);
-    return result;
+    const uniqueCats = [...new Set(valid)];
+    const serialized = JSON.stringify(uniqueCats);
+    console.log(`[AI] "${cleanName}" (${aiRes.model}, ${latencyMs}ms) → ${serialized}`);
+    return {
+      ok: true,
+      categories: uniqueCats,
+      serialized,
+      usedModel: aiRes.model,
+      latencyMs,
+      status: aiRes.status || 200,
+      code: "operational",
+      diagnosis: `Categorizado via ${aiRes.model} em ${latencyMs}ms`,
+      actionHint: null,
+      rawError: null,
+      fallbackSerialized,
+      fallbackCategories
+    };
   } catch (e) {
-    console.warn(`[AI] Fallback para keywords ("${name}"): ${e.message}`);
-    return autoCategorizeRules(name);
+    const latencyMs = Date.now() - startedAt;
+    console.warn(`[AI] Fallback para keywords ("${cleanName}"): ${e.message}`);
+    return {
+      ok: false,
+      categories: [],
+      serialized: null,
+      usedModel: db.settings?.geminiModel || "gemini-2.5-flash",
+      latencyMs,
+      status: null,
+      code: "provider_outage",
+      diagnosis: `Falha ao interpretar resposta da IA: ${e.message}`,
+      actionHint: "Fallback local de keywords aplicado automaticamente.",
+      rawError: e.message,
+      fallbackSerialized,
+      fallbackCategories
+    };
   }
+}
+
+async function autoCategorize(name) {
+  const detailed = await autoCategorizeDetailed(name);
+  return detailed.ok && detailed.serialized ? detailed.serialized : detailed.fallbackSerialized;
 }
 
 // Migração retroativa: recategoriza itens que ainda têm categorias antigas (não-JSON)
@@ -92824,53 +93176,664 @@ app.post("/api/shopping-list/recategorize", async (req, res) => {
   }
 });
 
-// GET /api/shopping-list/ai-test — diagnóstico da conexão com Gemini
-// Cache: guarda resultado por 5 minutos para não gastar cota com auto-refresh
-let _aiTestCache = { result: null, ts: 0 };
+// ── Helpers de Sonda (Probe) dos Motores Reais Gemini para /ia-status ────────
+async function probeGenerateContentEngine({
+  id,
+  label,
+  model,
+  apiKey,
+  keySourceLabel,
+  usedBy = [],
+  promptText = "Responda apenas: OK"
+}) {
+  if (!apiKey) {
+    return {
+      id,
+      label,
+      model,
+      protocol: "generateContent (v1beta)",
+      keySourceLabel: keySourceLabel || "Nenhuma chave configurada",
+      usedBy,
+      ok: false,
+      status: null,
+      latencyMs: 0,
+      code: "unconfigured",
+      diagnosis: "Chave de API não configurada",
+      actionHint: "Configure GEMINI_API_KEY no Render ou em /configuracoes.",
+      rawError: null,
+      responsePreview: null
+    };
+  }
+
+  const startedAt = Date.now();
+  const isPro = model.includes("pro");
+  const isFlash25 = model.startsWith("gemini-2.5-flash");
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const buildBody = (withThinking) => JSON.stringify({
+    contents: [{ parts: [{ text: promptText }] }],
+    generationConfig: {
+      temperature: 0,
+      maxOutputTokens: isPro ? 256 : 64,
+      ...(withThinking && isFlash25 ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+      ...(withThinking && isPro ? { thinkingConfig: { thinkingBudget: 128 } } : {})
+    }
+  });
+
+  try {
+    let resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: buildBody(true),
+      signal: AbortSignal.timeout(12000)
+    });
+
+    if (resp.status === 400 && (isFlash25 || isPro)) {
+      resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: buildBody(false),
+        signal: AbortSignal.timeout(12000)
+      });
+    }
+
+    const latencyMs = Date.now() - startedAt;
+    const rawText = await resp.text();
+    const classified = classifyGeminiHttpResult(resp.status, rawText);
+
+    let responsePreview = null;
+    if (resp.ok) {
+      try {
+        const parsed = JSON.parse(rawText);
+        const parts = parsed?.candidates?.[0]?.content?.parts || [];
+        responsePreview = parts
+          .filter(p => typeof p?.text === "string" && !p.thought)
+          .map(p => p.text)
+          .join("")
+          .trim()
+          .slice(0, 200) || "OK";
+      } catch {
+        responsePreview = "OK";
+      }
+    }
+
+    return {
+      id,
+      label,
+      model,
+      protocol: "generateContent (v1beta)",
+      keySourceLabel: keySourceLabel || "Chave ativa",
+      usedBy,
+      ok: resp.ok,
+      status: resp.status,
+      latencyMs,
+      ...classified,
+      responsePreview
+    };
+  } catch (err) {
+    const latencyMs = Date.now() - startedAt;
+    const classified = classifyGeminiHttpResult(0, "", err?.message || "Erro de rede");
+    return {
+      id,
+      label,
+      model,
+      protocol: "generateContent (v1beta)",
+      keySourceLabel: keySourceLabel || "Chave ativa",
+      usedBy,
+      ok: false,
+      status: null,
+      latencyMs,
+      ...classified,
+      responsePreview: null
+    };
+  }
+}
+
+async function probeInteractionsEngine({
+  id,
+  label,
+  model = "gemini-3.8-flash",
+  apiKey,
+  keySourceLabel,
+  usedBy = [],
+  promptText = "Responda apenas: OK"
+}) {
+  if (!apiKey) {
+    return {
+      id,
+      label,
+      model,
+      protocol: "Interactions API (v1beta)",
+      keySourceLabel: keySourceLabel || "Nenhuma chave configurada",
+      usedBy,
+      ok: false,
+      status: null,
+      latencyMs: 0,
+      code: "unconfigured",
+      diagnosis: "Chave de API não configurada",
+      actionHint: "Configure a chave Gemini em /configuracoes ou no Render.",
+      rawError: null,
+      responsePreview: null
+    };
+  }
+
+  const startedAt = Date.now();
+  try {
+    const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+        "Api-Revision": "2026-05-20"
+      },
+      body: JSON.stringify({
+        model,
+        store: false,
+        input: [{ type: "text", text: promptText }]
+      }),
+      signal: AbortSignal.timeout(12000)
+    });
+
+    const latencyMs = Date.now() - startedAt;
+    const rawText = await resp.text();
+    const classified = classifyGeminiHttpResult(resp.status, rawText);
+
+    let responsePreview = null;
+    if (resp.ok) {
+      try {
+        const parsed = JSON.parse(rawText);
+        const outputs = Array.isArray(parsed?.outputs) ? parsed.outputs : [];
+        const textItem = [...outputs].reverse().find(o => o?.type === "text" && o?.text);
+        responsePreview = (textItem?.text || "OK").trim().slice(0, 200);
+      } catch {
+        responsePreview = "OK";
+      }
+    }
+
+    return {
+      id,
+      label,
+      model,
+      protocol: "Interactions API (v1beta)",
+      keySourceLabel: keySourceLabel || "Chave ativa",
+      usedBy,
+      ok: resp.ok,
+      status: resp.status,
+      latencyMs,
+      ...classified,
+      responsePreview
+    };
+  } catch (err) {
+    const latencyMs = Date.now() - startedAt;
+    const classified = classifyGeminiHttpResult(0, "", err?.message || "Erro de rede");
+    return {
+      id,
+      label,
+      model,
+      protocol: "Interactions API (v1beta)",
+      keySourceLabel: keySourceLabel || "Chave ativa",
+      usedBy,
+      ok: false,
+      status: null,
+      latencyMs,
+      ...classified,
+      responsePreview: null
+    };
+  }
+}
+
+// GET /api/admin/ai-status — Central real de saúde, latência, chaves e módulos de IA
+app.get("/api/admin/ai-status", async (req, res) => {
+  const forceRefresh = req.query.refresh === "1";
+  const now = Date.now();
+
+  if (!forceRefresh && _aiStatusOverviewCache.result && (now - _aiStatusOverviewCache.ts) < AI_STATUS_OVERVIEW_CACHE_MS) {
+    const cacheAgeSeconds = Math.max(0, Math.round((now - _aiStatusOverviewCache.ts) / 1000));
+    return res.json({
+      ..._aiStatusOverviewCache.result,
+      cached: true,
+      cacheAgeSeconds,
+      recentRuntimeCalls: _aiRuntimeTelemetry.calls.slice(0, 15)
+    });
+  }
+
+  const keyInfo = resolvePrimaryGeminiKeyInfo();
+  const configuredFlashModel = (db.settings?.geminiModel && !db.settings.geminiModel.includes("lite") && !db.settings.geminiModel.includes("pro"))
+    ? db.settings.geminiModel
+    : "gemini-2.5-flash";
+  const sofiaConfiguredModel = String(
+    db?.zapiConfig?.aiAgent?.preferredModel ||
+    db?.settings?.geminiModel ||
+    db?.whatsappAiSettings?.geminiModel ||
+    "gemini-2.5-pro"
+  ).trim();
+
+  const [flashProbe, proProbe, interactionsProbe] = await Promise.all([
+    probeGenerateContentEngine({
+      id: "gemini_25_flash",
+      label: "Gemini 2.5 Flash (Motor Principal)",
+      model: configuredFlashModel,
+      apiKey: keyInfo.primaryKey,
+      keySourceLabel: keyInfo.primarySourceLabel,
+      usedBy: ["OCR Pré-Check-in", "Avaliações & Camareiras", "Lista de Compras", "Fallback Sofia"]
+    }),
+    probeGenerateContentEngine({
+      id: "gemini_25_pro",
+      label: "Gemini 2.5 Pro (Raciocínio & Tools)",
+      model: "gemini-2.5-pro",
+      apiKey: keyInfo.primaryKey,
+      keySourceLabel: keyInfo.primarySourceLabel,
+      usedBy: ["Agente Sofia (WhatsApp)", "Copiloto IA Admin"]
+    }),
+    probeInteractionsEngine({
+      id: "gemini_38_interactions",
+      label: "Gemini 3.8 Flash (Multimodal B2B)",
+      model: "gemini-3.8-flash",
+      apiKey: keyInfo.b2bKey,
+      keySourceLabel: keyInfo.b2bSourceLabel,
+      usedBy: ["Leitor de Vouchers B2B (Zoho Mail)"]
+    })
+  ]);
+
+  let secondaryProbe = null;
+  if (keyInfo.hasOverrideConflict && !flashProbe.ok && keyInfo.dbSettingsKey) {
+    const altProbe = await probeGenerateContentEngine({
+      id: "gemini_25_flash",
+      label: "Sonda da chave secundária (/configuracoes)",
+      model: "gemini-2.5-flash",
+      apiKey: keyInfo.dbSettingsKey,
+      keySourceLabel: "Configurações (/configuracoes)"
+    });
+    secondaryProbe = {
+      testedSource: "Configurações (/configuracoes)",
+      masked: maskGeminiKey(keyInfo.dbSettingsKey),
+      model: altProbe.model,
+      ok: altProbe.ok,
+      status: altProbe.status,
+      latencyMs: altProbe.latencyMs,
+      diagnosis: altProbe.diagnosis
+    };
+  }
+
+  const probes = [flashProbe, proProbe, interactionsProbe];
+  const onlineProbes = probes.filter(p => p.ok);
+  const avgLatencyMs = onlineProbes.length > 0
+    ? Math.round(onlineProbes.reduce((acc, p) => acc + p.latencyMs, 0) / onlineProbes.length)
+    : null;
+
+  // Mapeamento dos 6 módulos reais de IA do CorpFlats
+  const aiAgentCfg = db?.zapiConfig?.aiAgent || {};
+  const sofiaEnabled = Boolean(aiAgentCfg.enabled);
+  const sofiaTestMode = aiAgentCfg.testMode !== undefined ? Boolean(aiAgentCfg.testMode) : Boolean(db?.zapiConfig?.testModeOnly);
+  const sofiaCanOperate = proProbe.ok || flashProbe.ok;
+  const sofiaPrimaryProbe = sofiaConfiguredModel.includes("pro") ? proProbe : flashProbe;
+
+  const reviewsTotal = Array.isArray(db.reviews) ? db.reviews.length : 0;
+  const lastReviewSync = db.reviewInsights?.lastAnalyzedAt
+    ? new Date(db.reviewInsights.lastAnalyzedAt).toLocaleDateString("pt-BR")
+    : "ainda não executado";
+  const shoppingCount = Array.isArray(db.shoppingList) ? db.shoppingList.filter(i => !i.completed).length : 0;
+
+  const modules = [
+    {
+      id: "sofia_whatsapp",
+      name: "Sofia — Concierge WhatsApp",
+      area: "Atendimento & Vendas",
+      engineId: sofiaConfiguredModel.includes("pro") ? "gemini_25_pro" : "gemini_25_flash",
+      configuredModel: sofiaConfiguredModel,
+      protocol: "generateContent + Tool Calling",
+      keySourceLabel: keyInfo.primarySourceLabel || "Sem chave",
+      status: !sofiaEnabled
+        ? "disabled"
+        : sofiaPrimaryProbe.ok
+          ? "operational"
+          : sofiaCanOperate
+            ? "degraded"
+            : "error",
+      statusLabel: !sofiaEnabled
+        ? "Desativada nas configurações"
+        : sofiaPrimaryProbe.ok
+          ? (sofiaTestMode ? "Operacional (Modo Teste)" : "IA Ativa em Produção")
+          : sofiaCanOperate
+            ? "Operando via modelo fallback"
+            : "Sem resposta da IA",
+      fallbackStrategy: "Fallback automático entre modelos (2.5-pro → 2.5-flash → 2.0-flash) e transbordo ao gestor",
+      liveSummary: sofiaEnabled
+        ? `Ativa (${sofiaTestMode ? "somente números de teste" : "todos os hóspedes"}) • Modelo preferido: ${sofiaConfiguredModel}`
+        : "Agente WhatsApp desligado em /whatsapp-automation",
+      latencyMs: sofiaPrimaryProbe.ok ? sofiaPrimaryProbe.latencyMs : (flashProbe.ok ? flashProbe.latencyMs : sofiaPrimaryProbe.latencyMs),
+      lastError: sofiaCanOperate ? null : sofiaPrimaryProbe.diagnosis
+    },
+    {
+      id: "admin_copilot",
+      name: "Copiloto IA Admin",
+      area: "Gestão & BI Interno",
+      engineId: "gemini_25_pro",
+      configuredModel: sofiaConfiguredModel,
+      protocol: "generateContent + querySystemData",
+      keySourceLabel: keyInfo.primarySourceLabel || "Sem chave",
+      status: sofiaCanOperate ? (proProbe.ok ? "operational" : "degraded") : "fallback_active",
+      statusLabel: proProbe.ok
+        ? "IA Ativa"
+        : flashProbe.ok
+          ? "Ativa via Flash (fallback)"
+          : "Heurística local ativa",
+      fallbackStrategy: "Motor local determinístico (generateAdminCopilotLocalResponse)",
+      liveSummary: "Consulta operacional em tempo real de flats, reservas, financeiro, limpeza e café",
+      latencyMs: proProbe.ok ? proProbe.latencyMs : flashProbe.latencyMs,
+      lastError: sofiaCanOperate ? null : proProbe.diagnosis
+    },
+    {
+      id: "precheckin_ocr",
+      name: "OCR & Validação Biométrica",
+      area: "Pré-Check-in & Segurança",
+      engineId: "gemini_25_flash",
+      configuredModel: configuredFlashModel,
+      protocol: "generateContent Multimodal (Visão)",
+      keySourceLabel: keyInfo.primarySourceLabel || "Sem chave",
+      status: flashProbe.ok ? "operational" : "fallback_active",
+      statusLabel: flashProbe.ok ? "Visão IA Ativa" : "Validação estrutural local",
+      fallbackStrategy: "Validação estrutural de CPF/datas + aprovação manual na recepção",
+      liveSummary: "Lê RG, CNH e Passaporte, compara selfie x documento e bloqueia CRLV/arquivos inválidos",
+      latencyMs: flashProbe.latencyMs,
+      lastError: flashProbe.ok ? null : flashProbe.diagnosis
+    },
+    {
+      id: "b2b_vouchers",
+      name: "Leitor de Vouchers B2B (E-mail)",
+      area: "Zoho Mail & Reservas Corp.",
+      engineId: "gemini_38_interactions",
+      configuredModel: "gemini-3.8-flash",
+      protocol: "Interactions API (PDF + Imagem + JSON Schema)",
+      keySourceLabel: keyInfo.b2bSourceLabel || "Sem chave",
+      status: interactionsProbe.ok ? "operational" : "fallback_active",
+      statusLabel: interactionsProbe.ok ? "IA Multimodal Ativa" : "Parser determinístico ativo",
+      fallbackStrategy: "Parser determinístico de PDF/HTML do Zoho Mail",
+      liveSummary: "Extrai CNPJ, razão social, endereço fiscal, e-mails de NF e diárias de vouchers corporativos",
+      latencyMs: interactionsProbe.latencyMs,
+      lastError: interactionsProbe.ok ? null : interactionsProbe.diagnosis
+    },
+    {
+      id: "reviews_and_maids",
+      name: "Avaliações IA, Sentimento & Camareiras",
+      area: "Qualidade & Governança",
+      engineId: "gemini_25_flash",
+      configuredModel: configuredFlashModel,
+      protocol: "generateContent (v1beta)",
+      keySourceLabel: keyInfo.primarySourceLabel || "Sem chave",
+      status: flashProbe.ok ? "operational" : "fallback_active",
+      statusLabel: flashProbe.ok ? "IA Ativa" : "Heurística local ativa",
+      fallbackStrategy: "Classificador local de palavras-chave de sentimento e manutenção",
+      liveSummary: `${reviewsTotal} avaliação(ões) na base • Última análise: ${lastReviewSync}`,
+      latencyMs: flashProbe.latencyMs,
+      lastError: flashProbe.ok ? null : flashProbe.diagnosis
+    },
+    {
+      id: "shopping_list",
+      name: "Auto-Categorização Lista de Compras",
+      area: "Operação & Suprimentos",
+      engineId: "gemini_25_flash",
+      configuredModel: configuredFlashModel,
+      protocol: "generateContent (v1beta)",
+      keySourceLabel: keyInfo.primarySourceLabel || "Sem chave",
+      status: flashProbe.ok ? "operational" : "fallback_active",
+      statusLabel: flashProbe.ok ? "IA Ativa" : "Regras de keywords ativas",
+      fallbackStrategy: "Dicionário local determinístico (400+ keywords de supermercado/hotelaria)",
+      liveSummary: `${shoppingCount} item(ns) pendente(s) na lista de compras`,
+      latencyMs: flashProbe.latencyMs,
+      lastError: flashProbe.ok ? null : flashProbe.diagnosis
+    }
+  ];
+
+  const modulesAiActive = modules.filter(m => m.status === "operational" || m.status === "degraded").length;
+
+  // Diagnóstico consolidado de saúde geral
+  const hasBillingError = probes.some(p => p.code === "billing_depleted");
+  const hasQuotaError = probes.some(p => p.code === "quota_exceeded");
+  const hasAuthError = probes.some(p => p.code === "auth_error");
+
+  let overallStatus = "operational";
+  let overallTitle = "Todos os motores de IA estão operacionais";
+  let overallSummary = `Os ${probes.length} motores Gemini responderam normalmente (latência média de ${avgLatencyMs ?? 0}ms).`;
+  let actionRequired = null;
+  let actionUrl = null;
+
+  if (!keyInfo.primaryKey && !keyInfo.b2bKey) {
+    overallStatus = "unconfigured";
+    overallTitle = "Nenhuma chave Gemini configurada";
+    overallSummary = "Configure GEMINI_API_KEY no Render ou salve uma chave em /configuracoes para ativar os recursos de IA.";
+    actionRequired = "Configure uma chave válida do Google AI Studio em /configuracoes ou nas variáveis de ambiente do Render.";
+    actionUrl = "https://ai.studio/projects";
+  } else if (onlineProbes.length === 0) {
+    if (hasBillingError) {
+      overallStatus = "billing_depleted";
+      overallTitle = "Créditos pré-pagos esgotados na API Gemini (HTTP 402)";
+      overallSummary = `A chave ativa (${keyInfo.primarySourceLabel || keyInfo.b2bSourceLabel}) ficou sem créditos no Google AI Studio. Os módulos com fallback continuam operando em modo local, mas Sofia e leitura IA estão bloqueadas.`;
+      actionRequired = secondaryProbe?.ok
+        ? `A chave salva em /configuracoes (${secondaryProbe.masked}) ESTÁ FUNCIONANDO, mas está sendo bloqueada pela variável GEMINI_API_KEY do Render! Atualize ou remova GEMINI_API_KEY no Render, ou recarregue créditos no Google AI Studio.`
+        : "Adicione créditos / ative o faturamento no projeto do Google AI Studio ou substitua a variável GEMINI_API_KEY no Render.";
+      actionUrl = "https://ai.studio/projects";
+    } else if (hasAuthError) {
+      overallStatus = "auth_error";
+      overallTitle = "Falha de autenticação na chave Gemini (HTTP 401/403)";
+      overallSummary = "O Google rejeitou a chave configurada. Verifique se a chave foi revogada ou possui restrições incompatíveis com o servidor.";
+      actionRequired = "Gere uma nova chave no Google AI Studio e atualize no Render / Configurações.";
+      actionUrl = "https://ai.studio/projects";
+    } else if (hasQuotaError) {
+      overallStatus = "quota_exceeded";
+      overallTitle = "Limite de cota / Rate Limit excedido (HTTP 429)";
+      overallSummary = "A chave é válida, mas atingiu o limite temporário de requisições por minuto ou por dia.";
+      actionRequired = "Aguarde a renovação da janela de cota ou revise os limites do projeto no Google AI Studio.";
+      actionUrl = "https://ai.studio/projects";
+    } else {
+      overallStatus = "offline";
+      overallTitle = "Motores Gemini indisponíveis no momento";
+      overallSummary = "Nenhum dos motores Gemini respondeu ao diagnóstico. Módulos com fallback heurístico permanecem ativos.";
+      actionRequired = "Verifique o detalhamento técnico de cada motor na tabela abaixo e tente novamente.";
+    }
+  } else if (onlineProbes.length < probes.length) {
+    overallStatus = "degraded";
+    overallTitle = `Operação parcial (${onlineProbes.length} de ${probes.length} motores online)`;
+    const failedLabels = probes.filter(p => !p.ok).map(p => `${p.model} (${p.status ? `HTTP ${p.status}` : p.code})`).join(", ");
+    overallSummary = `Parte dos motores respondeu normalmente, mas houve falha em: ${failedLabels}.`;
+    actionRequired = hasBillingError
+      ? "Um dos motores recebeu HTTP 402 (créditos esgotados). Verifique qual chave cada motor está utilizando."
+      : "Verifique a tabela de motores abaixo para identificar o motivo exato da falha parcial.";
+    actionUrl = hasBillingError || hasQuotaError ? "https://ai.studio/projects" : null;
+  }
+
+  const payload = {
+    checkedAt: new Date().toISOString(),
+    cached: false,
+    cacheAgeSeconds: 0,
+    cacheTtlSeconds: Math.round(AI_STATUS_OVERVIEW_CACHE_MS / 1000),
+    overallStatus,
+    overallTitle,
+    overallSummary,
+    actionRequired,
+    actionUrl,
+    summary: {
+      enginesOnline: onlineProbes.length,
+      enginesTotal: probes.length,
+      avgLatencyMs,
+      modulesAiActive,
+      modulesTotal: modules.length
+    },
+    keys: {
+      primaryActiveSource: keyInfo.primarySourceLabel,
+      primaryMasked: maskGeminiKey(keyInfo.primaryKey),
+      b2bActiveSource: keyInfo.b2bSourceLabel,
+      b2bMasked: maskGeminiKey(keyInfo.b2bKey),
+      hasOverrideConflict: keyInfo.hasOverrideConflict,
+      overrideMessage: keyInfo.overrideMessage,
+      sources: keyInfo.sources,
+      secondaryProbe
+    },
+    probes,
+    modules,
+    recentRuntimeCalls: _aiRuntimeTelemetry.calls.slice(0, 15)
+  };
+
+  _aiStatusOverviewCache = { result: payload, ts: Date.now() };
+  return res.json(payload);
+});
+
+// POST /api/admin/ai-status/test — Laboratório interativo real (sem cache)
+app.post("/api/admin/ai-status/test", async (req, res) => {
+  const { mode = "shopping", product = "", prompt = "", engine = "gemini_25_flash", keySource = "active" } = req.body || {};
+
+  if (mode === "shopping") {
+    const testProduct = String(product || "").trim() || "queijo minas frescal";
+    const detailed = await autoCategorizeDetailed(testProduct);
+    return res.json({
+      ok: detailed.ok,
+      mode: "shopping",
+      product: testProduct,
+      aiOk: detailed.ok,
+      aiCategories: detailed.categories,
+      fallbackCategories: detailed.fallbackCategories,
+      usedModel: detailed.usedModel,
+      latencyMs: detailed.latencyMs,
+      status: detailed.status,
+      code: detailed.code,
+      diagnosis: detailed.diagnosis,
+      actionHint: detailed.actionHint,
+      rawError: detailed.rawError
+    });
+  }
+
+  if (mode === "prompt") {
+    const cleanPrompt = String(prompt || "").trim().slice(0, 500) || "Responda em 1 frase curta: qual o status desta conexão?";
+    const keyInfo = resolvePrimaryGeminiKeyInfo();
+    const useDbKey = keySource === "db_settings" && Boolean(keyInfo.dbSettingsKey);
+
+    let probeRes;
+    if (engine === "gemini_38_interactions") {
+      const targetKey = useDbKey ? keyInfo.dbSettingsKey : keyInfo.b2bKey;
+      const targetSource = useDbKey ? "Configurações (/configuracoes)" : keyInfo.b2bSourceLabel;
+      probeRes = await probeInteractionsEngine({
+        id: "gemini_38_interactions",
+        label: "Gemini 3.8 Flash (Interactions API)",
+        model: "gemini-3.8-flash",
+        apiKey: targetKey,
+        keySourceLabel: targetSource,
+        promptText: cleanPrompt
+      });
+    } else if (engine === "gemini_25_pro") {
+      const targetKey = useDbKey ? keyInfo.dbSettingsKey : keyInfo.primaryKey;
+      const targetSource = useDbKey ? "Configurações (/configuracoes)" : keyInfo.primarySourceLabel;
+      probeRes = await probeGenerateContentEngine({
+        id: "gemini_25_pro",
+        label: "Gemini 2.5 Pro",
+        model: "gemini-2.5-pro",
+        apiKey: targetKey,
+        keySourceLabel: targetSource,
+        promptText: cleanPrompt
+      });
+    } else {
+      const targetKey = useDbKey ? keyInfo.dbSettingsKey : keyInfo.primaryKey;
+      const targetSource = useDbKey ? "Configurações (/configuracoes)" : keyInfo.primarySourceLabel;
+      probeRes = await probeGenerateContentEngine({
+        id: "gemini_25_flash",
+        label: "Gemini 2.5 Flash",
+        model: "gemini-2.5-flash",
+        apiKey: targetKey,
+        keySourceLabel: targetSource,
+        promptText: cleanPrompt
+      });
+    }
+
+    recordAiRuntimeCall({
+      module: "ai_status_lab",
+      model: probeRes.model,
+      protocol: probeRes.protocol,
+      ok: probeRes.ok,
+      status: probeRes.status,
+      latencyMs: probeRes.latencyMs,
+      error: probeRes.rawError,
+      keySource: probeRes.keySourceLabel
+    });
+
+    return res.json({
+      ok: probeRes.ok,
+      mode: "prompt",
+      engine: probeRes.id,
+      model: probeRes.model,
+      protocol: probeRes.protocol,
+      keySourceLabel: probeRes.keySourceLabel,
+      status: probeRes.status,
+      latencyMs: probeRes.latencyMs,
+      replyText: probeRes.responsePreview,
+      code: probeRes.code,
+      diagnosis: probeRes.diagnosis,
+      actionHint: probeRes.actionHint,
+      rawError: probeRes.rawError
+    });
+  }
+
+  return res.status(400).json({ error: "Modo de teste inválido. Use 'shopping' ou 'prompt'." });
+});
+
+// GET /api/shopping-list/ai-test — diagnóstico retrocompatível (corrigido: usa chave real, produto real e cache por produto)
+let _aiTestCache = { result: null, ts: 0, product: "" };
 const AI_TEST_CACHE_MS = 5 * 60 * 1000; // 5 minutos
 
 app.get("/api/shopping-list/ai-test", async (req, res) => {
-  const apiKey = process.env.GEMINI_API_KEY;
-  const testProduct = req.query.product || "queijo minas frescal";
+  const keyInfo = resolvePrimaryGeminiKeyInfo();
+  const apiKey = keyInfo.primaryKey;
+  const testProduct = String(req.query.product || "queijo minas frescal").trim();
   const forceRefresh = req.query.refresh === "1";
 
+  if (!apiKey) {
+    return res.json({
+      hasApiKey: false,
+      keyPrefix: null,
+      keyLength: 0,
+      keySource: null,
+      testProduct,
+      geminiTest: null,
+      finalResult: null,
+      fallbackResult: autoCategorizeRules(testProduct),
+      usedModel: null,
+      latencyMs: 0,
+      cached: false,
+      error: "Nenhuma chave Gemini configurada"
+    });
+  }
+
+  // Só usa cache se for o MESMO produto e não houver refresh=1
+  if (
+    !forceRefresh &&
+    _aiTestCache.result &&
+    _aiTestCache.product === testProduct.toLowerCase() &&
+    (Date.now() - _aiTestCache.ts) < AI_TEST_CACHE_MS
+  ) {
+    return res.json({
+      ..._aiTestCache.result,
+      cached: true,
+      cacheAge: Math.round((Date.now() - _aiTestCache.ts) / 1000) + "s"
+    });
+  }
+
+  const detailed = await autoCategorizeDetailed(testProduct);
   const results = {
-    hasApiKey: !!apiKey,
-    keyPrefix: apiKey ? apiKey.slice(0, 6) + "..." : null,
-    keyLength: apiKey ? apiKey.length : 0,
+    hasApiKey: true,
+    keyPrefix: maskGeminiKey(apiKey),
+    keyLength: apiKey.length,
+    keySource: keyInfo.primarySourceLabel,
     testProduct,
-    geminiTest: null,
-    fallbackResult: autoCategorizeRules(testProduct),
-    cached: false,
+    usedModel: detailed.usedModel,
+    latencyMs: detailed.latencyMs,
+    finalResult: detailed.serialized,
+    fallbackResult: detailed.fallbackSerialized,
+    geminiTest: {
+      status: detailed.status || (detailed.ok ? 200 : 500),
+      ok: detailed.ok,
+      body: detailed.ok ? (detailed.serialized || "OK") : (detailed.rawError || detailed.diagnosis)
+    },
+    cached: false
   };
 
-  if (!apiKey) {
-    results.error = "GEMINI_API_KEY not set";
-    return res.json(results);
-  }
-
-  // Retorna cache se ainda válido (evita gastar cota com auto-refresh)
-  if (!forceRefresh && _aiTestCache.result && (Date.now() - _aiTestCache.ts) < AI_TEST_CACHE_MS) {
-    return res.json({ ..._aiTestCache.result, cached: true, cacheAge: Math.round((Date.now() - _aiTestCache.ts) / 1000) + "s" });
-  }
-
-  // Faz UMA chamada de teste
-  const baseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent";
-  try {
-    const r = await fetch(`${baseUrl}?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: `Responda apenas: ["teste"]` }] }],
-        generationConfig: { temperature: 0, maxOutputTokens: 50 },
-      }),
-    });
-    const txt = await r.text();
-    results.geminiTest = { status: r.status, ok: r.ok, body: txt.slice(0, 300) };
-  } catch (e) { results.geminiTest = { error: e.message }; }
-
-  // Atualiza cache
-  _aiTestCache = { result: results, ts: Date.now() };
+  _aiTestCache = { result: results, ts: Date.now(), product: testProduct.toLowerCase() };
   return res.json(results);
 });
 
@@ -95732,6 +96695,31 @@ function normalizeMinibarSplitMode(rawMode) {
   return "titular";
 }
 
+function isMinibarGuestRealRegistered(guest) {
+  const trimmed = String(guest?.name || "").trim();
+  if (!trimmed) return false;
+  if (
+    /^h[óo]spede\s*(titular|\d*)$/i.test(trimmed) ||
+    /^\d+º\s*h[óo]spede/i.test(trimmed) ||
+    /^acompanhante\s*\d*$/i.test(trimmed)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function computeMinibarCanSplitBill(reservation, reservationGuests = []) {
+  const declaredNum = Number(reservation?.numGuests ?? reservation?.guestsCount ?? 0);
+  const list = Array.isArray(reservationGuests) ? reservationGuests : [];
+  const registeredGuests = list.filter(isMinibarGuestRealRegistered);
+  const canSplitBill = declaredNum !== 1 && registeredGuests.length >= 2;
+  return {
+    canSplitBill,
+    registeredGuestsCount: registeredGuests.length,
+    registeredGuests
+  };
+}
+
 function computeReservationMinibarSplit(
   reservation,
   pendingLaunchedItems = [],
@@ -95743,7 +96731,7 @@ function computeReservationMinibarSplit(
   const rawConfig = (reservation && typeof reservation.minibarSplitConfig === "object" && reservation.minibarSplitConfig)
     ? reservation.minibarSplitConfig
     : {};
-  const mode = normalizeMinibarSplitMode(rawConfig.mode);
+  const requestedMode = normalizeMinibarSplitMode(rawConfig.mode);
   const itemAssignments = (rawConfig.itemAssignments && typeof rawConfig.itemAssignments === "object")
     ? rawConfig.itemAssignments
     : {};
@@ -95770,25 +96758,11 @@ function computeReservationMinibarSplit(
         }
       ];
 
-  // Se o modo de divisão for "half_and_half" (Meio a Meio) ou "by_item" (Marcar por Item)
-  // e houver apenas 1 hóspede listado, garante o 2º slot para permitir a marcação/divisão imediata
-  if ((mode === "half_and_half" || mode === "by_item") && guests.length < 2) {
-    guests.push({
-      index: 2,
-      role: "acompanhante",
-      label: "2º Hóspede (Acompanhante)",
-      guestId: null,
-      name: "2º Hóspede (Acompanhante)",
-      firstName: "2º Hóspede",
-      phone: "",
-      email: "",
-      cpf: "",
-      document: ""
-    });
-  }
+  const { canSplitBill, registeredGuestsCount } = computeMinibarCanSplitBill(reservation, guests);
+  const mode = canSplitBill ? requestedMode : "titular";
 
   const enrichedGuests = guests.map(g => {
-    const isPlaceholderName = !g.name || /^h[óo]spede\s*\d*/i.test(g.name) || /^\d+º\s*h[óo]spede/i.test(g.name);
+    const isPlaceholderName = !isMinibarGuestRealRegistered(g);
     const cleanDoc = String(g.cpf || g.document || "").replace(/\D/g, "");
     const cleanPhone = String(g.phone || "").replace(/\D/g, "");
     const isMissingFiscalData = Boolean(isPlaceholderName || cleanPhone.length < 10 || cleanDoc.length < 11);
@@ -96169,6 +97143,8 @@ function computeReservationMinibarSplit(
 
   return {
     mode,
+    canSplitBill,
+    registeredGuestsCount,
     itemAssignments,
     updatedAt: rawConfig.updatedAt || null,
     guests: enrichedGuests,
@@ -97750,8 +98726,298 @@ function applyPaymentDeductionToLaunchOrders(order, pendingLaunchOrders, nowIso)
   }
 }
 
+function formatMinibarPaymentMethodShortLabel(method) {
+  const m = String(method || "").trim().toLowerCase();
+  if (m === "pix" || m === "pix_avulso") return "PIX";
+  if (m === "credit_card" || m === "cartao_credito" || m === "cartao_maquininha") return "Cartão";
+  if (m === "dinheiro") return "Dinheiro";
+  if (m === "transferencia") return "Transferência";
+  if (m === "cortesia_admin") return "Cortesia/Abono";
+  return "";
+}
+
+function buildMinibarPaymentConfirmationMessage(
+  order,
+  { reservation = null, remainingBalanceForGuest = 0, template = null } = {}
+) {
+  const fullName = String(order?.guestName || reservation?.guestName || "Hóspede").trim() || "Hóspede";
+  const firstName = fullName.split(/\s+/)[0] || "Hóspede";
+  const flat = String(order?.flatNumber || reservation?.flatNumber || reservation?.flatId || "").trim();
+  const amountVal = Number(order?.paidAmount || order?.totalAmount || 0);
+  const amountFmt = amountVal.toFixed(2).replace(".", ",");
+  const methodLabel = formatMinibarPaymentMethodShortLabel(order?.paymentMethod);
+  const resCode = String(order?.reservationCode || reservation?.code || "").trim();
+  const remVal = Number(remainingBalanceForGuest || 0);
+  const remFmt = remVal.toFixed(2).replace(".", ",");
+
+  const rawTemplate =
+    String(
+      template ??
+        db?.minibarSettings?.paymentConfirmationWhatsAppTemplate ??
+        DEFAULT_MINIBAR_PAYMENT_CONFIRMATION_WA_TEMPLATE
+    ).trim() || DEFAULT_MINIBAR_PAYMENT_CONFIRMATION_WA_TEMPLATE;
+
+  const hasRemainingPlaceholder = /\{saldo_restante\}/i.test(rawTemplate);
+  let text = rawTemplate
+    .replace(/\{primeiro_nome\}/gi, firstName)
+    .replace(/\{nome\}/gi, fullName)
+    .replace(/\{flat\}/gi, flat || "—")
+    .replace(/\{valor\}/gi, amountFmt)
+    .replace(/\{metodo\}/gi, methodLabel)
+    .replace(/\{reserva\}/gi, resCode || "—")
+    .replace(/\{saldo_restante\}/gi, remFmt);
+
+  // Limpa parênteses vazios caso não haja método definido
+  text = text.replace(/\s*\(\s*\)/g, "").replace(/[ \t]{2,}/g, " ").trim();
+
+  if (remVal > 0.01) {
+    text = text.replace(/a quita[çc][aã]o do seu consumo/i, "o pagamento parcial do seu consumo");
+    if (!hasRemainingPlaceholder) {
+      if (/\s*Obrigado!\s*$/i.test(text)) {
+        text = text.replace(/\s*Obrigado!\s*$/i, ` Saldo restante: *R$ ${remFmt}*. Obrigado!`);
+      } else {
+        text = `${text} Saldo restante: *R$ ${remFmt}*.`;
+      }
+    }
+  }
+
+  return text;
+}
+
+async function dispatchMinibarPaymentConfirmationWhatsApp(
+  order,
+  { reservation = null, crmGuest = null, remainingBalanceForGuest = 0, force = false } = {}
+) {
+  if (!order) return { sent: false, skipped: true, reason: "invalid_order" };
+  ensureMinibarSettingsDefaults(db);
+
+  if (!force && db.minibarSettings?.sendPaymentConfirmationWhatsApp === false) {
+    order._paymentConfirmationDispatching = false;
+    return { sent: false, skipped: true, reason: "disabled_in_settings" };
+  }
+  if (!force && order.paymentConfirmationWhatsappSentAt) {
+    order._paymentConfirmationDispatching = false;
+    return { sent: false, skipped: true, reason: "already_sent" };
+  }
+
+  const effectiveAmt = Number(order.paidAmount || order.totalAmount || 0);
+  const methodLower = String(order.paymentMethod || "").trim().toLowerCase();
+  if (effectiveAmt <= 0.01 || methodLower === "cortesia") {
+    order._paymentConfirmationDispatching = false;
+    return { sent: false, skipped: true, reason: "zero_or_courtesy_order" };
+  }
+
+  const payerIdx = Number(order.guestIndex || 1);
+  let resolvedRes = reservation;
+  if (!resolvedRes && (order.reservationCode || order.reservationId)) {
+    resolvedRes =
+      (db.reservations || []).find(
+        r =>
+          r &&
+          ((order.reservationCode && r.code === order.reservationCode) ||
+            (order.reservationId && String(r.id) === String(order.reservationId)))
+      ) || null;
+  }
+
+  let slotPhone = "";
+  if (resolvedRes) {
+    const slots = getReservationAllGuests(resolvedRes);
+    const matchedSlot = slots.find(s => Number(s.index) === payerIdx);
+    slotPhone = matchedSlot?.phone || (payerIdx === 1 ? resolvedRes.guestPhone || "" : "");
+  }
+
+  const rawPhone =
+    order.guestPhone ||
+    order.fiscalPreferences?.phone ||
+    slotPhone ||
+    crmGuest?.phone ||
+    "";
+  const cleanPhone = cleanWhatsAppPhone(String(rawPhone));
+
+  if (cleanPhone.length < 10) {
+    order._paymentConfirmationDispatching = false;
+    return { sent: false, skipped: true, reason: "missing_guest_phone" };
+  }
+
+  const whatsappText = buildMinibarPaymentConfirmationMessage(order, {
+    reservation: resolvedRes,
+    remainingBalanceForGuest
+  });
+
+  order._paymentConfirmationDispatching = true;
+  try {
+    const waRes = await _callMinibarSendZapiMessage(db.zapiConfig || {}, {
+      phone: cleanPhone,
+      message: whatsappText,
+      channelId: "guest",
+      recipientRole: "guest",
+      triggerEvent: "minibar_payment_confirmed",
+      db
+    });
+
+    if (!waRes || waRes.success !== false) {
+      const sentIso = new Date().toISOString();
+      order.paymentConfirmationWhatsappSentAt = sentIso;
+      order.paymentConfirmationWhatsappPhone = cleanPhone;
+      order.paymentConfirmationWhatsappError = null;
+      order._paymentConfirmationDispatching = false;
+      order.updatedAt = sentIso;
+
+      _callMinibarAppendConversation(db, {
+        phone: cleanPhone,
+        text: whatsappText,
+        type: "text",
+        sender: "Sofia (IA)"
+      });
+
+      saveDatabase("minibar_payment_confirmation_wa_sent");
+      return { sent: true, phone: cleanPhone, message: whatsappText };
+    }
+
+    order._paymentConfirmationDispatching = false;
+    order.paymentConfirmationWhatsappError = String(waRes?.error || waRes?.reason || "Envio WhatsApp não permitido");
+    return { sent: false, phone: cleanPhone, error: order.paymentConfirmationWhatsappError };
+  } catch (err) {
+    order._paymentConfirmationDispatching = false;
+    order.paymentConfirmationWhatsappError = String(err?.message || "Erro ao enviar confirmação WhatsApp");
+    console.warn(`[Minibar Payment Confirmation WA] Erro para ${cleanPhone}:`, order.paymentConfirmationWhatsappError);
+    return { sent: false, phone: cleanPhone, error: order.paymentConfirmationWhatsappError };
+  }
+}
+
+function formatMinibarCourtesyItemsNaturalList(consumedCourtesyItems = []) {
+  const parts = (Array.isArray(consumedCourtesyItems) ? consumedCourtesyItems : [])
+    .filter(it => it && Number(it.quantity || 0) > 0)
+    .map(it => `${Number(it.quantity)}x ${String(it.productName || it.name || it.productId || "Item Cortesia").trim()}`);
+  if (parts.length === 0) return "";
+  if (parts.length === 1) return parts[0];
+  if (parts.length === 2) return `${parts[0]} e ${parts[1]}`;
+  return `${parts.slice(0, -1).join(", ")} e ${parts[parts.length - 1]}`;
+}
+
+function buildMinibarCourtesyOnlyCheckoutMessage(
+  reservation,
+  { flatNumber = "", consumedCourtesyItems = [], template = null } = {}
+) {
+  const titularSlot = reservation ? getReservationAllGuests(reservation)[0] : null;
+  const fullName = String(titularSlot?.name || reservation?.guestName || "Hóspede").trim() || "Hóspede";
+  const firstName = fullName.split(/\s+/)[0] || "Hóspede";
+  const flat = String(flatNumber || reservation?.flatNumber || reservation?.flatId || "").trim();
+  const resCode = String(reservation?.code || (reservation?.id ? `RES-${reservation.id}` : "")).trim();
+  const courtesyListStr = formatMinibarCourtesyItemsNaturalList(consumedCourtesyItems) || "itens do Kit de Boas-Vindas";
+
+  const rawTemplate =
+    String(
+      template ??
+        db?.minibarSettings?.courtesyOnlyCheckoutWhatsAppTemplate ??
+        DEFAULT_MINIBAR_COURTESY_ONLY_WA_TEMPLATE
+    ).trim() || DEFAULT_MINIBAR_COURTESY_ONLY_WA_TEMPLATE;
+
+  return rawTemplate
+    .replace(/\{primeiro_nome\}/gi, firstName)
+    .replace(/\{nome\}/gi, fullName)
+    .replace(/\{flat\}/gi, flat || "—")
+    .replace(/\{itens_cortesia\}/gi, courtesyListStr)
+    .replace(/\{reserva\}/gi, resCode || "—")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+async function dispatchMinibarCourtesyOnlyCheckoutWhatsApp(
+  reservation,
+  { flatNumber = "", consumedCourtesyItems = [], force = false } = {}
+) {
+  if (!reservation) return { sent: false, skipped: true, reason: "missing_reservation" };
+  ensureMinibarSettingsDefaults(db);
+
+  if (!force && db.minibarSettings?.sendCourtesyOnlyCheckoutWhatsApp === false) {
+    return { sent: false, skipped: true, reason: "disabled_in_settings" };
+  }
+  if (!force && reservation.minibarCourtesyOnlyWhatsappSentAt) {
+    return { sent: false, skipped: true, reason: "already_sent" };
+  }
+
+  const validItems = (Array.isArray(consumedCourtesyItems) ? consumedCourtesyItems : []).filter(
+    it => it && Number(it.quantity || 0) > 0
+  );
+  if (validItems.length === 0) {
+    return { sent: false, skipped: true, reason: "no_courtesy_items" };
+  }
+
+  const titularSlot = getReservationAllGuests(reservation)[0] || null;
+  const rawPhone = String(titularSlot?.phone || reservation.guestPhone || "").trim();
+  const cleanPhone = cleanWhatsAppPhone(rawPhone);
+  if (cleanPhone.length < 10) {
+    return { sent: false, skipped: true, reason: "missing_guest_phone" };
+  }
+
+  // Guarda obrigatória anti-solicitante B2B: jamais enviar mensagem de estadia para telefone de agência/solicitante
+  if (typeof evaluateStayContactEligibility === "function") {
+    const stayElig = evaluateStayContactEligibility(reservation, db, {
+      targetType: "guest",
+      candidatePhone: cleanPhone
+    });
+    if (!stayElig.phoneAllowedForStay) {
+      return {
+        sent: false,
+        skipped: true,
+        reason: stayElig.blockedReason || "blocked_b2b_requester_phone",
+        phone: cleanPhone
+      };
+    }
+  }
+
+  const whatsappText = buildMinibarCourtesyOnlyCheckoutMessage(reservation, {
+    flatNumber,
+    consumedCourtesyItems: validItems
+  });
+
+  try {
+    const zapiConfig = db.settings?.zapiConfig || db.zapiConfig || {};
+    const waRes = await _callMinibarSendZapiMessage(zapiConfig, {
+      phone: cleanPhone,
+      message: whatsappText,
+      channelId: "guest",
+      recipientRole: "guest",
+      triggerEvent: "minibar_courtesy_only_checkout",
+      db
+    });
+
+    if (!waRes || waRes.success !== false) {
+      const sentIso = new Date().toISOString();
+      reservation.minibarCourtesyOnlyWhatsappSentAt = sentIso;
+      reservation.minibarCourtesyOnlyWhatsappPhone = cleanPhone;
+      reservation.updatedAt = sentIso;
+
+      _callMinibarAppendConversation(db, {
+        phone: cleanPhone,
+        text: whatsappText,
+        type: "text",
+        sender: "Sofia (IA)"
+      });
+
+      return {
+        sent: true,
+        phone: cleanPhone,
+        guestName: titularSlot?.name || reservation.guestName || "Hóspede",
+        message: whatsappText
+      };
+    }
+
+    return {
+      sent: false,
+      phone: cleanPhone,
+      error: String(waRes?.error || waRes?.reason || "Envio WhatsApp não permitido")
+    };
+  } catch (err) {
+    console.warn(`[Minibar Courtesy-Only Checkout WA] Erro para ${cleanPhone}:`, err?.message || err);
+    return { sent: false, phone: cleanPhone, error: String(err?.message || "Erro ao enviar WhatsApp") };
+  }
+}
+
 function settleMinibarOrder(order, paymentDetails = {}) {
   if (!order) return null;
+  const wasAlreadyPaid = order.paymentStatus === "pago";
   const nowIso = paymentDetails.paidAt || new Date().toISOString();
   const effectiveMethod = String(paymentDetails.paymentMethod || order.paymentMethod || "").toLowerCase();
   const totalAmt = Number(order.totalAmount || 0);
@@ -97974,6 +99240,7 @@ function settleMinibarOrder(order, paymentDetails = {}) {
     (postSettleStatement && postSettleStatement.pendingBalance <= 0.01) ||
     (payerShareAfter && Number(payerShareAfter.amount || 0) <= 0.01);
 
+  let settledCrmGuest = null;
   if (Array.isArray(db.guests)) {
     const crmGuest = findOrCreateCrmGuestForMinibarTarget({
       guestId: order.guestId || (payerIdx === 1 ? reservation?.guestId : null),
@@ -97983,6 +99250,7 @@ function settleMinibarOrder(order, paymentDetails = {}) {
       guestDocument: order.fiscalPreferences?.documentNumber || order.guestDocument || (payerIdx === 1 ? reservation?.guestDocument : ""),
       createIfMissing: false
     });
+    settledCrmGuest = crmGuest;
     if (crmGuest) {
       crmGuest.lastMinibarConsumptionAt = nowIso;
       if (isGuestShareCleared) {
@@ -98020,6 +99288,39 @@ function settleMinibarOrder(order, paymentDetails = {}) {
   }
 
   saveDatabase("minibar_order_settled");
+
+  // 5. Dispara confirmação curta de quitação no WhatsApp do hóspede (assíncrono e idempotente)
+  const remainingBalanceForGuest = isGuestShareCleared
+    ? 0
+    : payerShareAfter && Number(payerShareAfter.amount || 0) > 0.01
+    ? Number(payerShareAfter.amount)
+    : postSettleStatement && Number(postSettleStatement.pendingBalance || 0) > 0.01
+    ? Number(postSettleStatement.pendingBalance)
+    : 0;
+
+  const shouldSendConfirmationWa =
+    !wasAlreadyPaid &&
+    !paymentDetails.skipPaymentConfirmationWhatsApp &&
+    !order.paymentConfirmationWhatsappSentAt &&
+    !order._paymentConfirmationDispatching &&
+    Number(order.paidAmount || order.totalAmount || 0) > 0.01 &&
+    String(order.paymentMethod || "").trim().toLowerCase() !== "cortesia";
+
+  if (shouldSendConfirmationWa) {
+    ensureMinibarSettingsDefaults(db);
+    if (db.minibarSettings?.sendPaymentConfirmationWhatsApp !== false) {
+      order._paymentConfirmationDispatching = true;
+      dispatchMinibarPaymentConfirmationWhatsApp(order, {
+        reservation,
+        crmGuest: settledCrmGuest,
+        remainingBalanceForGuest
+      }).catch(err => {
+        order._paymentConfirmationDispatching = false;
+        console.warn("[Minibar Payment Confirmation WA] Erro:", err?.message || err);
+      });
+    }
+  }
+
   return order;
 }
 
@@ -98057,6 +99358,10 @@ function reopenMinibarOrderToPending(order, { reason = "", actorName = "Sistema"
   order.manualPaymentConfirmed = false;
   order.manualPaymentDetails = null;
   order.paymentVerifiedSource = null;
+  order.paymentConfirmationWhatsappSentAt = null;
+  order.paymentConfirmationWhatsappPhone = null;
+  order.paymentConfirmationWhatsappError = null;
+  order._paymentConfirmationDispatching = false;
   order.updatedAt = nowIso;
 
   const isDirectLaunch = isMinibarLaunchOrderRecord(order);
@@ -98373,7 +99678,7 @@ async function auditAndReopenFalsePaidMinibarOrders({ lookbackDays = 15, trigger
           flaggedWithInvoiceCount: report.flaggedWithInvoiceCount,
           triggeredBy
         },
-        targetUrl: "/anserve"
+        targetUrl: "/frigobar?tab=cobrancas"
       });
     }
 
@@ -98392,7 +99697,7 @@ async function auditAndReopenFalsePaidMinibarOrders({ lookbackDays = 15, trigger
           .join("\n");
         _callMinibarSendZapiMessage(zapiConfig, {
           phone: managerPhone,
-          message: `${title}\n\n${summaryMsg}\n\n${reopenedLines}\n\n🔗 Acesse o painel de Cobranças & Avisos em /anserve.`,
+          message: `${title}\n\n${summaryMsg}\n\n${reopenedLines}\n\n🔗 Acesse o painel de Cobranças & Inadimplência em /frigobar?tab=cobrancas.`,
           channelId: "internal_ops",
           triggerEvent: "minibar_audit_reopen_summary",
           db
@@ -98917,7 +100222,8 @@ async function processDailyMinibarPaymentReminders({
                 pixEndToEndId: v.endToEndId,
                 amount: v.amount || ord.totalAmount,
                 paymentMethod: "pix",
-                source: "pre_reminder_inter_check"
+                source: "pre_reminder_inter_check",
+                skipPaymentConfirmationWhatsApp: true
               });
             }
           } catch (_) {}
@@ -98933,7 +100239,8 @@ async function processDailyMinibarPaymentReminders({
                 mpPaymentId: String(mp.id),
                 amount: mp.transaction_amount || ord.totalAmount,
                 paymentMethod: ord.paymentMethod,
-                source: "pre_reminder_mp_check"
+                source: "pre_reminder_mp_check",
+                skipPaymentConfirmationWhatsApp: true
               });
             }
           } catch (_) {}
@@ -99085,7 +100392,7 @@ async function processDailyMinibarPaymentReminders({
               pendingAmount: Number(freshShare.amount),
               stepNumber
             },
-            targetUrl: "/anserve"
+            targetUrl: "/frigobar?tab=cobrancas"
           });
         }
 
@@ -99523,195 +100830,13 @@ if (!global.__minibarInvoiceRetryWorkerStarted) {
   }, 60000);
 }
 
-// ── F03 & F04: Contexto Mobile (Acesso Direto por Reserva ou Flat) ──────────
-app.post("/api/minibar/flat-context", (req, res) => {
-  try {
-    const { flatNumber, last4Digits, guestIndex } = req.body || {};
-    const flatStr = String(flatNumber || "").trim();
-    const digits = String(last4Digits || "").replace(/\D/g, "");
-
-    if (!flatStr) {
-      return res.status(400).json({
-        success: false,
-        error: "Número do flat é obrigatório."
-      });
-    }
-
-    const reservation = findActiveOrRecentReservationForFlat(flatStr);
-    if (!reservation) {
-      return res.status(404).json({
-        success: false,
-        error: "Nenhuma reserva ativa ou recente encontrada para este flat."
-      });
-    }
-
-    const reservationGuests = getReservationAllGuests(reservation);
-    let matchedGuest = null;
-
-    if (digits.length === 4) {
-      // Se 4 dígitos foram enviados (retrocompatibilidade), localiza o hóspede correspondente
-      for (const g of reservationGuests) {
-        const gPhoneDigits = String(g.phone || "").replace(/\D/g, "");
-        const gDocDigits = String(g.document || "").replace(/\D/g, "");
-        if (
-          (gPhoneDigits.length >= 4 && gPhoneDigits.endsWith(digits)) ||
-          (gDocDigits.length >= 4 && gDocDigits.endsWith(digits))
-        ) {
-          matchedGuest = g;
-          break;
-        }
-      }
-
-      if (!matchedGuest) {
-        const phoneDigits = String(reservation.guestPhone || "").replace(/\D/g, "");
-        const docDigits = String(reservation.guestDocument || "").replace(/\D/g, "");
-        if (phoneDigits.endsWith(digits) || docDigits.endsWith(digits)) {
-          matchedGuest = reservationGuests[0] || {
-            index: 1,
-            role: "titular",
-            guestId: reservation.guestId || null,
-            name: reservation.guestName || "Hóspede",
-            firstName: (reservation.guestName || "Hóspede").trim().split(" ")[0],
-            phone: reservation.guestPhone || "",
-            email: reservation.guestEmail || "",
-            document: reservation.guestDocument || ""
-          };
-        }
-      }
-
-      if (!matchedGuest) {
-        return res.status(401).json({
-          success: false,
-          error: "Dígitos incorretos ou nenhuma reserva ativa no flat"
-        });
-      }
-    } else {
-      // Acesso direto sem necessidade de digitar 4 dígitos de CPF ou telefone
-      const reqIdx = Number(guestIndex || 0);
-      matchedGuest =
-        (reqIdx > 0 && reservationGuests.find(g => g.index === reqIdx)) ||
-        reservationGuests[0] || {
-          index: 1,
-          role: "titular",
-          guestId: reservation.guestId || null,
-          name: reservation.guestName || "Hóspede",
-          firstName: (reservation.guestName || "Hóspede").trim().split(" ")[0],
-          phone: reservation.guestPhone || "",
-          email: reservation.guestEmail || "",
-          document: reservation.guestDocument || ""
-        };
-    }
-
-    const guestName = matchedGuest.name || reservation.guestName || "Hóspede";
-    const firstName = matchedGuest.firstName || guestName.trim().split(" ")[0];
-    const resCode = reservation.code || `RES-${reservation.id}`;
-
-    // Pedidos da reserva (pagos e pendentes)
-    const allResOrders = (db.minibarOrders || []).filter(o =>
-      doesMinibarOrderMatchReservation(o, reservation) &&
-      o.paymentStatus !== "cancelado"
-    );
-    const paidOrders = allResOrders.filter(o => o.paymentStatus === "pago" || o.invoice?.status === "anexada" || Boolean(o.invoice?.invoiceFileUrl || o.invoice?.fileUrl));
-    const statement = buildReservationMinibarStatement(reservation, flatStr);
-    const pendingDiscrepancyOrder = sanitizeMinibarOrderForResponse(statement.primaryPendingOrder);
-
-    const paidItemsMap = {};
-    for (const ord of paidOrders) {
-      if (Array.isArray(ord.items)) {
-        for (const it of ord.items) {
-          if (!paidItemsMap[it.productId]) {
-            paidItemsMap[it.productId] = {
-              productId: it.productId,
-              productName: it.productName || it.name,
-              quantity: 0,
-              isCourtesy: Boolean(it.isCourtesy)
-            };
-          }
-          paidItemsMap[it.productId].quantity += Number(it.quantity) || 0;
-        }
-      }
-    }
-    const paidItems = Object.values(paidItemsMap);
-    const courtesyConsumed =
-      paidItems.some(i => i.isCourtesy) ||
-      statement.dailyLaunches.some(dl => (dl.items || []).some(i => i.isCourtesy)) ||
-      (Array.isArray(statement.consumedCourtesyItems) && statement.consumedCourtesyItems.length > 0);
-
-    const paidOrdersHistory = paidOrders.map(ord => ({
-      id: ord.id,
-      guestName: ord.guestName || reservation.guestName,
-      guestIndex: ord.guestIndex || 1,
-      partialMode: ord.partialMode || "full",
-      totalAmount: ord.totalAmount,
-      paidAt: ord.paidAt || ord.createdAt,
-      paymentMethod: ord.paymentMethod,
-      items: ord.items || [],
-      invoice: sanitizeMinibarInvoiceForResponse(ord.invoice),
-      invoiceFileUrl: ord.invoice?.invoiceFileUrl || ord.invoice?.fileUrl || null,
-      invoiceFileName: ord.invoice?.invoiceFileName || null,
-      invoiceNumber: ord.invoice?.invoiceNumber || null,
-      invoiceStatus: ord.invoice?.status || null
-    }));
-
-    // Gabarito padrão do flat
-    const defaultTemplate = db.minibarDefaultStock?.flatOverrides?.[flatStr] || db.minibarDefaultStock?.globalTemplate || [];
-    const defaultStock = {};
-    for (const item of defaultTemplate) {
-      defaultStock[item.productId] = item.defaultQuantity ?? item.quantity ?? 0;
-    }
-
-    const catalog = (db.minibarProducts || [])
-      .filter(p => p.active !== false)
-      .map(p => {
-        const { cost, ...safe } = p;
-        return safe;
-      })
-      .sort((a, b) => (Number(a.sortOrder) || 99) - (Number(b.sortOrder) || 99));
-
-    res.json({
-      success: true,
-      operationMode: db.minibarSettings?.operationMode || "restocker_daily_launch",
-      isCheckedOut: statement.isCheckedOut,
-      hasFinalCheckoutInspection: statement.hasFinalCheckoutInspection,
-      checkoutTime: statement.checkoutTime,
-      dailyLaunches: statement.dailyLaunches,
-      pendingLaunchedItems: statement.pendingLaunchedItems,
-      consumedCourtesyItems: statement.consumedCourtesyItems,
-      welcomeKitSummary: statement.welcomeKitSummary,
-      pendingBalance: statement.pendingBalance,
-      totalLaunchedAmount: statement.totalLaunchedAmount,
-      totalPaidAmount: statement.totalPaidAmount,
-      splitConfig: statement.splitConfig,
-      splitBreakdown: statement.splitBreakdown,
-      statement,
-      guestName,
-      firstName,
-      phone: matchedGuest.phone || reservation.guestPhone || "",
-      email: matchedGuest.email || reservation.guestEmail || "",
-      document: matchedGuest.document || reservation.guestDocument || "",
-      matchedGuestIndex: matchedGuest.index || 1,
-      matchedGuestRole: matchedGuest.role || "titular",
-      matchedGuestId: matchedGuest.guestId || null,
-      reservationGuests,
-      allGuests: reservationGuests,
-      numGuests: Math.max(Number(reservation.numGuests || 1), reservationGuests.length),
-      reservationCode: resCode,
-      reservationId: reservation.id,
-      flatNumber: flatStr,
-      checkIn: reservation.checkinDate || reservation.checkIn,
-      checkOut: reservation.checkoutDate || reservation.checkOut,
-      catalog,
-      defaultStock,
-      paidItems,
-      paidOrdersHistory,
-      minibarOrders: getVisibleReservationMinibarOrders(reservation),
-      pendingDiscrepancyOrder,
-      courtesyConsumed,
-      anserveDnd: buildGuestAnserveDndPayload(reservation, getBrasiliaNow().date)
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+// ── Acesso por QR Code de Flat desativado (acesso exclusivo via link da reserva) ──
+app.post("/api/minibar/flat-context", (_req, res) => {
+  return res.status(410).json({
+    success: false,
+    code: "FLAT_QR_DEPRECATED",
+    error: "O acesso por QR Code personalizado de flat foi desativado. Utilize o link da sua reserva (/minha-reserva/:codigo/frigobar) enviado pelo WhatsApp."
+  });
 });
 
 app.get("/api/minibar/reservation-context/:code", (req, res) => {
@@ -99825,6 +100950,8 @@ app.get("/api/minibar/reservation-context/:code", (req, res) => {
       totalPaidAmount: statement.totalPaidAmount,
       splitConfig: statement.splitConfig,
       splitBreakdown: statement.splitBreakdown,
+      canSplitBill: Boolean(statement.splitBreakdown?.canSplitBill),
+      registeredGuestsCount: Number(statement.splitBreakdown?.registeredGuestsCount ?? 1),
       statement,
       guestName,
       firstName,
@@ -99933,6 +101060,9 @@ function handleSaveMinibarSplitConfig(req, res) {
         const gPhone = String(gu.phone || gu.whatsapp || "").trim();
         const gEmail = String(gu.email || "").trim();
         const gDoc = String(gu.document || gu.cpf || "").replace(/\D/g, "");
+        const isPlaceholderOnlyUpdate =
+          gIdx > 1 && !isMinibarGuestRealRegistered({ name: gName }) && !gPhone && !gEmail && !gDoc;
+        if (isPlaceholderOnlyUpdate) continue;
 
         // 1. Atualiza se for o Titular (index === 1)
         if (gIdx === 1) {
@@ -100024,6 +101154,10 @@ function handleSaveMinibarSplitConfig(req, res) {
       }
     }
 
+    const splitEligibilityAfterSave = computeMinibarCanSplitBill(reservation, getReservationAllGuests(reservation));
+    if (!splitEligibilityAfterSave.canSplitBill) {
+      reservation.minibarSplitConfig.mode = "titular";
+    }
     reservation.minibarSplitConfig.updatedAt = new Date().toISOString();
 
     const flatStr = String(reservation.flatNumber || reservation.flatId || rawFlatNum || "").trim();
@@ -100045,6 +101179,8 @@ function handleSaveMinibarSplitConfig(req, res) {
       success: true,
       splitConfig: statement.splitConfig,
       splitBreakdown: statement.splitBreakdown,
+      canSplitBill: Boolean(statement.splitBreakdown?.canSplitBill),
+      registeredGuestsCount: Number(statement.splitBreakdown?.registeredGuestsCount ?? 1),
       reservationGuests: statement.reservationGuests,
       allGuests: statement.reservationGuests,
       numGuests: Math.max(Number(reservation.numGuests || 1), statement.reservationGuests.length),
@@ -102221,6 +103357,29 @@ app.post("/api/minibar/inspections", async (req, res) => {
       (bodyNotifySofia === true || isEffectiveFinalCheckoutInspection) &&
       totalPendingNow > 0;
 
+    const courtesyTargetRes = billingTargetRes || reservation;
+    const consumedCourtesyForMsg = Array.isArray(updatedStatement?.consumedCourtesyItems)
+      ? updatedStatement.consumedCourtesyItems.filter(it => it && Number(it.quantity || 0) > 0)
+      : [];
+    const shouldNotifyCourtesyOnlyCheckoutNow =
+      !suppressAutoWhatsapp &&
+      !isSkipMark &&
+      !isInternalAdjustmentMode &&
+      !isGuestStillInHouseAfterTransfer &&
+      !isPureCourtesyCorrectionWithoutNewPaid &&
+      bodyNotifySofia !== false &&
+      Boolean(courtesyTargetRes) &&
+      db.minibarSettings?.autoNotifySofiaOnDiscrepancy !== false &&
+      db.minibarSettings?.sendCourtesyOnlyCheckoutWhatsApp !== false &&
+      !isInStayDailyLaunchOnly &&
+      isEffectiveFinalCheckoutInspection &&
+      totalPendingNow <= 0.01 &&
+      totalPaidPreviously <= 0.01 &&
+      totalStayAmount <= 0.01 &&
+      consumedCourtesyForMsg.length > 0 &&
+      !courtesyTargetRes.minibarCourtesyOnlyWhatsappSentAt &&
+      !reservation?.minibarCourtesyOnlyWhatsappSentAt;
+
     if (shouldSendDailySummaryNow) {
       // Disparo do Resumo Diário de Consumo para TODOS os hóspedes cadastrados na reserva (Passagem "Sem Consumo" não envia nada)
       const allGuestsInFlat = getReservationAllGuests(billingTargetRes || reservation);
@@ -102518,6 +103677,30 @@ app.post("/api/minibar/inspections", async (req, res) => {
             console.warn("[Minibar Sofia Alert] Erro ao disparar mensagem:", sErr.message);
           }
         }
+      }
+    } else if (shouldNotifyCourtesyOnlyCheckoutNow) {
+      const courtesyDispatch = await dispatchMinibarCourtesyOnlyCheckoutWhatsApp(courtesyTargetRes, {
+        flatNumber: flatStr,
+        consumedCourtesyItems: consumedCourtesyForMsg
+      });
+      if (courtesyDispatch?.sent) {
+        postCheckoutNotificationType = "courtesy_only_no_charge";
+        whatsappSofiaAlertSent = true;
+        if (courtesyDispatch.phone) notifiedPhones.push(courtesyDispatch.phone);
+        if (reservation && reservation !== courtesyTargetRes) {
+          reservation.minibarCourtesyOnlyWhatsappSentAt = courtesyTargetRes.minibarCourtesyOnlyWhatsappSentAt;
+          reservation.minibarCourtesyOnlyWhatsappPhone = courtesyTargetRes.minibarCourtesyOnlyWhatsappPhone;
+        }
+        whatsappMessagesSent.push({
+          guestIndex: 1,
+          guestName: courtesyDispatch.guestName || courtesyTargetRes.guestName || "Hóspede",
+          phone: courtesyDispatch.phone,
+          amount: 0,
+          orderId: "",
+          message: courtesyDispatch.message,
+          type: "courtesy_only_no_charge",
+          courtesyItems: consumedCourtesyForMsg
+        });
       }
     }
 
@@ -104503,6 +105686,27 @@ app.put("/api/minibar/settings", (req, res) => {
     if (!isTestBypass && !isMinibarAdmin(userAuth)) {
       return res.status(403).json({ success: false, error: "Acesso restrito ao Gestor Anserve e Administração CorpFlats." });
     }
+    const isCorpFlatsAdmin = isTestBypass || userAuth?.role === "admin" || userAuth?.role === "dev";
+    const adminOnlyRuleFields = [
+      "operationMode",
+      "autoNotifySofiaOnDiscrepancy",
+      "dailyPaymentRemindersEnabled",
+      "dailyPaymentReminderHour",
+      "dailyPaymentReminderLookbackDays",
+      "dailyPaymentReminderMaxDays",
+      "dailyPaymentReminderNotifyManagerOnDay7",
+      "notificationManagerWhatsApp",
+      "sendPaymentConfirmationWhatsApp",
+      "paymentConfirmationWhatsAppTemplate",
+      "sendCourtesyOnlyCheckoutWhatsApp",
+      "courtesyOnlyCheckoutWhatsAppTemplate"
+    ];
+    if (!isCorpFlatsAdmin && req.body && adminOnlyRuleFields.some(k => req.body[k] !== undefined)) {
+      return res.status(403).json({
+        success: false,
+        error: "Configurações da régua de cobrança e automações WhatsApp são exclusivas da Administração CorpFlats."
+      });
+    }
     ensureMinibarSettingsDefaults(db);
     const {
       restockerWorkWhatsapp,
@@ -104514,7 +105718,11 @@ app.put("/api/minibar/settings", (req, res) => {
       dailyPaymentReminderLookbackDays,
       dailyPaymentReminderMaxDays,
       dailyPaymentReminderNotifyManagerOnDay7,
-      notificationManagerWhatsApp
+      notificationManagerWhatsApp,
+      sendPaymentConfirmationWhatsApp,
+      paymentConfirmationWhatsAppTemplate,
+      sendCourtesyOnlyCheckoutWhatsApp,
+      courtesyOnlyCheckoutWhatsAppTemplate
     } = req.body || {};
 
     if (restockerWorkWhatsapp !== undefined) {
@@ -104556,6 +105764,22 @@ app.put("/api/minibar/settings", (req, res) => {
     if (notificationManagerWhatsApp !== undefined) {
       db.minibarSettings.notificationManagerWhatsApp = cleanWhatsAppPhone(notificationManagerWhatsApp);
     }
+    if (sendPaymentConfirmationWhatsApp !== undefined) {
+      db.minibarSettings.sendPaymentConfirmationWhatsApp = Boolean(sendPaymentConfirmationWhatsApp);
+    }
+    if (paymentConfirmationWhatsAppTemplate !== undefined) {
+      const cleanTpl = String(paymentConfirmationWhatsAppTemplate || "").trim();
+      db.minibarSettings.paymentConfirmationWhatsAppTemplate =
+        cleanTpl || DEFAULT_MINIBAR_PAYMENT_CONFIRMATION_WA_TEMPLATE;
+    }
+    if (sendCourtesyOnlyCheckoutWhatsApp !== undefined) {
+      db.minibarSettings.sendCourtesyOnlyCheckoutWhatsApp = Boolean(sendCourtesyOnlyCheckoutWhatsApp);
+    }
+    if (courtesyOnlyCheckoutWhatsAppTemplate !== undefined) {
+      const cleanCourtesyTpl = String(courtesyOnlyCheckoutWhatsAppTemplate || "").trim();
+      db.minibarSettings.courtesyOnlyCheckoutWhatsAppTemplate =
+        cleanCourtesyTpl || DEFAULT_MINIBAR_COURTESY_ONLY_WA_TEMPLATE;
+    }
     db.minibarSettings.updatedAt = new Date().toISOString();
 
     saveDatabase("minibar_settings_updated");
@@ -104567,6 +105791,219 @@ app.put("/api/minibar/settings", (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// ── Estatísticas de Inadimplência de Frigobar (Pós-Check-out) ──────────────────
+function computeMinibarDelinquencyStats({ period = "30d", nowOverride = null } = {}) {
+  const validPeriods = new Set(["30d", "90d", "month", "all"]);
+  const normalizedPeriod = validPeriods.has(String(period || "").toLowerCase())
+    ? String(period).toLowerCase()
+    : "30d";
+
+  const periodLabels = {
+    "30d": "Últimos 30 dias",
+    "90d": "Últimos 90 dias",
+    month: "Mês atual",
+    all: "Todo histórico"
+  };
+
+  const brNow = getBrasiliaContextFromNow(nowOverride);
+  const todayStr = brNow.date;
+  const currentYm = todayStr.slice(0, 7);
+
+  // Série cronológica de meses para Evolução Mensal (6 meses p/ 30d/90d/mês, 12 meses p/ todo histórico)
+  const monthsWindow = normalizedPeriod === "all" ? 12 : 6;
+  const monthShortNames = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+  const curYear = Number(currentYm.slice(0, 4)) || new Date().getFullYear();
+  const curMonth = Number(currentYm.slice(5, 7)) || (new Date().getMonth() + 1);
+  const monthBuckets = [];
+  const monthMap = new Map();
+  for (let offset = monthsWindow - 1; offset >= 0; offset--) {
+    let m = curMonth - offset;
+    let y = curYear;
+    while (m <= 0) {
+      m += 12;
+      y -= 1;
+    }
+    const ym = `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}`;
+    const entry = {
+      month: ym,
+      label: `${monthShortNames[m - 1]}/${String(y).slice(-2)}`,
+      consumedAmount: 0,
+      paidAmount: 0,
+      pendingAmount: 0,
+      delinquencyRatePct: 0,
+      reservationsCount: 0,
+      delinquentCount: 0
+    };
+    monthBuckets.push(entry);
+    monthMap.set(ym, entry);
+  }
+
+  let totalReservationsWithConsumption = 0;
+  let delinquentReservationsCount = 0;
+  let delinquentSharesCount = 0;
+  let totalConsumedAmount = 0;
+  let totalPaidAmount = 0;
+  let totalPendingAmount = 0;
+
+  let paidWithoutReminderCount = 0;
+  let paidWithoutReminderAmount = 0;
+  let spontaneousPaidAmount = 0;
+  let remindedTotalCount = 0;
+  let recoveredAfterReminderCount = 0;
+  let recoveredAfterReminderAmount = 0;
+  let recoveredPaidAmount = 0;
+  let chronicOverdueCount = 0;
+  let chronicOverdueAmount = 0;
+
+  const aging = {
+    d1_3: { key: "d1_3", label: "0–3 dias", subLabel: "Lembrete cordial", count: 0, amount: 0 },
+    d4_7: { key: "d4_7", label: "4–7 dias", subLabel: "Cobrança objetiva", count: 0, amount: 0 },
+    d8_15: { key: "d8_15", label: "8–15 dias", subLabel: "Pós-D+7 / Formal", count: 0, amount: 0 },
+    over_15: { key: "over_15", label: "+15 dias", subLabel: "Crônico (fora da régua)", count: 0, amount: 0 }
+  };
+
+  for (const r of db.reservations || []) {
+    if (!r || r.isRoomMoveHistoricalSegment) continue;
+    const stLower = String(r.status || "").toLowerCase();
+    if (stLower === "cancelada" || stLower === "cancelled") continue;
+
+    const flatStr = String(r.flatNumber || r.flatId || "").trim();
+    const statement = buildReservationMinibarStatement(r, flatStr);
+    if (!statement || !statement.isCheckedOut || !statement.hasFinalCheckoutInspection) continue;
+
+    const totalConsumed = Number(
+      Math.max(
+        Number(statement.totalLaunchedAmount || 0),
+        Number(statement.totalPaidAmount || 0) + Number(statement.pendingBalance || 0)
+      ).toFixed(2)
+    );
+    if (totalConsumed <= 0.01) continue;
+
+    const pendingAmount = Number(Math.max(0, Number(statement.pendingBalance || 0)).toFixed(2));
+    const paidAmount = Number(Math.max(0, Math.min(totalConsumed, totalConsumed - pendingAmount)).toFixed(2));
+    const isDelinquent = pendingAmount > 0.01;
+
+    const referenceDateYmd = resolveReservationMinibarReferenceDateYmd(r, flatStr);
+    const daysSinceReference = Math.max(0, calcDaysDiff(todayStr, referenceDateYmd));
+    const monthKey = String(referenceDateYmd || "").slice(0, 7);
+
+    // Atualiza evolução mensal (sempre dentro da janela de 6 ou 12 meses)
+    if (monthMap.has(monthKey)) {
+      const mEntry = monthMap.get(monthKey);
+      mEntry.consumedAmount += totalConsumed;
+      mEntry.paidAmount += paidAmount;
+      mEntry.pendingAmount += pendingAmount;
+      mEntry.reservationsCount += 1;
+      if (isDelinquent) mEntry.delinquentCount += 1;
+    }
+
+    // Filtro do período selecionado para KPIs e Aging
+    const inPeriod =
+      normalizedPeriod === "all"
+        ? true
+        : normalizedPeriod === "month"
+        ? monthKey === currentYm
+        : normalizedPeriod === "90d"
+        ? daysSinceReference <= 90
+        : daysSinceReference <= 30;
+
+    if (!inPeriod) continue;
+
+    totalReservationsWithConsumption += 1;
+    totalConsumedAmount += totalConsumed;
+    totalPaidAmount += paidAmount;
+    totalPendingAmount += pendingAmount;
+
+    const remEntries = Object.values(r.minibarReminderState || {}).filter(Boolean);
+    const wasReminded = remEntries.some(
+      st => Number(st.reminderCount || 0) > 0 || (Array.isArray(st.history) && st.history.length > 0)
+    );
+
+    if (isDelinquent) {
+      delinquentReservationsCount += 1;
+      const unpaidShares = (statement.splitBreakdown?.shares || []).filter(s => Number(s.amount || 0) > 0.01);
+      const shareCount = Math.max(1, unpaidShares.length);
+      delinquentSharesCount += shareCount;
+
+      if (daysSinceReference <= 3) {
+        aging.d1_3.count += shareCount;
+        aging.d1_3.amount += pendingAmount;
+      } else if (daysSinceReference <= 7) {
+        aging.d4_7.count += shareCount;
+        aging.d4_7.amount += pendingAmount;
+      } else if (daysSinceReference <= 15) {
+        aging.d8_15.count += shareCount;
+        aging.d8_15.amount += pendingAmount;
+      } else {
+        aging.over_15.count += shareCount;
+        aging.over_15.amount += pendingAmount;
+        chronicOverdueCount += shareCount;
+        chronicOverdueAmount += pendingAmount;
+      }
+
+      if (wasReminded) {
+        remindedTotalCount += 1;
+        if (paidAmount > 0.01) recoveredPaidAmount += paidAmount;
+      } else if (paidAmount > 0.01) {
+        spontaneousPaidAmount += paidAmount;
+      }
+    } else {
+      if (wasReminded) {
+        remindedTotalCount += 1;
+        recoveredAfterReminderCount += 1;
+        recoveredAfterReminderAmount += paidAmount;
+        recoveredPaidAmount += paidAmount;
+      } else {
+        paidWithoutReminderCount += 1;
+        paidWithoutReminderAmount += paidAmount;
+        spontaneousPaidAmount += paidAmount;
+      }
+    }
+  }
+
+  const round2 = v => Number(Number(v || 0).toFixed(2));
+  const pct = (part, total) => (total > 0 ? Number(((part / total) * 100).toFixed(1)) : 0);
+
+  const monthlyEvolution = monthBuckets.map(m => ({
+    ...m,
+    consumedAmount: round2(m.consumedAmount),
+    paidAmount: round2(m.paidAmount),
+    pendingAmount: round2(m.pendingAmount),
+    delinquencyRatePct: pct(m.pendingAmount, m.consumedAmount)
+  }));
+
+  const agingBuckets = [aging.d1_3, aging.d4_7, aging.d8_15, aging.over_15].map(b => ({
+    ...b,
+    amount: round2(b.amount)
+  }));
+
+  return {
+    period: normalizedPeriod,
+    periodLabel: periodLabels[normalizedPeriod],
+    monthsWindow,
+    totalReservationsWithConsumption,
+    delinquentReservationsCount,
+    delinquentSharesCount,
+    delinquencyRateByReservationPct: pct(delinquentReservationsCount, totalReservationsWithConsumption),
+    totalConsumedAmount: round2(totalConsumedAmount),
+    totalPaidAmount: round2(totalPaidAmount),
+    totalPendingAmount: round2(totalPendingAmount),
+    delinquencyRateByValuePct: pct(totalPendingAmount, totalConsumedAmount),
+    paidWithoutReminderCount,
+    paidWithoutReminderAmount: round2(paidWithoutReminderAmount),
+    spontaneousPaidAmount: round2(spontaneousPaidAmount),
+    remindedTotalCount,
+    recoveredAfterReminderCount,
+    recoveredAfterReminderAmount: round2(recoveredAfterReminderAmount),
+    recoveredPaidAmount: round2(recoveredPaidAmount),
+    recoveryRatePct: pct(recoveredAfterReminderCount, remindedTotalCount),
+    chronicOverdueCount,
+    chronicOverdueAmount: round2(chronicOverdueAmount),
+    agingBuckets,
+    monthlyEvolution
+  };
+}
 
 // ── Painel de Cobranças Pós-Check-out, Auditoria PIX e Reabertura Manual ───────
 app.get("/api/minibar/collections/overview", (req, res) => {
@@ -104581,8 +106018,10 @@ app.get("/api/minibar/collections/overview", (req, res) => {
     const lookbackDays = req.query?.lookbackDays
       ? Math.max(1, Math.min(90, parseInt(req.query.lookbackDays, 10) || 15))
       : Number(cfg.dailyPaymentReminderLookbackDays) || 15;
+    const period = req.query?.period ? String(req.query.period) : "30d";
 
     const pendingTargets = collectPendingMinibarCollectionTargets({ lookbackDays });
+    const delinquencyStats = computeMinibarDelinquencyStats({ period });
 
     const cutoffRecentMs = Date.now() - Math.max(lookbackDays, 60) * 24 * 60 * 60 * 1000;
     const mapPaidOrderSummary = o => {
@@ -104652,9 +106091,16 @@ app.get("/api/minibar/collections/overview", (req, res) => {
         dailyPaymentReminderLookbackDays: Number(cfg.dailyPaymentReminderLookbackDays ?? 15),
         dailyPaymentReminderMaxDays: Number(cfg.dailyPaymentReminderMaxDays ?? 7),
         dailyPaymentReminderNotifyManagerOnDay7: cfg.dailyPaymentReminderNotifyManagerOnDay7 !== false,
-        notificationManagerWhatsApp: cfg.notificationManagerWhatsApp || ""
+        notificationManagerWhatsApp: cfg.notificationManagerWhatsApp || "",
+        sendPaymentConfirmationWhatsApp: cfg.sendPaymentConfirmationWhatsApp !== false,
+        paymentConfirmationWhatsAppTemplate:
+          cfg.paymentConfirmationWhatsAppTemplate || DEFAULT_MINIBAR_PAYMENT_CONFIRMATION_WA_TEMPLATE,
+        sendCourtesyOnlyCheckoutWhatsApp: cfg.sendCourtesyOnlyCheckoutWhatsApp !== false,
+        courtesyOnlyCheckoutWhatsAppTemplate:
+          cfg.courtesyOnlyCheckoutWhatsAppTemplate || DEFAULT_MINIBAR_COURTESY_ONLY_WA_TEMPLATE
       },
       summary,
+      delinquencyStats,
       pendingTargets,
       suspiciousPaidOrders,
       recentPaidOrders,
@@ -106799,6 +108245,7 @@ export {
   auditAndReopenFalsePaidMinibarOrders,
   reconcilePendingMinibarPayments,
   collectPendingMinibarCollectionTargets,
+  computeMinibarDelinquencyStats,
   processDailyMinibarPaymentReminders,
   setMinibarTestHooks,
   buildReservationMinibarStatement,
@@ -106810,5 +108257,12 @@ export {
   filterCanonicalVisibleMinibarOrders,
   formatAggregatedMinibarItemsSummary,
   getVisibleReservationMinibarOrders,
-  computeReservationAccommodationAndConsumption
+  computeReservationAccommodationAndConsumption,
+  buildMinibarPaymentConfirmationMessage,
+  dispatchMinibarPaymentConfirmationWhatsApp,
+  isMinibarGuestRealRegistered,
+  computeMinibarCanSplitBill,
+  formatMinibarCourtesyItemsNaturalList,
+  buildMinibarCourtesyOnlyCheckoutMessage,
+  dispatchMinibarCourtesyOnlyCheckoutWhatsApp
 };
