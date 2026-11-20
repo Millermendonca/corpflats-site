@@ -34,6 +34,7 @@ import {
   dispatchRetroactiveTodayReceptionEmailsToWhatsApp
 } from "./mail-service.mjs";
 import { extractTextFromPdfBuffer } from "./pdf-extract-service.mjs";
+import { createGeminiInteraction, GEMINI_FLASH_MODEL } from "./gemini-interactions-client.mjs";
 import {
   detectB2bEmailIntent,
   matchReservationForCancellation,
@@ -5036,31 +5037,27 @@ export async function extractB2bVoucherWithGeminiAI({
   });
 
   try {
-    const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-        "Api-Revision": "2026-05-20"
+    const aiRes = await createGeminiInteraction({
+      apiKey,
+      model: GEMINI_FLASH_MODEL,
+      input: inputParts,
+      store: false,
+      thinkingLevel: "low",
+      maxOutputTokens: 4096,
+      responseFormat: {
+        type: "text",
+        mime_type: "application/json",
+        schema: B2B_VOUCHER_EXTRACTION_SCHEMA
       },
-      body: JSON.stringify({
-        model: "gemini-3.8-flash",
-        store: false,
-        input: inputParts,
-        response_format: {
-          type: "text",
-          mime_type: "application/json",
-          schema: B2B_VOUCHER_EXTRACTION_SCHEMA
-        }
-      }),
-      signal: AbortSignal.timeout(25000)
+      timeoutMs: 25000
     });
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    const outputs = Array.isArray(data?.outputs) ? data.outputs : [];
-    const textItem = [...outputs].reverse().find(o => o?.type === "text" && o?.text);
-    if (!textItem?.text) return null;
-    return JSON.parse(textItem.text);
+    if (!aiRes.ok || !aiRes.text) return null;
+    try {
+      return JSON.parse(aiRes.text);
+    } catch {
+      const jsonMatch = aiRes.text.match(/\{[\s\S]*\}/);
+      return jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    }
   } catch {
     return null;
   }

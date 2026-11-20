@@ -160,7 +160,13 @@ export default function ShoppingListPage() {
   const [activeTab, setActiveTab] = useState<"pending" | "completed">("pending")
   useBackTabState(activeTab, setActiveTab, { id: "shopping-list-tabs" })
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([])
+
+  const toggleCategoryFilter = useCallback((cat: string) => {
+    setSelectedCategories(prev =>
+      prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]
+    )
+  }, [])
 
   // ── Quick-add state ────────────────────────────────────────────────────────
   const [newTitle, setNewTitle] = useState("")
@@ -408,15 +414,29 @@ export default function ShoppingListPage() {
 
   const availableCategories = useMemo(() => {
     const counts: Record<string, number> = {}
-    pendingItems.forEach(item => parseCategories(item).filter(c => c !== "Alimentos").forEach(cat => { counts[cat] = (counts[cat] || 0) + 1 }))
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count }))
-  }, [pendingItems])
+    pendingItems.forEach(item =>
+      parseCategories(item)
+        .filter(c => c !== "Alimentos")
+        .forEach(cat => {
+          counts[cat] = (counts[cat] || 0) + 1
+        })
+    )
+    selectedCategories.forEach(cat => {
+      if (!(cat in counts)) counts[cat] = 0
+    })
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "pt-BR"))
+      .map(([name, count]) => ({ name, count }))
+  }, [pendingItems, selectedCategories])
 
   const displayedItems = useMemo(() => {
     const base = activeTab === "pending" ? pendingItems : completedItems
-    if (!categoryFilter) return base
-    return base.filter(item => parseCategories(item).includes(categoryFilter))
-  }, [activeTab, pendingItems, completedItems, categoryFilter])
+    if (selectedCategories.length === 0) return base
+    return base.filter(item => {
+      const itemCats = parseCategories(item)
+      return selectedCategories.some(cat => itemCats.includes(cat))
+    })
+  }, [activeTab, pendingItems, completedItems, selectedCategories])
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -542,7 +562,8 @@ export default function ShoppingListPage() {
           {(["pending", "completed"] as const).map(tab => (
             <button
               key={tab}
-              onClick={() => { setActiveTab(tab); setCategoryFilter(null) }}
+              type="button"
+              onClick={() => { setActiveTab(tab); setSelectedCategories([]) }}
               className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
                 activeTab === tab ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
               }`}
@@ -552,34 +573,67 @@ export default function ShoppingListPage() {
           ))}
         </div>
 
-        {/* Filtros de categoria — linha horizontal compacta */}
+        {/* Filtros de categoria — linha horizontal compacta (seleção múltipla) */}
         {activeTab === "pending" && availableCategories.length > 0 && (
-          <div className="w-full overflow-x-auto no-scrollbar -mt-1">
-            <div className="flex gap-1.5 pb-0.5">
-              <button
-                onClick={() => setCategoryFilter(null)}
-                className={`shrink-0 px-2.5 py-0.5 rounded-full text-[11px] font-bold border transition-all ${
-                  !categoryFilter
-                    ? "bg-foreground text-background border-foreground"
-                    : "bg-muted/40 border-border/60 text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                Todos
-              </button>
-              {availableCategories.map(({ name, count }) => (
+          <div className="space-y-1.5 -mt-1">
+            <div
+              role="group"
+              aria-label="Filtrar por categorias"
+              className="w-full overflow-x-auto no-scrollbar"
+            >
+              <div className="flex items-center gap-1.5 py-0.5 px-0.5">
                 <button
-                  key={name}
-                  onClick={() => setCategoryFilter(categoryFilter === name ? null : name)}
-                  className={`shrink-0 px-2.5 py-0.5 rounded-full text-[11px] font-bold border transition-all ${
-                    categoryFilter === name
-                      ? getCategoryColor(name) + " ring-1 ring-current"
+                  type="button"
+                  aria-pressed={selectedCategories.length === 0}
+                  onClick={() => setSelectedCategories([])}
+                  className={`shrink-0 min-h-6 px-2.5 py-1 rounded-full text-[11px] font-bold border transition-all inline-flex items-center gap-1 ${
+                    selectedCategories.length === 0
+                      ? "bg-foreground text-background border-foreground"
                       : "bg-muted/40 border-border/60 text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  {name} <span className="opacity-60">({count})</span>
+                  Todos
                 </button>
-              ))}
+                {availableCategories.map(({ name, count }) => {
+                  const isSelected = selectedCategories.includes(name)
+                  return (
+                    <button
+                      key={name}
+                      type="button"
+                      aria-pressed={isSelected}
+                      onClick={() => toggleCategoryFilter(name)}
+                      className={`shrink-0 min-h-6 px-2.5 py-1 rounded-full text-[11px] font-bold border transition-all inline-flex items-center gap-1 ${
+                        isSelected
+                          ? getCategoryColor(name) + " ring-1 ring-current"
+                          : "bg-muted/40 border-border/60 text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {isSelected && <Check className="w-3 h-3 shrink-0 stroke-[2.5]" aria-hidden="true" />}
+                      <span>{name}</span>
+                      <span className="opacity-60">({count})</span>
+                    </button>
+                  )
+                })}
+              </div>
             </div>
+
+            {selectedCategories.length > 0 && (
+              <div className="flex items-center justify-between gap-2 px-1 text-[11px] text-muted-foreground">
+                <span className="truncate">
+                  {selectedCategories.length === 1
+                    ? `1 filtro ativo · ${displayedItems.length} ${displayedItems.length === 1 ? "item" : "itens"}`
+                    : `${selectedCategories.length} filtros ativos · ${displayedItems.length} ${displayedItems.length === 1 ? "item" : "itens"}`}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedCategories([])}
+                  className="shrink-0 min-h-6 px-1.5 inline-flex items-center gap-1 font-semibold text-primary hover:underline rounded-md"
+                >
+                  <X className="w-3 h-3" aria-hidden="true" />
+                  Limpar filtros
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -589,11 +643,28 @@ export default function ShoppingListPage() {
         ) : displayedItems.length === 0 ? (
           <div className="py-14 flex flex-col items-center gap-3 text-center">
             <div className="w-12 h-12 rounded-2xl bg-muted flex items-center justify-center">
-              <ShoppingCart className="w-6 h-6 text-muted-foreground/40" />
+              <ShoppingCart className="w-6 h-6 text-muted-foreground/40" aria-hidden="true" />
             </div>
             <p className="text-sm font-semibold text-foreground">
-              {categoryFilter ? `Nenhum item em "${categoryFilter}"` : activeTab === "pending" ? "Lista vazia! Adicione itens acima." : "Nenhum item comprado ainda."}
+              {selectedCategories.length === 1
+                ? `Nenhum item em "${selectedCategories[0]}"`
+                : selectedCategories.length > 1
+                ? `Nenhum item nas categorias selecionadas (${selectedCategories.join(", ")})`
+                : activeTab === "pending"
+                ? "Lista vazia! Adicione itens acima."
+                : "Nenhum item comprado ainda."}
             </p>
+            {selectedCategories.length > 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setSelectedCategories([])}
+                className="h-8 text-xs rounded-xl"
+              >
+                Limpar filtros
+              </Button>
+            )}
           </div>
         ) : (
           <div className="space-y-1.5">
@@ -663,16 +734,22 @@ export default function ShoppingListPage() {
                         {/* Tags de categoria — pequenas, abaixo do título */}
                         {!item.completed && cats.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-0.5">
-                            {cats.slice(0, 3).map(cat => (
-                              <button
-                                key={cat}
-                                onClick={() => setCategoryFilter(cat === categoryFilter ? null : cat)}
-                                className={`text-[9px] font-bold px-1.5 py-0 rounded border leading-[18px] transition-all ${getCategoryColor(cat)} ${categoryFilter === cat ? "ring-1 ring-current" : ""}`}
-                                title={`Filtrar por ${cat}`}
-                              >
-                                {cat}
-                              </button>
-                            ))}
+                            {cats.slice(0, 3).map(cat => {
+                              const isSelected = selectedCategories.includes(cat)
+                              return (
+                                <button
+                                  key={cat}
+                                  type="button"
+                                  aria-pressed={isSelected}
+                                  onClick={() => toggleCategoryFilter(cat)}
+                                  className={`text-[9px] font-bold px-1.5 py-0 rounded border leading-[18px] transition-all inline-flex items-center gap-0.5 ${getCategoryColor(cat)} ${isSelected ? "ring-1 ring-current" : ""}`}
+                                  title={isSelected ? `Remover filtro ${cat}` : `Adicionar filtro ${cat}`}
+                                >
+                                  {isSelected && <Check className="w-2.5 h-2.5 shrink-0 stroke-[3]" aria-hidden="true" />}
+                                  {cat}
+                                </button>
+                              )
+                            })}
                           </div>
                         )}
                         {item.completed && item.completedBy && (

@@ -27,6 +27,8 @@ import { useToast } from "@/hooks/use-toast"
 import { sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildDirectWaWebUrl } from "@/hooks/use-quick-messages"
 import { formatSmartPhone } from "@/lib/phone-mask"
 import { parseEmailList, validateEmailList, formatEmailList, getPrimaryEmail } from "@/lib/email-utils"
+import "@/components/fiscal/fiscal-mobile.css"
+import { FiscalTabsBar } from "@/components/fiscal/fiscal-tabs-bar"
 
 interface ChatMessage {
   role: "user" | "assistant"
@@ -3881,7 +3883,7 @@ export default function FiscalInvoicesPage() {
 
   return (
     <Shell>
-      <div className="p-4 md:p-6 max-w-[1600px] mx-auto space-y-6 pb-20">
+      <div className="fiscal-page-root w-full min-w-0 px-3 py-3 sm:p-4 md:p-6 max-w-[1600px] mx-auto space-y-4 md:space-y-6 pb-28 md:pb-20">
         <FrozenSlot
           freeze={isFiscalModalOpen}
           deps={[
@@ -3920,34 +3922,38 @@ export default function FiscalInvoicesPage() {
             retryQueue,
           ]}
           render={() => (
-        <div className="bg-card border border-border p-5 rounded-3xl shadow-sm space-y-4">
-          <div className={`flex flex-col lg:flex-row lg:items-center justify-between gap-4 transition-all ${!isSidebarPinned ? "md:pl-20" : ""}`}>
-            <div className="space-y-1">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center text-primary shrink-0">
-                  <FileText className="w-5 h-5" />
+        <div className="bg-card border border-border p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl shadow-sm space-y-3.5 sm:space-y-4">
+          <div className={`flex flex-col lg:flex-row lg:items-center justify-between gap-3 sm:gap-4 transition-all ${!isSidebarPinned ? "md:pl-20" : ""}`}>
+            <div className="space-y-1 min-w-0">
+              <div className="flex items-start sm:items-center gap-2.5 min-w-0">
+                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-primary/10 flex items-center justify-center text-primary shrink-0">
+                  <FileText className="w-5 h-5" aria-hidden="true" />
                 </div>
-                <div>
-                  <h1 className="text-xl font-black tracking-tight text-foreground flex items-center gap-2 flex-wrap">
+                <div className="min-w-0 flex-1">
+                  <h1 className="fiscal-heading-balance text-lg sm:text-xl font-black tracking-tight text-foreground flex items-center gap-1.5 sm:gap-2 flex-wrap leading-tight">
                     <span>Notas Fiscais de Serviço (NFS-e)</span>
-                    <Badge className="bg-emerald-600 text-white text-[10px] h-5">Emissor Nacional Gov.br</Badge>
+                    <Badge className="bg-emerald-600 text-white text-[10px] h-5 shrink-0">Emissor Nacional Gov.br</Badge>
                   </h1>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="fiscal-text-pretty text-[11px] sm:text-xs text-muted-foreground mt-0.5 break-words">
                     Rental Miller's LTDA • CNPJ: <strong>47.964.813/0001-65</strong> • IM: <strong>142591</strong> • Campos dos Goytacazes/RJ
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2.5">
+            <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-stretch sm:items-center gap-2 sm:gap-2.5 w-full lg:w-auto">
               {/* Filtro de Competência Mensal */}
-              <div className="flex items-center gap-1.5 bg-muted/60 px-3 py-1.5 rounded-2xl border border-border text-xs">
-                <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
-                <span className="font-bold text-muted-foreground">Competência:</span>
+              <div className="col-span-2 sm:col-span-1 flex items-center gap-1.5 bg-muted/60 px-3 min-h-[44px] sm:min-h-0 sm:py-1.5 rounded-2xl border border-border text-xs min-w-0">
+                <Calendar className="w-3.5 h-3.5 text-muted-foreground shrink-0" aria-hidden="true" />
+                <label htmlFor="fiscal-competencia-select" className="font-bold text-muted-foreground shrink-0">
+                  <span className="sm:hidden">Comp.:</span>
+                  <span className="hidden sm:inline">Competência:</span>
+                </label>
                 <select
+                  id="fiscal-competencia-select"
                   value={selectedCompetencia}
                   onChange={e => setSelectedCompetencia(e.target.value)}
-                  className="bg-transparent font-black text-foreground cursor-pointer focus:outline-hidden"
+                  className="bg-transparent font-black text-foreground text-base md:text-xs cursor-pointer focus:outline-hidden flex-1 min-w-0"
                 >
                   <option value="all">Todas as Competências</option>
                   {uniqueCompetencias.map(c => (
@@ -3962,46 +3968,55 @@ export default function FiscalInvoicesPage() {
                 variant="outline"
                 size="sm"
                 onClick={() => setLocation("/pagamentos?tab=boletos")}
-                className="h-8.5 px-3 rounded-2xl text-xs font-bold gap-1.5 border-indigo-500/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/10"
+                className="min-h-[44px] sm:min-h-0 sm:h-8.5 px-2.5 sm:px-3 rounded-2xl text-xs font-bold gap-1.5 border-indigo-500/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/10 w-full sm:w-auto justify-center min-w-0"
                 title="Abrir carteira centralizada de Boletos & Faturado a Prazo"
               >
-                <CreditCard className="w-3.5 h-3.5 text-indigo-600" />
-                <span>Boletos & Pagamentos</span>
-                <ArrowRight className="w-3 h-3 opacity-70" />
+                <CreditCard className="w-3.5 h-3.5 text-indigo-600 shrink-0" aria-hidden="true" />
+                <span className="sm:hidden truncate">Boletos</span>
+                <span className="hidden sm:inline truncate">Boletos &amp; Pagamentos</span>
+                <ArrowRight className="w-3 h-3 opacity-70 shrink-0" aria-hidden="true" />
               </Button>
 
               {/* Status do Certificado Digital A1 */}
               <button
+                type="button"
                 onClick={() => setCertModalOpen(true)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-2xl border text-xs font-bold transition-all shadow-2xs ${
+                className={`flex items-center justify-center gap-1.5 px-2.5 sm:px-3 min-h-[44px] sm:min-h-0 sm:py-1.5 rounded-2xl border text-xs font-bold transition-all shadow-2xs w-full sm:w-auto min-w-0 ${
                   certStatus && certStatus.daysRemaining < 30
                     ? "bg-rose-500/10 border-rose-500/30 text-rose-600 animate-pulse"
                     : "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20"
                 }`}
                 title="Clique para abrir o Cofre do Certificado A1"
+                aria-label={`Abrir cofre do Certificado Digital A1 (${certStatus ? `${certStatus.daysRemaining} dias restantes` : "Válido"})`}
               >
-                <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                <span>Certificado A1: <strong>{certStatus ? `${certStatus.daysRemaining}d` : "Válido"}</strong></span>
-                <KeyRound className="w-3 h-3 opacity-60 ml-0.5" />
+                <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" aria-hidden="true" />
+                <span className="truncate">
+                  <span className="sm:hidden">A1: </span>
+                  <span className="hidden sm:inline">Certificado A1: </span>
+                  <strong>{certStatus ? `${certStatus.daysRemaining}d` : "Válido"}</strong>
+                </span>
+                <KeyRound className="w-3 h-3 opacity-60 ml-0.5 shrink-0" aria-hidden="true" />
               </button>
             </div>
           </div>
 
           {/* 4 KPI Cards em Tempo Real (100% focados em NFS-e) */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2 border-t border-border/60">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 pt-2.5 border-t border-border/60">
             {/* Card 1: Faturamento Emitido & ISS */}
-            <div className="p-3.5 rounded-2xl bg-muted/30 border border-border/80 flex items-center justify-between">
-              <div>
-                <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Faturamento c/ Nota</span>
-                <div className="text-lg font-black text-emerald-600 mt-0.5">
+            <div className="p-2.5 sm:p-3.5 rounded-2xl bg-muted/30 border border-border/80 flex items-start sm:items-center justify-between gap-2 min-w-0">
+              <div className="min-w-0 flex-1">
+                <span className="text-[10px] sm:text-[11px] font-bold text-muted-foreground uppercase tracking-wider block leading-tight">
+                  Faturamento c/ Nota
+                </span>
+                <div className="text-sm sm:text-lg font-black text-emerald-600 mt-1 tabular-nums leading-tight break-words">
                   R$ {livroSubtotais.faturamentoTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">
-                  ISS Estimado (2%): <strong className="text-foreground">R$ {livroSubtotais.issTotal.toFixed(2)}</strong>
+                <div className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
+                  ISS (2%): <strong className="text-foreground tabular-nums">R$ {livroSubtotais.issTotal.toFixed(2)}</strong>
                 </div>
               </div>
-              <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center shrink-0">
-                <FileSpreadsheet className="w-4 h-4" />
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center shrink-0">
+                <FileSpreadsheet className="w-4 h-4" aria-hidden="true" />
               </div>
             </div>
 
@@ -4009,23 +4024,25 @@ export default function FiscalInvoicesPage() {
             <button
               type="button"
               onClick={() => setActiveTab("history")}
-              className="p-3.5 rounded-2xl bg-muted/30 hover:bg-muted/50 border border-border/80 transition-all text-left flex items-center justify-between group cursor-pointer"
+              className="p-2.5 sm:p-3.5 rounded-2xl bg-muted/30 hover:bg-muted/50 border border-border/80 transition-all text-left flex items-start sm:items-center justify-between gap-2 group cursor-pointer min-w-0"
             >
-              <div>
-                <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Notas Emitidas</span>
-                <div className="text-lg font-black text-foreground mt-0.5 flex items-center gap-1.5">
+              <div className="min-w-0 flex-1">
+                <span className="text-[10px] sm:text-[11px] font-bold text-muted-foreground uppercase tracking-wider block leading-tight">
+                  Notas Emitidas
+                </span>
+                <div className="text-sm sm:text-lg font-black text-foreground mt-1 flex items-baseline gap-1 flex-wrap tabular-nums leading-tight">
                   <span className="text-emerald-600">{livroSubtotais.autorizadasCount}</span>
-                  <span className="text-xs text-muted-foreground font-normal">autorizadas</span>
+                  <span className="text-[10px] sm:text-xs text-muted-foreground font-normal">aut.</span>
                   {livroSubtotais.canceladasCount > 0 && (
-                    <span className="text-xs text-rose-500 font-bold ml-1">({livroSubtotais.canceladasCount} canc.)</span>
+                    <span className="text-[10px] sm:text-xs text-rose-500 font-bold">({livroSubtotais.canceladasCount} canc.)</span>
                   )}
                 </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">
-                  Divisão: <strong>{livroSubtotais.pfCount} PF</strong> • <strong>{livroSubtotais.pjCount} PJ</strong>
+                <div className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
+                  <strong>{livroSubtotais.pfCount} PF</strong> • <strong>{livroSubtotais.pjCount} PJ</strong>
                 </div>
               </div>
-              <div className="w-9 h-9 rounded-xl bg-blue-500/10 text-blue-600 flex items-center justify-center shrink-0">
-                <Layers className="w-4 h-4" />
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-blue-500/10 text-blue-600 flex items-center justify-center shrink-0">
+                <Layers className="w-4 h-4" aria-hidden="true" />
               </div>
             </button>
 
@@ -4036,23 +4053,25 @@ export default function FiscalInvoicesPage() {
                 setPendingScopeFilter("priority")
                 setActiveTab("batch")
               }}
-              className="p-3.5 rounded-2xl bg-amber-500/5 hover:bg-amber-500/10 border border-amber-500/20 transition-all text-left flex items-center justify-between group cursor-pointer"
+              className="p-2.5 sm:p-3.5 rounded-2xl bg-amber-500/5 hover:bg-amber-500/10 border border-amber-500/20 transition-all text-left flex items-start sm:items-center justify-between gap-2 group cursor-pointer min-w-0"
             >
-              <div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">Fila Prioritária s/ Nota</span>
-                  <Badge className="bg-amber-500 text-white text-[9px] h-4 px-1">PJ & Recentes</Badge>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] sm:text-[11px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider leading-tight">
+                    Fila Prioritária
+                  </span>
+                  <Badge className="hidden sm:inline-flex bg-amber-500 text-white text-[9px] h-4 px-1">PJ &amp; Recentes</Badge>
                 </div>
-                <div className="text-lg font-black text-amber-700 dark:text-amber-300 mt-0.5">
+                <div className="text-sm sm:text-lg font-black text-amber-700 dark:text-amber-300 mt-1 tabular-nums leading-tight">
                   {pendingScopeCounts.priority} {pendingScopeCounts.priority === 1 ? "estadia" : "estadias"}
                 </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1">
-                  <span>{pendingScopeCounts.all} no histórico total</span>
-                  <ChevronRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-0.5 leading-tight">
+                  <span className="truncate">{pendingScopeCounts.all} no total</span>
+                  <ChevronRight className="w-3 h-3 shrink-0 group-hover:translate-x-0.5 transition-transform" aria-hidden="true" />
                 </div>
               </div>
-              <div className="w-9 h-9 rounded-xl bg-amber-500/15 text-amber-600 flex items-center justify-center shrink-0">
-                <Zap className="w-4 h-4" />
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-amber-500/15 text-amber-600 flex items-center justify-center shrink-0">
+                <Zap className="w-4 h-4" aria-hidden="true" />
               </div>
             </button>
 
@@ -4060,29 +4079,31 @@ export default function FiscalInvoicesPage() {
             <button
               type="button"
               onClick={() => setActiveTab(retryQueue.length > 0 ? "history" : "settings")}
-              className={`p-3.5 rounded-2xl border transition-all text-left flex items-center justify-between group cursor-pointer ${
+              className={`p-2.5 sm:p-3.5 rounded-2xl border transition-all text-left flex items-start sm:items-center justify-between gap-2 group cursor-pointer min-w-0 ${
                 retryQueue.length > 0 
                   ? "bg-rose-500/5 hover:bg-rose-500/10 border-rose-500/30" 
                   : "bg-muted/30 hover:bg-muted/50 border-border/80"
               }`}
             >
-              <div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Transmissão & Automação</span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] sm:text-[11px] font-bold text-muted-foreground uppercase tracking-wider leading-tight">
+                    Transmissão
+                  </span>
                   {retryQueue.length > 0 && (
                     <Badge className="bg-rose-600 text-white text-[9px] h-4 px-1 animate-pulse">Atenção</Badge>
                   )}
                 </div>
-                <div className={`text-lg font-black mt-0.5 ${retryQueue.length > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                  {retryQueue.length > 0 ? `${retryQueue.length} em contingência` : "Operacional"}
+                <div className={`text-sm sm:text-lg font-black mt-1 leading-tight ${retryQueue.length > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                  {retryQueue.length > 0 ? `${retryQueue.length} pendente${retryQueue.length > 1 ? "s" : ""}` : "Operacional"}
                 </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1">
-                  <span>{retryQueue.length > 0 ? "Ver fila no Livro Fiscal" : "Regras de auto-emissão & A1"}</span>
-                  <ChevronRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-0.5 leading-tight">
+                  <span className="truncate">{retryQueue.length > 0 ? "Ver contingência" : "Regras & A1"}</span>
+                  <ChevronRight className="w-3 h-3 shrink-0 group-hover:translate-x-0.5 transition-transform" aria-hidden="true" />
                 </div>
               </div>
-              <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${retryQueue.length > 0 ? 'bg-rose-500/15 text-rose-600' : 'bg-emerald-500/10 text-emerald-600'}`}>
-                {retryQueue.length > 0 ? <Clock className="w-4 h-4" /> : <ShieldCheck className="w-4 h-4" />}
+              <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center shrink-0 ${retryQueue.length > 0 ? 'bg-rose-500/15 text-rose-600' : 'bg-emerald-500/10 text-emerald-600'}`}>
+                {retryQueue.length > 0 ? <Clock className="w-4 h-4" aria-hidden="true" /> : <ShieldCheck className="w-4 h-4" aria-hidden="true" />}
               </div>
             </button>
           </div>
@@ -4090,81 +4111,56 @@ export default function FiscalInvoicesPage() {
           )}
         />
 
-        {/* ── NAVEGAÇÃO DO HUB FISCAL (4 ABAS LIMPAS E SEM REDUNDÂNCIA) ── */}
-        <Tabs value={activeTab} onValueChange={(v: any) => setActiveTab(v)} className="space-y-5">
-          <TabsList className="bg-card border border-border p-1.5 rounded-2xl h-auto grid grid-cols-2 lg:grid-cols-4 gap-1.5 shadow-xs">
-            <TabsTrigger value="studio" className="rounded-xl py-2.5 text-xs font-bold gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Sparkles className="w-4 h-4" />
-              <span>Emitir Nota Avulsa</span>
-            </TabsTrigger>
-
-            <TabsTrigger value="batch" className="rounded-xl py-2.5 text-xs font-bold gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Zap className="w-4 h-4" />
-              <span>Reservas sem Nota</span>
-              {pendingScopeCounts.priority > 0 && (
-                <Badge className="ml-1 bg-amber-500 text-white text-[10px] px-1.5 py-0">
-                  {pendingScopeCounts.priority}
-                </Badge>
-              )}
-            </TabsTrigger>
-
-            <TabsTrigger value="history" className="rounded-xl py-2.5 text-xs font-bold gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <FileText className="w-4 h-4" />
-              <span>Notas Emitidas ({invoices.length})</span>
-              {retryQueue.length > 0 && (
-                <Badge className="ml-1 bg-rose-600 text-white text-[10px] px-1.5 py-0">
-                  {retryQueue.length}
-                </Badge>
-              )}
-            </TabsTrigger>
-
-            <TabsTrigger value="settings" className="rounded-xl py-2.5 text-xs font-bold gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Sliders className="w-4 h-4" />
-              <span>Configurações & Certificado A1</span>
-            </TabsTrigger>
-          </TabsList>
+        {/* ── NAVEGAÇÃO DO HUB FISCAL (4 ABAS EM LINHA ÚNICA COM SCROLL SNAP + INDICADOR NÃO-COR) ── */}
+        <Tabs value={activeTab} onValueChange={(v: any) => setActiveTab(v)} className="space-y-4 sm:space-y-5 min-w-0">
+          <FiscalTabsBar
+            activeTab={activeTab}
+            pendingPriorityCount={pendingScopeCounts.priority}
+            invoicesCount={invoices.length}
+            retryQueueCount={retryQueue.length}
+          />
 
           {/* ══════════════════════════════════════════════════════════════════════
               R2: EMISSOR STUDIO UNIFICADO (CHAT IA + FORMULÁRIO + LIVE PREVIEW)
              ══════════════════════════════════════════════════════════════════════ */}
-          <TabsContent value="studio" className="space-y-4 m-0">
+          <TabsContent value="studio" className="space-y-4 m-0 min-w-0">
             {/* Banner da Última Nota Emitida com Ações Pós-Emissão */}
             {lastEmittedInvoice && (
-              <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-3xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
-                <div className="flex items-center gap-3">
+              <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl sm:rounded-3xl p-3.5 sm:p-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shadow-xs min-w-0">
+                <div className="flex items-start sm:items-center gap-3 min-w-0">
                   <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-black shrink-0">
-                    <CheckCircle2 className="w-5 h-5" />
+                    <CheckCircle2 className="w-5 h-5" aria-hidden="true" />
                   </div>
-                  <div>
-                    <h4 className="font-black text-xs text-foreground flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <h4 className="font-black text-xs text-foreground flex items-center gap-2 flex-wrap">
                       <span>NFS-e Nº {lastEmittedInvoice.numeroNfse} Autorizada!</span>
-                      <Badge className="bg-emerald-600 text-white text-[10px]">
+                      <Badge className="bg-emerald-600 text-white text-[10px] shrink-0">
                         🇧🇷 Padrão Nacional (Gov.br)
                       </Badge>
                     </h4>
-                    <p className="text-[11px] text-muted-foreground">
-                      Tomador: <strong>{lastEmittedInvoice.tomadorNome}</strong> • Valor: <strong>R$ {Number(lastEmittedInvoice.valorServico || 0).toFixed(2)}</strong> • Cód: <span className="font-mono">{lastEmittedInvoice.codigoVerificacao}</span>
+                    <p className="text-[11px] text-muted-foreground mt-0.5 break-words">
+                      Tomador: <strong>{lastEmittedInvoice.tomadorNome}</strong> • Valor: <strong className="tabular-nums">R$ {Number(lastEmittedInvoice.valorServico || 0).toFixed(2)}</strong> • Cód: <span className="font-mono fiscal-break-anywhere">{lastEmittedInvoice.codigoVerificacao}</span>
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
+                <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 w-full sm:w-auto sm:flex-wrap">
                   {lastEmittedInvoice.danfseUrl && (
                     <Button 
                       size="sm"
                       onClick={() => window.open(lastEmittedInvoice.danfseUrl, "_blank")}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl h-8.5 gap-1.5"
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl min-h-[44px] sm:min-h-0 sm:h-8.5 gap-1.5"
                     >
-                      <ExternalLink className="w-3.5 h-3.5" />
+                      <ExternalLink className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                       <span>Ver DANFSE</span>
                     </Button>
                   )}
                   <Button 
                     size="sm"
                     onClick={() => window.open(`/api/nfse/pdf/${lastEmittedInvoice.numeroNfse || lastEmittedInvoice.id}`, "_blank")}
-                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl h-8.5 gap-1.5"
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl min-h-[44px] sm:min-h-0 sm:h-8.5 gap-1.5"
                   >
-                    <FileText className="w-3.5 h-3.5" />
+                    <FileText className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                     <span>Abrir PDF</span>
                   </Button>
                   {lastEmittedInvoice.linkPrefeitura && (
@@ -4172,9 +4168,9 @@ export default function FiscalInvoicesPage() {
                       size="sm"
                       variant="outline"
                       onClick={() => window.open(lastEmittedInvoice.linkPrefeitura, "_blank")}
-                      className="font-bold text-xs rounded-xl h-8.5 gap-1.5 border-emerald-600/30 text-emerald-700 dark:text-emerald-300"
+                      className="font-bold text-xs rounded-xl min-h-[44px] sm:min-h-0 sm:h-8.5 gap-1.5 border-emerald-600/30 text-emerald-700 dark:text-emerald-300"
                     >
-                      <ExternalLink className="w-3.5 h-3.5" />
+                      <ExternalLink className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                       <span>Portal Gov.br</span>
                     </Button>
                   )}
@@ -4219,17 +4215,18 @@ export default function FiscalInvoicesPage() {
                         return buildDirectWaWebUrl(targetPhone, message)
                       }
                     })}
-                    className="font-bold text-xs rounded-xl h-8.5 gap-1.5 text-emerald-600 border-emerald-500/30 hover:bg-emerald-500/10"
+                    className="font-bold text-xs rounded-xl min-h-[44px] sm:min-h-0 sm:h-8.5 gap-1.5 text-emerald-600 border-emerald-500/30 hover:bg-emerald-500/10"
                     title="Clique: enviar via Z-API | Segure 2s: abrir no WhatsApp Web"
+                    aria-label={`Enviar NFS-e Nº ${lastEmittedInvoice.numeroNfse} pelo WhatsApp`}
                   >
-                    <MessageSquare className="w-3.5 h-3.5" />
+                    <MessageSquare className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                     <span>WhatsApp</span>
                   </Button>
                   <Button 
                     size="sm"
                     variant="ghost"
                     onClick={() => setLastEmittedInvoice(null)}
-                    className="font-bold text-xs rounded-xl h-8.5 text-muted-foreground"
+                    className="col-span-2 sm:col-span-1 font-bold text-xs rounded-xl min-h-[40px] sm:min-h-0 sm:h-8.5 text-muted-foreground"
                   >
                     Fechar
                   </Button>
@@ -4238,23 +4235,31 @@ export default function FiscalInvoicesPage() {
             )}
 
             {/* Topo do Studio: CRM 360° Combobox & Seletor de 3 Tomadores (PF / Empresa PJ / Agência B2B) */}
-            <div className="bg-card border border-border p-4 rounded-3xl shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+            <div className="bg-card border border-border p-3.5 sm:p-4 rounded-2xl sm:rounded-3xl shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 min-w-0">
               {/* Combobox Pesquisável Multi-Entidade */}
-              <div className="relative flex-1" ref={guestComboboxRef}>
+              <search aria-label="Pesquisar entidade ou reserva no CRM" className="relative flex-1 min-w-0" ref={guestComboboxRef}>
                 <div className="relative">
-                  <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" aria-hidden="true" />
                   <Input 
-                    placeholder="Pesquisar Hóspede (PF), Empresa (PJ), Agência B2B ou Reserva para carregar..."
+                    type="search"
+                    inputMode="search"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    aria-label="Pesquisar Hóspede (PF), Empresa (PJ), Agência B2B ou Reserva"
+                    placeholder="Pesquisar Hóspede, Empresa, Agência ou Reserva..."
                     value={guestSearchQuery}
                     onChange={e => {
                       setGuestSearchQuery(e.target.value)
                       setGuestDropdownOpen(true)
                     }}
                     onFocus={() => setGuestDropdownOpen(true)}
-                    className="h-10 text-xs pl-9 pr-8 rounded-2xl bg-background font-medium border-border"
+                    className="h-11 md:h-10 text-base md:text-xs pl-9 pr-11 rounded-2xl bg-background font-medium border-border"
                   />
                   {guestSearchQuery && (
                     <button
+                      type="button"
+                      aria-label="Limpar busca"
                       onClick={() => {
                         setGuestSearchQuery("")
                         setReplaceDraftMeta(null)
@@ -4268,15 +4273,15 @@ export default function FiscalInvoicesPage() {
                         setExtractedData({})
                         setIsReadyToEmit(false)
                       }}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs"
+                      className="absolute right-0.5 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/60"
                     >
-                      ×
+                      <X className="w-4 h-4" aria-hidden="true" />
                     </button>
                   )}
                 </div>
 
                 {guestDropdownOpen && (
-                  <div className="absolute top-11 left-0 right-0 z-50 bg-popover border border-border rounded-2xl shadow-xl max-h-72 overflow-y-auto p-1.5 text-xs space-y-1">
+                  <div className="absolute top-12 md:top-11 left-0 right-0 z-50 bg-popover border border-border rounded-2xl shadow-xl max-h-[55dvh] sm:max-h-72 overflow-y-auto overscroll-contain p-1.5 text-xs space-y-1">
                     {filteredCrmItems.length === 0 ? (
                       <div className="p-3 text-center text-muted-foreground">Nenhuma entidade ou reserva encontrada</div>
                     ) : (
@@ -4285,7 +4290,7 @@ export default function FiscalInvoicesPage() {
                           key={item.id}
                           type="button"
                           onClick={() => handleSelectEntity(item)}
-                          className="w-full text-left p-2.5 rounded-xl hover:bg-muted/80 transition-colors flex items-start justify-between gap-2 border border-transparent hover:border-border/50"
+                          className="w-full min-h-[44px] text-left p-2.5 rounded-xl hover:bg-muted/80 transition-colors flex items-start justify-between gap-2 border border-transparent hover:border-border/50"
                         >
                           <div className="flex flex-col min-w-0">
                             <span className="font-bold text-foreground truncate">{item.title}</span>
@@ -4309,14 +4314,15 @@ export default function FiscalInvoicesPage() {
                     )}
                   </div>
                 )}
-              </div>
+              </search>
 
               {/* Seletores Rápidos dos Tomadores: Hóspede (PF) | Solicitante (PF) | Empresa (PJ) | Agência B2B (PJ) */}
-              <div className="flex items-center gap-1.5 bg-muted/50 p-1 rounded-2xl border border-border shrink-0 flex-wrap">
+              <div className="grid grid-cols-2 sm:flex sm:items-center gap-1.5 bg-muted/50 p-1.5 sm:p-1 rounded-2xl border border-border shrink-0 sm:flex-wrap">
                 <button
                   type="button"
                   onClick={() => handleSelectTomadorMode("pf")}
-                  className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5 ${
+                  aria-pressed={tomadorMode === "pf"}
+                  className={`min-h-[42px] sm:min-h-0 px-3 py-2 sm:py-1.5 rounded-xl text-xs sm:text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 ${
                     tomadorMode === "pf"
                       ? "bg-emerald-600 text-white shadow-xs"
                       : "text-muted-foreground hover:text-foreground"
@@ -4328,73 +4334,77 @@ export default function FiscalInvoicesPage() {
                   <button
                     type="button"
                     onClick={() => handleSelectTomadorMode("requester")}
-                    className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5 ${
+                    aria-pressed={tomadorMode === "requester"}
+                    className={`min-h-[42px] sm:min-h-0 px-3 py-2 sm:py-1.5 rounded-xl text-xs sm:text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 ${
                       tomadorMode === "requester"
                         ? "bg-amber-600 text-white shadow-xs"
                         : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
                     <span>👥 Solicitante (PF)</span>
-                    {linkedRequester && <span className="w-1.5 h-1.5 rounded-full bg-amber-300" />}
+                    {linkedRequester && <span className="w-1.5 h-1.5 rounded-full bg-amber-300 shrink-0" />}
                   </button>
                 )}
                 <button
                   type="button"
                   onClick={() => handleSelectTomadorMode("pj")}
-                  className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5 ${
+                  aria-pressed={tomadorMode === "pj"}
+                  className={`min-h-[42px] sm:min-h-0 px-3 py-2 sm:py-1.5 rounded-xl text-xs sm:text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 ${
                     tomadorMode === "pj"
                       ? "bg-indigo-600 text-white shadow-xs"
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   <span>🏢 Empresa (PJ)</span>
-                  {linkedCompany && <span className="w-1.5 h-1.5 rounded-full bg-indigo-300" />}
+                  {linkedCompany && <span className="w-1.5 h-1.5 rounded-full bg-indigo-300 shrink-0" />}
                 </button>
                 <button
                   type="button"
                   onClick={() => handleSelectTomadorMode("agency")}
-                  className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5 ${
+                  aria-pressed={tomadorMode === "agency"}
+                  className={`min-h-[42px] sm:min-h-0 px-3 py-2 sm:py-1.5 rounded-xl text-xs sm:text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 ${
                     tomadorMode === "agency"
                       ? "bg-fuchsia-600 text-white shadow-xs"
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  <span>🟣 Agência B2B (PJ)</span>
-                  {linkedAgency && <span className="w-1.5 h-1.5 rounded-full bg-fuchsia-300" />}
+                  <span>🟣 Agência B2B</span>
+                  {linkedAgency && <span className="w-1.5 h-1.5 rounded-full bg-fuchsia-300 shrink-0" />}
                 </button>
               </div>
             </div>
 
             {/* Grid de Duas Colunas Integradas: Studio de Emissão */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5 items-start">
               {/* ── COLUNA 1 (ESQUERDA): ENTRADA (CHAT IA OU FORMULÁRIO ESTRUTURADO) ── */}
-              <div className="lg:col-span-7 space-y-4">
-                <Card className="rounded-3xl border border-border shadow-sm">
-                  <CardHeader className="p-4 border-b border-border flex flex-row items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
-                        {studioInputMode === "chat" ? <Bot className="w-4 h-4" /> : <PlusCircle className="w-4 h-4" />}
+              <div className="lg:col-span-7 space-y-4 min-w-0">
+                <Card className="rounded-2xl sm:rounded-3xl border border-border shadow-sm min-w-0">
+                  <CardHeader className="p-3.5 sm:p-4 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center text-primary shrink-0">
+                        {studioInputMode === "chat" ? <Bot className="w-4 h-4" aria-hidden="true" /> : <PlusCircle className="w-4 h-4" aria-hidden="true" />}
                       </div>
-                      <div>
-                        <CardTitle className="text-sm font-black text-foreground">
+                      <div className="min-w-0">
+                        <CardTitle className="fiscal-heading-balance text-sm font-black text-foreground">
                           {studioInputMode === "chat" ? "Assistente Fiscal IA" : "Formulário Estruturado de Emissão"}
                         </CardTitle>
-                        <CardDescription className="text-[11px]">
+                        <CardDescription className="fiscal-text-pretty text-[11px]">
                           {studioInputMode === "chat" ? "Extração livre e sincronização instantânea" : "Edição direta dos campos fiscais e cadastrais"}
                         </CardDescription>
                       </div>
                     </div>
 
                     {/* Alternador de Modo: Chat vs Formulário */}
-                    <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-xl border border-border">
+                    <div className="grid grid-cols-2 sm:flex items-center gap-1 bg-muted/60 p-1 rounded-xl border border-border w-full sm:w-auto shrink-0">
                       <button
                         type="button"
                         onClick={() => setStudioInputMode("chat")}
-                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                        aria-pressed={studioInputMode === "chat"}
+                        className={`min-h-[40px] sm:min-h-0 px-3 sm:px-2.5 py-1.5 sm:py-1 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
                           studioInputMode === "chat" ? "bg-background text-foreground shadow-2xs" : "text-muted-foreground hover:text-foreground"
                         }`}
                       >
-                        <Bot className="w-3.5 h-3.5" />
+                        <Bot className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                         <span>Chat IA</span>
                       </button>
 
@@ -4404,23 +4414,24 @@ export default function FiscalInvoicesPage() {
                           setStudioInputMode("form")
                           syncFormToPreview()
                         }}
-                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                        aria-pressed={studioInputMode === "form"}
+                        className={`min-h-[40px] sm:min-h-0 px-3 sm:px-2.5 py-1.5 sm:py-1 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
                           studioInputMode === "form" ? "bg-background text-foreground shadow-2xs" : "text-muted-foreground hover:text-foreground"
                         }`}
                       >
-                        <Sliders className="w-3.5 h-3.5" />
+                        <Sliders className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                         <span>Formulário</span>
                       </button>
                     </div>
                   </CardHeader>
 
-                  <CardContent className="p-4">
+                  <CardContent className="p-3.5 sm:p-4">
                     {/* Modo 1: Chat Inteligente */}
                     {studioInputMode === "chat" ? (
                       <div className="space-y-3">
                         <div 
                           ref={chatContainerRef}
-                          className="h-[430px] overflow-y-auto space-y-3 p-3 rounded-2xl bg-muted/20 border border-border/60 text-xs"
+                          className="h-[48dvh] min-h-[260px] max-h-[430px] overflow-y-auto overscroll-contain space-y-3 p-3 rounded-2xl bg-muted/20 border border-border/60 text-sm sm:text-xs"
                         >
                           {messages.map((m, idx) => (
                             <div 
@@ -4429,10 +4440,10 @@ export default function FiscalInvoicesPage() {
                             >
                               {m.role === "assistant" && (
                                 <div className="w-6 h-6 rounded-lg bg-primary/20 flex items-center justify-center text-primary shrink-0 mt-0.5">
-                                  <Bot className="w-3.5 h-3.5" />
+                                  <Bot className="w-3.5 h-3.5" aria-hidden="true" />
                                 </div>
                               )}
-                              <div className={`p-3 rounded-2xl max-w-[85%] whitespace-pre-wrap leading-relaxed ${
+                              <div className={`p-3 rounded-2xl max-w-[90%] sm:max-w-[85%] whitespace-pre-wrap break-words leading-relaxed ${
                                 m.role === "user"
                                   ? "bg-primary text-primary-foreground font-medium rounded-tr-xs"
                                   : "bg-card border border-border text-foreground font-normal rounded-tl-xs shadow-2xs"
@@ -4443,7 +4454,7 @@ export default function FiscalInvoicesPage() {
                           ))}
                           {chatLoading && (
                             <div className="flex items-center gap-2 text-muted-foreground text-xs italic p-2">
-                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" aria-hidden="true" />
                               <span>Interpretando mensagem e dados fiscais...</span>
                             </div>
                           )}
@@ -4452,31 +4463,37 @@ export default function FiscalInvoicesPage() {
                         {/* Input do Chat */}
                         <form onSubmit={handleSendMessage} className="flex gap-2">
                           <Input 
-                            placeholder="Ex: Emitir nota para Dr. Carlos, CPF 12345678900, flat 102, 3 diárias, R$ 750,00..."
+                            placeholder="Ex: Emitir nota para Dr. Carlos, CPF 12345678900, flat 102, 3 diárias, R$ 750..."
+                            aria-label="Mensagem para o assistente fiscal IA"
                             value={chatInput}
                             onChange={e => setChatInput(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === "Enter" && e.nativeEvent.isComposing) {
+                                e.preventDefault()
+                              }
+                            }}
                             disabled={chatLoading}
-                            className="text-xs h-10 rounded-2xl bg-background"
+                            className="text-base md:text-xs h-11 md:h-10 rounded-2xl bg-background flex-1 min-w-0"
                           />
                           <Button 
                             type="submit"
                             disabled={chatLoading || !chatInput.trim()}
-                            className="h-10 px-4 rounded-2xl bg-primary text-primary-foreground font-bold text-xs gap-1.5 shrink-0"
+                            className="h-11 md:h-10 px-4 rounded-2xl bg-primary text-primary-foreground font-bold text-xs gap-1.5 shrink-0"
                           >
-                            <Send className="w-3.5 h-3.5" />
+                            <Send className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                             <span>Enviar</span>
                           </Button>
                         </form>
 
-                        <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1">
-                          <span>💡 Dica: Você pode digitar livremente ou abrir o formulário para editar campo por campo.</span>
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs sm:text-[11px] text-muted-foreground pt-1">
+                          <span className="fiscal-text-pretty">💡 Dica: Você pode digitar livremente ou abrir o formulário para editar campo por campo.</span>
                           <button
                             type="button"
                             onClick={() => {
                               setStudioInputMode("form")
                               syncFormToPreview()
                             }}
-                            className="font-bold text-primary hover:underline"
+                            className="font-bold text-primary hover:underline min-h-[36px] sm:min-h-0 inline-flex items-center self-start sm:self-auto shrink-0"
                           >
                             Editar no formulário →
                           </button>
@@ -4487,15 +4504,16 @@ export default function FiscalInvoicesPage() {
                       <div className="space-y-4">
                         {/* Seção Tomador */}
                         <div className="space-y-2.5">
-                          <div className="flex items-center justify-between flex-wrap gap-2">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                             <span className="text-xs font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                              <User className="w-3.5 h-3.5 text-primary" /> Dados do Tomador (Cliente)
+                              <User className="w-3.5 h-3.5 text-primary shrink-0" aria-hidden="true" /> Dados do Tomador (Cliente)
                             </span>
-                            <div className="flex items-center gap-1.5 text-[11px] flex-wrap">
+                            <div className="fiscal-wrap-balance items-center gap-1.5 text-xs sm:text-[11px]">
                               <button
                                 type="button"
                                 onClick={() => handleSelectTomadorMode("pf")}
-                                className={`font-bold px-2 py-0.5 rounded-lg transition-colors ${tomadorMode === "pf" ? "bg-emerald-600 text-white" : "text-muted-foreground hover:text-foreground"}`}
+                                aria-pressed={tomadorMode === "pf"}
+                                className={`min-h-[36px] sm:min-h-0 font-bold px-2.5 sm:px-2 py-1.5 sm:py-0.5 rounded-lg transition-colors ${tomadorMode === "pf" ? "bg-emerald-600 text-white" : "text-muted-foreground hover:text-foreground bg-muted/40 sm:bg-transparent"}`}
                               >
                                 👤 Hóspede (PF)
                               </button>
@@ -4503,7 +4521,8 @@ export default function FiscalInvoicesPage() {
                                 <button
                                   type="button"
                                   onClick={() => handleSelectTomadorMode("requester")}
-                                  className={`font-bold px-2 py-0.5 rounded-lg transition-colors ${tomadorMode === "requester" ? "bg-amber-600 text-white" : "text-muted-foreground hover:text-foreground"}`}
+                                  aria-pressed={tomadorMode === "requester"}
+                                  className={`min-h-[36px] sm:min-h-0 font-bold px-2.5 sm:px-2 py-1.5 sm:py-0.5 rounded-lg transition-colors ${tomadorMode === "requester" ? "bg-amber-600 text-white" : "text-muted-foreground hover:text-foreground bg-muted/40 sm:bg-transparent"}`}
                                 >
                                   👥 Solicitante (PF)
                                 </button>
@@ -4511,14 +4530,16 @@ export default function FiscalInvoicesPage() {
                               <button
                                 type="button"
                                 onClick={() => handleSelectTomadorMode("pj")}
-                                className={`font-bold px-2 py-0.5 rounded-lg transition-colors ${tomadorMode === "pj" ? "bg-indigo-600 text-white" : "text-muted-foreground hover:text-foreground"}`}
+                                aria-pressed={tomadorMode === "pj"}
+                                className={`min-h-[36px] sm:min-h-0 font-bold px-2.5 sm:px-2 py-1.5 sm:py-0.5 rounded-lg transition-colors ${tomadorMode === "pj" ? "bg-indigo-600 text-white" : "text-muted-foreground hover:text-foreground bg-muted/40 sm:bg-transparent"}`}
                               >
                                 🏢 Empresa (PJ)
                               </button>
                               <button
                                 type="button"
                                 onClick={() => handleSelectTomadorMode("agency")}
-                                className={`font-bold px-2 py-0.5 rounded-lg transition-colors ${tomadorMode === "agency" ? "bg-fuchsia-600 text-white" : "text-muted-foreground hover:text-foreground"}`}
+                                aria-pressed={tomadorMode === "agency"}
+                                className={`min-h-[36px] sm:min-h-0 font-bold px-2.5 sm:px-2 py-1.5 sm:py-0.5 rounded-lg transition-colors ${tomadorMode === "agency" ? "bg-fuchsia-600 text-white" : "text-muted-foreground hover:text-foreground bg-muted/40 sm:bg-transparent"}`}
                               >
                                 🟣 Agência B2B (PJ)
                               </button>
@@ -4527,7 +4548,7 @@ export default function FiscalInvoicesPage() {
 
                           <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
                             {/* Documento com Botão Buscar CPF/CNPJ */}
-                            <div className="sm:col-span-5 space-y-1">
+                            <div className="sm:col-span-5 space-y-1 min-w-0">
                               <Label className="text-[11px] font-bold">
                                 {tomadorMode === "agency"
                                   ? "CNPJ da Agência B2B"
@@ -4539,6 +4560,10 @@ export default function FiscalInvoicesPage() {
                               </Label>
                               <div className="flex gap-1.5">
                                 <Input 
+                                  inputMode="numeric"
+                                  autoCorrect="off"
+                                  autoCapitalize="none"
+                                  spellCheck={false}
                                   placeholder={tomadorMode === "pf" || tomadorMode === "requester" ? "000.000.000-00" : "00.000.000/0000-00"}
                                   value={formTomadorDoc}
                                   onChange={e => {
@@ -4552,23 +4577,24 @@ export default function FiscalInvoicesPage() {
                                     }
                                   }}
                                   onBlur={() => handleSaveTomadorToCrm(true)}
-                                  className="h-9 text-xs rounded-xl"
+                                  className="h-11 md:h-9 text-base md:text-xs rounded-xl flex-1 min-w-0"
                                 />
                                 <Button 
                                   type="button" 
                                   size="sm"
                                   onClick={() => handleLookupDoc()}
                                   disabled={isLookingUpDoc}
-                                  className="h-9 px-2.5 rounded-xl text-xs font-bold bg-muted hover:bg-muted/80 text-foreground border border-border shrink-0"
+                                  className="h-11 w-11 md:h-9 md:w-auto md:px-2.5 rounded-xl text-xs font-bold bg-muted hover:bg-muted/80 text-foreground border border-border shrink-0"
                                   title={tomadorMode !== "pf" && tomadorMode !== "requester" ? "Buscar Razão Social e Endereço pelo CNPJ" : "Buscar Cadastro e Endereço do Check-in Digital pelo CPF"}
+                                  aria-label={tomadorMode !== "pf" && tomadorMode !== "requester" ? "Buscar Razão Social e Endereço pelo CNPJ" : "Buscar Cadastro e Endereço pelo CPF"}
                                 >
-                                  <Search className={`w-3.5 h-3.5 ${isLookingUpDoc ? 'animate-spin' : ''}`} />
+                                  <Search className={`w-4 h-4 md:w-3.5 md:h-3.5 ${isLookingUpDoc ? 'animate-spin' : ''}`} aria-hidden="true" />
                                 </Button>
                               </div>
                             </div>
 
                             {/* Nome / Razão Social */}
-                            <div className="sm:col-span-7 space-y-1">
+                            <div className="sm:col-span-7 space-y-1 min-w-0">
                               <Label className="text-[11px] font-bold">
                                 {tomadorMode === "agency"
                                   ? "Razão Social da Agência"
@@ -4588,16 +4614,19 @@ export default function FiscalInvoicesPage() {
                                   syncFormToPreview({ tomadorNome: val })
                                 }}
                                 onBlur={() => handleSaveTomadorToCrm(true)}
-                                className="h-9 text-xs rounded-xl font-bold"
+                                className="h-11 md:h-9 text-base md:text-xs rounded-xl font-bold"
                               />
                             </div>
 
                             {/* E-mail e Telefone */}
-                            <div className="sm:col-span-6 space-y-1">
+                            <div className="sm:col-span-6 space-y-1 min-w-0">
                               <Label className="text-[11px] font-bold">E-mail Principal do Tomador</Label>
                               <Input 
                                 type="text"
                                 inputMode="email"
+                                autoCorrect="off"
+                                autoCapitalize="none"
+                                spellCheck={false}
                                 placeholder="financeiro@empresa.com; fiscal@empresa.com"
                                 value={formTomadorEmail}
                                 onChange={e => {
@@ -4607,18 +4636,21 @@ export default function FiscalInvoicesPage() {
                                   syncFormToPreview({ tomadorEmail: val })
                                 }}
                                 onBlur={() => handleSaveTomadorToCrm(true)}
-                                className="h-9 text-xs rounded-xl"
+                                className="h-11 md:h-9 text-base md:text-xs rounded-xl"
                               />
                               <p className="text-[10px] text-muted-foreground">
                                 Aceita múltiplos e-mails separados por <code className="font-mono">;</code> (o 1º vai na DPS/XML).
                               </p>
                             </div>
 
-                            <div className="sm:col-span-6 space-y-1">
+                            <div className="sm:col-span-6 space-y-1 min-w-0">
                               <Label className="text-[11px] font-bold">Telefone (com DDD)</Label>
                               <Input 
                                 type="tel"
                                 inputMode="tel"
+                                autoCorrect="off"
+                                autoCapitalize="none"
+                                spellCheck={false}
                                 placeholder="(22) 99999-9999"
                                 value={formTomadorTelefone}
                                 onChange={e => {
@@ -4628,14 +4660,14 @@ export default function FiscalInvoicesPage() {
                                   syncFormToPreview({ tomadorTelefone: val })
                                 }}
                                 onBlur={() => handleSaveTomadorToCrm(true)}
-                                className="h-9 text-xs rounded-xl"
+                                className="h-11 md:h-9 text-base md:text-xs rounded-xl"
                               />
                             </div>
 
                             {/* Controle de Envio de NFS-e B2B & Privacidade do Hóspede */}
-                            <div className="sm:col-span-12 p-2.5 rounded-xl bg-fuchsia-500/5 border border-fuchsia-500/20 space-y-2">
+                            <div className="sm:col-span-12 p-3 sm:p-2.5 rounded-xl bg-fuchsia-500/5 border border-fuchsia-500/20 space-y-2">
                               <div className="flex items-center justify-between gap-2 flex-wrap">
-                                <label className="flex items-center gap-2 text-[11px] font-bold text-foreground cursor-pointer">
+                                <label className="flex items-start sm:items-center gap-2.5 min-h-[44px] sm:min-h-0 py-1 sm:py-0 text-xs sm:text-[11px] font-bold text-foreground cursor-pointer">
                                   <input
                                     type="checkbox"
                                     checked={formNfHideFromGuest}
@@ -4644,7 +4676,7 @@ export default function FiscalInvoicesPage() {
                                       setFormNfHideFromGuest(val)
                                       handleSaveTomadorToCrm(true, { nfHideFromGuest: val })
                                     }}
-                                    className="rounded border-fuchsia-500 text-fuchsia-600"
+                                    className="w-4 h-4 mt-0.5 sm:mt-0 shrink-0 rounded border-fuchsia-500 text-fuchsia-600"
                                   />
                                   <span>🔒 Ocultar NFS-e e valores do Hóspede (Enviar apenas para Agência / Empresa)</span>
                                 </label>
@@ -4659,6 +4691,11 @@ export default function FiscalInvoicesPage() {
                                   E-mails de Faturamento / Conciliação B2B (separados por ; ou vírgula)
                                 </Label>
                                 <Input
+                                  type="text"
+                                  inputMode="email"
+                                  autoCorrect="off"
+                                  autoCapitalize="none"
+                                  spellCheck={false}
                                   placeholder="Ex: faturamento@agencia.com.br; conciliacao@empresa.com.br"
                                   value={formNfDeliveryEmails}
                                   onChange={e => {
@@ -4666,7 +4703,7 @@ export default function FiscalInvoicesPage() {
                                     setFormNfDeliveryEmails(e.target.value)
                                   }}
                                   onBlur={() => handleSaveTomadorToCrm(true)}
-                                  className="h-8 text-[11px] rounded-lg bg-background"
+                                  className="h-11 md:h-8 text-base md:text-[11px] rounded-xl md:rounded-lg bg-background"
                                 />
                               </div>
                             </div>
@@ -4675,16 +4712,16 @@ export default function FiscalInvoicesPage() {
 
                         {/* Seção Endereço com Busca Automática de CEP */}
                         <div className="space-y-2.5 pt-2 border-t border-border">
-                          <div className="flex items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
                             <span className="text-xs font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                              <MapPin className="w-3.5 h-3.5 text-primary" /> Endereço do Tomador
+                              <MapPin className="w-3.5 h-3.5 text-primary shrink-0" aria-hidden="true" /> Endereço do Tomador
                             </span>
                             <Button
                               type="button"
                               size="sm"
                               variant="outline"
                               onClick={() => handleSaveTomadorToCrm(false)}
-                              className="h-7 px-2.5 rounded-lg text-[11px] font-bold border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+                              className="min-h-[40px] sm:min-h-0 sm:h-7 px-3 sm:px-2.5 rounded-xl sm:rounded-lg text-xs sm:text-[11px] font-bold border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
                               title="Gravar CPF, contato e endereço no cadastro do hóspede/empresa para as próximas notas"
                             >
                               💾 Salvar no Cadastro
@@ -4692,10 +4729,14 @@ export default function FiscalInvoicesPage() {
                           </div>
 
                           <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
-                            <div className="sm:col-span-4 space-y-1">
+                            <div className="sm:col-span-4 space-y-1 min-w-0">
                               <Label className="text-[11px] font-bold">CEP</Label>
                               <div className="flex gap-1.5">
                                 <Input 
+                                  inputMode="numeric"
+                                  autoCorrect="off"
+                                  autoCapitalize="none"
+                                  spellCheck={false}
                                   placeholder="28035-000"
                                   value={formTomadorCep}
                                   onChange={e => {
@@ -4709,22 +4750,23 @@ export default function FiscalInvoicesPage() {
                                     }
                                   }}
                                   onBlur={() => handleSaveTomadorToCrm(true)}
-                                  className="h-9 text-xs rounded-xl"
+                                  className="h-11 md:h-9 text-base md:text-xs rounded-xl flex-1 min-w-0"
                                 />
                                 <Button 
                                   type="button" 
                                   size="sm"
                                   onClick={handleLookupCep}
                                   disabled={isLookingUpCep}
-                                  className="h-9 px-2.5 rounded-xl text-xs font-bold bg-muted hover:bg-muted/80 text-foreground border border-border shrink-0"
+                                  className="h-11 w-11 md:h-9 md:w-auto md:px-2.5 rounded-xl text-xs font-bold bg-muted hover:bg-muted/80 text-foreground border border-border shrink-0"
                                   title="Buscar endereço pelo CEP"
+                                  aria-label="Buscar endereço pelo CEP"
                                 >
-                                  <Search className={`w-3.5 h-3.5 ${isLookingUpCep ? 'animate-spin' : ''}`} />
+                                  <Search className={`w-4 h-4 md:w-3.5 md:h-3.5 ${isLookingUpCep ? 'animate-spin' : ''}`} aria-hidden="true" />
                                 </Button>
                               </div>
                             </div>
 
-                            <div className="sm:col-span-6 space-y-1">
+                            <div className="sm:col-span-6 space-y-1 min-w-0">
                               <Label className="text-[11px] font-bold">Logradouro / Rua</Label>
                               <Input 
                                 placeholder="Ex: Rua Sebastião Rangel"
@@ -4736,13 +4778,14 @@ export default function FiscalInvoicesPage() {
                                   syncFormToPreview({ tomadorEndereco: val })
                                 }}
                                 onBlur={() => handleSaveTomadorToCrm(true)}
-                                className="h-9 text-xs rounded-xl"
+                                className="h-11 md:h-9 text-base md:text-xs rounded-xl"
                               />
                             </div>
 
-                            <div className="sm:col-span-2 space-y-1">
+                            <div className="sm:col-span-2 space-y-1 min-w-0">
                               <Label className="text-[11px] font-bold">Número</Label>
                               <Input 
+                                inputMode="numeric"
                                 placeholder="Ex: 26"
                                 value={formTomadorNumero}
                                 onChange={e => {
@@ -4752,11 +4795,11 @@ export default function FiscalInvoicesPage() {
                                   syncFormToPreview({ tomadorNumero: val })
                                 }}
                                 onBlur={() => handleSaveTomadorToCrm(true)}
-                                className="h-9 text-xs rounded-xl"
+                                className="h-11 md:h-9 text-base md:text-xs rounded-xl"
                               />
                             </div>
 
-                            <div className="sm:col-span-3 space-y-1">
+                            <div className="sm:col-span-3 space-y-1 min-w-0">
                               <Label className="text-[11px] font-bold">Complemento</Label>
                               <Input 
                                 placeholder="Apto, Sala, Bloco..."
@@ -4768,11 +4811,11 @@ export default function FiscalInvoicesPage() {
                                   syncFormToPreview({ tomadorComplemento: val })
                                 }}
                                 onBlur={() => handleSaveTomadorToCrm(true)}
-                                className="h-9 text-xs rounded-xl"
+                                className="h-11 md:h-9 text-base md:text-xs rounded-xl"
                               />
                             </div>
 
-                            <div className="sm:col-span-3 space-y-1">
+                            <div className="sm:col-span-3 space-y-1 min-w-0">
                               <Label className="text-[11px] font-bold">Bairro</Label>
                               <Input 
                                 placeholder="Ex: Centro"
@@ -4784,11 +4827,11 @@ export default function FiscalInvoicesPage() {
                                   syncFormToPreview({ tomadorBairro: val })
                                 }}
                                 onBlur={() => handleSaveTomadorToCrm(true)}
-                                className="h-9 text-xs rounded-xl"
+                                className="h-11 md:h-9 text-base md:text-xs rounded-xl"
                               />
                             </div>
 
-                            <div className="sm:col-span-4 space-y-1">
+                            <div className="sm:col-span-4 space-y-1 min-w-0">
                               <Label className="text-[11px] font-bold">Município</Label>
                               <Input 
                                 placeholder="Ex: Campos dos Goytacazes"
@@ -4800,13 +4843,16 @@ export default function FiscalInvoicesPage() {
                                   syncFormToPreview({ tomadorCidade: val })
                                 }}
                                 onBlur={() => handleSaveTomadorToCrm(true)}
-                                className="h-9 text-xs rounded-xl"
+                                className="h-11 md:h-9 text-base md:text-xs rounded-xl"
                               />
                             </div>
 
-                            <div className="sm:col-span-2 space-y-1">
+                            <div className="sm:col-span-2 space-y-1 min-w-0">
                               <Label className="text-[11px] font-bold">UF / Estado</Label>
                               <Input 
+                                autoCorrect="off"
+                                autoCapitalize="characters"
+                                spellCheck={false}
                                 placeholder="RJ"
                                 value={formTomadorUf}
                                 onChange={e => {
@@ -4816,7 +4862,7 @@ export default function FiscalInvoicesPage() {
                                   syncFormToPreview({ tomadorUf: val })
                                 }}
                                 onBlur={() => handleSaveTomadorToCrm(true)}
-                                className="h-9 text-xs rounded-xl"
+                                className="h-11 md:h-9 text-base md:text-xs rounded-xl"
                               />
                             </div>
                           </div>
@@ -4825,13 +4871,17 @@ export default function FiscalInvoicesPage() {
                         {/* Seção Estadia & Valores */}
                         <div className="space-y-2.5 pt-2 border-t border-border">
                           <span className="text-xs font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                            <Calendar className="w-3.5 h-3.5 text-primary" /> Estadia & Valores
+                            <Calendar className="w-3.5 h-3.5 text-primary shrink-0" aria-hidden="true" /> Estadia &amp; Valores
                           </span>
 
                           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                            <div className="space-y-1">
+                            <div className="space-y-1 min-w-0">
                               <Label className="text-[11px] font-bold">Flat Nº</Label>
                               <Input 
+                                inputMode="numeric"
+                                autoCorrect="off"
+                                autoCapitalize="none"
+                                spellCheck={false}
                                 placeholder="Ex: 102"
                                 value={formFlatNumber}
                                 onChange={e => {
@@ -4839,34 +4889,15 @@ export default function FiscalInvoicesPage() {
                                   setFormFlatNumber(val)
                                   syncFormToPreview({ flatNumber: val })
                                 }}
-                                className="h-9 text-xs rounded-xl"
+                                className="h-11 md:h-9 text-base md:text-xs rounded-xl"
                               />
                             </div>
 
-                            <div className="space-y-1">
-                              <Label className="text-[11px] font-bold">Check-in</Label>
-                              <Input 
-                                type="date"
-                                value={formCheckin}
-                                onChange={e => handleDateChange(e.target.value, undefined)}
-                                className="h-9 text-xs rounded-xl"
-                              />
-                            </div>
-
-                            <div className="space-y-1">
-                              <Label className="text-[11px] font-bold">Check-out</Label>
-                              <Input 
-                                type="date"
-                                value={formCheckout}
-                                onChange={e => handleDateChange(undefined, e.target.value)}
-                                className="h-9 text-xs rounded-xl"
-                              />
-                            </div>
-
-                            <div className="space-y-1">
+                            <div className="space-y-1 min-w-0 sm:order-4">
                               <Label className="text-[11px] font-bold">Diárias</Label>
                               <Input 
                                 type="number"
+                                inputMode="numeric"
                                 min={1}
                                 value={rawFormDiarias ?? formDiarias}
                                 onChange={e => {
@@ -4889,14 +4920,35 @@ export default function FiscalInvoicesPage() {
                                     syncFormToPreview({ quantidadeDiarias: clamped })
                                   }
                                 }}
-                                className="h-9 text-xs rounded-xl"
+                                className="h-11 md:h-9 text-base md:text-xs rounded-xl"
                               />
                             </div>
 
-                            <div className="col-span-2 space-y-1">
+                            <div className="col-span-2 sm:col-span-1 space-y-1 min-w-0 sm:order-2">
+                              <Label className="text-[11px] font-bold">Check-in</Label>
+                              <Input 
+                                type="date"
+                                value={formCheckin}
+                                onChange={e => handleDateChange(e.target.value, undefined)}
+                                className="h-11 md:h-9 text-base md:text-xs rounded-xl"
+                              />
+                            </div>
+
+                            <div className="col-span-2 sm:col-span-1 space-y-1 min-w-0 sm:order-3">
+                              <Label className="text-[11px] font-bold">Check-out</Label>
+                              <Input 
+                                type="date"
+                                value={formCheckout}
+                                onChange={e => handleDateChange(undefined, e.target.value)}
+                                className="h-11 md:h-9 text-base md:text-xs rounded-xl"
+                              />
+                            </div>
+
+                            <div className="col-span-2 space-y-1 min-w-0 sm:order-5">
                               <Label className="text-[11px] font-bold">Valor Total do Serviço (R$)</Label>
                               <Input 
                                 type="number"
+                                inputMode="decimal"
                                 step="0.01"
                                 placeholder="0.00"
                                 value={formValor}
@@ -4905,14 +4957,15 @@ export default function FiscalInvoicesPage() {
                                   setFormValor(val)
                                   syncFormToPreview({ valorServico: val })
                                 }}
-                                className="h-9 text-xs rounded-xl font-black text-emerald-600"
+                                className="h-11 md:h-9 text-base md:text-xs rounded-xl font-black text-emerald-600"
                               />
                             </div>
 
-                            <div className="col-span-2 space-y-1">
+                            <div className="col-span-2 space-y-1 min-w-0 sm:order-6">
                               <Label className="text-[11px] font-bold">Alíquota ISS (%)</Label>
                               <Input 
                                 type="number"
+                                inputMode="decimal"
                                 step="0.01"
                                 value={formAliquota}
                                 onChange={e => {
@@ -4920,7 +4973,7 @@ export default function FiscalInvoicesPage() {
                                   setFormAliquota(val)
                                   syncFormToPreview({ aliquotaIss: val })
                                 }}
-                                className="h-9 text-xs rounded-xl"
+                                className="h-11 md:h-9 text-base md:text-xs rounded-xl"
                               />
                             </div>
                           </div>
@@ -4928,7 +4981,7 @@ export default function FiscalInvoicesPage() {
 
                         {/* Seção Discriminação do Serviço com Tags Rápidas */}
                         <div className="space-y-2 pt-2 border-t border-border">
-                          <div className="flex items-center justify-between">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
                             <Label className="text-[11px] font-bold">Discriminação dos Serviços (Hóspede, Flat, IN/OUT, RLOC/B2B)</Label>
                             <button
                               type="button"
@@ -4948,7 +5001,7 @@ export default function FiscalInvoicesPage() {
                                 setFormDescricao(desc)
                                 syncFormToPreview({ descricaoServico: desc })
                               }}
-                              className="text-[10px] text-primary font-bold hover:underline"
+                              className="min-h-[36px] sm:min-h-0 px-2 py-1 text-xs sm:text-[10px] text-primary font-bold hover:underline"
                             >
                               ↺ Gerar automático
                             </button>
@@ -4964,7 +5017,7 @@ export default function FiscalInvoicesPage() {
                               syncFormToPreview({ descricaoServico: val })
                             }}
                             onBlur={() => handleSaveTomadorToCrm(true)}
-                            className="text-xs font-mono rounded-xl p-2.5 bg-background leading-relaxed"
+                            className="text-base md:text-xs font-mono rounded-xl p-3 md:p-2.5 bg-background leading-relaxed"
                           />
                         </div>
                       </div>
@@ -4974,31 +5027,31 @@ export default function FiscalInvoicesPage() {
               </div>
 
               {/* ── COLUNA 2 (DIREITA): LIVE DANFSE VISUAL PREVIEW & TRANSMISSÃO ── */}
-              <div className="lg:col-span-5 space-y-4">
-                <Card className="rounded-3xl border border-border shadow-md overflow-hidden bg-white dark:bg-card">
-                  <CardHeader className="p-3.5 bg-muted/40 border-b border-border flex flex-row items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-primary" />
+              <div className="lg:col-span-5 space-y-4 min-w-0">
+                <Card className="rounded-2xl sm:rounded-3xl border border-border shadow-md overflow-hidden bg-white dark:bg-card min-w-0">
+                  <CardHeader className="p-3.5 bg-muted/40 border-b border-border flex flex-row flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FileText className="w-4 h-4 text-primary shrink-0" aria-hidden="true" />
                       <span className="text-xs font-black text-foreground">Espelho DANFSE ao Vivo</span>
                     </div>
-                    <Badge variant="outline" className="text-[10px] font-mono border-emerald-500/40 text-emerald-700 dark:text-emerald-300">
+                    <Badge variant="outline" className="text-[10px] font-mono border-emerald-500/40 text-emerald-700 dark:text-emerald-300 shrink-0">
                       ● Prévia em Tempo Real
                     </Badge>
                   </CardHeader>
 
-                  <CardContent className="p-4 space-y-3.5 text-[11px]">
+                  <CardContent className="p-3.5 sm:p-4 space-y-3 sm:space-y-3.5 text-xs sm:text-[11px]">
                     {/* Cabeçalho Oficial do DANFSE */}
                     <div className="border border-border/80 rounded-2xl p-3 bg-muted/10 space-y-2 text-center">
-                      <div className="font-black text-xs uppercase tracking-wide text-foreground">
+                      <div className="font-black text-xs uppercase tracking-wide text-foreground fiscal-heading-balance">
                         República Federativa do Brasil • Gov.br
                       </div>
                       <div className="text-[10px] text-muted-foreground font-semibold">
                         Ambiente de Dados Nacional (ADN / SEFIN) • Município: Campos dos Goytacazes/RJ
                       </div>
-                      <div className="inline-block bg-primary/10 text-primary font-black px-2.5 py-0.5 rounded-md text-[10px]">
+                      <div className="inline-block bg-primary/10 text-primary font-black px-2.5 py-0.5 rounded-md text-[10px] leading-snug">
                         DOCUMENTO AUXILIAR DA NOTA FISCAL DE SERVIÇOS ELETRÔNICA (DANFSE)
                       </div>
-                      <div className="flex justify-between text-[10px] font-mono text-muted-foreground pt-1 border-t border-border/40">
+                      <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-[10px] font-mono text-muted-foreground pt-1.5 border-t border-border/40">
                         <span>Nº: <strong>{lastEmittedInvoice?.numeroNfse || "PRÉVIA"}</strong></span>
                         <span>Emissão: <strong>{new Date().toLocaleDateString("pt-BR")}</strong></span>
                         <span>Comp: <strong>{new Date().toISOString().substring(0, 7)}</strong></span>
@@ -5008,28 +5061,28 @@ export default function FiscalInvoicesPage() {
                     {/* Prestador */}
                     <div className="border border-border/80 rounded-2xl p-2.5 bg-muted/5 space-y-1">
                       <span className="font-black text-[10px] uppercase text-muted-foreground tracking-wider">Emitente da NFS-e (Prestador de Serviços)</span>
-                      <div className="font-bold text-foreground">RENTAL MILLER&apos;S LTDA (CORPFLATS HOTELARIA)</div>
+                      <div className="font-bold text-foreground break-words">RENTAL MILLER&apos;S LTDA (CORPFLATS HOTELARIA)</div>
                       <div className="text-muted-foreground text-[10px]">
                         CNPJ: <span className="font-mono font-bold">47.964.813/0001-65</span> • IM: <span className="font-mono">142591</span>
                       </div>
-                      <div className="text-muted-foreground text-[10px]">
+                      <div className="text-muted-foreground text-[10px] break-words">
                         Rua Conselheiro Otaviano, 209, Centro • Campos dos Goytacazes/RJ • CEP 28010-140
                       </div>
                     </div>
 
                     {/* Tomador */}
-                    <div className="border border-border/80 rounded-2xl p-2.5 bg-muted/5 space-y-1">
-                      <div className="flex justify-between items-center">
+                    <div className="border border-border/80 rounded-2xl p-2.5 bg-muted/5 space-y-1 min-w-0">
+                      <div className="flex justify-between items-center gap-2">
                         <span className="font-black text-[10px] uppercase text-muted-foreground tracking-wider">Tomador do Serviço</span>
-                        <Badge className="text-[9px] h-4 px-1.5" variant="outline">
+                        <Badge className="text-[9px] h-4 px-1.5 shrink-0" variant="outline">
                           {previewTomadorDoc.replace(/\D/g, "").length === 14 ? "🏢 PJ" : "👤 PF"}
                         </Badge>
                       </div>
-                      <div className="font-bold text-foreground truncate">{previewTomadorNome}</div>
-                      <div className="text-muted-foreground text-[10px] font-mono">
+                      <div className="font-bold text-foreground break-words">{previewTomadorNome}</div>
+                      <div className="text-muted-foreground text-[10px] font-mono fiscal-break-anywhere">
                         CPF/CNPJ: <strong>{previewTomadorDoc}</strong>
                       </div>
-                      <div className="text-muted-foreground text-[10px] truncate">
+                      <div className="text-muted-foreground text-[10px] break-words">
                         {previewTomadorEndereco}
                       </div>
                     </div>
@@ -5037,29 +5090,29 @@ export default function FiscalInvoicesPage() {
                     {/* Discriminação do Serviço */}
                     <div className="border border-border/80 rounded-2xl p-2.5 bg-muted/5 space-y-1">
                       <span className="font-black text-[10px] uppercase text-muted-foreground tracking-wider">Discriminação dos Serviços</span>
-                      <div className="text-[10px] font-mono whitespace-pre-wrap text-foreground/90 leading-relaxed bg-background/50 p-2 rounded-xl border border-border/50 max-h-36 overflow-y-auto">
+                      <div className="text-[11px] sm:text-[10px] font-mono whitespace-pre-wrap break-words text-foreground/90 leading-relaxed bg-background/50 p-2 rounded-xl border border-border/50 max-h-36 overflow-y-auto overscroll-contain">
                         {previewDescricao}
                       </div>
                     </div>
 
                     {/* Valores e Tributação */}
                     <div className="border border-border/80 rounded-2xl p-2.5 bg-muted/10 space-y-2">
-                      <span className="font-black text-[10px] uppercase text-muted-foreground tracking-wider">Valores & Tributos</span>
-                      <div className="grid grid-cols-2 gap-2 text-[10px]">
-                        <div className="flex justify-between"><span className="text-muted-foreground">Valor dos Serviços:</span> <strong className="font-mono">R$ {previewValorServico.toFixed(2)}</strong></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">Deduções Legais:</span> <span className="font-mono">R$ 0,00</span></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">Base de Cálculo:</span> <span className="font-mono">R$ {previewValorServico.toFixed(2)}</span></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">Alíquota ISS:</span> <span className="font-mono">{previewAliquotaIss.toFixed(2)}%</span></div>
+                      <span className="font-black text-[10px] uppercase text-muted-foreground tracking-wider">Valores &amp; Tributos</span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 sm:gap-2 text-[11px] sm:text-[10px]">
+                        <div className="flex justify-between gap-2"><span className="text-muted-foreground">Valor dos Serviços:</span> <strong className="font-mono tabular-nums">R$ {previewValorServico.toFixed(2)}</strong></div>
+                        <div className="flex justify-between gap-2"><span className="text-muted-foreground">Deduções Legais:</span> <span className="font-mono tabular-nums">R$ 0,00</span></div>
+                        <div className="flex justify-between gap-2"><span className="text-muted-foreground">Base de Cálculo:</span> <span className="font-mono tabular-nums">R$ {previewValorServico.toFixed(2)}</span></div>
+                        <div className="flex justify-between gap-2"><span className="text-muted-foreground">Alíquota ISS:</span> <span className="font-mono tabular-nums">{previewAliquotaIss.toFixed(2)}%</span></div>
                       </div>
 
                       <div className="pt-2 border-t border-border/60 flex justify-between items-center text-xs">
                         <span className="font-bold text-muted-foreground">Valor do ISS:</span>
-                        <strong className="font-mono text-foreground font-black">R$ {previewValorIss.toFixed(2)}</strong>
+                        <strong className="font-mono text-foreground font-black tabular-nums">R$ {previewValorIss.toFixed(2)}</strong>
                       </div>
 
                       <div className="flex justify-between items-center text-sm pt-1 border-t border-border/40">
                         <span className="font-black text-foreground">Valor Líquido:</span>
-                        <strong className="font-mono text-emerald-600 font-black">R$ {previewValorServico.toFixed(2)}</strong>
+                        <strong className="font-mono text-emerald-600 font-black tabular-nums">R$ {previewValorServico.toFixed(2)}</strong>
                       </div>
                     </div>
 
@@ -5067,16 +5120,16 @@ export default function FiscalInvoicesPage() {
                     <Button 
                       onClick={() => handleEmitInvoice()}
                       disabled={isEmitting || !previewTomadorNome || previewValorServico <= 0}
-                      className="w-full h-11 rounded-2xl font-black text-xs gap-2 shadow-md bg-emerald-600 hover:bg-emerald-700 text-white"
+                      className="w-full min-h-[48px] sm:min-h-0 sm:h-11 h-auto py-2.5 px-4 rounded-2xl font-black text-xs gap-2 shadow-md bg-emerald-600 hover:bg-emerald-700 text-white whitespace-normal text-center leading-snug"
                     >
                       {isEmitting ? (
                         <>
-                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <RefreshCw className="w-4 h-4 animate-spin shrink-0" aria-hidden="true" />
                           <span>Transmitindo ao Emissor Nacional (Gov.br)...</span>
                         </>
                       ) : (
                         <>
-                          <CheckCircle2 className="w-4 h-4" />
+                          <CheckCircle2 className="w-4 h-4 shrink-0" aria-hidden="true" />
                           <span>Transmitir NFS-e Oficial (Gov.br / Padrão Nacional)</span>
                         </>
                       )}
@@ -5090,28 +5143,28 @@ export default function FiscalInvoicesPage() {
           {/* ══════════════════════════════════════════════════════════════════════
               R3: ABA FATURAMENTO & LOTE (RESERVAS PENDENTES & B2B CONSOLIDADO)
              ══════════════════════════════════════════════════════════════════════ */}
-          <TabsContent value="batch" className="space-y-4 m-0">
-            <Card className="rounded-3xl border border-border shadow-sm">
-              <CardHeader className="p-5 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-3">
-                <div>
-                  <CardTitle className="text-base font-black text-foreground flex items-center gap-2">
-                    <Zap className="w-4 h-4 text-amber-500" />
+          <TabsContent value="batch" className="space-y-4 m-0 min-w-0">
+            <Card className="rounded-2xl sm:rounded-3xl border border-border shadow-sm overflow-hidden min-w-0">
+              <CardHeader className="p-3.5 sm:p-5 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <CardTitle className="fiscal-heading-balance text-base font-black text-foreground flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-amber-500 shrink-0" aria-hidden="true" />
                     <span>Fila de Reservas Pendentes de NFS-e</span>
                   </CardTitle>
-                  <CardDescription className="text-xs">
+                  <CardDescription className="fiscal-text-pretty text-xs mt-0.5">
                     Estadias finalizadas ou ativas que ainda não possuem nota fiscal autorizada vinculada
                   </CardDescription>
                 </div>
 
                 {/* Botões de Ação em Lote */}
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 sm:flex-wrap w-full md:w-auto">
                   <Button 
                     variant="outline" 
                     size="sm"
                     onClick={fetchReservations}
-                    className="h-9 px-3 rounded-xl text-xs font-bold gap-1.5"
+                    className="min-h-[44px] sm:min-h-0 sm:h-9 px-3 rounded-xl text-xs font-bold gap-1.5"
                   >
-                    <RefreshCw className="w-3.5 h-3.5" />
+                    <RefreshCw className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                     <span>Atualizar</span>
                   </Button>
 
@@ -5119,10 +5172,10 @@ export default function FiscalInvoicesPage() {
                     size="sm"
                     onClick={handleBatchEmitSelected}
                     disabled={selectedPendingIds.length === 0 || batchEmitting}
-                    className="h-9 px-3.5 rounded-xl text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                    className="min-h-[44px] sm:min-h-0 sm:h-9 px-3 sm:px-3.5 rounded-xl text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
                   >
-                    <Zap className="w-3.5 h-3.5" />
-                    <span>Emitir Selecionadas ({selectedPendingIds.length})</span>
+                    <Zap className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    <span className="truncate">Emitir ({selectedPendingIds.length})</span>
                   </Button>
 
                   <Button 
@@ -5130,22 +5183,38 @@ export default function FiscalInvoicesPage() {
                     variant="outline"
                     onClick={handleOpenConsolidatedModal}
                     disabled={selectedPendingIds.length < 2}
-                    className="h-9 px-3.5 rounded-xl text-xs font-bold gap-1.5 border-indigo-500/40 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/10"
+                    className="col-span-2 sm:col-span-1 min-h-[44px] sm:min-h-0 sm:h-9 px-3.5 rounded-xl text-xs font-bold gap-1.5 border-indigo-500/40 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/10"
                   >
-                    <Building2 className="w-3.5 h-3.5" />
+                    <Building2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                     <span>Faturamento B2B Consolidado</span>
                   </Button>
                 </div>
               </CardHeader>
 
               {/* Escopo Inteligente: Prioritárias vs Hospedados vs Futuras vs Histórico Completo */}
-              <div className="px-4 pt-3.5 pb-2 bg-muted/10 border-b border-border/60 flex flex-wrap items-center justify-between gap-2 text-xs">
-                <div className="flex flex-wrap items-center gap-1.5">
+              <div className="px-3.5 sm:px-4 pt-3 pb-2.5 bg-muted/10 border-b border-border/60 flex flex-col sm:flex-row sm:flex-wrap sm:items-center justify-between gap-2 text-xs">
+                <div className="flex sm:flex-wrap items-center gap-1.5 overflow-x-auto overscroll-x-contain fiscal-no-scrollbar pb-0.5 sm:pb-0">
                   {([
-                    { id: "priority", label: `Prioritárias: PJ, Faturado & Check-outs 30d (${pendingScopeCounts.priority})` },
-                    { id: "in_stay", label: `Hospedados Agora (${pendingScopeCounts.in_stay})` },
-                    { id: "future", label: `Reservas Futuras (${pendingScopeCounts.future})` },
-                    { id: "all", label: `Histórico Completo (${pendingScopeCounts.all})` }
+                    {
+                      id: "priority",
+                      shortLabel: `Prioritárias (PJ/30d) (${pendingScopeCounts.priority})`,
+                      fullLabel: `Prioritárias: PJ, Faturado & Check-outs 30d (${pendingScopeCounts.priority})`
+                    },
+                    {
+                      id: "in_stay",
+                      shortLabel: `Hospedados (${pendingScopeCounts.in_stay})`,
+                      fullLabel: `Hospedados Agora (${pendingScopeCounts.in_stay})`
+                    },
+                    {
+                      id: "future",
+                      shortLabel: `Futuras (${pendingScopeCounts.future})`,
+                      fullLabel: `Reservas Futuras (${pendingScopeCounts.future})`
+                    },
+                    {
+                      id: "all",
+                      shortLabel: `Todas (${pendingScopeCounts.all})`,
+                      fullLabel: `Histórico Completo (${pendingScopeCounts.all})`
+                    }
                   ] as const).map(sc => (
                     <button
                       key={sc.id}
@@ -5154,13 +5223,15 @@ export default function FiscalInvoicesPage() {
                         setPendingScopeFilter(sc.id)
                         setSelectedPendingIds([])
                       }}
-                      className={`px-3 py-1.5 rounded-xl font-bold border transition-all ${
+                      aria-pressed={pendingScopeFilter === sc.id && !pendingSearch.trim()}
+                      className={`shrink-0 min-h-[40px] sm:min-h-0 px-3 py-2 sm:py-1.5 rounded-xl font-bold border transition-all whitespace-nowrap text-xs ${
                         pendingScopeFilter === sc.id && !pendingSearch.trim()
                           ? "bg-primary text-primary-foreground border-primary shadow-2xs"
                           : "bg-background text-muted-foreground border-border hover:border-primary/40 hover:text-foreground"
                       }`}
                     >
-                      {sc.label}
+                      <span className="sm:hidden">{sc.shortLabel}</span>
+                      <span className="hidden sm:inline">{sc.fullLabel}</span>
                     </button>
                   ))}
                 </div>
@@ -5172,193 +5243,313 @@ export default function FiscalInvoicesPage() {
               </div>
 
               {/* Barra de Filtros das Pendências */}
-              <div className="p-4 bg-muted/20 border-b border-border flex flex-wrap items-center gap-3 text-xs">
-                <div className="relative w-64">
-                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <search
+                aria-label="Filtrar reservas pendentes de NFS-e"
+                className="p-3.5 sm:p-4 bg-muted/20 border-b border-border flex flex-col md:flex-row md:flex-wrap md:items-center gap-2.5 md:gap-3 text-xs"
+              >
+                <div className="relative w-full md:w-64">
+                  <Search className="w-4 h-4 md:w-3.5 md:h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" aria-hidden="true" />
                   <Input 
+                    type="search"
+                    inputMode="search"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    aria-label="Buscar hóspede, flat, RLOC ou código da reserva"
                     placeholder="Buscar hóspede, flat, RLOC, código..."
                     value={pendingSearch}
                     onChange={e => setPendingSearch(e.target.value)}
-                    className="pl-8 text-xs h-8.5 rounded-xl bg-background"
+                    className="pl-9 md:pl-8 pr-10 text-base md:text-xs h-11 md:h-8.5 rounded-xl bg-background"
                   />
+                  {pendingSearch && (
+                    <button
+                      type="button"
+                      aria-label="Limpar busca de reservas pendentes"
+                      onClick={() => setPendingSearch("")}
+                      className="absolute right-0.5 top-1/2 -translate-y-1/2 w-10 h-10 md:w-7 md:h-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="w-4 h-4 md:w-3.5 md:h-3.5" aria-hidden="true" />
+                    </button>
+                  )}
                 </div>
 
-                <div className="flex items-center gap-1.5 bg-muted/60 px-2.5 py-1 rounded-xl border border-border">
-                  <span className="text-muted-foreground font-bold">Tomador:</span>
-                  <select
-                    value={pendingTypeFilter}
-                    onChange={(e: any) => setPendingTypeFilter(e.target.value)}
-                    className="bg-transparent font-bold text-foreground cursor-pointer focus:outline-hidden"
-                  >
-                    <option value="all">Todos</option>
-                    <option value="pf">Pessoa Física (PF)</option>
-                    <option value="pj">Empresa (PJ)</option>
-                    <option value="agency">Agência B2B (PJ)</option>
-                  </select>
+                <div className="grid grid-cols-2 md:flex md:flex-wrap items-stretch md:items-center gap-2 w-full md:w-auto">
+                  <div className="flex flex-col md:flex-row md:items-center gap-0.5 md:gap-1.5 bg-muted/60 px-2.5 py-1.5 md:py-1 rounded-xl border border-border min-w-0">
+                    <label htmlFor="batch-type-filter" className="text-[10px] md:text-xs text-muted-foreground font-bold shrink-0">
+                      Tomador:
+                    </label>
+                    <select
+                      id="batch-type-filter"
+                      value={pendingTypeFilter}
+                      onChange={(e: any) => setPendingTypeFilter(e.target.value)}
+                      className="bg-transparent font-bold text-foreground text-base md:text-xs cursor-pointer focus:outline-hidden w-full md:w-auto min-w-0"
+                    >
+                      <option value="all">Todos</option>
+                      <option value="pf">Pessoa Física (PF)</option>
+                      <option value="pj">Empresa (PJ)</option>
+                      <option value="agency">Agência B2B (PJ)</option>
+                    </select>
+                  </div>
+
+                  <div className="flex flex-col md:flex-row md:items-center gap-0.5 md:gap-1.5 bg-muted/60 px-2.5 py-1.5 md:py-1 rounded-xl border border-border min-w-0">
+                    <label htmlFor="batch-company-filter" className="text-[10px] md:text-xs text-muted-foreground font-bold shrink-0">
+                      Empresa:
+                    </label>
+                    <select
+                      id="batch-company-filter"
+                      value={pendingCompanyFilter}
+                      onChange={e => setPendingCompanyFilter(e.target.value)}
+                      className="bg-transparent font-bold text-foreground text-base md:text-xs cursor-pointer focus:outline-hidden w-full md:w-auto md:max-w-[160px] truncate min-w-0"
+                    >
+                      <option value="all">Todas as Empresas</option>
+                      {companies.map(c => (
+                        <option key={c.id} value={String(c.id)}>{c.corporateName || c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex flex-col md:flex-row md:items-center gap-0.5 md:gap-1.5 bg-violet-500/10 px-2.5 py-1.5 md:py-1 rounded-xl border border-violet-500/30 min-w-0">
+                    <label htmlFor="batch-agency-filter" className="text-[10px] md:text-xs text-violet-700 dark:text-violet-300 font-bold shrink-0">
+                      Agência B2B:
+                    </label>
+                    <select
+                      id="batch-agency-filter"
+                      value={pendingAgencyFilter}
+                      onChange={e => setPendingAgencyFilter(e.target.value)}
+                      className="bg-transparent font-bold text-foreground text-base md:text-xs cursor-pointer focus:outline-hidden w-full md:w-auto md:max-w-[160px] truncate min-w-0"
+                    >
+                      <option value="all">Todas as Agências</option>
+                      {agencies.map(a => (
+                        <option key={a.id} value={String(a.id)}>{a.tradeName || a.corporateName}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex flex-col md:flex-row md:items-center gap-0.5 md:gap-1.5 bg-muted/60 px-2.5 py-1.5 md:py-1 rounded-xl border border-border min-w-0">
+                    <label htmlFor="batch-cadastral-filter" className="text-[10px] md:text-xs text-muted-foreground font-bold shrink-0">
+                      Cadastro:
+                    </label>
+                    <select
+                      id="batch-cadastral-filter"
+                      value={pendingCadastralFilter}
+                      onChange={(e: any) => setPendingCadastralFilter(e.target.value)}
+                      className="bg-transparent font-bold text-foreground text-base md:text-xs cursor-pointer focus:outline-hidden w-full md:w-auto min-w-0"
+                    >
+                      <option value="all">Todos</option>
+                      <option value="ready">Prontos c/ Doc</option>
+                      <option value="pending_doc">Falta CPF/CNPJ</option>
+                    </select>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-1.5 bg-muted/60 px-2.5 py-1 rounded-xl border border-border">
-                  <span className="text-muted-foreground font-bold">Empresa:</span>
-                  <select
-                    value={pendingCompanyFilter}
-                    onChange={e => setPendingCompanyFilter(e.target.value)}
-                    className="bg-transparent font-bold text-foreground cursor-pointer focus:outline-hidden max-w-[160px] truncate"
-                  >
-                    <option value="all">Todas as Empresas</option>
-                    {companies.map(c => (
-                      <option key={c.id} value={String(c.id)}>{c.corporateName || c.name}</option>
-                    ))}
-                  </select>
+                <div className="flex items-center justify-end gap-2 md:ml-auto pt-1 md:pt-0 border-t border-border/50 md:border-0">
+                  <div className="text-muted-foreground font-mono text-[11px] sm:text-xs whitespace-nowrap">
+                    <span className="sm:hidden">{filteredPendingReservations.length} pend. • {selectedPendingIds.length} sel.</span>
+                    <span className="hidden sm:inline">{filteredPendingReservations.length} encontradas • {selectedPendingIds.length} selecionadas</span>
+                  </div>
                 </div>
+              </search>
 
-                <div className="flex items-center gap-1.5 bg-violet-500/10 px-2.5 py-1 rounded-xl border border-violet-500/30">
-                  <span className="text-violet-700 dark:text-violet-300 font-bold">Agência B2B:</span>
-                  <select
-                    value={pendingAgencyFilter}
-                    onChange={e => setPendingAgencyFilter(e.target.value)}
-                    className="bg-transparent font-bold text-foreground cursor-pointer focus:outline-hidden max-w-[160px] truncate"
-                  >
-                    <option value="all">Todas as Agências</option>
-                    {agencies.map(a => (
-                      <option key={a.id} value={String(a.id)}>{a.tradeName || a.corporateName}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="flex items-center gap-1.5 bg-muted/60 px-2.5 py-1 rounded-xl border border-border">
-                  <span className="text-muted-foreground font-bold">Cadastro:</span>
-                  <select
-                    value={pendingCadastralFilter}
-                    onChange={(e: any) => setPendingCadastralFilter(e.target.value)}
-                    className="bg-transparent font-bold text-foreground cursor-pointer focus:outline-hidden"
-                  >
-                    <option value="all">Todos</option>
-                    <option value="ready">Prontos com Documento</option>
-                    <option value="pending_doc">Falta CPF/CNPJ</option>
-                  </select>
-                </div>
-
-                <div className="ml-auto text-muted-foreground font-mono">
-                  {filteredPendingReservations.length} encontradas • {selectedPendingIds.length} selecionadas
-                </div>
-              </div>
-
-              {/* Tabela de Reservas Pendentes */}
+              {/* Lista Responsiva de Reservas Pendentes (Cards < 720px via @container | Tabela >= 720px) */}
               <CardContent className="p-0">
                 {filteredPendingReservations.length === 0 ? (
-                  <div className="p-12 text-center text-xs text-muted-foreground space-y-2">
-                    <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto opacity-70" />
+                  <div className="p-10 sm:p-12 text-center text-xs text-muted-foreground space-y-2">
+                    <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto opacity-70" aria-hidden="true" />
                     <p className="font-bold">Nenhuma reserva pendente de NFS-e encontrada.</p>
-                    <p className="text-[11px]">Todas as estadias elegíveis já foram faturadas ou filtradas.</p>
+                    <p className="text-[11px] fiscal-text-pretty">Todas as estadias elegíveis já foram faturadas ou filtradas.</p>
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs text-left">
-                      <thead className="bg-muted/40 text-muted-foreground border-b border-border font-bold">
-                        <tr>
-                          <th className="p-3 w-10 text-center">
-                            <input 
-                              type="checkbox" 
-                              checked={selectedPendingIds.length > 0 && selectedPendingIds.length === filteredPendingReservations.length}
-                              onChange={handleSelectAllPending}
-                              className="rounded cursor-pointer"
-                            />
-                          </th>
-                          <th className="p-3">Código / Flat</th>
-                          <th className="p-3">Hóspede & Tomador Selecionado</th>
-                          <th className="p-3">Agência / Empresa (4-Pontas)</th>
-                          <th className="p-3">Período / Diárias</th>
-                          <th className="p-3">Valor (R$)</th>
-                          <th className="p-3">Cadastro</th>
-                          <th className="p-3 text-right">Ações Rápidas</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        {filteredPendingReservations.map(res => {
-                          const rowKey = String(res.id || res.code)
-                          const isSelected = selectedPendingIds.includes(rowKey)
-                          const activeType: "guest" | "company" | "agency" = res.activeTomadorType || pendingTomadorOverrides[rowKey] || (res.invoiceRecipientType === "agency" ? "agency" : res.invoiceRecipientType === "company" ? "company" : res.isAgency ? "agency" : res.isPj ? "company" : "guest")
-                          const activeOpt = res.tomadorOptions?.[activeType]
-                          const displayTomadorName = activeOpt?.name || activeOpt?.tomadorNome || res.tomadorDefaultName
-                          const displayTomadorDoc = activeOpt ? (activeOpt.doc ?? activeOpt.tomadorCpfCnpj ?? "") : res.tomadorDefaultDoc
-                          const cleanDisplayDoc = String(displayTomadorDoc || "").replace(/\D/g, "")
-                          const displayHasDoc = activeType === "guest" ? cleanDisplayDoc.length >= 11 : cleanDisplayDoc.length === 14
-                          return (
-                            <tr key={rowKey} className={`hover:bg-muted/20 transition-colors ${isSelected ? 'bg-primary/5' : ''}`}>
-                              <td className="p-3 text-center">
-                                <input 
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={() => handleToggleSelectPending(rowKey)}
-                                  className="rounded cursor-pointer"
-                                />
-                              </td>
+                  <div className="fiscal-list-container">
+                    {/* ── MOBILE / NARROW CONTAINER: CARDS TOUCH-FRIENDLY ── */}
+                    <div className="fiscal-list-cards gap-3 p-3 bg-muted/10">
+                      {/* Barra "Selecionar todas" sincronizada com o breakpoint @container fiscal-list (< 720px) */}
+                      <div className="flex items-center justify-between gap-2 px-1 border-b border-border/50 pb-1">
+                        <label className="inline-flex items-center gap-2 min-h-[44px] pr-2 cursor-pointer text-xs font-bold text-foreground select-none whitespace-nowrap shrink-0">
+                          <input
+                            type="checkbox"
+                            checked={selectedPendingIds.length > 0 && selectedPendingIds.length === filteredPendingReservations.length}
+                            onChange={handleSelectAllPending}
+                            className="w-4 h-4 rounded cursor-pointer"
+                          />
+                          <span>Selecionar todas ({filteredPendingReservations.length})</span>
+                        </label>
+                        {selectedPendingIds.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedPendingIds([])}
+                            className="min-h-[44px] px-2 text-xs font-bold text-primary hover:underline whitespace-nowrap shrink-0"
+                          >
+                            Limpar ({selectedPendingIds.length})
+                          </button>
+                        )}
+                      </div>
+                      {filteredPendingReservations.map(res => {
+                        const rowKey = String(res.id || res.code)
+                        const isSelected = selectedPendingIds.includes(rowKey)
+                        const activeType: "guest" | "company" | "agency" = res.activeTomadorType || pendingTomadorOverrides[rowKey] || (res.invoiceRecipientType === "agency" ? "agency" : res.invoiceRecipientType === "company" ? "company" : res.isAgency ? "agency" : res.isPj ? "company" : "guest")
+                        const activeOpt = res.tomadorOptions?.[activeType]
+                        const displayTomadorName = activeOpt?.name || activeOpt?.tomadorNome || res.tomadorDefaultName
+                        const displayTomadorDoc = activeOpt ? (activeOpt.doc ?? activeOpt.tomadorCpfCnpj ?? "") : res.tomadorDefaultDoc
+                        const cleanDisplayDoc = String(displayTomadorDoc || "").replace(/\D/g, "")
+                        const displayHasDoc = activeType === "guest" ? cleanDisplayDoc.length >= 11 : cleanDisplayDoc.length === 14
+                        const hasCompanyOption = Boolean(res.company || res.tomadorOptions?.company)
+                        const hasAgencyOption = Boolean(res.agency || res.tomadorOptions?.agency)
+                        const hasMultipleTomadores = hasCompanyOption || hasAgencyOption
+                        const showSecondaryAgency = Boolean(res.agency && activeType !== "agency")
+                        const showSecondaryCompany = Boolean(res.company && activeType !== "company")
+                        const showDistinctGuest = Boolean(
+                          res.guestName &&
+                          String(res.guestName).trim().toLowerCase() !== String(displayTomadorName || "").trim().toLowerCase()
+                        )
 
-                              <td className="p-3 font-mono">
-                                <div className="font-bold text-foreground">Flat {res.flatNumber}</div>
-                                <div className="text-[10px] text-muted-foreground flex flex-wrap items-center gap-1">
-                                  <span>{res.code || `#${res.id}`}</span>
-                                  <span>•</span>
-                                  <span className={res.channel === "b2b" ? "text-violet-600 font-bold uppercase" : ""}>{res.channel || 'direto'}</span>
+                        return (
+                          <article
+                            key={rowKey}
+                            className={`rounded-2xl border bg-card p-3.5 shadow-2xs space-y-3 transition-colors min-w-0 ${
+                              isSelected ? "border-primary bg-primary/5 ring-1 ring-primary/25" : "border-border"
+                            }`}
+                          >
+                            {/* Cabeçalho do Card: Checkbox 44×44 + Flat/Código/Canal | Valor + Status Cadastral */}
+                            <div className="flex items-start justify-between gap-2 min-w-0">
+                              <div className="flex items-start gap-1 min-w-0 flex-1">
+                                <label className="w-11 h-11 -ml-2 -mt-2 flex items-center justify-center shrink-0 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => handleToggleSelectPending(rowKey)}
+                                    aria-label={`Selecionar reserva Flat ${res.flatNumber} (${res.code || `#${res.id}`})`}
+                                    className="w-4.5 h-4.5 rounded cursor-pointer"
+                                  />
+                                </label>
+                                <div className="min-w-0 space-y-0.5">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="font-black text-sm text-foreground whitespace-nowrap">
+                                      Flat {res.flatNumber}
+                                    </span>
+                                    <Badge
+                                      variant="outline"
+                                      className={`text-[10px] h-5 px-1.5 font-mono uppercase shrink-0 ${
+                                        res.channel === "b2b"
+                                          ? "border-violet-500/40 text-violet-600 bg-violet-500/10 font-bold"
+                                          : "text-muted-foreground"
+                                      }`}
+                                    >
+                                      {res.channel || "direto"}
+                                    </Badge>
+                                  </div>
+                                  <div className="text-[11px] text-muted-foreground font-mono whitespace-nowrap">
+                                    {res.code || `#${res.id}`}
+                                  </div>
+                                  {(res.b2bReservationNumber || res.b2bLocatorRloc) && (
+                                    <div className="text-[10px] text-violet-600 dark:text-violet-400 font-bold font-mono fiscal-break-anywhere">
+                                      {res.b2bReservationNumber ? `B2B #${res.b2bReservationNumber}` : ""}{" "}
+                                      {res.b2bLocatorRloc ? `• RLOC ${res.b2bLocatorRloc}` : ""}
+                                    </div>
+                                  )}
                                 </div>
-                                {(res.b2bReservationNumber || res.b2bLocatorRloc) && (
-                                  <div className="text-[9px] text-violet-600 dark:text-violet-400 font-bold mt-0.5">
-                                    {res.b2bReservationNumber ? `B2B #${res.b2bReservationNumber}` : ""} {res.b2bLocatorRloc ? `• RLOC ${res.b2bLocatorRloc}` : ""}
+                              </div>
+
+                              <div className="text-right shrink-0 space-y-1">
+                                <div className="text-base font-black text-emerald-600 font-mono tabular-nums leading-none">
+                                  R$ {Number(res.accommodationAmount || res.totalAmount || res.price || 0).toFixed(2)}
+                                </div>
+                                <div className="text-[10px] text-muted-foreground font-semibold leading-none">
+                                  Só Hospedagem
+                                </div>
+                                {Number(res.consumptionAmount || 0) > 0 && (
+                                  <div>
+                                    <Badge variant="outline" className="text-[9px] h-4.5 px-1.5 border-amber-500/40 text-amber-600 bg-amber-500/10 font-mono tabular-nums">
+                                      +R$ {Number(res.consumptionAmount).toFixed(2)} Consumo
+                                    </Badge>
                                   </div>
                                 )}
-                              </td>
+                                <div className="flex justify-end">
+                                  {displayHasDoc ? (
+                                    <Badge className="bg-emerald-600 text-white text-[10px] h-5 px-1.5 gap-1">
+                                      <Check className="w-2.5 h-2.5" aria-hidden="true" /> Pronto
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="outline" className="border-amber-500/50 text-amber-700 dark:text-amber-300 bg-amber-500/10 text-[10px] h-5 px-1.5 gap-1">
+                                      <AlertTriangle className="w-2.5 h-2.5" aria-hidden="true" /> Falta Doc
+                                    </Badge>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
 
-                              <td className="p-3">
-                                <div className="text-[10px] text-muted-foreground mb-0.5">
+                            {/* Bloco Tomador, Hóspede, Documento & Switcher */}
+                            <div className="rounded-xl bg-muted/30 border border-border/60 p-2.5 space-y-1.5 min-w-0">
+                              {showDistinctGuest && (
+                                <div className="text-[11px] text-muted-foreground break-words">
                                   Hóspede: <strong className="text-foreground">{res.guestName}</strong>
                                 </div>
-                                <div className="font-bold text-foreground flex items-center gap-1.5">
-                                  <span>{displayTomadorName}</span>
-                                  <Badge variant="outline" className={`text-[9px] h-4 px-1 ${activeType === "agency" ? "border-violet-500/40 text-violet-600 bg-violet-500/10" : activeType === "company" ? "border-indigo-500/40 text-indigo-600 bg-indigo-500/10" : ""}`}>
+                              )}
+                              <div className="flex items-start justify-between gap-2 min-w-0">
+                                <div className="font-bold text-xs text-foreground break-words min-w-0 flex-1">
+                                  {displayTomadorName}
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+                                  <Badge
+                                    variant="outline"
+                                    className={`text-[10px] h-5 px-1.5 shrink-0 ${
+                                      activeType === "agency"
+                                        ? "border-violet-500/40 text-violet-600 bg-violet-500/10"
+                                        : activeType === "company"
+                                          ? "border-indigo-500/40 text-indigo-600 bg-indigo-500/10"
+                                          : ""
+                                    }`}
+                                  >
                                     {activeType === "agency" ? "🟣 Agência" : activeType === "company" ? "🏢 Empresa" : "👤 PF"}
                                   </Badge>
                                   {res.nfHideFromGuest && (
-                                    <Badge variant="outline" className="text-[8px] h-4 px-1 border-amber-500/40 text-amber-600 bg-amber-500/10" title="Ocultar NF do hóspede">
+                                    <Badge variant="outline" className="text-[9px] h-5 px-1.5 border-amber-500/40 text-amber-600 bg-amber-500/10 shrink-0">
                                       🔒 Sigilo
                                     </Badge>
                                   )}
                                 </div>
-                                <div className="text-[10px] text-muted-foreground font-mono">
-                                  {displayTomadorDoc || "Sem documento informado"}
-                                </div>
-                                {res.autoInvoiceStatus && res.autoInvoiceStatus !== "emitted" && res.autoInvoiceStatus !== "skipped_rule_off" && res.autoInvoiceStatus !== "skipped_disabled_global" && (
-                                  <div className="mt-1">
-                                    <Badge
-                                      variant="outline"
-                                      title={res.autoInvoiceLastError || res.autoInvoiceStatus}
-                                      className={`text-[9px] h-4 px-1.5 ${
-                                        res.autoInvoiceStatus === "awaiting_document_whatsapp"
-                                          ? "border-sky-500/40 text-sky-700 dark:text-sky-300 bg-sky-500/10"
-                                          : res.autoInvoiceStatus === "waiting_package_last_checkout"
+                              </div>
+
+                              <div className={`text-[11px] font-mono fiscal-break-anywhere ${displayHasDoc ? "text-muted-foreground" : "text-amber-600 dark:text-amber-400 font-semibold"}`}>
+                                {displayTomadorDoc || "Sem CPF/CNPJ informado"}
+                              </div>
+
+                              {res.autoInvoiceStatus && res.autoInvoiceStatus !== "emitted" && res.autoInvoiceStatus !== "skipped_rule_off" && res.autoInvoiceStatus !== "skipped_disabled_global" && (
+                                <div className="pt-0.5">
+                                  <Badge
+                                    variant="outline"
+                                    title={res.autoInvoiceLastError || res.autoInvoiceStatus}
+                                    className={`text-[10px] h-auto py-0.5 px-2 whitespace-normal leading-tight ${
+                                      res.autoInvoiceStatus === "awaiting_document_whatsapp"
+                                        ? "border-sky-500/40 text-sky-700 dark:text-sky-300 bg-sky-500/10"
+                                        : res.autoInvoiceStatus === "waiting_package_last_checkout"
                                           ? "border-violet-500/40 text-violet-700 dark:text-violet-300 bg-violet-500/10"
                                           : res.autoInvoiceStatus === "queued_retry"
-                                          ? "border-amber-500/40 text-amber-700 dark:text-amber-300 bg-amber-500/10"
-                                          : "border-rose-500/40 text-rose-700 dark:text-rose-300 bg-rose-500/10"
-                                      }`}
-                                    >
-                                      {res.autoInvoiceStatus === "awaiting_document_whatsapp"
-                                        ? "💬 Aguardando CPF/CNPJ no WhatsApp"
-                                        : res.autoInvoiceStatus === "waiting_package_last_checkout"
+                                            ? "border-amber-500/40 text-amber-700 dark:text-amber-300 bg-amber-500/10"
+                                            : "border-rose-500/40 text-rose-700 dark:text-rose-300 bg-rose-500/10"
+                                    }`}
+                                  >
+                                    {res.autoInvoiceStatus === "awaiting_document_whatsapp"
+                                      ? "💬 Aguardando CPF/CNPJ no WhatsApp"
+                                      : res.autoInvoiceStatus === "waiting_package_last_checkout"
                                         ? "📦 Aguardando último flat do pacote"
                                         : res.autoInvoiceStatus === "blocked_unpaid"
-                                        ? "⛔ Bloqueada: pagamento pendente"
-                                        : res.autoInvoiceStatus === "queued_retry"
-                                        ? "⏳ Na fila automática SEFIN"
-                                        : "⚠️ Erro na auto-emissão"}
-                                    </Badge>
-                                  </div>
-                                )}
-                                {/* 3-Tomador Switcher Rápido */}
-                                <div className="flex items-center gap-1 mt-1.5">
+                                          ? "⛔ Bloqueada: pagamento pendente"
+                                          : res.autoInvoiceStatus === "queued_retry"
+                                            ? "⏳ Na fila automática SEFIN"
+                                            : "⚠️ Erro na auto-emissão"}
+                                  </Badge>
+                                </div>
+                              )}
+
+                              {/* Switcher de Tomador exibido APENAS quando há mais de 1 opção (sem duplicar PF solitário) */}
+                              {hasMultipleTomadores && (
+                                <div className="flex items-center gap-1.5 pt-1.5 border-t border-border/50 flex-wrap">
+                                  <span className="text-[10px] font-bold text-muted-foreground uppercase mr-0.5">Tomador:</span>
                                   <button
                                     type="button"
                                     onClick={() => setPendingTomadorOverrides(prev => ({ ...prev, [rowKey]: "guest" }))}
-                                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold border transition-all ${
+                                    aria-pressed={activeType === "guest"}
+                                    className={`min-h-[36px] px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
                                       activeType === "guest"
                                         ? "bg-primary text-primary-foreground border-primary"
                                         : "bg-background text-muted-foreground border-border hover:border-primary/40"
@@ -5366,11 +5557,12 @@ export default function FiscalInvoicesPage() {
                                   >
                                     👤 PF
                                   </button>
-                                  {(res.company || res.tomadorOptions?.company) && (
+                                  {hasCompanyOption && (
                                     <button
                                       type="button"
                                       onClick={() => setPendingTomadorOverrides(prev => ({ ...prev, [rowKey]: "company" }))}
-                                      className={`px-1.5 py-0.5 rounded text-[9px] font-bold border transition-all ${
+                                      aria-pressed={activeType === "company"}
+                                      className={`min-h-[36px] px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
                                         activeType === "company"
                                           ? "bg-indigo-600 text-white border-indigo-600"
                                           : "bg-background text-muted-foreground border-border hover:border-indigo-500/40"
@@ -5379,11 +5571,12 @@ export default function FiscalInvoicesPage() {
                                       🏢 Empresa
                                     </button>
                                   )}
-                                  {(res.agency || res.tomadorOptions?.agency) && (
+                                  {hasAgencyOption && (
                                     <button
                                       type="button"
                                       onClick={() => setPendingTomadorOverrides(prev => ({ ...prev, [rowKey]: "agency" }))}
-                                      className={`px-1.5 py-0.5 rounded text-[9px] font-bold border transition-all ${
+                                      aria-pressed={activeType === "agency"}
+                                      className={`min-h-[36px] px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
                                         activeType === "agency"
                                           ? "bg-violet-600 text-white border-violet-600"
                                           : "bg-background text-muted-foreground border-border hover:border-violet-500/40"
@@ -5393,115 +5586,387 @@ export default function FiscalInvoicesPage() {
                                     </button>
                                   )}
                                 </div>
-                              </td>
+                              )}
 
-                              <td className="p-3 space-y-1">
-                                {res.agency && (
-                                  <div>
-                                    <div className="font-bold text-violet-700 dark:text-violet-300 flex items-center gap-1">
-                                      <span>🟣 {res.agency.tradeName || res.agency.corporateName || res.agency.name}</span>
+                              {/* Referência compacta 4-Pontas (exibe apenas entidade secundária distinta do Tomador ativo) */}
+                              {(showSecondaryAgency || showSecondaryCompany) && (
+                                <div className="pt-1 border-t border-border/40 text-[10px] text-muted-foreground space-y-0.5 break-words">
+                                  {showSecondaryAgency && (
+                                    <div>
+                                      <span className="font-bold text-violet-700 dark:text-violet-300">
+                                        🟣 {res.agency.tradeName || res.agency.corporateName || res.agency.name}
+                                      </span>
+                                      {res.agency.cnpj && <span className="font-mono ml-1">({res.agency.cnpj})</span>}
                                     </div>
-                                    <div className="text-[10px] text-muted-foreground font-mono">{res.agency.cnpj}</div>
-                                  </div>
-                                )}
-                                {res.company && (
-                                  <div>
-                                    <div className="font-bold text-foreground">🏢 {res.company.corporateName || res.company.name}</div>
-                                    <div className="text-[10px] text-muted-foreground font-mono">{res.company.cnpj}</div>
-                                  </div>
-                                )}
-                                {!res.agency && !res.company && (
-                                  <span className="text-muted-foreground">—</span>
-                                )}
-                              </td>
-
-                              <td className="p-3">
-                                <div>{res.checkinDate} a {res.checkoutDate}</div>
-                                <div className="text-[10px] text-muted-foreground font-bold">{res.diarias} diárias</div>
-                              </td>
-
-                              <td className="p-3 font-black text-emerald-600 font-mono">
-                                <div>R$ {Number(res.accommodationAmount || res.totalAmount || res.price || 0).toFixed(2)}</div>
-                                <div className="text-[9px] text-muted-foreground font-sans font-semibold">Só Hospedagem (NF)</div>
-                                {Number(res.consumptionAmount || 0) > 0 && (
-                                  <Badge variant="outline" className="mt-0.5 text-[9px] h-4 px-1 border-amber-500/40 text-amber-600 bg-amber-500/10 font-mono">
-                                    +R$ {Number(res.consumptionAmount).toFixed(2)} Consumo
-                                  </Badge>
-                                )}
-                              </td>
-
-                              <td className="p-3">
-                                {displayHasDoc ? (
-                                  <Badge className="bg-emerald-600 text-white text-[9px] h-4.5 px-1.5 gap-1">
-                                    <Check className="w-2.5 h-2.5" /> Pronto
-                                  </Badge>
-                                ) : (
-                                  <Badge variant="outline" className="border-amber-500/50 text-amber-600 text-[9px] h-4.5 px-1.5 gap-1">
-                                    <AlertTriangle className="w-2.5 h-2.5" /> Falta Doc
-                                  </Badge>
-                                )}
-                              </td>
-
-                              <td className="p-3 text-right">
-                                <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                                  <Button
-                                    size="sm"
-                                    onClick={() => handleEmitPendingSingle(res)}
-                                    disabled={!displayHasDoc || isEmitting}
-                                    className="h-7 px-2 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white gap-1 shadow-2xs"
-                                    title="Emitir apenas NFS-e (Só Hospedagem) com 1 clique"
-                                  >
-                                    <Zap className="w-3 h-3" />
-                                    <span>1-Clique NF</span>
-                                  </Button>
-
-                                  <Button
-                                    size="sm"
-                                    onClick={() => handleOpenEmitBoletoModal(res)}
-                                    className="h-7 px-2 text-[11px] font-bold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white gap-1 shadow-2xs"
-                                    title="Emitir NFS-e (Hospedagem) + Boleto(s) Faturado Banco Inter (1 ou 2 boletos)"
-                                  >
-                                    <Building2 className="w-3 h-3" />
-                                    <span>NF + Boleto</span>
-                                  </Button>
-
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => handleLoadToStudio(res)}
-                                    className="h-7 px-2 text-[11px] font-bold rounded-lg text-primary border-primary/30 hover:bg-primary/10 gap-1"
-                                    title="Carregar no Emissor Studio para revisar"
-                                  >
-                                    <Sparkles className="w-3 h-3" />
-                                    <span>Studio</span>
-                                  </Button>
+                                  )}
+                                  {showSecondaryCompany && (
+                                    <div>
+                                      <span className="font-bold text-foreground">
+                                        🏢 {res.company.corporateName || res.company.name}
+                                      </span>
+                                      {res.company.cnpj && <span className="font-mono ml-1">({res.company.cnpj})</span>}
+                                    </div>
+                                  )}
                                 </div>
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
+                              )}
+                            </div>
+
+                            {/* Período & Diárias */}
+                            <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground px-0.5">
+                              <div className="flex items-center gap-1.5 font-medium text-foreground min-w-0">
+                                <Calendar className="w-3.5 h-3.5 text-muted-foreground shrink-0" aria-hidden="true" />
+                                <span className="truncate">{res.checkinDate} → {res.checkoutDate}</span>
+                              </div>
+                              <span className="font-bold text-foreground shrink-0">
+                                {res.diarias} {res.diarias === 1 ? "diária" : "diárias"}
+                              </span>
+                            </div>
+
+                            {/* Barra Inferior Full-Width de Ações (3 botões confortáveis sem corte em 360px) */}
+                            <div className="grid grid-cols-3 gap-1 min-[375px]:gap-1.5 pt-0.5">
+                              <Button
+                                size="sm"
+                                onClick={() => handleEmitPendingSingle(res)}
+                                disabled={!displayHasDoc || isEmitting}
+                                className="min-h-[44px] h-auto py-2 px-1 min-[375px]:px-1.5 text-[10px] min-[375px]:text-[11px] font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white gap-0.5 min-[375px]:gap-1 shadow-2xs justify-center"
+                                aria-label={`Emitir NFS-e com 1 clique para Flat ${res.flatNumber}`}
+                              >
+                                <Zap className="w-3 h-3 min-[375px]:w-3.5 min-[375px]:h-3.5 shrink-0" aria-hidden="true" />
+                                <span className="whitespace-nowrap">1-Clique NF</span>
+                              </Button>
+
+                              <Button
+                                size="sm"
+                                onClick={() => handleOpenEmitBoletoModal(res)}
+                                className="min-h-[44px] h-auto py-2 px-1 min-[375px]:px-1.5 text-[10px] min-[375px]:text-[11px] font-bold rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white gap-0.5 min-[375px]:gap-1 shadow-2xs justify-center"
+                                aria-label={`Emitir NFS-e e Boleto para Flat ${res.flatNumber}`}
+                              >
+                                <Building2 className="w-3 h-3 min-[375px]:w-3.5 min-[375px]:h-3.5 shrink-0" aria-hidden="true" />
+                                <span className="whitespace-nowrap">NF + Boleto</span>
+                              </Button>
+
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleLoadToStudio(res)}
+                                className="min-h-[44px] h-auto py-2 px-1 min-[375px]:px-1.5 text-[10px] min-[375px]:text-[11px] font-bold rounded-xl text-primary border-primary/30 hover:bg-primary/10 gap-0.5 min-[375px]:gap-1 justify-center"
+                                aria-label={`Abrir Flat ${res.flatNumber} no Studio`}
+                              >
+                                <Sparkles className="w-3 h-3 min-[375px]:w-3.5 min-[375px]:h-3.5 shrink-0" aria-hidden="true" />
+                                <span className="whitespace-nowrap">Studio</span>
+                              </Button>
+                            </div>
+                          </article>
+                        )
+                      })}
+                    </div>
+
+                    {/* ── DESKTOP (>= 720px CONTAINER): TABELA COMPLETA INTACTA ── */}
+                    <div
+                      tabIndex={0}
+                      role="region"
+                      aria-label="Tabela de reservas pendentes de NFS-e"
+                      className="fiscal-list-table overflow-x-auto overscroll-x-contain focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                    >
+                      <table className="w-full text-xs text-left">
+                        <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur-xs text-muted-foreground border-b border-border font-bold">
+                          <tr>
+                            <th scope="col" className="p-3 w-10 text-center">
+                              <input 
+                                type="checkbox" 
+                                checked={selectedPendingIds.length > 0 && selectedPendingIds.length === filteredPendingReservations.length}
+                                onChange={handleSelectAllPending}
+                                aria-label="Selecionar todas as reservas pendentes"
+                                className="rounded cursor-pointer"
+                              />
+                            </th>
+                            <th scope="col" className="p-3">Código / Flat</th>
+                            <th scope="col" className="p-3">Hóspede &amp; Tomador Selecionado</th>
+                            <th scope="col" className="p-3">Agência / Empresa (4-Pontas)</th>
+                            <th scope="col" className="p-3">Período / Diárias</th>
+                            <th scope="col" className="p-3">Valor (R$)</th>
+                            <th scope="col" className="p-3">Cadastro</th>
+                            <th scope="col" className="p-3 text-right">Ações Rápidas</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {filteredPendingReservations.map(res => {
+                            const rowKey = String(res.id || res.code)
+                            const isSelected = selectedPendingIds.includes(rowKey)
+                            const activeType: "guest" | "company" | "agency" = res.activeTomadorType || pendingTomadorOverrides[rowKey] || (res.invoiceRecipientType === "agency" ? "agency" : res.invoiceRecipientType === "company" ? "company" : res.isAgency ? "agency" : res.isPj ? "company" : "guest")
+                            const activeOpt = res.tomadorOptions?.[activeType]
+                            const displayTomadorName = activeOpt?.name || activeOpt?.tomadorNome || res.tomadorDefaultName
+                            const displayTomadorDoc = activeOpt ? (activeOpt.doc ?? activeOpt.tomadorCpfCnpj ?? "") : res.tomadorDefaultDoc
+                            const cleanDisplayDoc = String(displayTomadorDoc || "").replace(/\D/g, "")
+                            const displayHasDoc = activeType === "guest" ? cleanDisplayDoc.length >= 11 : cleanDisplayDoc.length === 14
+                            return (
+                              <tr key={rowKey} className={`hover:bg-muted/20 transition-colors ${isSelected ? 'bg-primary/5' : ''}`}>
+                                <td className="p-3 text-center">
+                                  <input 
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => handleToggleSelectPending(rowKey)}
+                                    aria-label={`Selecionar reserva Flat ${res.flatNumber} (${res.code || `#${res.id}`})`}
+                                    className="rounded cursor-pointer"
+                                  />
+                                </td>
+
+                                <td className="p-3 font-mono">
+                                  <div className="font-bold text-foreground whitespace-nowrap">Flat {res.flatNumber}</div>
+                                  <div className="text-[10px] text-muted-foreground flex flex-wrap items-center gap-1">
+                                    <span className="whitespace-nowrap">{res.code || `#${res.id}`}</span>
+                                    <span>•</span>
+                                    <span className={res.channel === "b2b" ? "text-violet-600 font-bold uppercase" : ""}>{res.channel || 'direto'}</span>
+                                  </div>
+                                  {(res.b2bReservationNumber || res.b2bLocatorRloc) && (
+                                    <div className="text-[9px] text-violet-600 dark:text-violet-400 font-bold mt-0.5">
+                                      {res.b2bReservationNumber ? `B2B #${res.b2bReservationNumber}` : ""} {res.b2bLocatorRloc ? `• RLOC ${res.b2bLocatorRloc}` : ""}
+                                    </div>
+                                  )}
+                                </td>
+
+                                <td className="p-3">
+                                  <div className="text-[10px] text-muted-foreground mb-0.5">
+                                    Hóspede: <strong className="text-foreground">{res.guestName}</strong>
+                                  </div>
+                                  <div className="font-bold text-foreground flex items-center gap-1.5 flex-wrap">
+                                    <span>{displayTomadorName}</span>
+                                    <Badge variant="outline" className={`text-[9px] h-4 px-1 ${activeType === "agency" ? "border-violet-500/40 text-violet-600 bg-violet-500/10" : activeType === "company" ? "border-indigo-500/40 text-indigo-600 bg-indigo-500/10" : ""}`}>
+                                      {activeType === "agency" ? "🟣 Agência" : activeType === "company" ? "🏢 Empresa" : "👤 PF"}
+                                    </Badge>
+                                    {res.nfHideFromGuest && (
+                                      <Badge variant="outline" className="text-[8px] h-4 px-1 border-amber-500/40 text-amber-600 bg-amber-500/10" title="Ocultar NF do hóspede">
+                                        🔒 Sigilo
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <div className="text-[10px] text-muted-foreground font-mono">
+                                    {displayTomadorDoc || "Sem documento informado"}
+                                  </div>
+                                  {res.autoInvoiceStatus && res.autoInvoiceStatus !== "emitted" && res.autoInvoiceStatus !== "skipped_rule_off" && res.autoInvoiceStatus !== "skipped_disabled_global" && (
+                                    <div className="mt-1">
+                                      <Badge
+                                        variant="outline"
+                                        title={res.autoInvoiceLastError || res.autoInvoiceStatus}
+                                        className={`text-[9px] h-4 px-1.5 ${
+                                          res.autoInvoiceStatus === "awaiting_document_whatsapp"
+                                            ? "border-sky-500/40 text-sky-700 dark:text-sky-300 bg-sky-500/10"
+                                            : res.autoInvoiceStatus === "waiting_package_last_checkout"
+                                            ? "border-violet-500/40 text-violet-700 dark:text-violet-300 bg-violet-500/10"
+                                            : res.autoInvoiceStatus === "queued_retry"
+                                            ? "border-amber-500/40 text-amber-700 dark:text-amber-300 bg-amber-500/10"
+                                            : "border-rose-500/40 text-rose-700 dark:text-rose-300 bg-rose-500/10"
+                                        }`}
+                                      >
+                                        {res.autoInvoiceStatus === "awaiting_document_whatsapp"
+                                          ? "💬 Aguardando CPF/CNPJ no WhatsApp"
+                                          : res.autoInvoiceStatus === "waiting_package_last_checkout"
+                                          ? "📦 Aguardando último flat do pacote"
+                                          : res.autoInvoiceStatus === "blocked_unpaid"
+                                          ? "⛔ Bloqueada: pagamento pendente"
+                                          : res.autoInvoiceStatus === "queued_retry"
+                                          ? "⏳ Na fila automática SEFIN"
+                                          : "⚠️ Erro na auto-emissão"}
+                                      </Badge>
+                                    </div>
+                                  )}
+                                  {/* 3-Tomador Switcher Rápido */}
+                                  <div className="flex items-center gap-1 mt-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => setPendingTomadorOverrides(prev => ({ ...prev, [rowKey]: "guest" }))}
+                                      className={`px-1.5 py-0.5 rounded text-[9px] font-bold border transition-all ${
+                                        activeType === "guest"
+                                          ? "bg-primary text-primary-foreground border-primary"
+                                          : "bg-background text-muted-foreground border-border hover:border-primary/40"
+                                      }`}
+                                    >
+                                      👤 PF
+                                    </button>
+                                    {(res.company || res.tomadorOptions?.company) && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setPendingTomadorOverrides(prev => ({ ...prev, [rowKey]: "company" }))}
+                                        className={`px-1.5 py-0.5 rounded text-[9px] font-bold border transition-all ${
+                                          activeType === "company"
+                                            ? "bg-indigo-600 text-white border-indigo-600"
+                                            : "bg-background text-muted-foreground border-border hover:border-indigo-500/40"
+                                        }`}
+                                      >
+                                        🏢 Empresa
+                                      </button>
+                                    )}
+                                    {(res.agency || res.tomadorOptions?.agency) && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setPendingTomadorOverrides(prev => ({ ...prev, [rowKey]: "agency" }))}
+                                        className={`px-1.5 py-0.5 rounded text-[9px] font-bold border transition-all ${
+                                          activeType === "agency"
+                                            ? "bg-violet-600 text-white border-violet-600"
+                                            : "bg-background text-muted-foreground border-border hover:border-violet-500/40"
+                                        }`}
+                                      >
+                                        🟣 Agência
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+
+                                <td className="p-3 space-y-1">
+                                  {res.agency && (
+                                    <div>
+                                      <div className="font-bold text-violet-700 dark:text-violet-300 flex items-center gap-1">
+                                        <span>🟣 {res.agency.tradeName || res.agency.corporateName || res.agency.name}</span>
+                                      </div>
+                                      <div className="text-[10px] text-muted-foreground font-mono">{res.agency.cnpj}</div>
+                                    </div>
+                                  )}
+                                  {res.company && (
+                                    <div>
+                                      <div className="font-bold text-foreground">🏢 {res.company.corporateName || res.company.name}</div>
+                                      <div className="text-[10px] text-muted-foreground font-mono">{res.company.cnpj}</div>
+                                    </div>
+                                  )}
+                                  {!res.agency && !res.company && (
+                                    <span className="text-muted-foreground">—</span>
+                                  )}
+                                </td>
+
+                                <td className="p-3">
+                                  <div className="whitespace-nowrap">{res.checkinDate} a {res.checkoutDate}</div>
+                                  <div className="text-[10px] text-muted-foreground font-bold">{res.diarias} diárias</div>
+                                </td>
+
+                                <td className="p-3 font-black text-emerald-600 font-mono tabular-nums">
+                                  <div className="whitespace-nowrap">R$ {Number(res.accommodationAmount || res.totalAmount || res.price || 0).toFixed(2)}</div>
+                                  <div className="text-[9px] text-muted-foreground font-sans font-semibold">Só Hospedagem (NF)</div>
+                                  {Number(res.consumptionAmount || 0) > 0 && (
+                                    <Badge variant="outline" className="mt-0.5 text-[9px] h-4 px-1 border-amber-500/40 text-amber-600 bg-amber-500/10 font-mono">
+                                      +R$ {Number(res.consumptionAmount).toFixed(2)} Consumo
+                                    </Badge>
+                                  )}
+                                </td>
+
+                                <td className="p-3">
+                                  {displayHasDoc ? (
+                                    <Badge className="bg-emerald-600 text-white text-[9px] h-4.5 px-1.5 gap-1">
+                                      <Check className="w-2.5 h-2.5" aria-hidden="true" /> Pronto
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="outline" className="border-amber-500/50 text-amber-600 text-[9px] h-4.5 px-1.5 gap-1">
+                                      <AlertTriangle className="w-2.5 h-2.5" aria-hidden="true" /> Falta Doc
+                                    </Badge>
+                                  )}
+                                </td>
+
+                                <td className="p-3 text-right">
+                                  <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                                    <Button
+                                      size="sm"
+                                      onClick={() => handleEmitPendingSingle(res)}
+                                      disabled={!displayHasDoc || isEmitting}
+                                      className="h-7 px-2 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white gap-1 shadow-2xs"
+                                      title="Emitir apenas NFS-e (Só Hospedagem) com 1 clique"
+                                    >
+                                      <Zap className="w-3 h-3" aria-hidden="true" />
+                                      <span>1-Clique NF</span>
+                                    </Button>
+
+                                    <Button
+                                      size="sm"
+                                      onClick={() => handleOpenEmitBoletoModal(res)}
+                                      className="h-7 px-2 text-[11px] font-bold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white gap-1 shadow-2xs"
+                                      title="Emitir NFS-e (Hospedagem) + Boleto(s) Faturado Banco Inter (1 ou 2 boletos)"
+                                    >
+                                      <Building2 className="w-3 h-3" aria-hidden="true" />
+                                      <span>NF + Boleto</span>
+                                    </Button>
+
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => handleLoadToStudio(res)}
+                                      className="h-7 px-2 text-[11px] font-bold rounded-lg text-primary border-primary/30 hover:bg-primary/10 gap-1"
+                                      title="Carregar no Emissor Studio para revisar"
+                                    >
+                                      <Sparkles className="w-3 h-3" aria-hidden="true" />
+                                      <span>Studio</span>
+                                    </Button>
+                                  </div>
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
               </CardContent>
             </Card>
+
+            {/* Barra Flutuante de Ações em Lote no Celular (acima da bottom nav e do FAB z-40) */}
+            {selectedPendingIds.length > 0 && !isFiscalModalOpen && (
+              <div
+                role="region"
+                aria-label="Ações em lote para reservas selecionadas"
+                className="md:hidden fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] left-3 right-3 z-[45] bg-card/95 backdrop-blur-md border-2 border-primary/30 rounded-2xl shadow-xl p-2.5 flex items-center justify-between gap-2"
+              >
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPendingIds([])}
+                    aria-label="Limpar seleção de reservas"
+                    className="w-10 h-10 rounded-xl bg-muted/60 hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground shrink-0"
+                  >
+                    <X className="w-4 h-4" aria-hidden="true" />
+                  </button>
+                  <div className="text-xs leading-tight min-w-0">
+                    <div className="font-black text-foreground tabular-nums">{selectedPendingIds.length} sel.</div>
+                    <div className="text-[10px] text-muted-foreground truncate">em lote</div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {selectedPendingIds.length >= 2 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleOpenConsolidatedModal}
+                      className="min-h-[42px] px-3 rounded-xl text-xs font-bold gap-1 border-indigo-500/40 text-indigo-700 dark:text-indigo-300 bg-background"
+                    >
+                      <Building2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                      <span>B2B</span>
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    onClick={handleBatchEmitSelected}
+                    disabled={batchEmitting}
+                    className="min-h-[42px] px-3.5 rounded-xl text-xs font-black gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+                  >
+                    <Zap className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    <span>Emitir ({selectedPendingIds.length})</span>
+                  </Button>
+                </div>
+              </div>
+            )}
           </TabsContent>
 
           {/* ══════════════════════════════════════════════════════════════════════
               R4: ABA LIVRO FISCAL AVANÇADO + CONTINGÊNCIA INTEGRADA
              ══════════════════════════════════════════════════════════════════════ */}
-          <TabsContent value="history" className="space-y-4 m-0">
+          <TabsContent value="history" className="space-y-4 m-0 min-w-0">
             {/* Alerta & Fila de Contingência Integrada (exibida apenas quando houver falhas/retentativas pendentes) */}
             {retryQueue.length > 0 && (
-              <Card className="rounded-3xl border border-rose-500/40 bg-rose-500/5 shadow-sm">
-                <CardHeader className="p-5 border-b border-rose-500/20 flex flex-row items-center justify-between gap-3">
-                  <div>
-                    <CardTitle className="text-base font-black text-rose-700 dark:text-rose-300 flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-rose-600" />
-                      <span>Fila de Contingência & Retentativa ({retryQueue.length})</span>
+              <Card className="rounded-2xl sm:rounded-3xl border border-rose-500/40 bg-rose-500/5 shadow-sm overflow-hidden min-w-0">
+                <CardHeader className="p-3.5 sm:p-5 border-b border-rose-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <CardTitle className="fiscal-heading-balance text-base font-black text-rose-700 dark:text-rose-300 flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-rose-600 shrink-0" aria-hidden="true" />
+                      <span>Fila de Contingência &amp; Retentativa ({retryQueue.length})</span>
                     </CardTitle>
-                    <CardDescription className="text-xs">
+                    <CardDescription className="fiscal-text-pretty text-xs mt-0.5">
                       Emissões aguardando reprocessamento automático ou manual junto à SEFIN Nacional (Gov.br)
                     </CardDescription>
                   </div>
@@ -5510,107 +5975,183 @@ export default function FiscalInvoicesPage() {
                     variant="outline"
                     size="sm"
                     onClick={fetchRetryQueue}
-                    className="h-9 px-3 rounded-xl text-xs font-bold gap-1.5 bg-background"
+                    className="w-full sm:w-auto min-h-[44px] sm:min-h-0 sm:h-9 px-3 rounded-xl text-xs font-bold gap-1.5 bg-background shrink-0"
                   >
-                    <RefreshCw className={`w-3.5 h-3.5 ${loadingRetryQueue ? "animate-spin" : ""}`} />
+                    <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${loadingRetryQueue ? "animate-spin" : ""}`} aria-hidden="true" />
                     <span>Atualizar Fila</span>
                   </Button>
                 </CardHeader>
 
                 <CardContent className="p-0">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs text-left">
-                      <thead className="bg-rose-500/10 text-muted-foreground border-b border-rose-500/20 font-bold">
-                        <tr>
-                          <th className="p-3.5">ID / Data</th>
-                          <th className="p-3.5">Tomador</th>
-                          <th className="p-3.5">Valor (R$)</th>
-                          <th className="p-3.5">Motivo da Falha / Detalhe</th>
-                          <th className="p-3.5">Tentativas</th>
-                          <th className="p-3.5">Próxima Tentativa</th>
-                          <th className="p-3.5 text-right">Ações</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border/60 bg-card">
-                        {retryQueue.map((item: any) => (
-                          <tr key={item.id} className="hover:bg-muted/20">
-                            <td className="p-3.5 font-mono">
-                              <div className="font-bold text-foreground">#{item.id}</div>
-                              <div className="text-[10px] text-muted-foreground">{item.createdAt ? new Date(item.createdAt).toLocaleTimeString("pt-BR") : "—"}</div>
-                            </td>
-                            <td className="p-3.5">
-                              <div className="font-bold text-foreground">{item.tomadorNome || item.payload?.tomadorNome || "Tomador"}</div>
-                              <div className="text-[10px] text-muted-foreground font-mono">{item.tomadorCpfCnpj || item.payload?.tomadorCpfCnpj}</div>
-                            </td>
-                            <td className="p-3.5 font-black text-foreground font-mono">
+                  <div className="fiscal-list-container">
+                    {/* ── MOBILE / NARROW CONTAINER: CARDS DE CONTINGÊNCIA ── */}
+                    <div className="fiscal-list-cards gap-3 p-3">
+                      {retryQueue.map((item: any) => (
+                        <article
+                          key={item.id}
+                          className="rounded-2xl border border-rose-500/25 bg-card p-3.5 shadow-2xs space-y-2.5 min-w-0"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 space-y-0.5">
+                              <div className="flex items-center gap-1.5 flex-wrap font-mono">
+                                <span className="font-black text-sm text-foreground">#{item.id}</span>
+                                <Badge variant="outline" className="text-[10px] font-bold">
+                                  {item.attempts || 1} / 5 tent.
+                                </Badge>
+                              </div>
+                              <div className="text-[11px] text-muted-foreground font-mono">
+                                Criado: {item.createdAt ? new Date(item.createdAt).toLocaleTimeString("pt-BR") : "—"} • Próx.: {item.nextRetry ? new Date(item.nextRetry).toLocaleTimeString("pt-BR") : "Em espera"}
+                              </div>
+                            </div>
+                            <div className="font-black text-base text-foreground font-mono tabular-nums shrink-0">
                               R$ {Number(item.valorServico || item.payload?.valorServico || 0).toFixed(2)}
-                            </td>
-                            <td className="p-3.5 max-w-[260px]">
-                              <div className="text-rose-500 font-medium text-[11px] truncate" title={item.lastError || item.error}>
-                                {item.lastError || item.error || "Aguardando liberação SEFIN Nacional (Gov.br)"}
-                              </div>
-                            </td>
-                            <td className="p-3.5">
-                              <Badge variant="outline" className="text-[10px] font-bold">
-                                {item.attempts || 1} / 5
-                              </Badge>
-                            </td>
-                            <td className="p-3.5 text-muted-foreground text-[11px]">
-                              {item.nextRetry ? new Date(item.nextRetry).toLocaleTimeString("pt-BR") : "Em espera"}
-                            </td>
-                            <td className="p-3.5 text-right">
-                              <div className="flex items-center justify-end gap-1.5">
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleRetryItem(item.id)}
-                                  disabled={reprocessingId === item.id}
-                                  className="h-7 px-2.5 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
-                                >
-                                  {reprocessingId === item.id ? <RefreshCw className="w-3 h-3 animate-spin" /> : <PlayCircle className="w-3 h-3" />}
-                                  <span>Reprocessar Agora</span>
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => handleRemoveRetryItem(item.id)}
-                                  className="h-7 px-2 text-[11px] font-bold rounded-lg text-rose-500 hover:bg-rose-500/10"
-                                  title="Remover da fila"
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                </Button>
-                              </div>
-                            </td>
+                            </div>
+                          </div>
+
+                          <div className="rounded-xl bg-muted/30 border border-border/60 p-2.5 space-y-0.5 min-w-0">
+                            <div className="font-bold text-xs text-foreground break-words">
+                              {item.tomadorNome || item.payload?.tomadorNome || "Tomador"}
+                            </div>
+                            <div className="text-[11px] text-muted-foreground font-mono fiscal-break-anywhere">
+                              {item.tomadorCpfCnpj || item.payload?.tomadorCpfCnpj || "—"}
+                            </div>
+                          </div>
+
+                          <div className="rounded-xl bg-rose-500/10 border border-rose-500/20 p-2.5 text-xs text-rose-700 dark:text-rose-300 font-medium break-words fiscal-break-anywhere leading-relaxed">
+                            {item.lastError || item.error || "Aguardando liberação SEFIN Nacional (Gov.br)"}
+                          </div>
+
+                          <div className="flex items-center gap-2 pt-0.5">
+                            <Button
+                              size="sm"
+                              onClick={() => handleRetryItem(item.id)}
+                              disabled={reprocessingId === item.id}
+                              className="flex-1 min-h-[44px] px-3 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5"
+                              aria-label={`Reprocessar item #${item.id} agora`}
+                            >
+                              {reprocessingId === item.id ? (
+                                <RefreshCw className="w-4 h-4 animate-spin shrink-0" aria-hidden="true" />
+                              ) : (
+                                <PlayCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
+                              )}
+                              <span>Reprocessar Agora</span>
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleRemoveRetryItem(item.id)}
+                              className="min-h-[44px] px-3 text-xs font-bold rounded-xl text-rose-600 border-rose-500/30 hover:bg-rose-500/10 gap-1.5 shrink-0"
+                              aria-label={`Remover item #${item.id} da fila de contingência`}
+                            >
+                              <Trash2 className="w-4 h-4 shrink-0" aria-hidden="true" />
+                              <span>Remover</span>
+                            </Button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+
+                    {/* ── DESKTOP (>= 720px CONTAINER): TABELA DE CONTINGÊNCIA ── */}
+                    <div
+                      tabIndex={0}
+                      role="region"
+                      aria-label="Tabela da fila de contingência e retentativa de NFS-e"
+                      className="fiscal-list-table overflow-x-auto overscroll-x-contain focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                    >
+                      <table className="w-full text-xs text-left">
+                        <thead className="sticky top-0 z-10 bg-rose-500/15 backdrop-blur-xs text-muted-foreground border-b border-rose-500/20 font-bold">
+                          <tr>
+                            <th scope="col" className="p-3.5">ID / Data</th>
+                            <th scope="col" className="p-3.5">Tomador</th>
+                            <th scope="col" className="p-3.5">Valor (R$)</th>
+                            <th scope="col" className="p-3.5">Motivo da Falha / Detalhe</th>
+                            <th scope="col" className="p-3.5">Tentativas</th>
+                            <th scope="col" className="p-3.5">Próxima Tentativa</th>
+                            <th scope="col" className="p-3.5 text-right">Ações</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-border/60 bg-card">
+                          {retryQueue.map((item: any) => (
+                            <tr key={item.id} className="hover:bg-muted/20">
+                              <td className="p-3.5 font-mono">
+                                <div className="font-bold text-foreground">#{item.id}</div>
+                                <div className="text-[10px] text-muted-foreground">{item.createdAt ? new Date(item.createdAt).toLocaleTimeString("pt-BR") : "—"}</div>
+                              </td>
+                              <td className="p-3.5">
+                                <div className="font-bold text-foreground">{item.tomadorNome || item.payload?.tomadorNome || "Tomador"}</div>
+                                <div className="text-[10px] text-muted-foreground font-mono">{item.tomadorCpfCnpj || item.payload?.tomadorCpfCnpj}</div>
+                              </td>
+                              <td className="p-3.5 font-black text-foreground font-mono tabular-nums">
+                                R$ {Number(item.valorServico || item.payload?.valorServico || 0).toFixed(2)}
+                              </td>
+                              <td className="p-3.5 max-w-[260px]">
+                                <div className="text-rose-500 font-medium text-[11px] truncate" title={item.lastError || item.error}>
+                                  {item.lastError || item.error || "Aguardando liberação SEFIN Nacional (Gov.br)"}
+                                </div>
+                              </td>
+                              <td className="p-3.5">
+                                <Badge variant="outline" className="text-[10px] font-bold">
+                                  {item.attempts || 1} / 5
+                                </Badge>
+                              </td>
+                              <td className="p-3.5 text-muted-foreground text-[11px]">
+                                {item.nextRetry ? new Date(item.nextRetry).toLocaleTimeString("pt-BR") : "Em espera"}
+                              </td>
+                              <td className="p-3.5 text-right">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <Button
+                                    size="sm"
+                                    onClick={() => handleRetryItem(item.id)}
+                                    disabled={reprocessingId === item.id}
+                                    className="h-7 px-2.5 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
+                                  >
+                                    {reprocessingId === item.id ? <RefreshCw className="w-3 h-3 animate-spin" aria-hidden="true" /> : <PlayCircle className="w-3 h-3" aria-hidden="true" />}
+                                    <span>Reprocessar Agora</span>
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => handleRemoveRetryItem(item.id)}
+                                    className="h-7 px-2 text-[11px] font-bold rounded-lg text-rose-500 hover:bg-rose-500/10"
+                                    title="Remover da fila"
+                                    aria-label={`Remover item #${item.id} da fila de contingência`}
+                                  >
+                                    <Trash2 className="w-3 h-3" aria-hidden="true" />
+                                  </Button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
             )}
 
-            <Card className="rounded-3xl border border-border shadow-sm">
-              <CardHeader className="p-5 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-3">
-                <div>
-                  <CardTitle className="text-base font-black text-foreground flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-primary" />
-                    <span>Livro Fiscal Eletrônico & Gestão Contábil</span>
+            <Card className="rounded-2xl sm:rounded-3xl border border-border shadow-sm overflow-hidden min-w-0">
+              <CardHeader className="p-3.5 sm:p-5 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <CardTitle className="fiscal-heading-balance text-base font-black text-foreground flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-primary shrink-0" aria-hidden="true" />
+                    <span>Livro Fiscal Eletrônico &amp; Gestão Contábil</span>
                   </CardTitle>
-                  <CardDescription className="text-xs">
+                  <CardDescription className="fiscal-text-pretty text-xs mt-0.5">
                     Histórico completo de notas autorizadas, canceladas e substituídas com exportação para contabilidade
                   </CardDescription>
                 </div>
 
                 {/* Botões do Kit Contador */}
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 sm:flex-wrap w-full md:w-auto">
                   <Button 
                     variant="outline" 
                     size="sm" 
                     onClick={handleExportAccountingCsv}
-                    className="h-9 px-3 rounded-xl text-xs font-bold gap-1.5 border-emerald-600/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10 shadow-2xs"
+                    className="col-span-2 sm:col-span-1 min-h-[44px] sm:min-h-0 sm:h-9 px-3 rounded-xl text-xs font-bold gap-1.5 border-emerald-600/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10 shadow-2xs"
                     title="Exportar Planilha Excel UTF-8 BOM com todas as colunas fiscais"
                   >
-                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 shrink-0" aria-hidden="true" />
                     <span>Kit Contador (CSV Excel)</span>
                   </Button>
 
@@ -5618,10 +6159,10 @@ export default function FiscalInvoicesPage() {
                     variant="outline" 
                     size="sm" 
                     onClick={handleExportAccountingJson}
-                    className="h-9 px-3 rounded-xl text-xs font-bold gap-1.5 border-border shadow-2xs"
+                    className="min-h-[44px] sm:min-h-0 sm:h-9 px-3 rounded-xl text-xs font-bold gap-1.5 border-border shadow-2xs"
                     title="Exportar Pacote JSON Estruturado"
                   >
-                    <Download className="w-3.5 h-3.5" />
+                    <Download className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                     <span>JSON</span>
                   </Button>
 
@@ -5629,85 +6170,114 @@ export default function FiscalInvoicesPage() {
                     variant="outline" 
                     size="sm" 
                     onClick={fetchInvoices}
-                    className="h-9 px-3 rounded-xl text-xs font-bold gap-1.5"
+                    className="min-h-[44px] sm:min-h-0 sm:h-9 px-3 rounded-xl text-xs font-bold gap-1.5"
                   >
-                    <RefreshCw className={`w-3.5 h-3.5 ${loadingInvoices ? 'animate-spin' : ''}`} />
+                    <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${loadingInvoices ? 'animate-spin' : ''}`} aria-hidden="true" />
                     <span>Atualizar</span>
                   </Button>
                 </div>
               </CardHeader>
 
               {/* Filtros Multi-Critério do Livro Fiscal */}
-              <div className="p-4 bg-muted/20 border-b border-border flex flex-wrap items-center gap-3 text-xs">
-                <div className="relative w-64">
-                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <search
+                aria-label="Filtrar notas emitidas no livro fiscal"
+                className="p-3.5 sm:p-4 bg-muted/20 border-b border-border flex flex-col md:flex-row md:flex-wrap md:items-center gap-2.5 md:gap-3 text-xs"
+              >
+                <div className="relative w-full md:w-64">
+                  <Search className="w-4 h-4 md:w-3.5 md:h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" aria-hidden="true" />
                   <Input 
+                    type="search"
+                    inputMode="search"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    aria-label="Buscar tomador, CPF, número da nota ou flat"
                     placeholder="Buscar tomador, CPF, nota, flat..."
                     value={searchFilter}
                     onChange={e => setSearchFilter(e.target.value)}
-                    className="pl-8 text-xs h-8.5 rounded-xl bg-background"
+                    className="pl-9 md:pl-8 pr-10 text-base md:text-xs h-11 md:h-8.5 rounded-xl bg-background"
                   />
+                  {searchFilter && (
+                    <button
+                      type="button"
+                      aria-label="Limpar busca do livro fiscal"
+                      onClick={() => setSearchFilter("")}
+                      className="absolute right-0.5 top-1/2 -translate-y-1/2 w-10 h-10 md:w-7 md:h-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="w-4 h-4 md:w-3.5 md:h-3.5" aria-hidden="true" />
+                    </button>
+                  )}
                 </div>
 
-                <div className="flex items-center gap-1.5 bg-muted/60 px-2.5 py-1 rounded-xl border border-border">
-                  <span className="text-muted-foreground font-bold">Status:</span>
-                  <select
-                    value={livroStatusFilter}
-                    onChange={e => setLivroStatusFilter(e.target.value)}
-                    className="bg-transparent font-bold text-foreground cursor-pointer focus:outline-hidden"
-                  >
-                    <option value="all">Todos os Status</option>
-                    <option value="autorizada">Autorizadas</option>
-                    <option value="cancelada">Canceladas</option>
-                    <option value="substituida">Substituídas</option>
-                  </select>
+                <div className="grid grid-cols-2 md:flex md:flex-wrap items-stretch md:items-center gap-2 w-full md:w-auto">
+                  <div className="flex flex-col md:flex-row md:items-center gap-0.5 md:gap-1.5 bg-muted/60 px-2.5 py-1.5 md:py-1 rounded-xl border border-border min-w-0">
+                    <label htmlFor="history-status-filter" className="text-[10px] md:text-xs text-muted-foreground font-bold shrink-0">
+                      Status:
+                    </label>
+                    <select
+                      id="history-status-filter"
+                      value={livroStatusFilter}
+                      onChange={e => setLivroStatusFilter(e.target.value)}
+                      className="bg-transparent font-bold text-foreground text-base md:text-xs cursor-pointer focus:outline-hidden w-full md:w-auto min-w-0"
+                    >
+                      <option value="all">Todos os Status</option>
+                      <option value="autorizada">Autorizadas</option>
+                      <option value="cancelada">Canceladas</option>
+                      <option value="substituida">Substituídas</option>
+                    </select>
+                  </div>
+
+                  <div className="flex flex-col md:flex-row md:items-center gap-0.5 md:gap-1.5 bg-muted/60 px-2.5 py-1.5 md:py-1 rounded-xl border border-border min-w-0">
+                    <label htmlFor="history-tomador-filter" className="text-[10px] md:text-xs text-muted-foreground font-bold shrink-0">
+                      Tomador:
+                    </label>
+                    <select
+                      id="history-tomador-filter"
+                      value={livroTomadorFilter}
+                      onChange={e => setLivroTomadorFilter(e.target.value)}
+                      className="bg-transparent font-bold text-foreground text-base md:text-xs cursor-pointer focus:outline-hidden w-full md:w-auto min-w-0"
+                    >
+                      <option value="all">PF e PJ</option>
+                      <option value="pf">Pessoa Física (PF)</option>
+                      <option value="pj">Pessoa Jurídica (PJ)</option>
+                    </select>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-1.5 bg-muted/60 px-2.5 py-1 rounded-xl border border-border">
-                  <span className="text-muted-foreground font-bold">Tomador:</span>
-                  <select
-                    value={livroTomadorFilter}
-                    onChange={e => setLivroTomadorFilter(e.target.value)}
-                    className="bg-transparent font-bold text-foreground cursor-pointer focus:outline-hidden"
-                  >
-                    <option value="all">PF e PJ</option>
-                    <option value="pf">Pessoa Física (PF)</option>
-                    <option value="pj">Pessoa Jurídica (PJ)</option>
-                  </select>
-                </div>
+                <div className="flex items-center justify-between gap-2 md:contents">
+                  <div className="flex items-center gap-1.5 bg-muted/60 px-2.5 py-1 rounded-xl border border-border text-[11px] sm:text-xs">
+                    <span className="text-muted-foreground font-bold">Sistema:</span>
+                    <span className="font-bold text-foreground">🇧🇷 Padrão Nacional</span>
+                  </div>
 
-                <div className="flex items-center gap-1.5 bg-muted/60 px-2.5 py-1 rounded-xl border border-border">
-                  <span className="text-muted-foreground font-bold">Sistema:</span>
-                  <span className="font-bold text-foreground">🇧🇷 Padrão Nacional (Gov.br)</span>
+                  <div className="md:ml-auto font-mono text-muted-foreground text-[11px] sm:text-xs">
+                    {filteredInvoices.length} notas no livro
+                  </div>
                 </div>
-
-                <div className="ml-auto font-mono text-muted-foreground">
-                  {filteredInvoices.length} notas no livro
-                </div>
-              </div>
+              </search>
 
               {/* Barra de Subtotais do Período Filtrado */}
-              <div className="bg-muted/40 px-5 py-2.5 border-b border-border flex flex-wrap items-center justify-between gap-4 text-xs">
-                <div className="flex items-center gap-4 flex-wrap">
-                  <div>
-                    <span className="text-muted-foreground">Notas Filtradas:</span>{" "}
-                    <strong className="text-foreground font-black">{livroSubtotais.totalCount}</strong>
+              <div className="bg-muted/40 px-3.5 sm:px-5 py-3 sm:py-2.5 border-b border-border flex flex-col sm:flex-row sm:flex-wrap sm:items-center justify-between gap-2.5 sm:gap-4 text-xs">
+                <div className="grid grid-cols-3 sm:flex sm:items-center gap-2 sm:gap-4 sm:flex-wrap">
+                  <div className="min-w-0">
+                    <span className="text-[10px] sm:text-xs text-muted-foreground block sm:inline">Notas: </span>
+                    <strong className="text-foreground font-black tabular-nums">{livroSubtotais.totalCount}</strong>
                   </div>
-                  <div>
-                    <span className="text-muted-foreground">Faturamento Bruto:</span>{" "}
-                    <strong className="text-emerald-600 font-black">
+                  <div className="min-w-0">
+                    <span className="text-[10px] sm:text-xs text-muted-foreground block sm:inline">Bruto: </span>
+                    <strong className="text-emerald-600 font-black tabular-nums break-words">
                       R$ {livroSubtotais.faturamentoTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                     </strong>
                   </div>
-                  <div>
-                    <span className="text-muted-foreground">ISS Apurado:</span>{" "}
-                    <strong className="text-foreground font-black">
+                  <div className="min-w-0">
+                    <span className="text-[10px] sm:text-xs text-muted-foreground block sm:inline">ISS: </span>
+                    <strong className="text-foreground font-black tabular-nums break-words">
                       R$ {livroSubtotais.issTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                     </strong>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 text-[11px] font-mono">
+                <div className="flex items-center gap-2 flex-wrap text-[11px] font-mono">
                   <span className="text-emerald-600 font-bold">{livroSubtotais.autorizadasCount} autorizadas</span>
                   {livroSubtotais.canceladasCount > 0 && (
                     <span className="text-rose-500 font-bold">• {livroSubtotais.canceladasCount} canceladas</span>
@@ -5718,229 +6288,456 @@ export default function FiscalInvoicesPage() {
                 </div>
               </div>
 
-              {/* Tabela do Livro Fiscal */}
+              {/* Lista Responsiva do Livro Fiscal (Cards < 720px via @container | Tabela >= 720px) */}
               <CardContent className="p-0">
                 {loadingInvoices ? (
-                  <div className="p-12 text-center text-xs text-muted-foreground">Carregando livro fiscal...</div>
+                  <div className="p-10 sm:p-12 text-center text-xs text-muted-foreground">Carregando livro fiscal...</div>
                 ) : filteredInvoices.length === 0 ? (
-                  <div className="p-12 text-center text-xs text-muted-foreground">Nenhuma nota fiscal encontrada no período.</div>
+                  <div className="p-10 sm:p-12 text-center text-xs text-muted-foreground">Nenhuma nota fiscal encontrada no período.</div>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs text-left">
-                      <thead className="bg-muted/40 text-muted-foreground border-b border-border font-bold">
-                        <tr>
-                          <th className="p-3.5">Número / Chave</th>
-                          <th className="p-3.5">Sistema</th>
-                          <th className="p-3.5">Tomador / Hóspede</th>
-                          <th className="p-3.5">Apartamento</th>
-                          <th className="p-3.5">Valor (R$)</th>
-                          <th className="p-3.5">Emissão</th>
-                          <th className="p-3.5">Status</th>
-                          <th className="p-3.5 text-right">Ações Fiscais</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        {filteredInvoices.map((inv: any) => {
-                          const status = inv.status || "autorizada"
-                          const isAuthorized = status === "autorizada"
-                          const isCancelled = status === "cancelada"
-                          const isReplaced = status === "substituida"
+                  <div className="fiscal-list-container">
+                    {/* ── MOBILE / NARROW CONTAINER: CARDS DO LIVRO FISCAL ── */}
+                    <div className="fiscal-list-cards gap-3 p-3 bg-muted/10">
+                      {filteredInvoices.map((inv: any) => {
+                        const status = inv.status || "autorizada"
+                        const isAuthorized = status === "autorizada"
+                        const isCancelled = status === "cancelada"
+                        const isReplaced = status === "substituida"
+                        const invNum = inv.numeroNfse || inv.numeroNota || `#${inv.id}`
+                        const isPjInv = (inv.tomadorCpfCnpj || "").replace(/\D/g, "").length === 14
 
-                          return (
-                            <tr key={inv.id || inv.numeroNfse} className="hover:bg-muted/20 transition-colors">
-                              <td className="p-3.5 font-mono">
-                                <div className="font-bold text-primary">{inv.numeroNfse || inv.numeroNota || `#${inv.id}`}</div>
-                                <div className="text-[10px] text-muted-foreground truncate max-w-[120px]">{inv.codigoVerificacao || inv.chaveAcesso}</div>
-                              </td>
-
-                              <td className="p-3.5">
-                                <Badge variant="outline" className="text-[10px] font-semibold">
-                                  🇧🇷 Padrão Nacional
-                                </Badge>
-                              </td>
-
-                              <td className="p-3.5">
-                                <div className="font-bold text-foreground flex items-center gap-1.5">
-                                  <span>{inv.tomadorNome}</span>
-                                  <Badge variant="outline" className="text-[9px] h-3.5 px-1">
-                                    {(inv.tomadorCpfCnpj || "").replace(/\D/g, "").length === 14 ? "PJ" : "PF"}
-                                  </Badge>
-                                </div>
-                                <div className="text-[10px] text-muted-foreground font-mono">{inv.tomadorCpfCnpj}</div>
-                              </td>
-
-                              <td className="p-3.5 font-semibold text-foreground">
-                                {inv.flatNumber ? `Flat ${inv.flatNumber}` : "—"}
-                              </td>
-
-                              <td className="p-3.5 font-black text-emerald-600 font-mono">
-                                R$ {Number(inv.valorServico || 0).toFixed(2)}
-                              </td>
-
-                              <td className="p-3.5 text-muted-foreground">
-                                {inv.dataEmissao ? new Date(inv.dataEmissao).toLocaleDateString("pt-BR") : "—"}
-                              </td>
-
-                              <td className="p-3.5">
-                                {isAuthorized && (
-                                  <Badge className="bg-emerald-600 text-white text-[10px] px-2 py-0.5">
-                                    Autorizada
-                                  </Badge>
-                                )}
-                                {isCancelled && (
-                                  <div>
+                        return (
+                          <article
+                            key={inv.id || inv.numeroNfse}
+                            className="rounded-2xl border border-border bg-card p-3.5 shadow-2xs space-y-2.5 min-w-0"
+                          >
+                            {/* Header do Card: Número + Status | Valor */}
+                            <div className="flex items-start justify-between gap-2 min-w-0">
+                              <div className="min-w-0 space-y-1">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-black text-sm text-primary font-mono">
+                                    NFS-e {invNum}
+                                  </span>
+                                  {isAuthorized && (
+                                    <Badge className="bg-emerald-600 text-white text-[10px] px-2 py-0.5">
+                                      Autorizada
+                                    </Badge>
+                                  )}
+                                  {isCancelled && (
                                     <Badge className="bg-rose-600 text-white text-[10px] px-2 py-0.5">
                                       Cancelada
                                     </Badge>
-                                    {inv.motivoCancelamento && (
-                                      <div className="text-[9px] text-rose-500 font-medium truncate max-w-[120px]" title={inv.motivoCancelamento}>
-                                        {inv.motivoCancelamento}
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                                {isReplaced && (
-                                  <Badge className="bg-purple-600 text-white text-[10px] px-2 py-0.5">
-                                    Substituída
-                                  </Badge>
-                                )}
-                              </td>
-
-                              <td className="p-3.5 text-right">
-                                <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                                  {/* Ver DANFSE */}
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => window.open(`/api/nfse/danfse/${inv.numeroNfse || inv.id}`, "_blank")}
-                                    className="h-7 px-2 text-[11px] font-bold rounded-lg gap-1 text-emerald-700 dark:text-emerald-300 border-emerald-600/40 hover:bg-emerald-500/10 shadow-2xs"
-                                    title="Visualizar e Imprimir Espelho DANFSE Oficial"
-                                  >
-                                    <ExternalLink className="w-3 h-3 text-emerald-600" />
-                                    <span>DANFSE</span>
-                                  </Button>
-
-                                  {/* Abrir PDF Oficial */}
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => window.open(`/api/nfse/pdf/${inv.numeroNfse || inv.id}`, "_blank")}
-                                    className="h-7 px-2 text-[11px] font-bold rounded-lg gap-1 text-indigo-700 dark:text-indigo-300 border-indigo-600/40 hover:bg-indigo-500/10 shadow-2xs"
-                                    title="Abrir Documento PDF Oficial da NFS-e"
-                                  >
-                                    <FileText className="w-3 h-3 text-indigo-600" />
-                                    <span>PDF</span>
-                                  </Button>
-
-                                  {/* Portal Gov.br */}
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => {
-                                      const link = inv.linkPrefeitura || `https://www.nfse.gov.br/consultapublica/danfse?chave=${inv.chaveAcesso || inv.codigoVerificacao}`
-                                      window.open(link, "_blank")
-                                    }}
-                                    className="h-7 px-2 text-[11px] font-bold rounded-lg gap-1 text-blue-700 dark:text-blue-300 border-blue-600/40 hover:bg-blue-500/10 shadow-2xs"
-                                    title="Consultar no Portal Nacional da NFS-e (Gov.br)"
-                                  >
-                                    <Globe className="w-3 h-3 text-blue-600" />
-                                    <span>Gov.br</span>
-                                  </Button>
-
-                                  {/* Baixar XML */}
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => window.open(`/api/nfse/xml/${inv.id}`, "_blank")}
-                                    className="h-7 px-1.5 text-[11px] font-bold rounded-lg text-muted-foreground hover:text-foreground"
-                                    title="Baixar XML Assinado"
-                                  >
-                                    <Download className="w-3 h-3" />
-                                  </Button>
-
-                                  {/* WhatsApp Z-API e Web Click/Hold */}
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    {...bindZapiClickOrHoldWaWeb({
-                                      toast,
-                                      onClickZapi: async () => {
-                                        const invId = inv.numeroNfse || inv.id
-                                        const phone = ((!inv.nfHideFromGuest && inv.guestPhone) || inv.tomadorTelefone || "").replace(/\D/g, "")
-                                        try {
-                                          const r = await fetch(`/api/nfse/whatsapp/${invId}`, {
-                                            method: "POST",
-                                            headers: { "Content-Type": "application/json" },
-                                            body: JSON.stringify({ phone, sendZapi: true }),
-                                            credentials: "include"
-                                          })
-                                          const d = await r.json()
-                                          if (r.ok && (d.pdfSent || d.sent)) {
-                                            toast({
-                                              title: "📄 PDF da NFS-e Enviado no WhatsApp!",
-                                              description: `Arquivo ${d.fileName} entregue via Z-API para ${inv.guestName || inv.tomadorNome}.`
-                                            })
-                                            return
-                                          }
-                                        } catch {}
-                                        const message = `Olá, ${inv.guestName || inv.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.com.br/api/nfse/pdf/${invId}`
-                                        await sendDirectZapiWithFallback({
-                                          phone: phone ? (phone.startsWith("55") ? phone : `55${phone}`) : "",
-                                          message,
-                                          recipientName: inv.guestName || inv.tomadorNome || "Tomador",
-                                          triggerEvent: "nfse_dispatch",
-                                          label: `NFS-e Nº ${inv.numeroNfse}`,
-                                          toast
-                                        })
-                                      },
-                                      getWaUrl: () => {
-                                        const invId = inv.numeroNfse || inv.id
-                                        const targetPhone = (!inv.nfHideFromGuest && inv.guestPhone) || inv.tomadorTelefone
-                                        const message = `Olá, ${inv.guestName || inv.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.com.br/api/nfse/pdf/${invId}`
-                                        return buildDirectWaWebUrl(targetPhone, message)
-                                      }
-                                    })}
-                                    className="h-7 px-1.5 text-[11px] font-bold rounded-lg text-emerald-600 hover:bg-emerald-500/10"
-                                    title="Clique: enviar via Z-API | Segure 2s: abrir no WhatsApp Web"
-                                  >
-                                    <MessageSquare className="w-3 h-3" />
-                                  </Button>
-
-                                  {/* Ciclo de Vida: Substituir & Cancelar se Autorizada */}
-                                  {isAuthorized && (
-                                    <>
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => handleConfirmReplace(inv)}
-                                        className="h-7 px-2 text-[10px] font-bold rounded-lg text-purple-600 border-purple-500/30 hover:bg-purple-500/10"
-                                        title="Substituir NFS-e por uma nova com correção"
-                                      >
-                                        <RefreshCw className="w-3 h-3" />
-                                        <span>Substituir</span>
-                                      </Button>
-
-                                      <Button
-                                        size="sm"
-                                        variant="ghost"
-                                        onClick={() => {
-                                          setInvoiceToCancel(inv)
-                                          setCancelModalOpen(true)
-                                        }}
-                                        className="h-7 px-1.5 text-[10px] font-bold rounded-lg text-rose-500 hover:bg-rose-500/10"
-                                        title="Cancelar NFS-e na Prefeitura"
-                                      >
-                                        <Trash2 className="w-3 h-3" />
-                                      </Button>
-                                    </>
+                                  )}
+                                  {isReplaced && (
+                                    <Badge className="bg-purple-600 text-white text-[10px] px-2 py-0.5">
+                                      Substituída
+                                    </Badge>
                                   )}
                                 </div>
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
+                                <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-muted-foreground">
+                                  <span className="font-semibold text-foreground">
+                                    {inv.flatNumber ? `Flat ${inv.flatNumber}` : "Avulsa"}
+                                  </span>
+                                  <span>•</span>
+                                  <span>{inv.dataEmissao ? new Date(inv.dataEmissao).toLocaleDateString("pt-BR") : "—"}</span>
+                                  <span>•</span>
+                                  <span>🇧🇷 Nacional</span>
+                                </div>
+                              </div>
+
+                              <div className="text-base font-black text-emerald-600 font-mono tabular-nums shrink-0">
+                                R$ {Number(inv.valorServico || 0).toFixed(2)}
+                              </div>
+                            </div>
+
+                            {/* Tomador & Chave */}
+                            <div className="rounded-xl bg-muted/30 border border-border/60 p-2.5 space-y-1 min-w-0">
+                              <div className="flex items-start justify-between gap-2 min-w-0">
+                                <span className="font-bold text-xs text-foreground break-words min-w-0 flex-1">
+                                  {inv.tomadorNome}
+                                </span>
+                                <Badge variant="outline" className="text-[10px] h-5 px-1.5 shrink-0">
+                                  {isPjInv ? "🏢 PJ" : "👤 PF"}
+                                </Badge>
+                              </div>
+                              <div className="text-[11px] text-muted-foreground font-mono fiscal-break-anywhere">
+                                {inv.tomadorCpfCnpj || "—"}
+                              </div>
+                              {(inv.codigoVerificacao || inv.chaveAcesso) && (
+                                <div className="text-[10px] text-muted-foreground font-mono fiscal-break-anywhere pt-0.5 border-t border-border/40">
+                                  Chave: {inv.codigoVerificacao || inv.chaveAcesso}
+                                </div>
+                              )}
+                              {isCancelled && inv.motivoCancelamento && (
+                                <div className="text-[11px] text-rose-600 dark:text-rose-400 font-medium break-words pt-0.5">
+                                  Motivo: {inv.motivoCancelamento}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Ações Fiscais em 2 Linhas Confortáveis */}
+                            <div className="space-y-1.5 pt-0.5">
+                              <div className="grid grid-cols-3 gap-1.5">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => window.open(`/api/nfse/danfse/${inv.numeroNfse || inv.id}`, "_blank")}
+                                  className="min-h-[42px] h-auto py-1.5 px-2 text-[11px] font-bold rounded-xl gap-1 text-emerald-700 dark:text-emerald-300 border-emerald-600/40 hover:bg-emerald-500/10 justify-center"
+                                  aria-label={`Abrir DANFSE da NFS-e ${invNum}`}
+                                >
+                                  <ExternalLink className="w-3.5 h-3.5 text-emerald-600 shrink-0" aria-hidden="true" />
+                                  <span>DANFSE</span>
+                                </Button>
+
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => window.open(`/api/nfse/pdf/${inv.numeroNfse || inv.id}`, "_blank")}
+                                  className="min-h-[42px] h-auto py-1.5 px-2 text-[11px] font-bold rounded-xl gap-1 text-indigo-700 dark:text-indigo-300 border-indigo-600/40 hover:bg-indigo-500/10 justify-center"
+                                  aria-label={`Abrir PDF da NFS-e ${invNum}`}
+                                >
+                                  <FileText className="w-3.5 h-3.5 text-indigo-600 shrink-0" aria-hidden="true" />
+                                  <span>PDF</span>
+                                </Button>
+
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  {...bindZapiClickOrHoldWaWeb({
+                                    toast,
+                                    onClickZapi: async () => {
+                                      const invId = inv.numeroNfse || inv.id
+                                      const phone = ((!inv.nfHideFromGuest && inv.guestPhone) || inv.tomadorTelefone || "").replace(/\D/g, "")
+                                      try {
+                                        const r = await fetch(`/api/nfse/whatsapp/${invId}`, {
+                                          method: "POST",
+                                          headers: { "Content-Type": "application/json" },
+                                          body: JSON.stringify({ phone, sendZapi: true }),
+                                          credentials: "include"
+                                        })
+                                        const d = await r.json()
+                                        if (r.ok && (d.pdfSent || d.sent)) {
+                                          toast({
+                                            title: "📄 PDF da NFS-e Enviado no WhatsApp!",
+                                            description: `Arquivo ${d.fileName} entregue via Z-API para ${inv.guestName || inv.tomadorNome}.`
+                                          })
+                                          return
+                                        }
+                                      } catch {}
+                                      const message = `Olá, ${inv.guestName || inv.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.com.br/api/nfse/pdf/${invId}`
+                                      await sendDirectZapiWithFallback({
+                                        phone: phone ? (phone.startsWith("55") ? phone : `55${phone}`) : "",
+                                        message,
+                                        recipientName: inv.guestName || inv.tomadorNome || "Tomador",
+                                        triggerEvent: "nfse_dispatch",
+                                        label: `NFS-e Nº ${inv.numeroNfse}`,
+                                        toast
+                                      })
+                                    },
+                                    getWaUrl: () => {
+                                      const invId = inv.numeroNfse || inv.id
+                                      const targetPhone = (!inv.nfHideFromGuest && inv.guestPhone) || inv.tomadorTelefone
+                                      const message = `Olá, ${inv.guestName || inv.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.com.br/api/nfse/pdf/${invId}`
+                                      return buildDirectWaWebUrl(targetPhone, message)
+                                    }
+                                  })}
+                                  className="min-h-[42px] h-auto py-1.5 px-2 text-[11px] font-bold rounded-xl gap-1 text-emerald-700 dark:text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/10 justify-center"
+                                  title="Clique: enviar via Z-API | Segure 2s: abrir no WhatsApp Web"
+                                  aria-label={`Enviar NFS-e ${invNum} pelo WhatsApp`}
+                                >
+                                  <MessageSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0" aria-hidden="true" />
+                                  <span>WhatsApp</span>
+                                </Button>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-1.5">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    const link = inv.linkPrefeitura || `https://www.nfse.gov.br/consultapublica/danfse?chave=${inv.chaveAcesso || inv.codigoVerificacao}`
+                                    window.open(link, "_blank")
+                                  }}
+                                  className="min-h-[44px] w-full px-2.5 text-[11px] font-bold rounded-xl gap-1.5 text-blue-700 dark:text-blue-300 border-blue-600/30 hover:bg-blue-500/10 justify-center"
+                                  aria-label={`Consultar NFS-e ${invNum} no Portal Gov.br`}
+                                >
+                                  <Globe className="w-3.5 h-3.5 text-blue-600 shrink-0" aria-hidden="true" />
+                                  <span>Gov.br</span>
+                                </Button>
+
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => window.open(`/api/nfse/xml/${inv.id}`, "_blank")}
+                                  className="min-h-[44px] w-full px-2.5 text-[11px] font-bold rounded-xl gap-1.5 text-muted-foreground hover:text-foreground justify-center"
+                                  aria-label={`Baixar XML da NFS-e ${invNum}`}
+                                >
+                                  <Download className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                                  <span>XML</span>
+                                </Button>
+
+                                {isAuthorized && (
+                                  <>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => handleConfirmReplace(inv)}
+                                      className="min-h-[44px] w-full px-2.5 text-[11px] font-bold rounded-xl gap-1.5 text-purple-600 border-purple-500/30 hover:bg-purple-500/10 justify-center"
+                                      aria-label={`Substituir NFS-e ${invNum}`}
+                                    >
+                                      <RefreshCw className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                                      <span>Substituir</span>
+                                    </Button>
+
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => {
+                                        setInvoiceToCancel(inv)
+                                        setCancelModalOpen(true)
+                                      }}
+                                      className="min-h-[44px] w-full px-2.5 text-[11px] font-bold rounded-xl gap-1.5 text-rose-600 border-rose-500/30 hover:bg-rose-500/10 justify-center"
+                                      aria-label={`Cancelar NFS-e ${invNum}`}
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                                      <span>Cancelar</span>
+                                    </Button>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </article>
+                        )
+                      })}
+                    </div>
+
+                    {/* ── DESKTOP (>= 720px CONTAINER): TABELA DO LIVRO FISCAL INTACTA ── */}
+                    <div
+                      tabIndex={0}
+                      role="region"
+                      aria-label="Tabela do livro fiscal eletrônico"
+                      className="fiscal-list-table overflow-x-auto overscroll-x-contain focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                    >
+                      <table className="w-full text-xs text-left">
+                        <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur-xs text-muted-foreground border-b border-border font-bold">
+                          <tr>
+                            <th scope="col" className="p-3.5">Número / Chave</th>
+                            <th scope="col" className="p-3.5">Sistema</th>
+                            <th scope="col" className="p-3.5">Tomador / Hóspede</th>
+                            <th scope="col" className="p-3.5">Apartamento</th>
+                            <th scope="col" className="p-3.5">Valor (R$)</th>
+                            <th scope="col" className="p-3.5">Emissão</th>
+                            <th scope="col" className="p-3.5">Status</th>
+                            <th scope="col" className="p-3.5 text-right">Ações Fiscais</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {filteredInvoices.map((inv: any) => {
+                            const status = inv.status || "autorizada"
+                            const isAuthorized = status === "autorizada"
+                            const isCancelled = status === "cancelada"
+                            const isReplaced = status === "substituida"
+                            const invNum = inv.numeroNfse || inv.numeroNota || `#${inv.id}`
+
+                            return (
+                              <tr key={inv.id || inv.numeroNfse} className="hover:bg-muted/20 transition-colors">
+                                <td className="p-3.5 font-mono">
+                                  <div className="font-bold text-primary">{invNum}</div>
+                                  <div className="text-[10px] text-muted-foreground truncate max-w-[120px]">{inv.codigoVerificacao || inv.chaveAcesso}</div>
+                                </td>
+
+                                <td className="p-3.5">
+                                  <Badge variant="outline" className="text-[10px] font-semibold">
+                                    🇧🇷 Padrão Nacional
+                                  </Badge>
+                                </td>
+
+                                <td className="p-3.5">
+                                  <div className="font-bold text-foreground flex items-center gap-1.5">
+                                    <span>{inv.tomadorNome}</span>
+                                    <Badge variant="outline" className="text-[9px] h-3.5 px-1">
+                                      {(inv.tomadorCpfCnpj || "").replace(/\D/g, "").length === 14 ? "PJ" : "PF"}
+                                    </Badge>
+                                  </div>
+                                  <div className="text-[10px] text-muted-foreground font-mono">{inv.tomadorCpfCnpj}</div>
+                                </td>
+
+                                <td className="p-3.5 font-semibold text-foreground">
+                                  {inv.flatNumber ? `Flat ${inv.flatNumber}` : "—"}
+                                </td>
+
+                                <td className="p-3.5 font-black text-emerald-600 font-mono tabular-nums">
+                                  R$ {Number(inv.valorServico || 0).toFixed(2)}
+                                </td>
+
+                                <td className="p-3.5 text-muted-foreground">
+                                  {inv.dataEmissao ? new Date(inv.dataEmissao).toLocaleDateString("pt-BR") : "—"}
+                                </td>
+
+                                <td className="p-3.5">
+                                  {isAuthorized && (
+                                    <Badge className="bg-emerald-600 text-white text-[10px] px-2 py-0.5">
+                                      Autorizada
+                                    </Badge>
+                                  )}
+                                  {isCancelled && (
+                                    <div>
+                                      <Badge className="bg-rose-600 text-white text-[10px] px-2 py-0.5">
+                                        Cancelada
+                                      </Badge>
+                                      {inv.motivoCancelamento && (
+                                        <div className="text-[9px] text-rose-500 font-medium truncate max-w-[120px]" title={inv.motivoCancelamento}>
+                                          {inv.motivoCancelamento}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {isReplaced && (
+                                    <Badge className="bg-purple-600 text-white text-[10px] px-2 py-0.5">
+                                      Substituída
+                                    </Badge>
+                                  )}
+                                </td>
+
+                                <td className="p-3.5 text-right">
+                                  <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                                    {/* Ver DANFSE */}
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => window.open(`/api/nfse/danfse/${inv.numeroNfse || inv.id}`, "_blank")}
+                                      className="h-7 px-2 text-[11px] font-bold rounded-lg gap-1 text-emerald-700 dark:text-emerald-300 border-emerald-600/40 hover:bg-emerald-500/10 shadow-2xs"
+                                      title="Visualizar e Imprimir Espelho DANFSE Oficial"
+                                    >
+                                      <ExternalLink className="w-3 h-3 text-emerald-600" aria-hidden="true" />
+                                      <span>DANFSE</span>
+                                    </Button>
+
+                                    {/* Abrir PDF Oficial */}
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => window.open(`/api/nfse/pdf/${inv.numeroNfse || inv.id}`, "_blank")}
+                                      className="h-7 px-2 text-[11px] font-bold rounded-lg gap-1 text-indigo-700 dark:text-indigo-300 border-indigo-600/40 hover:bg-indigo-500/10 shadow-2xs"
+                                      title="Abrir Documento PDF Oficial da NFS-e"
+                                    >
+                                      <FileText className="w-3 h-3 text-indigo-600" aria-hidden="true" />
+                                      <span>PDF</span>
+                                    </Button>
+
+                                    {/* Portal Gov.br */}
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => {
+                                        const link = inv.linkPrefeitura || `https://www.nfse.gov.br/consultapublica/danfse?chave=${inv.chaveAcesso || inv.codigoVerificacao}`
+                                        window.open(link, "_blank")
+                                      }}
+                                      className="h-7 px-2 text-[11px] font-bold rounded-lg gap-1 text-blue-700 dark:text-blue-300 border-blue-600/40 hover:bg-blue-500/10 shadow-2xs"
+                                      title="Consultar no Portal Nacional da NFS-e (Gov.br)"
+                                    >
+                                      <Globe className="w-3 h-3 text-blue-600" aria-hidden="true" />
+                                      <span>Gov.br</span>
+                                    </Button>
+
+                                    {/* Baixar XML */}
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => window.open(`/api/nfse/xml/${inv.id}`, "_blank")}
+                                      className="h-7 px-1.5 text-[11px] font-bold rounded-lg text-muted-foreground hover:text-foreground"
+                                      title="Baixar XML Assinado"
+                                      aria-label={`Baixar XML da NFS-e ${invNum}`}
+                                    >
+                                      <Download className="w-3 h-3" aria-hidden="true" />
+                                    </Button>
+
+                                    {/* WhatsApp Z-API e Web Click/Hold */}
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      {...bindZapiClickOrHoldWaWeb({
+                                        toast,
+                                        onClickZapi: async () => {
+                                          const invId = inv.numeroNfse || inv.id
+                                          const phone = ((!inv.nfHideFromGuest && inv.guestPhone) || inv.tomadorTelefone || "").replace(/\D/g, "")
+                                          try {
+                                            const r = await fetch(`/api/nfse/whatsapp/${invId}`, {
+                                              method: "POST",
+                                              headers: { "Content-Type": "application/json" },
+                                              body: JSON.stringify({ phone, sendZapi: true }),
+                                              credentials: "include"
+                                            })
+                                            const d = await r.json()
+                                            if (r.ok && (d.pdfSent || d.sent)) {
+                                              toast({
+                                                title: "📄 PDF da NFS-e Enviado no WhatsApp!",
+                                                description: `Arquivo ${d.fileName} entregue via Z-API para ${inv.guestName || inv.tomadorNome}.`
+                                              })
+                                              return
+                                            }
+                                          } catch {}
+                                          const message = `Olá, ${inv.guestName || inv.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.com.br/api/nfse/pdf/${invId}`
+                                          await sendDirectZapiWithFallback({
+                                            phone: phone ? (phone.startsWith("55") ? phone : `55${phone}`) : "",
+                                            message,
+                                            recipientName: inv.guestName || inv.tomadorNome || "Tomador",
+                                            triggerEvent: "nfse_dispatch",
+                                            label: `NFS-e Nº ${inv.numeroNfse}`,
+                                            toast
+                                          })
+                                        },
+                                        getWaUrl: () => {
+                                          const invId = inv.numeroNfse || inv.id
+                                          const targetPhone = (!inv.nfHideFromGuest && inv.guestPhone) || inv.tomadorTelefone
+                                          const message = `Olá, ${inv.guestName || inv.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.com.br/api/nfse/pdf/${invId}`
+                                          return buildDirectWaWebUrl(targetPhone, message)
+                                        }
+                                      })}
+                                      className="h-7 px-1.5 text-[11px] font-bold rounded-lg text-emerald-600 hover:bg-emerald-500/10"
+                                      title="Clique: enviar via Z-API | Segure 2s: abrir no WhatsApp Web"
+                                      aria-label={`Enviar NFS-e ${invNum} pelo WhatsApp`}
+                                    >
+                                      <MessageSquare className="w-3 h-3" aria-hidden="true" />
+                                    </Button>
+
+                                    {/* Ciclo de Vida: Substituir & Cancelar se Autorizada */}
+                                    {isAuthorized && (
+                                      <>
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() => handleConfirmReplace(inv)}
+                                          className="h-7 px-2 text-[10px] font-bold rounded-lg text-purple-600 border-purple-500/30 hover:bg-purple-500/10"
+                                          title="Substituir NFS-e por uma nova com correção"
+                                        >
+                                          <RefreshCw className="w-3 h-3" aria-hidden="true" />
+                                          <span>Substituir</span>
+                                        </Button>
+
+                                        <Button
+                                          size="sm"
+                                          variant="ghost"
+                                          onClick={() => {
+                                            setInvoiceToCancel(inv)
+                                            setCancelModalOpen(true)
+                                          }}
+                                          className="h-7 px-1.5 text-[10px] font-bold rounded-lg text-rose-500 hover:bg-rose-500/10"
+                                          title="Cancelar NFS-e na Prefeitura"
+                                          aria-label={`Cancelar NFS-e ${invNum}`}
+                                        >
+                                          <Trash2 className="w-3 h-3" aria-hidden="true" />
+                                        </Button>
+                                      </>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
               </CardContent>
@@ -5950,60 +6747,60 @@ export default function FiscalInvoicesPage() {
           {/* ══════════════════════════════════════════════════════════════════════
               ABA 4: CONFIGURAÇÕES FISCAIS, AUTOMAÇÃO POR CANAL & CERTIFICADO A1
              ══════════════════════════════════════════════════════════════════════ */}
-          <TabsContent value="settings" className="space-y-4 m-0">
+          <TabsContent value="settings" className="space-y-4 m-0 min-w-0">
             {/* Cofre do Certificado Digital A1 */}
-            <Card className="rounded-3xl border border-border shadow-sm">
-              <CardHeader className="p-5 border-b border-border flex flex-row items-center justify-between">
-                <div>
-                  <CardTitle className="text-base font-black text-foreground flex items-center gap-2">
-                    <ShieldCheck className="w-5 h-5 text-emerald-600" />
+            <Card className="rounded-2xl sm:rounded-3xl border border-border shadow-sm min-w-0">
+              <CardHeader className="p-3.5 sm:p-5 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <CardTitle className="fiscal-heading-balance text-base font-black text-foreground flex items-center gap-2">
+                    <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" aria-hidden="true" />
                     <span>Cofre do Certificado Digital A1</span>
                   </CardTitle>
-                  <CardDescription className="text-xs">
+                  <CardDescription className="fiscal-text-pretty text-xs mt-0.5">
                     Certificado ICP-Brasil utilizado na assinatura digital das emissões no Padrão Nacional (ADN)
                   </CardDescription>
                 </div>
 
                 <Button 
                   onClick={() => setCertModalOpen(true)}
-                  className="h-9 px-3.5 rounded-xl text-xs font-bold gap-1.5 bg-primary text-primary-foreground shadow-xs"
+                  className="w-full sm:w-auto min-h-[44px] sm:min-h-0 sm:h-9 px-3.5 rounded-xl text-xs font-bold gap-1.5 bg-primary text-primary-foreground shadow-xs shrink-0"
                 >
-                  <UploadCloud className="w-4 h-4" />
+                  <UploadCloud className="w-4 h-4 shrink-0" aria-hidden="true" />
                   <span>Fazer Upload (.pfx / .p12)</span>
                 </Button>
               </CardHeader>
 
-              <CardContent className="p-5">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
-                  <div className="p-3.5 rounded-2xl bg-muted/30 border border-border">
+              <CardContent className="p-3.5 sm:p-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 text-xs">
+                  <div className="p-3.5 rounded-2xl bg-muted/30 border border-border min-w-0">
                     <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Status de Validade</span>
-                    <div className="text-sm font-black text-emerald-600 mt-1 flex items-center gap-1.5">
-                      <CheckCircle2 className="w-4 h-4" />
+                    <div className="text-sm font-black text-emerald-600 mt-1 flex items-center gap-1.5 tabular-nums">
+                      <CheckCircle2 className="w-4 h-4 shrink-0" aria-hidden="true" />
                       <span>{certStatus?.daysRemaining || 142} dias restantes</span>
                     </div>
                     <div className="text-[10px] text-muted-foreground mt-0.5">Expira em: {certStatus?.validade || "2027-03-12"}</div>
                   </div>
 
-                  <div className="p-3.5 rounded-2xl bg-muted/30 border border-border">
+                  <div className="p-3.5 rounded-2xl bg-muted/30 border border-border min-w-0">
                     <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Titular</span>
-                    <div className="text-sm font-black text-foreground mt-1 truncate">
+                    <div className="text-sm font-black text-foreground mt-1 break-words">
                       {certStatus?.titular || "RENTAL MILLER'S LTDA"}
                     </div>
                     <div className="text-[10px] text-muted-foreground mt-0.5">CNPJ: 47.964.813/0001-65</div>
                   </div>
 
-                  <div className="p-3.5 rounded-2xl bg-muted/30 border border-border">
+                  <div className="p-3.5 rounded-2xl bg-muted/30 border border-border min-w-0">
                     <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Autoridade Certificadora</span>
-                    <div className="text-sm font-black text-foreground mt-1">
+                    <div className="text-sm font-black text-foreground mt-1 break-words">
                       {certStatus?.emissor || "AC Serasa ICP-Brasil"}
                     </div>
                     <div className="text-[10px] text-muted-foreground mt-0.5">Tipo: A1 (Software / PFX)</div>
                   </div>
 
-                  <div className="p-3.5 rounded-2xl bg-muted/30 border border-border">
+                  <div className="p-3.5 rounded-2xl bg-muted/30 border border-border min-w-0">
                     <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Segurança</span>
                     <div className="text-sm font-black text-foreground mt-1 flex items-center gap-1.5">
-                      <Lock className="w-3.5 h-3.5 text-primary" />
+                      <Lock className="w-3.5 h-3.5 text-primary shrink-0" aria-hidden="true" />
                       <span>Criptografia AES-256</span>
                     </div>
                     <div className="text-[10px] text-muted-foreground mt-0.5">Armazenado em cofre seguro</div>
@@ -6013,19 +6810,19 @@ export default function FiscalInvoicesPage() {
             </Card>
 
             {/* Regras de Automação por Canal (Unificado em Configurações) */}
-            <Card className="rounded-3xl border border-border shadow-sm">
-              <CardHeader className="p-5 border-b border-border">
-                <CardTitle className="text-base font-black text-foreground flex items-center gap-2">
-                  <Zap className="w-4 h-4 text-primary" />
+            <Card className="rounded-2xl sm:rounded-3xl border border-border shadow-sm min-w-0">
+              <CardHeader className="p-3.5 sm:p-5 border-b border-border">
+                <CardTitle className="fiscal-heading-balance text-base font-black text-foreground flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-primary shrink-0" aria-hidden="true" />
                   <span>Automação de Emissão por Canal de Reserva</span>
                 </CardTitle>
-                <CardDescription className="text-xs">
+                <CardDescription className="fiscal-text-pretty text-xs mt-0.5">
                   Configure quais reservas disparam emissão fiscal automática e quais aguardam liberação manual
                 </CardDescription>
               </CardHeader>
 
-              <CardContent className="p-5 space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <CardContent className="p-3.5 sm:p-5 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
                   {[
                     { key: "autoCheckout", title: "⚡ Auto-Emissão no Check-out (Chave Mestra)", desc: "Habilita disparo automático da NFS-e em todos os canais de check-out (PMS, Portaria, Link Digital, Frigobar, Governança e WhatsApp)", defaultVal: true },
                     { key: "direct", title: "Reservas Diretas (Site)", desc: "Auto-emissão no check-out para reservas do site (site_direto / direct)", defaultVal: true },
@@ -6035,18 +6832,26 @@ export default function FiscalInvoicesPage() {
                     { key: "airbnb", title: "Reservas Airbnb", desc: "Auto-emissão no check-out para reservas Airbnb (ou quando marcado na reserva)", defaultVal: false }
                   ].map(rule => {
                     const isChecked = channelRules[rule.key] !== undefined ? Boolean(channelRules[rule.key]) : rule.defaultVal
+                    const switchId = `fiscal-channel-rule-${rule.key}`
                     return (
-                      <div key={rule.key} className={`p-4 rounded-2xl border flex items-center justify-between gap-4 ${rule.key === "autoCheckout" ? "bg-primary/5 border-primary/30" : "bg-muted/20 border-border"}`}>
-                        <div>
-                          <h4 className="font-bold text-xs text-foreground">{rule.title}</h4>
-                          <p className="text-[11px] text-muted-foreground mt-0.5">{rule.desc}</p>
+                      <label
+                        key={rule.key}
+                        htmlFor={switchId}
+                        className={`p-3.5 sm:p-4 rounded-2xl border flex items-center justify-between gap-3 sm:gap-4 min-w-0 min-h-[44px] cursor-pointer ${rule.key === "autoCheckout" ? "bg-primary/5 border-primary/30" : "bg-muted/20 border-border"}`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <h4 className="font-bold text-xs text-foreground break-words">{rule.title}</h4>
+                          <p className="fiscal-text-pretty text-[11px] text-muted-foreground mt-0.5 break-words">{rule.desc}</p>
                         </div>
                         <Switch 
+                          id={switchId}
                           checked={isChecked}
                           onCheckedChange={() => handleToggleChannelRule(rule.key, isChecked)}
                           disabled={savingChannelRules}
+                          aria-label={rule.title}
+                          className="shrink-0 relative after:content-[''] after:absolute after:-inset-y-3 after:-inset-x-1 md:after:inset-0"
                         />
-                      </div>
+                      </label>
                     )
                   })}
                 </div>
@@ -6054,40 +6859,40 @@ export default function FiscalInvoicesPage() {
             </Card>
 
             {/* Template de Tags & Parâmetros Fiscais da Empresa */}
-            <Card className="rounded-3xl border border-border shadow-sm">
-              <CardHeader className="p-5 border-b border-border">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-base font-black text-foreground flex items-center gap-2">
-                      <Sliders className="w-5 h-5 text-primary" />
-                      <span>Configurações Fiscais & Template de Discriminação</span>
+            <Card className="rounded-2xl sm:rounded-3xl border border-border shadow-sm min-w-0">
+              <CardHeader className="p-3.5 sm:p-5 border-b border-border">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <CardTitle className="fiscal-heading-balance text-base font-black text-foreground flex items-center gap-2">
+                      <Sliders className="w-5 h-5 text-primary shrink-0" aria-hidden="true" />
+                      <span>Configurações Fiscais &amp; Template de Discriminação</span>
                     </CardTitle>
-                    <CardDescription className="text-xs">
+                    <CardDescription className="fiscal-text-pretty text-xs mt-0.5">
                       Defina o modelo de texto padrão com tags dinâmicas e os parâmetros fiscais da empresa
                     </CardDescription>
                   </div>
                   {settingsSuccess && (
-                    <Badge className="bg-emerald-600 text-white text-xs gap-1 py-1">
-                      <Check className="w-3.5 h-3.5" /> Salvo com sucesso!
+                    <Badge className="bg-emerald-600 text-white text-xs gap-1 py-1 self-start sm:self-auto shrink-0">
+                      <Check className="w-3.5 h-3.5" aria-hidden="true" /> Salvo com sucesso!
                     </Badge>
                   )}
                 </div>
               </CardHeader>
 
-              <CardContent className="p-6 space-y-6">
-                <form onSubmit={handleSaveSettings} className="space-y-6">
+              <CardContent className="p-4 sm:p-6 space-y-5 sm:space-y-6">
+                <form onSubmit={handleSaveSettings} className="space-y-5 sm:space-y-6">
                   {/* Editor do Template de Tags */}
                   <div className="space-y-3">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2">
                       <Label className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                        <Code className="w-4 h-4 text-primary" />
-                        Texto Padrão da Discriminação do Serviço (com Tags Dinâmicas)
+                        <Code className="w-4 h-4 text-primary shrink-0" aria-hidden="true" />
+                        <span>Texto Padrão da Discriminação do Serviço (com Tags Dinâmicas)</span>
                       </Label>
-                      <span className="text-[11px] text-muted-foreground">Clique nas tags abaixo para inserir no texto</span>
+                      <span className="text-[11px] text-muted-foreground">Toque nas tags abaixo para inserir no texto</span>
                     </div>
 
                     {/* Botões de Tags Rápidas */}
-                    <div className="flex flex-wrap gap-1.5 p-2.5 rounded-2xl bg-muted/40 border border-border">
+                    <div className="fiscal-wrap-balance gap-1.5 p-2.5 rounded-2xl bg-muted/40 border border-border">
                       {[
                         { tag: "{nome_hospede}", label: "Nome do Hóspede" },
                         { tag: "{artigo}", label: "Artigo (do/da)" },
@@ -6105,7 +6910,7 @@ export default function FiscalInvoicesPage() {
                           key={t.tag}
                           type="button"
                           onClick={() => handleInsertTag(t.tag)}
-                          className="px-2.5 py-1 rounded-xl bg-card hover:bg-primary hover:text-primary-foreground border border-border text-[11px] font-mono font-bold transition-all shadow-2xs"
+                          className="min-h-[38px] sm:min-h-0 px-2.5 py-1.5 sm:py-1 rounded-xl bg-card hover:bg-primary hover:text-primary-foreground border border-border text-[11px] font-mono font-bold transition-all shadow-2xs text-left"
                         >
                           + {t.tag} ({t.label})
                         </button>
@@ -6116,71 +6921,84 @@ export default function FiscalInvoicesPage() {
                       value={fiscalSettings.descriptionTemplate || ""}
                       onChange={e => setFiscalSettings({ ...fiscalSettings, descriptionTemplate: e.target.value })}
                       rows={6}
-                      className="text-xs font-mono rounded-2xl leading-relaxed p-3.5 bg-background"
+                      className="text-base md:text-xs font-mono rounded-2xl leading-relaxed p-3.5 bg-background"
                       required
                     />
                   </div>
 
                   {/* Parâmetros Fiscais da Empresa */}
                   <div className="space-y-4 pt-2 border-t border-border">
-                    <h3 className="text-xs font-black text-foreground uppercase tracking-wider flex items-center gap-1.5">
-                      <Building2 className="w-4 h-4 text-primary" /> Parâmetros Municipais & Tributários
+                    <h3 className="fiscal-heading-balance text-xs font-black text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                      <Building2 className="w-4 h-4 text-primary shrink-0" aria-hidden="true" /> Parâmetros Municipais &amp; Tributários
                     </h3>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-                      <div className="space-y-1.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3.5 sm:gap-4 text-xs">
+                      <div className="space-y-1.5 min-w-0">
                         <Label className="font-bold">Alíquota de ISS (%)</Label>
                         <Input 
                           type="number"
+                          inputMode="decimal"
                           step="0.01"
                           value={fiscalSettings.aliquotaPadrao || "2.00"}
                           onChange={e => setFiscalSettings({ ...fiscalSettings, aliquotaPadrao: e.target.value })}
-                          className="text-xs rounded-xl h-9.5"
+                          className="text-base md:text-xs rounded-xl h-11 md:h-9.5"
                         />
                       </div>
 
-                      <div className="space-y-1.5">
+                      <div className="space-y-1.5 min-w-0">
                         <Label className="font-bold">Item da Lista de Serviço (ABRASF)</Label>
                         <Input 
+                          inputMode="decimal"
+                          autoCorrect="off"
+                          autoCapitalize="none"
+                          spellCheck={false}
                           value={fiscalSettings.codigoServico || "09.02"}
                           onChange={e => setFiscalSettings({ ...fiscalSettings, codigoServico: e.target.value })}
-                          className="text-xs rounded-xl h-9.5"
+                          className="text-base md:text-xs rounded-xl h-11 md:h-9.5"
                         />
                       </div>
 
-                      <div className="space-y-1.5">
+                      <div className="space-y-1.5 min-w-0">
                         <Label className="font-bold">Código de Tributação Municipal</Label>
                         <Input 
+                          inputMode="numeric"
+                          autoCorrect="off"
+                          autoCapitalize="none"
+                          spellCheck={false}
                           value={fiscalSettings.codigoTributacaoMunicipio || "799020000"}
                           onChange={e => setFiscalSettings({ ...fiscalSettings, codigoTributacaoMunicipio: e.target.value })}
-                          className="text-xs rounded-xl h-9.5"
+                          className="text-base md:text-xs rounded-xl h-11 md:h-9.5"
                         />
                       </div>
 
-                      <div className="space-y-1.5">
+                      <div className="space-y-1.5 min-w-0">
                         <Label className="font-bold">CNAE Principal</Label>
                         <Input 
+                          inputMode="numeric"
+                          autoCorrect="off"
+                          autoCapitalize="none"
+                          spellCheck={false}
                           value={fiscalSettings.cnae || "5510801"}
                           onChange={e => setFiscalSettings({ ...fiscalSettings, cnae: e.target.value })}
-                          className="text-xs rounded-xl h-9.5"
+                          className="text-base md:text-xs rounded-xl h-11 md:h-9.5"
                         />
                       </div>
 
-                      <div className="space-y-1.5">
+                      <div className="space-y-1.5 min-w-0">
                         <Label className="font-bold">Inscrição Municipal (IM)</Label>
                         <Input 
                           value="142591"
                           disabled
-                          className="text-xs rounded-xl h-9.5 bg-muted/60"
+                          className="text-base md:text-xs rounded-xl h-11 md:h-9.5 bg-muted/60"
                         />
                       </div>
 
-                      <div className="space-y-1.5">
+                      <div className="space-y-1.5 min-w-0">
                         <Label className="font-bold">CNPJ Prestador</Label>
                         <Input 
                           value="47.964.813/0001-65"
                           disabled
-                          className="text-xs rounded-xl h-9.5 bg-muted/60"
+                          className="text-base md:text-xs rounded-xl h-11 md:h-9.5 bg-muted/60"
                         />
                       </div>
                     </div>
@@ -6190,9 +7008,9 @@ export default function FiscalInvoicesPage() {
                     <Button 
                       type="submit"
                       disabled={savingSettings}
-                      className="h-11 px-8 rounded-2xl bg-primary hover:bg-primary/90 text-primary-foreground font-black text-xs gap-2 shadow-md"
+                      className="w-full sm:w-auto min-h-[48px] sm:min-h-0 sm:h-11 px-8 rounded-2xl bg-primary hover:bg-primary/90 text-primary-foreground font-black text-xs gap-2 shadow-md"
                     >
-                      {savingSettings ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                      {savingSettings ? <RefreshCw className="w-4 h-4 animate-spin shrink-0" aria-hidden="true" /> : <Check className="w-4 h-4 shrink-0" aria-hidden="true" />}
                       <span>Salvar Configurações Fiscais</span>
                     </Button>
                   </div>
@@ -6211,47 +7029,56 @@ export default function FiscalInvoicesPage() {
 
         {/* Modal 1: Emitir NFS-e (Só Hospedagem) + Boleto(s) Faturado Banco Inter */}
         <Dialog open={emitBoletoModalOpen} onOpenChange={setEmitBoletoModalOpen}>
-          <DialogContent className="sm:max-w-2xl bg-card border border-border rounded-3xl max-h-[92vh] overflow-y-auto p-6 shadow-2xl">
-            <DialogHeader>
-              <DialogTitle className="text-base font-black flex items-center gap-2">
-                <Building2 className="w-5 h-5 text-indigo-600" />
+          <DialogContent className="sm:max-w-2xl bg-card border border-border rounded-t-3xl sm:rounded-3xl max-h-[92dvh] overflow-y-auto overscroll-contain p-4 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] sm:pb-6 shadow-2xl">
+            <DialogHeader className="text-left">
+              <DialogTitle className="fiscal-heading-balance text-base font-black flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-indigo-600 shrink-0" aria-hidden="true" />
                 <span>Emitir Pacote Faturado: NFS-e + Boleto(s) Banco Inter</span>
               </DialogTitle>
-              <DialogDescription className="text-xs">
+              <DialogDescription className="fiscal-text-pretty text-xs">
                 A NFS-e é emitida sempre apenas sobre a Hospedagem (consumo é faturado pela Anserve). Escolha abaixo se o boleto será unificado ou dividido em 2 boletos separados.
               </DialogDescription>
             </DialogHeader>
 
             {emitBoletoTargetRes && (
               <form onSubmit={handleConfirmEmitBoletoPackage} className="space-y-4 text-xs pt-2">
-                <div className="p-3.5 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="p-3.5 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-2">
                   <div>
                     <div className="text-[10px] font-bold uppercase text-muted-foreground">Valor Hospedagem (NFS-e)</div>
-                    <div className="text-base font-black text-emerald-600 font-mono">
+                    <div className="text-base font-black text-emerald-600 font-mono tabular-nums">
                       R$ {Number(emitBoletoTargetRes.accommodationAmount || emitBoletoTargetRes.totalAmount || 0).toFixed(2)}
                     </div>
                   </div>
                   <div>
                     <div className="text-[10px] font-bold uppercase text-muted-foreground">Consumo / Frigobar (Anserve)</div>
-                    <div className="text-base font-black text-amber-600 font-mono">
+                    <div className="text-base font-black text-amber-600 font-mono tabular-nums">
                       R$ {Number(emitBoletoTargetRes.consumptionAmount || 0).toFixed(2)}
                     </div>
                   </div>
                   <div>
                     <div className="text-[10px] font-bold uppercase text-muted-foreground">Total Geral (Hosp + Consumo)</div>
-                    <div className="text-base font-black text-indigo-600 font-mono">
+                    <div className="text-base font-black text-indigo-600 font-mono tabular-nums">
                       R$ {Number((emitBoletoTargetRes.accommodationAmount || emitBoletoTargetRes.totalAmount || 0) + (emitBoletoTargetRes.consumptionAmount || 0)).toFixed(2)}
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between p-3 rounded-xl bg-muted/40 border border-border">
-                  <div>
+                <label
+                  htmlFor="eb-emit-nfse-switch"
+                  className="flex items-center justify-between gap-3 p-3 rounded-xl bg-muted/40 border border-border min-h-[44px] cursor-pointer"
+                >
+                  <div className="min-w-0 flex-1">
                     <div className="font-bold text-foreground">Emitir também a NFS-e de Hospedagem agora?</div>
-                    <div className="text-[11px] text-muted-foreground">Envia o PDF da NFS-e junto com o(s) PDF(s) do(s) Boleto(s) e Linha Digitável/PIX.</div>
+                    <div className="text-[11px] text-muted-foreground fiscal-text-pretty">Envia o PDF da NFS-e junto com o(s) PDF(s) do(s) Boleto(s) e Linha Digitável/PIX.</div>
                   </div>
-                  <Switch checked={ebEmitNfseToo} onCheckedChange={setEbEmitNfseToo} />
-                </div>
+                  <Switch
+                    id="eb-emit-nfse-switch"
+                    checked={ebEmitNfseToo}
+                    onCheckedChange={setEbEmitNfseToo}
+                    aria-label="Emitir também a NFS-e de Hospedagem agora"
+                    className="shrink-0 relative after:content-[''] after:absolute after:-inset-y-3 after:-inset-x-1 md:after:inset-0"
+                  />
+                </label>
 
                 {/* 1 Boleto vs 2 Boletos */}
                 <div className="space-y-1.5">
@@ -6260,7 +7087,8 @@ export default function FiscalInvoicesPage() {
                     <button
                       type="button"
                       onClick={() => setEbConsumptionMode("single")}
-                      className={`p-3 rounded-xl border text-left transition-all ${
+                      aria-pressed={ebConsumptionMode === "single"}
+                      className={`min-h-[48px] p-3 rounded-xl border text-left transition-all ${
                         ebConsumptionMode === "single"
                           ? "bg-indigo-600 text-white border-indigo-600 font-bold"
                           : "bg-background border-border text-foreground"
@@ -6275,7 +7103,8 @@ export default function FiscalInvoicesPage() {
                     <button
                       type="button"
                       onClick={() => setEbConsumptionMode("separate")}
-                      className={`p-3 rounded-xl border text-left transition-all ${
+                      aria-pressed={ebConsumptionMode === "separate"}
+                      className={`min-h-[48px] p-3 rounded-xl border text-left transition-all ${
                         ebConsumptionMode === "separate"
                           ? "bg-indigo-600 text-white border-indigo-600 font-bold"
                           : "bg-background border-border text-foreground"
@@ -6291,42 +7120,45 @@ export default function FiscalInvoicesPage() {
 
                 {/* Prazo, Vencimento e Multa/Juros */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                  <div className="space-y-1">
+                  <div className="col-span-2 sm:col-span-1 space-y-1 min-w-0">
                     <Label className="font-bold text-[11px]">Prazo (Dias após Check-out)</Label>
                     <Input
                       type="number"
+                      inputMode="numeric"
                       value={ebTermDays}
                       onChange={e => setEbTermDays(e.target.value)}
-                      className="h-8.5 text-xs rounded-xl font-mono"
+                      className="h-11 sm:h-8.5 text-base sm:text-xs rounded-xl font-mono"
                     />
                   </div>
-                  <div className="space-y-1">
+                  <div className="col-span-2 sm:col-span-1 space-y-1 min-w-0">
                     <Label className="font-bold text-[11px]">Ou Vencimento Fixo</Label>
                     <Input
                       type="date"
                       value={ebCustomDueDate}
                       onChange={e => setEbCustomDueDate(e.target.value)}
-                      className="h-8.5 text-xs rounded-xl font-mono"
+                      className="h-11 sm:h-8.5 text-base sm:text-xs rounded-xl font-mono"
                     />
                   </div>
-                  <div className="space-y-1">
+                  <div className="space-y-1 min-w-0">
                     <Label className="font-bold text-[11px]">Multa Atraso (%)</Label>
                     <Input
                       type="number"
+                      inputMode="decimal"
                       step="0.1"
                       value={ebMultaPct}
                       onChange={e => setEbMultaPct(e.target.value)}
-                      className="h-8.5 text-xs rounded-xl font-mono"
+                      className="h-11 sm:h-8.5 text-base sm:text-xs rounded-xl font-mono"
                     />
                   </div>
-                  <div className="space-y-1">
+                  <div className="space-y-1 min-w-0">
                     <Label className="font-bold text-[11px]">Juros ao Mês (%)</Label>
                     <Input
                       type="number"
+                      inputMode="decimal"
                       step="0.1"
                       value={ebJurosMonthlyPct}
                       onChange={e => setEbJurosMonthlyPct(e.target.value)}
-                      className="h-8.5 text-xs rounded-xl font-mono"
+                      className="h-11 sm:h-8.5 text-base sm:text-xs rounded-xl font-mono"
                     />
                   </div>
                 </div>
@@ -6334,15 +7166,16 @@ export default function FiscalInvoicesPage() {
                 {/* Regra do 2º Boleto de Consumo */}
                 {ebConsumptionMode === "separate" && (
                   <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-2.5">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <span className="font-bold text-amber-800 dark:text-amber-200">
                         🍫 Configuração do 2º Boleto (Consumo)
                       </span>
-                      <label className="flex items-center gap-1.5 cursor-pointer text-[11px] font-bold">
+                      <label className="flex items-center gap-2 min-h-[40px] sm:min-h-0 cursor-pointer text-xs sm:text-[11px] font-bold">
                         <input
                           type="checkbox"
                           checked={ebConsumptionPayerSame}
                           onChange={e => setEbConsumptionPayerSame(e.target.checked)}
+                          className="w-4 h-4 shrink-0 rounded"
                         />
                         <span>Usar mesmo pagador e prazo do boleto principal</span>
                       </label>
@@ -6353,19 +7186,23 @@ export default function FiscalInvoicesPage() {
                           value={ebConsumptionPayerName}
                           onChange={e => setEbConsumptionPayerName(e.target.value)}
                           placeholder="Nome do Pagador do Consumo"
-                          className="h-8 text-xs rounded-xl"
+                          className="h-11 sm:h-8 text-base sm:text-xs rounded-xl"
                         />
                         <Input
+                          inputMode="numeric"
+                          autoCorrect="off"
+                          autoCapitalize="none"
+                          spellCheck={false}
                           value={ebConsumptionPayerDoc}
                           onChange={e => setEbConsumptionPayerDoc(e.target.value)}
                           placeholder="CPF/CNPJ do Pagador"
-                          className="h-8 text-xs rounded-xl font-mono"
+                          className="h-11 sm:h-8 text-base sm:text-xs rounded-xl font-mono"
                         />
                         <Input
                           type="date"
                           value={ebConsumptionDueDate}
                           onChange={e => setEbConsumptionDueDate(e.target.value)}
-                          className="h-8 text-xs rounded-xl font-mono"
+                          className="h-11 sm:h-8 text-base sm:text-xs rounded-xl font-mono"
                         />
                       </div>
                     )}
@@ -6380,64 +7217,72 @@ export default function FiscalInvoicesPage() {
                       value={ebFinRespName}
                       onChange={e => setEbFinRespName(e.target.value)}
                       placeholder="Nome do Resp. Financeiro"
-                      className="h-8 text-xs rounded-xl"
+                      className="h-11 sm:h-8 text-base sm:text-xs rounded-xl"
                     />
                     <Input
+                      type="text"
+                      inputMode="email"
+                      autoCorrect="off"
+                      autoCapitalize="none"
+                      spellCheck={false}
                       value={ebFinRespEmail}
                       onChange={e => setEbFinRespEmail(e.target.value)}
                       placeholder="E-mail(s) p/ Nota e Boleto (separe por ;)"
-                      className="h-8 text-xs rounded-xl"
+                      className="h-11 sm:h-8 text-base sm:text-xs rounded-xl"
                     />
                     <Input
                       type="tel"
                       inputMode="tel"
+                      autoCorrect="off"
+                      autoCapitalize="none"
+                      spellCheck={false}
                       value={ebFinRespPhone}
                       onChange={e => setEbFinRespPhone(formatSmartPhone(e.target.value))}
                       placeholder="WhatsApp (DDD + Número)"
-                      className="h-8 text-xs rounded-xl font-mono"
+                      className="h-11 sm:h-8 text-base sm:text-xs rounded-xl font-mono"
                     />
                   </div>
                 </div>
 
                 {/* Destinatários e Canais */}
-                <div className="p-3 rounded-2xl bg-muted/30 border border-border space-y-2">
+                <div className="p-3 rounded-2xl bg-muted/30 border border-border space-y-2.5">
                   <div className="font-bold text-foreground">📨 Destinatários do Pacote (PDF NFS-e + PDF Boleto + Linha Digitável + PIX)</div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    <label className="flex items-center gap-1.5 p-2 rounded-xl border border-border bg-background cursor-pointer font-semibold">
-                      <input type="checkbox" checked={ebRecGuest} onChange={e => setEbRecGuest(e.target.checked)} />
-                      <span>👤 Hóspede</span>
+                    <label className="flex items-center gap-2 min-h-[44px] sm:min-h-0 p-2.5 sm:p-2 rounded-xl border border-border bg-background cursor-pointer font-semibold">
+                      <input type="checkbox" checked={ebRecGuest} onChange={e => setEbRecGuest(e.target.checked)} className="w-4 h-4 shrink-0 rounded" />
+                      <span className="truncate">👤 Hóspede</span>
                     </label>
-                    <label className="flex items-center gap-1.5 p-2 rounded-xl border border-border bg-background cursor-pointer font-semibold">
-                      <input type="checkbox" checked={ebRecRequester} onChange={e => setEbRecRequester(e.target.checked)} />
-                      <span>📋 Solicitante</span>
+                    <label className="flex items-center gap-2 min-h-[44px] sm:min-h-0 p-2.5 sm:p-2 rounded-xl border border-border bg-background cursor-pointer font-semibold">
+                      <input type="checkbox" checked={ebRecRequester} onChange={e => setEbRecRequester(e.target.checked)} className="w-4 h-4 shrink-0 rounded" />
+                      <span className="truncate">📋 Solicitante</span>
                     </label>
-                    <label className="flex items-center gap-1.5 p-2 rounded-xl border border-border bg-background cursor-pointer font-semibold">
-                      <input type="checkbox" checked={ebRecCompany} onChange={e => setEbRecCompany(e.target.checked)} />
-                      <span>🏢 Empresa/Agência</span>
+                    <label className="flex items-center gap-2 min-h-[44px] sm:min-h-0 p-2.5 sm:p-2 rounded-xl border border-border bg-background cursor-pointer font-semibold">
+                      <input type="checkbox" checked={ebRecCompany} onChange={e => setEbRecCompany(e.target.checked)} className="w-4 h-4 shrink-0 rounded" />
+                      <span className="truncate">🏢 Empresa</span>
                     </label>
-                    <label className="flex items-center gap-1.5 p-2 rounded-xl border border-border bg-background cursor-pointer font-semibold">
-                      <input type="checkbox" checked={ebRecFinResp} onChange={e => setEbRecFinResp(e.target.checked)} />
-                      <span>💼 Resp. Financeiro</span>
+                    <label className="flex items-center gap-2 min-h-[44px] sm:min-h-0 p-2.5 sm:p-2 rounded-xl border border-border bg-background cursor-pointer font-semibold">
+                      <input type="checkbox" checked={ebRecFinResp} onChange={e => setEbRecFinResp(e.target.checked)} className="w-4 h-4 shrink-0 rounded" />
+                      <span className="truncate">💼 Financeiro</span>
                     </label>
                   </div>
-                  <div className="flex items-center gap-4 pt-1">
-                    <label className="flex items-center gap-1.5 cursor-pointer font-bold text-indigo-600">
-                      <input type="checkbox" checked={ebRecSendEmail} onChange={e => setEbRecSendEmail(e.target.checked)} />
+                  <div className="flex flex-col sm:flex-row sm:items-center flex-wrap gap-2 sm:gap-4 pt-1">
+                    <label className="flex items-center gap-2 min-h-[40px] sm:min-h-0 cursor-pointer font-bold text-indigo-600">
+                      <input type="checkbox" checked={ebRecSendEmail} onChange={e => setEbRecSendEmail(e.target.checked)} className="w-4 h-4 shrink-0 rounded" />
                       <span>📧 Enviar por E-mail (com PDFs anexos)</span>
                     </label>
-                    <label className="flex items-center gap-1.5 cursor-pointer font-bold text-emerald-600">
-                      <input type="checkbox" checked={ebRecSendWhatsApp} onChange={e => setEbRecSendWhatsApp(e.target.checked)} />
+                    <label className="flex items-center gap-2 min-h-[40px] sm:min-h-0 cursor-pointer font-bold text-emerald-600">
+                      <input type="checkbox" checked={ebRecSendWhatsApp} onChange={e => setEbRecSendWhatsApp(e.target.checked)} className="w-4 h-4 shrink-0 rounded" />
                       <span>💬 Enviar por WhatsApp (Z-API)</span>
                     </label>
                   </div>
                 </div>
 
-                <DialogFooter className="gap-2">
-                  <Button type="button" variant="outline" onClick={() => setEmitBoletoModalOpen(false)} className="rounded-xl h-9 text-xs font-bold">
+                <DialogFooter className="gap-2 pt-1">
+                  <Button type="button" variant="outline" onClick={() => setEmitBoletoModalOpen(false)} className="w-full sm:w-auto min-h-[44px] sm:min-h-0 sm:h-9 rounded-xl text-xs font-bold">
                     Cancelar
                   </Button>
-                  <Button type="submit" disabled={emittingBoletoPackage} className="rounded-xl h-9 text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5">
-                    {emittingBoletoPackage ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                  <Button type="submit" disabled={emittingBoletoPackage} className="w-full sm:w-auto min-h-[44px] sm:min-h-0 sm:h-9 rounded-xl text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5">
+                    {emittingBoletoPackage ? <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" aria-hidden="true" /> : <Zap className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />}
                     <span>{emittingBoletoPackage ? "Emitindo e Enviando..." : "Emitir e Disparar Agora"}</span>
                   </Button>
                 </DialogFooter>
@@ -6452,24 +7297,24 @@ export default function FiscalInvoicesPage() {
 
         {/* Modal de Cancelamento de NFS-e */}
         <Dialog open={cancelModalOpen} onOpenChange={setCancelModalOpen}>
-          <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl shadow-2xl">
+          <DialogContent className="sm:max-w-md bg-card border border-border rounded-t-3xl sm:rounded-3xl max-h-[92dvh] overflow-y-auto overscroll-contain p-4 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] sm:pb-6 shadow-2xl">
             <DialogHeader className="text-left pb-2">
               <div className="w-10 h-10 rounded-2xl bg-rose-500/10 text-rose-600 flex items-center justify-center mb-2">
-                <AlertTriangle className="w-5 h-5" />
+                <AlertTriangle className="w-5 h-5" aria-hidden="true" />
               </div>
-              <DialogTitle className="text-base font-black text-foreground">
+              <DialogTitle className="fiscal-heading-balance text-base font-black text-foreground">
                 Cancelar NFS-e Nº {invoiceToCancel?.numeroNfse}
               </DialogTitle>
-              <DialogDescription className="text-xs text-muted-foreground">
+              <DialogDescription className="fiscal-text-pretty text-xs text-muted-foreground">
                 O cancelamento será transmitido diretamente à Prefeitura de Campos dos Goytacazes. Esta ação é irreversível.
               </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-3 py-2 text-xs">
-              <div className="p-3 rounded-xl bg-muted/30 border border-border space-y-1">
-                <div>Tomador: <strong>{invoiceToCancel?.tomadorNome}</strong></div>
-                <div>Valor: <strong>R$ {Number(invoiceToCancel?.valorServico || 0).toFixed(2)}</strong></div>
-                <div>Código de Verificação: <span className="font-mono">{invoiceToCancel?.codigoVerificacao}</span></div>
+              <div className="p-3 rounded-xl bg-muted/30 border border-border space-y-1 min-w-0">
+                <div className="break-words">Tomador: <strong>{invoiceToCancel?.tomadorNome}</strong></div>
+                <div>Valor: <strong className="tabular-nums">R$ {Number(invoiceToCancel?.valorServico || 0).toFixed(2)}</strong></div>
+                <div>Código de Verificação: <span className="font-mono fiscal-break-anywhere">{invoiceToCancel?.codigoVerificacao}</span></div>
               </div>
 
               <div className="space-y-1.5">
@@ -6479,7 +7324,7 @@ export default function FiscalInvoicesPage() {
                   value={cancelReason}
                   onChange={e => setCancelReason(e.target.value)}
                   rows={3}
-                  className="text-xs rounded-xl"
+                  className="text-base sm:text-xs rounded-xl"
                   required
                 />
               </div>
@@ -6489,16 +7334,16 @@ export default function FiscalInvoicesPage() {
               <Button 
                 variant="outline"
                 onClick={() => setCancelModalOpen(false)}
-                className="font-bold text-xs rounded-xl h-9.5"
+                className="w-full sm:w-auto min-h-[44px] sm:min-h-0 sm:h-9.5 font-bold text-xs rounded-xl"
               >
                 Voltar
               </Button>
               <Button 
                 onClick={handleConfirmCancel}
                 disabled={isCancelling || !cancelReason.trim()}
-                className="bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl h-9.5 gap-1.5"
+                className="w-full sm:w-auto min-h-[44px] sm:min-h-0 sm:h-9.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl gap-1.5"
               >
-                {isCancelling ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                {isCancelling ? <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" aria-hidden="true" /> : <Trash2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />}
                 <span>Confirmar Cancelamento</span>
               </Button>
             </DialogFooter>
@@ -6507,25 +7352,26 @@ export default function FiscalInvoicesPage() {
 
         {/* Modal de Faturamento B2B Consolidado */}
         <Dialog open={consolidatedModalOpen} onOpenChange={setConsolidatedModalOpen}>
-          <DialogContent className="sm:max-w-lg bg-card border border-border rounded-3xl shadow-2xl">
+          <DialogContent className="sm:max-w-lg bg-card border border-border rounded-t-3xl sm:rounded-3xl max-h-[92dvh] overflow-y-auto overscroll-contain p-4 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] sm:pb-6 shadow-2xl">
             <DialogHeader className="text-left pb-2">
               <div className="w-10 h-10 rounded-2xl bg-indigo-500/10 text-indigo-600 flex items-center justify-center mb-2">
-                <Building2 className="w-5 h-5" />
+                <Building2 className="w-5 h-5" aria-hidden="true" />
               </div>
-              <DialogTitle className="text-base font-black text-foreground">
+              <DialogTitle className="fiscal-heading-balance text-base font-black text-foreground">
                 Faturamento Corporativo B2B Consolidado
               </DialogTitle>
-              <DialogDescription className="text-xs text-muted-foreground">
+              <DialogDescription className="fiscal-text-pretty text-xs text-muted-foreground">
                 Emissão de 1 única NFS-e consolidando múltiplas estadias para uma Empresa Parceira ou Agência de Viagens B2B
               </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-3.5 py-2 text-xs">
-              <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-muted/50 border border-border">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 sm:gap-2 p-1 rounded-xl bg-muted/50 border border-border">
                 <button
                   type="button"
                   onClick={() => setConsolidatedTargetType("company")}
-                  className={`py-2 px-3 rounded-lg text-xs font-bold transition-all ${
+                  aria-pressed={consolidatedTargetType === "company"}
+                  className={`min-h-[44px] sm:min-h-0 py-2 px-3 rounded-lg text-xs font-bold transition-all ${
                     consolidatedTargetType === "company"
                       ? "bg-indigo-600 text-white shadow-xs"
                       : "text-muted-foreground hover:text-foreground"
@@ -6536,7 +7382,8 @@ export default function FiscalInvoicesPage() {
                 <button
                   type="button"
                   onClick={() => setConsolidatedTargetType("agency")}
-                  className={`py-2 px-3 rounded-lg text-xs font-bold transition-all ${
+                  aria-pressed={consolidatedTargetType === "agency"}
+                  className={`min-h-[44px] sm:min-h-0 py-2 px-3 rounded-lg text-xs font-bold transition-all ${
                     consolidatedTargetType === "agency"
                       ? "bg-violet-600 text-white shadow-xs"
                       : "text-muted-foreground hover:text-foreground"
@@ -6548,11 +7395,14 @@ export default function FiscalInvoicesPage() {
 
               {consolidatedTargetType === "agency" ? (
                 <div className="space-y-1.5">
-                  <Label className="font-bold text-violet-700 dark:text-violet-300">Agência de Viagens B2B Tomadora da NFS-e</Label>
+                  <Label htmlFor="consolidated-agency-select" className="font-bold text-violet-700 dark:text-violet-300">
+                    Agência de Viagens B2B Tomadora da NFS-e
+                  </Label>
                   <select
+                    id="consolidated-agency-select"
                     value={consolidatedAgencyId}
                     onChange={e => setConsolidatedAgencyId(e.target.value)}
-                    className="w-full h-9.5 rounded-xl border border-violet-500/40 bg-background px-3 text-xs font-bold"
+                    className="w-full h-11 sm:h-9.5 rounded-xl border border-violet-500/40 bg-background px-3 text-base sm:text-xs font-bold"
                   >
                     <option value="">Selecione a Agência B2B...</option>
                     {agencies.map(a => {
@@ -6572,11 +7422,14 @@ export default function FiscalInvoicesPage() {
                 </div>
               ) : (
                 <div className="space-y-1.5">
-                  <Label className="font-bold">Empresa Parceira Tomadora da NFS-e</Label>
+                  <Label htmlFor="consolidated-company-select" className="font-bold">
+                    Empresa Parceira Tomadora da NFS-e
+                  </Label>
                   <select
+                    id="consolidated-company-select"
                     value={consolidatedCompanyId}
                     onChange={e => setConsolidatedCompanyId(e.target.value)}
-                    className="w-full h-9.5 rounded-xl border border-border bg-background px-3 text-xs font-bold"
+                    className="w-full h-11 sm:h-9.5 rounded-xl border border-border bg-background px-3 text-base sm:text-xs font-bold"
                   >
                     <option value="">Selecione a Empresa...</option>
                     {companies.map(c => {
@@ -6601,17 +7454,17 @@ export default function FiscalInvoicesPage() {
                   <span className="font-bold text-muted-foreground">Estadias Selecionadas:</span>
                   <strong className="text-foreground">{selectedB2BItems.length} estadias</strong>
                 </div>
-                <div className="max-h-40 overflow-y-auto divide-y divide-border/60 text-[11px]">
+                <div className="max-h-44 overflow-y-auto overscroll-contain divide-y divide-border/60 text-[11px]">
                   {selectedB2BItems.map(i => (
-                    <div key={i.id || i.code} className="py-1.5 flex justify-between">
-                      <div>
-                        <strong className="text-foreground">{i.guestName}</strong>
-                        <div className="text-[10px] text-muted-foreground">
+                    <div key={i.id || i.code} className="py-1.5 flex items-start justify-between gap-2 min-w-0">
+                      <div className="min-w-0 flex-1">
+                        <strong className="text-foreground break-words block">{i.guestName}</strong>
+                        <div className="text-[10px] text-muted-foreground break-words">
                           Flat {i.flatNumber} • {i.checkinDate} a {i.checkoutDate} ({i.diarias}d)
                           {i.b2bLocatorRloc ? ` • RLOC ${i.b2bLocatorRloc}` : ""}
                         </div>
                       </div>
-                      <div className="font-mono font-bold text-emerald-600">
+                      <div className="font-mono font-bold text-emerald-600 tabular-nums shrink-0">
                         R$ {Number(i.totalAmount || 0).toFixed(2)}
                       </div>
                     </div>
@@ -6619,7 +7472,7 @@ export default function FiscalInvoicesPage() {
                 </div>
                 <div className="pt-2 border-t border-border flex justify-between items-center text-xs font-black">
                   <span>Valor Total Consolidado:</span>
-                  <span className="text-emerald-600 font-mono text-sm">
+                  <span className="text-emerald-600 font-mono text-sm tabular-nums">
                     R$ {selectedB2BTotal.toFixed(2)}
                   </span>
                 </div>
@@ -6630,7 +7483,7 @@ export default function FiscalInvoicesPage() {
               <Button 
                 variant="outline"
                 onClick={() => setConsolidatedModalOpen(false)}
-                className="font-bold text-xs rounded-xl h-9.5"
+                className="w-full sm:w-auto min-h-[44px] sm:min-h-0 sm:h-9.5 font-bold text-xs rounded-xl"
               >
                 Cancelar
               </Button>
@@ -6642,9 +7495,9 @@ export default function FiscalInvoicesPage() {
                     ? !selectedConsolidatedAgencyHasCnpj
                     : !selectedConsolidatedCompanyHasCnpj)
                 }
-                className={`${consolidatedTargetType === "agency" ? "bg-violet-600 hover:bg-violet-700" : "bg-indigo-600 hover:bg-indigo-700"} text-white font-bold text-xs rounded-xl h-9.5 gap-1.5`}
+                className={`w-full sm:w-auto min-h-[44px] sm:min-h-0 sm:h-9.5 ${consolidatedTargetType === "agency" ? "bg-violet-600 hover:bg-violet-700" : "bg-indigo-600 hover:bg-indigo-700"} text-white font-bold text-xs rounded-xl gap-1.5`}
               >
-                {consolidatedEmitting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Building2 className="w-3.5 h-3.5" />}
+                {consolidatedEmitting ? <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" aria-hidden="true" /> : <Building2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />}
                 <span>Emitir NFS-e Consolidada</span>
               </Button>
             </DialogFooter>
@@ -6653,15 +7506,15 @@ export default function FiscalInvoicesPage() {
 
         {/* Modal de Upload de Certificado A1 */}
         <Dialog open={certModalOpen} onOpenChange={setCertModalOpen}>
-          <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl shadow-2xl">
+          <DialogContent className="sm:max-w-md bg-card border border-border rounded-t-3xl sm:rounded-3xl max-h-[92dvh] overflow-y-auto overscroll-contain p-4 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] sm:pb-6 shadow-2xl">
             <DialogHeader className="text-left pb-2">
               <div className="w-10 h-10 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mb-2">
-                <ShieldCheck className="w-5 h-5" />
+                <ShieldCheck className="w-5 h-5" aria-hidden="true" />
               </div>
-              <DialogTitle className="text-base font-black text-foreground">
+              <DialogTitle className="fiscal-heading-balance text-base font-black text-foreground">
                 Upload de Certificado Digital A1
               </DialogTitle>
-              <DialogDescription className="text-xs text-muted-foreground">
+              <DialogDescription className="fiscal-text-pretty text-xs text-muted-foreground">
                 Envie o arquivo .pfx ou .p12 do seu certificado ICP-Brasil e informe a senha para validação imediata
               </DialogDescription>
             </DialogHeader>
@@ -6673,7 +7526,7 @@ export default function FiscalInvoicesPage() {
                   type="file"
                   accept=".pfx,.p12"
                   onChange={e => setCertFile(e.target.files?.[0] || null)}
-                  className="text-xs rounded-xl h-10 cursor-pointer"
+                  className="text-base sm:text-xs rounded-xl h-11 sm:h-10 cursor-pointer"
                   required
                 />
               </div>
@@ -6685,12 +7538,12 @@ export default function FiscalInvoicesPage() {
                   placeholder="Digite a senha do certificado..."
                   value={certPassphrase}
                   onChange={e => setCertPassphrase(e.target.value)}
-                  className="text-xs rounded-xl h-9.5"
+                  className="text-base sm:text-xs rounded-xl h-11 sm:h-9.5"
                   required
                 />
               </div>
 
-              <div className="p-3 rounded-xl bg-muted/40 border border-border text-[11px] text-muted-foreground leading-relaxed">
+              <div className="p-3 rounded-xl bg-muted/40 border border-border text-[11px] text-muted-foreground leading-relaxed fiscal-text-pretty">
                 🔒 O arquivo e a senha serão armazenados com criptografia de ponta a ponta no servidor para assinatura digital dos lotes da prefeitura.
               </div>
 
@@ -6699,16 +7552,16 @@ export default function FiscalInvoicesPage() {
                   type="button"
                   variant="outline"
                   onClick={() => setCertModalOpen(false)}
-                  className="font-bold text-xs rounded-xl h-9.5"
+                  className="w-full sm:w-auto min-h-[44px] sm:min-h-0 sm:h-9.5 font-bold text-xs rounded-xl"
                 >
                   Cancelar
                 </Button>
                 <Button 
                   type="submit"
                   disabled={certUploading || !certFile || !certPassphrase}
-                  className="bg-primary text-primary-foreground font-bold text-xs rounded-xl h-9.5 gap-1.5"
+                  className="w-full sm:w-auto min-h-[44px] sm:min-h-0 sm:h-9.5 bg-primary text-primary-foreground font-bold text-xs rounded-xl gap-1.5"
                 >
-                  {certUploading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <UploadCloud className="w-3.5 h-3.5" />}
+                  {certUploading ? <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" aria-hidden="true" /> : <UploadCloud className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />}
                   <span>Instalar Certificado A1</span>
                 </Button>
               </DialogFooter>
@@ -6718,22 +7571,22 @@ export default function FiscalInvoicesPage() {
 
         {/* Modal de Sucesso de Emissão */}
         <Dialog open={!!emissionSuccessData} onOpenChange={() => setEmissionSuccessData(null)}>
-          <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl shadow-2xl">
+          <DialogContent className="sm:max-w-md bg-card border border-border rounded-t-3xl sm:rounded-3xl max-h-[92dvh] overflow-y-auto overscroll-contain p-4 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] sm:pb-6 shadow-2xl">
             <DialogHeader className="text-center pb-2">
               <div className="w-12 h-12 rounded-2xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 flex items-center justify-center mx-auto mb-2">
-                <CheckCircle2 className="w-7 h-7" />
+                <CheckCircle2 className="w-7 h-7" aria-hidden="true" />
               </div>
-              <DialogTitle className="text-lg font-black text-foreground">NFS-e Autorizada com Sucesso!</DialogTitle>
-              <DialogDescription className="text-xs text-muted-foreground">
+              <DialogTitle className="fiscal-heading-balance text-lg font-black text-foreground">NFS-e Autorizada com Sucesso!</DialogTitle>
+              <DialogDescription className="fiscal-text-pretty text-xs text-muted-foreground">
                 A nota fiscal foi processada e autorizada pelo Emissor Nacional da NFS-e (Gov.br / ADN).
               </DialogDescription>
             </DialogHeader>
 
             {emissionSuccessData && (
               <div className="p-4 rounded-2xl bg-muted/50 border border-border text-xs space-y-2">
-                <div className="flex justify-between"><span className="text-muted-foreground">Número da Nota:</span> <strong className="text-primary font-black text-sm">{emissionSuccessData.numeroNfse || emissionSuccessData.numeroNota || "Emitida"}</strong></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Código de Verificação:</span> <strong className="font-mono">{emissionSuccessData.codigoVerificacao}</strong></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Data/Hora:</span> <span>{new Date().toLocaleString("pt-BR")}</span></div>
+                <div className="flex flex-wrap justify-between gap-1"><span className="text-muted-foreground">Número da Nota:</span> <strong className="text-primary font-black text-sm">{emissionSuccessData.numeroNfse || emissionSuccessData.numeroNota || "Emitida"}</strong></div>
+                <div className="flex flex-wrap justify-between gap-1"><span className="text-muted-foreground">Código de Verificação:</span> <strong className="font-mono fiscal-break-anywhere">{emissionSuccessData.codigoVerificacao}</strong></div>
+                <div className="flex flex-wrap justify-between gap-1"><span className="text-muted-foreground">Data/Hora:</span> <span>{new Date().toLocaleString("pt-BR")}</span></div>
               </div>
             )}
 
@@ -6743,25 +7596,25 @@ export default function FiscalInvoicesPage() {
                   const target = emissionSuccessData?.danfseUrl || `/api/nfse/danfse/${emissionSuccessData?.numeroNfse || emissionSuccessData?.id || 'latest'}`
                   window.open(target, "_blank")
                 }}
-                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl h-10 gap-1.5 shadow-xs"
+                className="w-full sm:flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl min-h-[44px] sm:min-h-0 sm:h-10 gap-1.5 shadow-xs"
               >
-                <ExternalLink className="w-3.5 h-3.5" />
+                <ExternalLink className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                 <span>Ver DANFSE Oficial</span>
               </Button>
 
               <Button 
                 variant="outline"
                 onClick={() => window.open(`/api/nfse/pdf/${emissionSuccessData?.numeroNfse || emissionSuccessData?.id || 'latest'}`, "_blank")}
-                className="flex-1 font-bold text-xs rounded-xl h-10 gap-1.5 border-emerald-600/30 text-emerald-700 dark:text-emerald-400"
+                className="w-full sm:flex-1 font-bold text-xs rounded-xl min-h-[44px] sm:min-h-0 sm:h-10 gap-1.5 border-emerald-600/30 text-emerald-700 dark:text-emerald-400"
               >
-                <FileText className="w-3.5 h-3.5" />
+                <FileText className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                 <span>Abrir PDF Oficial</span>
               </Button>
 
               <Button 
                 variant="outline"
                 onClick={() => setEmissionSuccessData(null)}
-                className="font-bold text-xs rounded-xl h-10 px-4"
+                className="w-full sm:w-auto font-bold text-xs rounded-xl min-h-[44px] sm:min-h-0 sm:h-10 px-4"
               >
                 Concluir
               </Button>
@@ -6771,20 +7624,20 @@ export default function FiscalInvoicesPage() {
 
         {/* Modal de Erro / Rejeição de Emissão */}
         <Dialog open={!!emissionErrorData} onOpenChange={() => setEmissionErrorData(null)}>
-          <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl shadow-2xl">
+          <DialogContent className="sm:max-w-md bg-card border border-border rounded-t-3xl sm:rounded-3xl max-h-[92dvh] overflow-y-auto overscroll-contain p-4 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] sm:pb-6 shadow-2xl">
             <DialogHeader className="text-center pb-2">
               <div className="w-12 h-12 rounded-2xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 flex items-center justify-center mx-auto mb-2">
-                <AlertCircle className="w-7 h-7" />
+                <AlertCircle className="w-7 h-7" aria-hidden="true" />
               </div>
-              <DialogTitle className="text-lg font-black text-foreground">Retorno do Validador</DialogTitle>
-              <DialogDescription className="text-xs text-muted-foreground">
+              <DialogTitle className="fiscal-heading-balance text-lg font-black text-foreground">Retorno do Validador</DialogTitle>
+              <DialogDescription className="fiscal-text-pretty text-xs text-muted-foreground">
                 Ocorreu uma rejeição ou inconsistência durante o envio da nota fiscal.
               </DialogDescription>
             </DialogHeader>
 
             <div className="p-4 rounded-2xl bg-rose-50/80 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-xs text-rose-900 dark:text-rose-200 space-y-1.5">
               <div className="font-bold">Detalhe da Rejeição:</div>
-              <p className="font-mono text-[11px] leading-relaxed">
+              <p className="font-mono text-xs sm:text-[11px] leading-relaxed fiscal-break-anywhere">
                 {emissionErrorData?.error || emissionErrorData?.erros?.[0]?.Descricao || "Erro desconhecido na transmissão."}
               </p>
             </div>
@@ -6793,7 +7646,7 @@ export default function FiscalInvoicesPage() {
               <Button 
                 variant="outline"
                 onClick={() => setEmissionErrorData(null)}
-                className="w-full font-bold text-xs rounded-xl h-10"
+                className="w-full font-bold text-xs rounded-xl min-h-[44px] sm:h-10"
               >
                 Voltar e Corrigir
               </Button>

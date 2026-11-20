@@ -41,7 +41,7 @@ interface KeySourceInfo {
 }
 
 interface EngineProbe {
-  id: "gemini_25_flash" | "gemini_25_pro" | "gemini_38_interactions"
+  id: "gemini_38_flash" | "gemini_4_argon" | "gemini_38_b2b"
   label: string
   model: string
   protocol: string
@@ -263,7 +263,7 @@ export default function AiStatusPage() {
   const [shoppingError, setShoppingError] = useState<string | null>(null)
 
   // Laboratório — Aba 2: Prompt Direto
-  const [promptEngine, setPromptEngine] = useState<"gemini_25_flash" | "gemini_25_pro" | "gemini_38_interactions">("gemini_25_flash")
+  const [promptEngine, setPromptEngine] = useState<"gemini_38_flash" | "gemini_4_argon" | "gemini_38_b2b">("gemini_38_flash")
   const [promptKeySource, setPromptKeySource] = useState<"active" | "db_settings">("active")
   const [promptInput, setPromptInput] = useState("Responda em 1 frase curta: a conexão com o CorpFlats está ativa?")
   const [promptTesting, setPromptTesting] = useState(false)
@@ -989,9 +989,9 @@ export default function AiStatusPage() {
                         onChange={(e) => setPromptEngine(e.target.value as any)}
                         className="w-full min-h-10 rounded-xl border border-input bg-background px-3 py-2 text-xs sm:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                       >
-                        <option value="gemini_25_flash">Gemini 2.5 Flash — generateContent (OCR, Avaliações, Compras)</option>
-                        <option value="gemini_25_pro">Gemini 2.5 Pro — generateContent (Sofia WhatsApp, Copiloto)</option>
-                        <option value="gemini_38_interactions">Gemini 3.8 Flash — Interactions API (Vouchers B2B Zoho)</option>
+                        <option value="gemini_38_flash">Gemini 3.8 Flash — Interactions API (OCR, Avaliações, Compras)</option>
+                        <option value="gemini_4_argon">Gemini 4 Argon — Interactions API (Sofia WhatsApp, Copiloto)</option>
+                        <option value="gemini_38_b2b">Gemini 3.8 Flash B2B — Interactions API + JSON Schema (Vouchers Zoho)</option>
                       </select>
                     </div>
 

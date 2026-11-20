@@ -18,6 +18,13 @@ import {
   getActiveRoomMoveReservation,
   computeRoomMoveConsolidatedSummary
 } from "./room-move-service.mjs";
+import {
+  createGeminiInteraction,
+  normalizeGeminiModel,
+  GEMINI_REASONING_MODEL,
+  GEMINI_REASONING_FALLBACK_CHAIN,
+  GEMINI_INTERACTIONS_PROTOCOL
+} from "./gemini-interactions-client.mjs";
 
 function buildOfficialNfseDraftForReservation(db, options = {}) {
   const isResObject =
@@ -297,7 +304,7 @@ export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbI
 export const DEFAULT_AI_CONFIG = {
   enabled: true,
   testMode: true,
-  preferredModel: "gemini-2.5-pro",
+  preferredModel: GEMINI_REASONING_MODEL,
   mode: "autonomous", // "autonomous" | "copilot" | "off_hours"
   agentName: "Sofia",
   agentRole: "Concierge Virtual CorpFlats",
@@ -9130,36 +9137,32 @@ export async function executeMultiTurnAgenticToolFallback({
 }
 
 /**
- * Chama o Google Gemini com lista de candidatos e suporte multi-turn a Function Calling
+ * Chama o Google Gemini via Interactions API (v1beta • steps[]) com cascata de modelos
+ * e suporte multi-turn stateless a Function Calling.
  */
 export async function callGeminiAi({ apiKey, systemInstruction, prompt, quotedText = "", history = [], db, tools = [], customPrompt = false, requesterRole = "guest", requesterPhone = "", saveDatabase = null, sendZapiMessage = null, createNotification = null, conversation = null, guestContext = null }) {
   if (!apiKey) return { ok: false, error: "Sem chave Gemini" };
 
   const rawPrefModel = String(
     db?.zapiConfig?.aiAgent?.preferredModel ||
-    db?.settings?.geminiModel ||
+    db?.whatsappAiSettings?.preferredModel ||
     db?.whatsappAiSettings?.geminiModel ||
-    "gemini-2.5-pro"
+    GEMINI_REASONING_MODEL
   ).trim();
-  const preferredModel = rawPrefModel.toLowerCase().includes("lite") ? "gemini-2.5-flash" : rawPrefModel;
+  const preferredModel = normalizeGeminiModel(rawPrefModel, "reasoning");
 
-  const rawCandidates = [
-    ...(preferredModel ? [{ ver: "v1beta", model: preferredModel }] : []),
-    { ver: "v1beta", model: "gemini-2.5-pro" },
-    { ver: "v1beta", model: "gemini-2.5-flash" },
-    { ver: "v1beta", model: "gemini-2.0-flash" },
-    { ver: "v1beta", model: "gemini-1.5-pro" },
-    { ver: "v1beta", model: "gemini-1.5-flash" },
-    { ver: "v1", model: "gemini-1.5-flash" }
+  const rawModelList = [
+    preferredModel,
+    ...GEMINI_REASONING_FALLBACK_CHAIN
   ];
-
   const seenModels = new Set();
-  const candidateModels = rawCandidates.filter(c => {
-    const key = `${c.ver}:${c.model}`;
-    if (seenModels.has(key)) return false;
-    seenModels.add(key);
-    return true;
-  });
+  const candidateModels = [];
+  for (const modelName of rawModelList) {
+    const clean = String(modelName || "").trim();
+    if (!clean || seenModels.has(clean)) continue;
+    seenModels.add(clean);
+    candidateModels.push({ ver: "v1beta", model: clean });
+  }
 
   // Injeta as últimas 15 mensagens conversacionais trocadas (filtrando alertas operacionais de OS/sistema)
   const rawHistory = Array.isArray(history)
@@ -9204,111 +9207,92 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, quotedTe
     ? `\n[MENSAGEM ANTERIOR CITADA/RESPONDIDA PELO HÓSPEDE NO WHATSAPP]:\n"${quotedText}"\n(O hóspede deslizou para responder especificamente à mensagem acima — interprete a pergunta atual dele como continuação direta desse assunto!)\n`
     : "";
 
-  const fullPrompt = customPrompt
-    ? (systemInstruction ? `${systemInstruction}\n\n${prompt}` : prompt)
-    : `${systemInstruction}\n${continuityHint}${quotedContextBlock}\n[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
-
-  const promptOnly = customPrompt
-    ? prompt
+  const effectiveUserPrompt = customPrompt
+    ? String(prompt || "")
     : `${continuityHint}${quotedContextBlock}\n[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
+
+  const baseSteps = formattedHistory.map(turn => ({
+    type: turn.role === "model" ? "model_output" : "user_input",
+    content: [{ type: "text", text: turn.parts[0].text }]
+  }));
+  baseSteps.push({
+    type: "user_input",
+    content: [{ type: "text", text: effectiveUserPrompt }]
+  });
 
   const geminiDiagnostics = [];
 
   for (const { ver, model } of candidateModels) {
     try {
-      const useNativeSysInst = ver === "v1beta" && Boolean(systemInstruction);
-      const effectiveUserPrompt = useNativeSysInst ? promptOnly : fullPrompt;
-      const baseContents = formattedHistory.map(turn => ({
-        role: turn.role,
-        parts: turn.parts.map(p => ({ ...p }))
-      }));
-      const lastTurn = baseContents[baseContents.length - 1];
-      if (lastTurn && lastTurn.role === "user" && formattedHistory.length === 0) {
-        baseContents[baseContents.length - 1] = {
-          role: "user",
-          parts: [{ text: `${lastTurn.parts[0].text}\n\n${effectiveUserPrompt}` }]
-        };
-      } else {
-        baseContents.push({ role: "user", parts: [{ text: effectiveUserPrompt }] });
-      }
+      const isGemini4 = model.startsWith("gemini-4");
+      const maxOutputTokens = isGemini4 ? 32768 : 8192;
+      const timeoutMs = isGemini4 ? 35000 : 25000;
 
-      const isGemini25 = model.startsWith("gemini-2.5");
-      const generationConfig = {
-        temperature: 0.35,
-        maxOutputTokens: 4096,
-        ...(isGemini25 ? { thinkingConfig: { thinkingBudget: model.includes("pro") ? 512 : 256 } } : {})
-      };
-
-      const bodyPayload = {
-        ...(useNativeSysInst ? { system_instruction: { parts: [{ text: String(systemInstruction) }] } } : {}),
-        contents: baseContents,
-        generationConfig
-      };
-
-      if (ver === "v1beta" && Array.isArray(tools) && tools.length > 0) {
-        bodyPayload.tools = tools;
-      }
-
-      let response = await fetch(`https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${apiKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(bodyPayload),
-        signal: AbortSignal.timeout(18000)
+      const firstRes = await createGeminiInteraction({
+        apiKey,
+        model,
+        input: baseSteps,
+        systemInstruction: systemInstruction ? String(systemInstruction) : null,
+        tools,
+        store: false,
+        thinkingLevel: "low",
+        maxOutputTokens,
+        timeoutMs
       });
 
-      // Fallback automático se thinkingConfig ou tools causarem HTTP 400 em alguma versão específica do modelo
-      if (response.status === 400 && (bodyPayload.generationConfig?.thinkingConfig || bodyPayload.tools)) {
-        const retryPayload = {
-          ...bodyPayload,
-          generationConfig: { temperature: 0.35, maxOutputTokens: 4096 }
-        };
-        response = await fetch(`https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${apiKey}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(retryPayload),
-          signal: AbortSignal.timeout(18000)
+      if (!firstRes.ok) {
+        geminiDiagnostics.push({
+          model,
+          ver,
+          protocol: GEMINI_INTERACTIONS_PROTOCOL,
+          status: firstRes.status,
+          error: String(firstRes.error || "").slice(0, 260)
         });
-      }
-
-      if (!response.ok) {
-        const errBody = await response.text().catch(() => "");
-        geminiDiagnostics.push({ model, ver, status: response.status, error: errBody.slice(0, 260) });
-        console.warn(`[WhatsApp AI] Modelo "${model}" (${ver}) retornou HTTP ${response.status}: ${errBody.slice(0, 260)}`);
-        continue;
-      }
-
-      const data = await response.json();
-      const candidate = data.candidates?.[0];
-      const finishReason = candidate?.finishReason || "UNKNOWN";
-      let currentParts = candidate?.content?.parts || [];
-
-      let callParts = currentParts.filter(p => p.functionCall);
-
-      if (callParts.length === 0) {
-        const text = currentParts
-          .filter(p => typeof p.text === "string" && !p.thought)
-          .map(p => p.text)
-          .join("")
-          .trim();
-        if (text && text.length > 0) {
-          return { ok: true, text, model, geminiDiagnostics };
+        console.warn(`[WhatsApp AI] Modelo "${model}" (${GEMINI_INTERACTIONS_PROTOCOL}) retornou HTTP ${firstRes.status || "ERR"}: ${String(firstRes.error || "").slice(0, 260)}`);
+        if (firstRes.status === 401 || firstRes.status === 402 || firstRes.status === 403) {
+          break;
         }
-        geminiDiagnostics.push({ model, ver, status: 200, finishReason, error: "Empty text parts" });
         continue;
       }
 
-      // ── Loop Multi-Turn de Execução Encadeada de Ferramentas (até 4 passos) ──
-      const runningContents = [...baseContents];
+      let currentSteps = firstRes.steps;
+      let callSteps = firstRes.functionCalls;
+
+      if (callSteps.length === 0) {
+        if (firstRes.text && firstRes.text.length > 0) {
+          return {
+            ok: true,
+            text: firstRes.text,
+            model,
+            protocol: GEMINI_INTERACTIONS_PROTOCOL,
+            geminiDiagnostics
+          };
+        }
+        geminiDiagnostics.push({
+          model,
+          ver,
+          protocol: GEMINI_INTERACTIONS_PROTOCOL,
+          status: firstRes.status || 200,
+          error: "Empty model_output text"
+        });
+        continue;
+      }
+
+      // ── Loop Multi-Turn Stateless de Execução Encadeada de Ferramentas (até 4 passos) ──
+      const runningSteps = [...baseSteps];
       let lastFnCall = null;
       let lastActionResult = null;
       let anyRequiresHandover = false;
 
-      for (let step = 0; step < 4 && callParts.length > 0; step++) {
-        const functionResponseParts = [];
+      for (let step = 0; step < 4 && callSteps.length > 0; step++) {
+        // Preserva todos os steps retornados pelo modelo (thought com signature + function_call)
+        const modelStepsToAppend = (Array.isArray(currentSteps) ? currentSteps : [])
+          .filter(s => s && s.type !== "user_input");
+        runningSteps.push(...modelStepsToAppend);
 
-        for (const cp of callParts) {
-          const fnName = cp.functionCall.name;
-          const fnArgs = cp.functionCall.args || {};
+        for (const fc of callSteps) {
+          const fnName = fc.name;
+          const fnArgs = fc.arguments || {};
           lastFnCall = { name: fnName, args: fnArgs };
 
           let actionResult;
@@ -9339,56 +9323,47 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, quotedTe
             anyRequiresHandover = true;
           }
 
-          functionResponseParts.push({
-            functionResponse: {
-              name: fnName,
-              response: actionResult
-            }
+          runningSteps.push({
+            type: "function_result",
+            call_id: fc.id,
+            name: fnName,
+            result: [{ type: "text", text: JSON.stringify(actionResult ?? {}) }]
           });
         }
 
-        runningContents.push({ role: "model", parts: currentParts });
-        runningContents.push({
-          role: "function",
-          parts: functionResponseParts
+        const nextRes = await createGeminiInteraction({
+          apiKey,
+          model,
+          input: runningSteps,
+          systemInstruction: systemInstruction ? String(systemInstruction) : null,
+          tools,
+          store: false,
+          thinkingLevel: "low",
+          maxOutputTokens,
+          timeoutMs
         });
 
-        const nextPayload = {
-          ...(useNativeSysInst ? { system_instruction: { parts: [{ text: String(systemInstruction) }] } } : {}),
-          contents: runningContents,
-          generationConfig
-        };
-
-        if (Array.isArray(tools) && tools.length > 0) {
-          nextPayload.tools = tools;
-        }
-
-        const nextResponse = await fetch(`https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${apiKey}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(nextPayload),
-          signal: AbortSignal.timeout(18000)
-        });
-
-        if (!nextResponse.ok) {
+        if (!nextRes.ok) {
+          geminiDiagnostics.push({
+            model,
+            ver,
+            protocol: GEMINI_INTERACTIONS_PROTOCOL,
+            status: nextRes.status,
+            error: `Tool round ${step + 1}: ${String(nextRes.error || "").slice(0, 220)}`
+          });
           break;
         }
 
-        const nextData = await nextResponse.json();
-        currentParts = nextData.candidates?.[0]?.content?.parts || [];
-        callParts = currentParts.filter(p => p.functionCall);
+        currentSteps = nextRes.steps;
+        callSteps = nextRes.functionCalls;
 
-        if (callParts.length === 0) {
-          const finalText = currentParts
-            .filter(p => typeof p.text === "string" && !p.thought)
-            .map(p => p.text)
-            .join("")
-            .trim();
-          if (finalText && finalText.length > 0) {
+        if (callSteps.length === 0) {
+          if (nextRes.text && nextRes.text.length > 0) {
             return {
               ok: true,
-              text: finalText,
+              text: nextRes.text,
               model,
+              protocol: GEMINI_INTERACTIONS_PROTOCOL,
               functionCall: lastFnCall,
               functionResult: lastActionResult,
               requiresHandover: anyRequiresHandover,
@@ -9405,6 +9380,7 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, quotedTe
           ok: true,
           text: lastActionResult?.message || "Esta operação do sistema requer acompanhamento humano. Já estou transferindo para a recepção! 🛎️",
           model,
+          protocol: GEMINI_INTERACTIONS_PROTOCOL,
           functionCall: lastFnCall,
           functionResult: lastActionResult,
           requiresHandover: true,
@@ -9419,6 +9395,7 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, quotedTe
             ok: true,
             text: lastActionResult.message,
             model,
+            protocol: GEMINI_INTERACTIONS_PROTOCOL,
             functionCall: lastFnCall,
             functionResult: lastActionResult,
             requiresHandover: false,
@@ -9435,7 +9412,7 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, quotedTe
         };
       }
     } catch (e) {
-      geminiDiagnostics.push({ model, ver, error: e.message });
+      geminiDiagnostics.push({ model, ver, protocol: GEMINI_INTERACTIONS_PROTOCOL, error: e.message });
       console.warn(`[Gemini WhatsApp AI] Falha no modelo ${model}:`, e.message);
       continue;
     }

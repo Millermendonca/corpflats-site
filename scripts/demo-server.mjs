@@ -73,6 +73,17 @@ import { fileURLToPath } from "url";
 import pg from "pg";
 import QRCode from "qrcode";
 import { uploadImageToStorage } from "./storage-service.mjs";
+import {
+  createGeminiInteraction,
+  convertLegacyContentsToInteractionsInput,
+  buildCompatGenerateContentData,
+  normalizeGeminiModel,
+  isLegacyOrRestrictedGeminiModel,
+  GEMINI_FLASH_MODEL,
+  GEMINI_REASONING_MODEL,
+  GEMINI_FLASH_FALLBACK_CHAIN,
+  GEMINI_INTERACTIONS_PROTOCOL
+} from "./gemini-interactions-client.mjs";
 import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
 import {
   getOrCreateVapidKeys,
@@ -16567,7 +16578,7 @@ const _aiRuntimeTelemetry = {
 function recordAiRuntimeCall({
   module = "gemini_core",
   model = "unknown",
-  protocol = "generateContent (v1beta)",
+  protocol = GEMINI_INTERACTIONS_PROTOCOL,
   ok = false,
   status = null,
   latencyMs = 0,
@@ -16794,186 +16805,100 @@ function classifyGeminiHttpResult(status, rawBody, networkError = null) {
 let _aiStatusOverviewCache = { result: null, ts: 0 };
 const AI_STATUS_OVERVIEW_CACHE_MS = 5 * 60 * 1000;
 
-// ── Helper Universal para Chamadas Google Gemini AI com Auto-Discovery de Modelos ──
+// ── Helper Universal para Chamadas Google Gemini AI via Interactions API (v1beta) ──
 let _geminiListModelsCache = { key: null, expiresAt: 0, candidates: null };
 
 async function getGeminiCandidateEndpoints(apiKey) {
-  const candidates = [];
-
-  // Modelos oficiais de alta capacidade para Tool Calling e raciocínio
-  const preferredModels = [
-    "gemini-2.5-flash",
-    "gemini-2.5-pro",
-    "gemini-2.0-flash",
-    "gemini-1.5-pro",
-    "gemini-1.5-flash"
-  ];
-
   let savedModel = db.settings?.geminiModel;
-  const savedVer = db.settings?.geminiApiVersion || "v1beta";
-  // Sanitiza modelos legados ou lite que degradam o raciocínio da Sofia
-  if (savedModel && (savedModel.includes("lite") || savedModel.includes("8b") || savedModel === "gemini-1.5-flash")) {
-    savedModel = "gemini-2.5-flash";
-    if (db.settings) db.settings.geminiModel = "gemini-2.5-flash";
+  // Auto-migra modelos legados/restritos (2.5, 2.0, 1.5, lite, 8b) para gemini-3.8-flash
+  if (savedModel && isLegacyOrRestrictedGeminiModel(savedModel)) {
+    savedModel = GEMINI_FLASH_MODEL;
+    if (db.settings) db.settings.geminiModel = GEMINI_FLASH_MODEL;
   }
-  if (savedModel && !savedModel.includes("tts") && !savedModel.includes("embed")) {
-    candidates.push({ ver: savedVer, model: savedModel });
-  }
+  const primaryModel = normalizeGeminiModel(savedModel, "flash");
 
-  // Usa cache de 30 minutos para evitar latência de 2 chamadas HTTP extras a cada inspeção de documento
-  const now = Date.now();
-  if (_geminiListModelsCache.key === apiKey && _geminiListModelsCache.expiresAt > now && Array.isArray(_geminiListModelsCache.candidates)) {
-    for (const c of _geminiListModelsCache.candidates) {
-      if (!candidates.some(x => x.ver === c.ver && x.model === c.model)) {
-        candidates.push(c);
-      }
-    }
-    return candidates;
-  }
-
-  // 1. Tentar consultar ListModels diretamente para saber quais modelos a chave suporta
-  try {
-    for (const ver of ["v1beta", "v1"]) {
-      const res = await fetch(`https://generativelanguage.googleapis.com/${ver}/models?key=${apiKey}`, {
-        signal: AbortSignal.timeout(4000)
-      });
-      if (res.ok) {
-        const data = await res.json();
-        // Filtra estritamente apenas modelos principais de geração de texto/chat (exclui lite, tts, embed, etc.)
-        const available = (data.models || [])
-          .filter(m => {
-            const name = (m.name || "").toLowerCase();
-            const methods = m.supportedGenerationMethods || [];
-            return (
-              methods.includes("generateContent") &&
-              !name.includes("lite") &&
-              !name.includes("8b") &&
-              !name.includes("tts") &&
-              !name.includes("embed") &&
-              !name.includes("aqa") &&
-              !name.includes("imagen") &&
-              !name.includes("whisper") &&
-              !name.includes("realtime")
-            );
-          })
-          .map(m => m.name.replace("models/", ""));
-
-        for (const p of preferredModels) {
-          if (available.includes(p) && !candidates.some(c => c.ver === ver && c.model === p)) {
-            candidates.push({ ver, model: p });
-          }
-        }
-        for (const a of available) {
-          if (!candidates.some(c => c.ver === ver && c.model === a)) {
-            candidates.push({ ver, model: a });
-          }
-        }
-      }
-    }
-  } catch (err) {
-    console.warn("[Gemini ListModels]", err.message);
-  }
-
-  // 2. Fallbacks padrões estáveis em ordem de preferência (incluindo flash-lite como último recurso rápido)
-  const defaultFallbacks = [
-    { ver: "v1beta", model: "gemini-2.5-flash" },
-    { ver: "v1beta", model: "gemini-2.5-pro" },
-    { ver: "v1beta", model: "gemini-2.0-flash" },
-    { ver: "v1beta", model: "gemini-2.5-flash-lite" },
-    { ver: "v1beta", model: "gemini-2.0-flash-lite" },
-    { ver: "v1beta", model: "gemini-1.5-pro" },
-    { ver: "v1beta", model: "gemini-1.5-flash" },
-    { ver: "v1", model: "gemini-1.5-flash" }
+  const modelOrder = [
+    primaryModel,
+    ...GEMINI_FLASH_FALLBACK_CHAIN.filter(m => m !== primaryModel)
   ];
 
-  for (const fb of defaultFallbacks) {
-    if (!candidates.some(c => c.ver === fb.ver && c.model === fb.model)) {
-      candidates.push(fb);
-    }
-  }
-
+  const candidates = modelOrder.map(model => ({ ver: "v1beta", model }));
   _geminiListModelsCache = {
     key: apiKey,
     expiresAt: Date.now() + 30 * 60 * 1000,
     candidates: [...candidates]
   };
-
   return candidates;
 }
 
 async function callGeminiGenerateContent(apiKey, contents, telemetryModule = "gemini_core") {
   const candidates = await getGeminiCandidateEndpoints(apiKey);
   const keyInfo = resolvePrimaryGeminiKeyInfo();
+  const input = convertLegacyContentsToInteractionsInput(contents);
   let lastError = null;
   let lastStatus = null;
   const startedAll = Date.now();
 
   for (const { ver, model } of candidates) {
-    const attemptStart = Date.now();
     try {
-      const payload = { contents };
-      if (model.startsWith("gemini-2.5-flash")) {
-        payload.generationConfig = { thinkingConfig: { thinkingBudget: 0 } };
-      }
-
-      let response = await fetch(`https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${apiKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(15000)
+      const isGemini4 = model.startsWith("gemini-4");
+      const res = await createGeminiInteraction({
+        apiKey,
+        model,
+        input,
+        store: false,
+        thinkingLevel: "low",
+        maxOutputTokens: isGemini4 ? 16384 : 8192,
+        timeoutMs: isGemini4 ? 30000 : 20000
       });
 
-      if (!response.ok && response.status === 400 && payload.generationConfig) {
-        response = await fetch(`https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${apiKey}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents }),
-          signal: AbortSignal.timeout(15000)
-        });
-      }
-
-      const latencyMs = Date.now() - attemptStart;
-      if (response.ok) {
-        const data = await response.json();
-        // Mantém o modelo principal configurado sem sobrescrever por fallbacks lite
+      if (res.ok && res.text) {
         if (!db.settings) db.settings = {};
-        if (!db.settings.geminiModel || db.settings.geminiModel.includes("lite")) {
-          db.settings.geminiModel = model.includes("lite") ? "gemini-2.5-flash" : model;
+        if (!db.settings.geminiModel || isLegacyOrRestrictedGeminiModel(db.settings.geminiModel)) {
+          db.settings.geminiModel = model.includes("lite") ? GEMINI_FLASH_MODEL : model;
           db.settings.geminiApiVersion = ver;
           saveDatabase();
         }
         recordAiRuntimeCall({
           module: telemetryModule,
           model,
-          protocol: `generateContent (${ver})`,
+          protocol: GEMINI_INTERACTIONS_PROTOCOL,
           ok: true,
-          status: response.status,
-          latencyMs,
+          status: res.status,
+          latencyMs: res.latencyMs,
           keySource: keyInfo.primarySourceLabel
         });
-        return { ok: true, data, model, ver, latencyMs, status: response.status };
-      } else {
-        const errJson = await response.json().catch(() => ({}));
-        const msg = errJson.error?.message || `Status ${response.status}`;
-        lastError = msg;
-        lastStatus = response.status;
-        console.warn(`[Gemini Candidate] ${model} (${ver}) -> Status ${response.status}: ${msg}`);
-        // Erros definitivos de faturamento ou chave inválida não melhoram tentando outros modelos com a mesma chave
-        if (response.status === 401 || response.status === 402 || response.status === 403) {
-          recordAiRuntimeCall({
-            module: telemetryModule,
-            model,
-            protocol: `generateContent (${ver})`,
-            ok: false,
-            status: response.status,
-            latencyMs,
-            error: msg,
-            keySource: keyInfo.primarySourceLabel
-          });
-          return { ok: false, error: msg, status: response.status, model, ver, latencyMs };
-        }
-        // Continua tentando os próximos modelos candidatos (ex: se 2.5 tem cota 0, tenta 2.0-flash / lite)
-        continue;
+        return {
+          ok: true,
+          text: res.text,
+          data: buildCompatGenerateContentData(res.data, res.text),
+          rawInteraction: res.data,
+          model,
+          ver,
+          protocol: GEMINI_INTERACTIONS_PROTOCOL,
+          latencyMs: res.latencyMs,
+          status: res.status
+        };
+      }
+
+      const msg = res.error || (res.ok ? "Resposta vazia da Interactions API" : `Status ${res.status}`);
+      lastError = msg;
+      lastStatus = res.status;
+      console.warn(`[Gemini Candidate] ${model} (${GEMINI_INTERACTIONS_PROTOCOL}) -> Status ${res.status || "ERR"}: ${msg}`);
+
+      // Erros definitivos de faturamento ou chave inválida não melhoram tentando outros modelos com a mesma chave
+      if (res.status === 401 || res.status === 402 || res.status === 403) {
+        recordAiRuntimeCall({
+          module: telemetryModule,
+          model,
+          protocol: GEMINI_INTERACTIONS_PROTOCOL,
+          ok: false,
+          status: res.status,
+          latencyMs: res.latencyMs,
+          error: msg,
+          keySource: keyInfo.primarySourceLabel
+        });
+        return { ok: false, error: msg, status: res.status, model, ver, protocol: GEMINI_INTERACTIONS_PROTOCOL, latencyMs: res.latencyMs };
       }
     } catch (e) {
       lastError = e.message;
@@ -16984,8 +16909,8 @@ async function callGeminiGenerateContent(apiKey, contents, telemetryModule = "ge
   const totalLatencyMs = Date.now() - startedAll;
   recordAiRuntimeCall({
     module: telemetryModule,
-    model: candidates[0]?.model || "gemini-2.5-flash",
-    protocol: "generateContent (v1beta)",
+    model: candidates[0]?.model || GEMINI_FLASH_MODEL,
+    protocol: GEMINI_INTERACTIONS_PROTOCOL,
     ok: false,
     status: lastStatus,
     latencyMs: totalLatencyMs,
@@ -59711,13 +59636,13 @@ app.get("/api/settings/gemini", (req, res) => {
   const key = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || "";
   const configured = !!key;
   const keyMasked = key ? key.substring(0, 6) + "••••••••••••••••••••••••••" + key.slice(-4) : "";
-  if (db.settings?.geminiModel && (db.settings.geminiModel.includes("lite") || db.settings.geminiModel.includes("8b"))) {
-    db.settings.geminiModel = "gemini-2.5-flash";
+  if (db.settings?.geminiModel && isLegacyOrRestrictedGeminiModel(db.settings.geminiModel)) {
+    db.settings.geminiModel = GEMINI_FLASH_MODEL;
     saveDatabase();
   }
-  const model = db.settings?.geminiModel || "gemini-2.5-flash";
+  const model = normalizeGeminiModel(db.settings?.geminiModel, "flash");
   const apiVersion = db.settings?.geminiApiVersion || "v1beta";
-  res.json({ configured, keyMasked, model, apiVersion });
+  res.json({ configured, keyMasked, model, apiVersion, protocol: GEMINI_INTERACTIONS_PROTOCOL });
 });
 
 // ── Gemini AI: POST save key ───────────────────────────────────────────────
@@ -59739,20 +59664,21 @@ app.post("/api/settings/gemini/test", async (req, res) => {
   const apiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || "";
   if (!apiKey) return res.status(400).json({ error: "Nenhuma chave Gemini configurada." });
 
-  // Limpa modelo salvo se for TTS, lite ou inválido
-  if (db.settings?.geminiModel && (db.settings.geminiModel.includes("tts") || db.settings.geminiModel.includes("embed") || db.settings.geminiModel.includes("lite"))) {
-    db.settings.geminiModel = "gemini-2.5-flash";
+  // Auto-migra modelo salvo se for legado (2.5/2.0/1.5), TTS, embed ou lite
+  if (db.settings?.geminiModel && isLegacyOrRestrictedGeminiModel(db.settings.geminiModel)) {
+    db.settings.geminiModel = GEMINI_FLASH_MODEL;
     saveDatabase();
   }
 
   const result = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: "Responda apenas: OK" }] }], "settings_test");
   if (result.ok) {
-    const reply = result.data.candidates?.[0]?.content?.parts?.[0]?.text || "OK";
+    const reply = result.text || result.data?.candidates?.[0]?.content?.parts?.[0]?.text || "OK";
     res.json({
       success: true,
-      message: `Conectado com sucesso! Modelo ativo: ${result.model} (${result.ver}) • ${result.latencyMs ?? 0}ms • Resposta: "${reply.trim()}"`,
+      message: `Conectado com sucesso! Modelo ativo: ${result.model} (${GEMINI_INTERACTIONS_PROTOCOL}) • ${result.latencyMs ?? 0}ms • Resposta: "${reply.trim()}"`,
       model: result.model,
       apiVersion: result.ver,
+      protocol: GEMINI_INTERACTIONS_PROTOCOL,
       latencyMs: result.latencyMs ?? null
     });
   } else {
@@ -82432,8 +82358,8 @@ Mantenha um tom profissional, ágil e focado na tomada de decisão gerencial.`;
       });
       recordAiRuntimeCall({
         module: "admin_copilot",
-        model: geminiRes?.model || db?.zapiConfig?.aiAgent?.preferredModel || db?.settings?.geminiModel || "gemini-2.5-pro",
-        protocol: "generateContent (v1beta)",
+        model: geminiRes?.model || normalizeGeminiModel(db?.zapiConfig?.aiAgent?.preferredModel || db?.whatsappAiSettings?.preferredModel, "reasoning"),
+        protocol: geminiRes?.protocol || GEMINI_INTERACTIONS_PROTOCOL,
         ok: Boolean(geminiRes?.ok && geminiRes?.text),
         status: geminiRes?.ok ? 200 : (geminiRes?.geminiDiagnostics?.[0]?.status || null),
         latencyMs: Date.now() - copilotStart,
@@ -82443,8 +82369,8 @@ Mantenha um tom profissional, ágil e focado na tomada de decisão gerencial.`;
     } catch (gErr) {
       recordAiRuntimeCall({
         module: "admin_copilot",
-        model: db?.zapiConfig?.aiAgent?.preferredModel || "gemini-2.5-pro",
-        protocol: "generateContent (v1beta)",
+        model: normalizeGeminiModel(db?.zapiConfig?.aiAgent?.preferredModel || db?.whatsappAiSettings?.preferredModel, "reasoning"),
+        protocol: GEMINI_INTERACTIONS_PROTOCOL,
         ok: false,
         status: null,
         latencyMs: Date.now() - copilotStart,
@@ -92942,7 +92868,7 @@ Regras:
         ok: false,
         categories: [],
         serialized: null,
-        usedModel: aiRes.model || db.settings?.geminiModel || "gemini-2.5-flash",
+        usedModel: aiRes.model || normalizeGeminiModel(db.settings?.geminiModel, "flash"),
         latencyMs,
         status: aiRes.status || null,
         ...classified,
@@ -92952,11 +92878,10 @@ Regras:
     }
 
     const parts = aiRes.data?.candidates?.[0]?.content?.parts || [];
-    const text = parts
+    const text = (aiRes.text || parts
       .filter(p => typeof p?.text === "string" && !p.thought)
       .map(p => p.text)
-      .join("")
-      .trim();
+      .join("")).trim();
 
     const match = text.match(/\[[\s\S]*?\]/);
     if (!match) throw new Error(`Resposta sem array JSON válido: "${text.slice(0, 100)}"`);
@@ -92992,7 +92917,7 @@ Regras:
       ok: false,
       categories: [],
       serialized: null,
-      usedModel: db.settings?.geminiModel || "gemini-2.5-flash",
+      usedModel: normalizeGeminiModel(db.settings?.geminiModel, "flash"),
       latencyMs,
       status: null,
       code: "provider_outage",
@@ -93177,21 +93102,23 @@ app.post("/api/shopping-list/recategorize", async (req, res) => {
 });
 
 // ── Helpers de Sonda (Probe) dos Motores Reais Gemini para /ia-status ────────
-async function probeGenerateContentEngine({
+async function probeInteractionsEngine({
   id,
   label,
-  model,
+  model = GEMINI_FLASH_MODEL,
+  protocolLabel = GEMINI_INTERACTIONS_PROTOCOL,
   apiKey,
   keySourceLabel,
   usedBy = [],
-  promptText = "Responda apenas: OK"
+  promptText = "Responda apenas: OK",
+  responseFormat = null
 }) {
   if (!apiKey) {
     return {
       id,
       label,
       model,
-      protocol: "generateContent (v1beta)",
+      protocol: protocolLabel,
       keySourceLabel: keySourceLabel || "Nenhuma chave configurada",
       usedBy,
       ok: false,
@@ -93205,180 +93132,41 @@ async function probeGenerateContentEngine({
     };
   }
 
-  const startedAt = Date.now();
-  const isPro = model.includes("pro");
-  const isFlash25 = model.startsWith("gemini-2.5-flash");
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  const buildBody = (withThinking) => JSON.stringify({
-    contents: [{ parts: [{ text: promptText }] }],
-    generationConfig: {
-      temperature: 0,
-      maxOutputTokens: isPro ? 256 : 64,
-      ...(withThinking && isFlash25 ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
-      ...(withThinking && isPro ? { thinkingConfig: { thinkingBudget: 128 } } : {})
-    }
+  const isGemini4 = String(model || "").startsWith("gemini-4");
+  const aiRes = await createGeminiInteraction({
+    apiKey,
+    model,
+    input: [{ type: "text", text: promptText }],
+    store: false,
+    thinkingLevel: "low",
+    maxOutputTokens: isGemini4 ? 1024 : 256,
+    responseFormat,
+    timeoutMs: isGemini4 ? 22000 : 15000
   });
 
-  try {
-    let resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: buildBody(true),
-      signal: AbortSignal.timeout(12000)
-    });
+  const classified = aiRes.status === null
+    ? classifyGeminiHttpResult(0, "", aiRes.error || "Erro de rede")
+    : classifyGeminiHttpResult(aiRes.status, aiRes.rawText || aiRes.error || "");
 
-    if (resp.status === 400 && (isFlash25 || isPro)) {
-      resp = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: buildBody(false),
-        signal: AbortSignal.timeout(12000)
-      });
-    }
+  const hasValidReply = Boolean(aiRes.ok && aiRes.text);
+  const responsePreview = aiRes.ok
+    ? (aiRes.text ? aiRes.text.slice(0, 200) : "(resposta sem bloco de texto)")
+    : null;
 
-    const latencyMs = Date.now() - startedAt;
-    const rawText = await resp.text();
-    const classified = classifyGeminiHttpResult(resp.status, rawText);
-
-    let responsePreview = null;
-    if (resp.ok) {
-      try {
-        const parsed = JSON.parse(rawText);
-        const parts = parsed?.candidates?.[0]?.content?.parts || [];
-        responsePreview = parts
-          .filter(p => typeof p?.text === "string" && !p.thought)
-          .map(p => p.text)
-          .join("")
-          .trim()
-          .slice(0, 200) || "OK";
-      } catch {
-        responsePreview = "OK";
-      }
-    }
-
-    return {
-      id,
-      label,
-      model,
-      protocol: "generateContent (v1beta)",
-      keySourceLabel: keySourceLabel || "Chave ativa",
-      usedBy,
-      ok: resp.ok,
-      status: resp.status,
-      latencyMs,
-      ...classified,
-      responsePreview
-    };
-  } catch (err) {
-    const latencyMs = Date.now() - startedAt;
-    const classified = classifyGeminiHttpResult(0, "", err?.message || "Erro de rede");
-    return {
-      id,
-      label,
-      model,
-      protocol: "generateContent (v1beta)",
-      keySourceLabel: keySourceLabel || "Chave ativa",
-      usedBy,
-      ok: false,
-      status: null,
-      latencyMs,
-      ...classified,
-      responsePreview: null
-    };
-  }
-}
-
-async function probeInteractionsEngine({
-  id,
-  label,
-  model = "gemini-3.8-flash",
-  apiKey,
-  keySourceLabel,
-  usedBy = [],
-  promptText = "Responda apenas: OK"
-}) {
-  if (!apiKey) {
-    return {
-      id,
-      label,
-      model,
-      protocol: "Interactions API (v1beta)",
-      keySourceLabel: keySourceLabel || "Nenhuma chave configurada",
-      usedBy,
-      ok: false,
-      status: null,
-      latencyMs: 0,
-      code: "unconfigured",
-      diagnosis: "Chave de API não configurada",
-      actionHint: "Configure a chave Gemini em /configuracoes ou no Render.",
-      rawError: null,
-      responsePreview: null
-    };
-  }
-
-  const startedAt = Date.now();
-  try {
-    const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-        "Api-Revision": "2026-05-20"
-      },
-      body: JSON.stringify({
-        model,
-        store: false,
-        input: [{ type: "text", text: promptText }]
-      }),
-      signal: AbortSignal.timeout(12000)
-    });
-
-    const latencyMs = Date.now() - startedAt;
-    const rawText = await resp.text();
-    const classified = classifyGeminiHttpResult(resp.status, rawText);
-
-    let responsePreview = null;
-    if (resp.ok) {
-      try {
-        const parsed = JSON.parse(rawText);
-        const outputs = Array.isArray(parsed?.outputs) ? parsed.outputs : [];
-        const textItem = [...outputs].reverse().find(o => o?.type === "text" && o?.text);
-        responsePreview = (textItem?.text || "OK").trim().slice(0, 200);
-      } catch {
-        responsePreview = "OK";
-      }
-    }
-
-    return {
-      id,
-      label,
-      model,
-      protocol: "Interactions API (v1beta)",
-      keySourceLabel: keySourceLabel || "Chave ativa",
-      usedBy,
-      ok: resp.ok,
-      status: resp.status,
-      latencyMs,
-      ...classified,
-      responsePreview
-    };
-  } catch (err) {
-    const latencyMs = Date.now() - startedAt;
-    const classified = classifyGeminiHttpResult(0, "", err?.message || "Erro de rede");
-    return {
-      id,
-      label,
-      model,
-      protocol: "Interactions API (v1beta)",
-      keySourceLabel: keySourceLabel || "Chave ativa",
-      usedBy,
-      ok: false,
-      status: null,
-      latencyMs,
-      ...classified,
-      responsePreview: null
-    };
-  }
+  return {
+    id,
+    label,
+    model,
+    protocol: protocolLabel,
+    keySourceLabel: keySourceLabel || "Chave ativa",
+    usedBy,
+    ok: aiRes.ok,
+    status: aiRes.status,
+    latencyMs: aiRes.latencyMs,
+    ...classified,
+    ...(aiRes.ok && !hasValidReply ? { actionHint: "HTTP 200 recebido, porém sem texto em steps[].model_output." } : {}),
+    responsePreview
+  };
 }
 
 // GET /api/admin/ai-status — Central real de saúde, latência, chaves e módulos de IA
@@ -93397,49 +93185,66 @@ app.get("/api/admin/ai-status", async (req, res) => {
   }
 
   const keyInfo = resolvePrimaryGeminiKeyInfo();
-  const configuredFlashModel = (db.settings?.geminiModel && !db.settings.geminiModel.includes("lite") && !db.settings.geminiModel.includes("pro"))
-    ? db.settings.geminiModel
-    : "gemini-2.5-flash";
-  const sofiaConfiguredModel = String(
+  const configuredFlashModel = normalizeGeminiModel(
+    db.settings?.geminiModel && !String(db.settings.geminiModel).includes("argon") && !String(db.settings.geminiModel).includes("pro")
+      ? db.settings.geminiModel
+      : GEMINI_FLASH_MODEL,
+    "flash"
+  );
+  const sofiaConfiguredModel = normalizeGeminiModel(
     db?.zapiConfig?.aiAgent?.preferredModel ||
-    db?.settings?.geminiModel ||
+    db?.whatsappAiSettings?.preferredModel ||
     db?.whatsappAiSettings?.geminiModel ||
-    "gemini-2.5-pro"
-  ).trim();
+    GEMINI_REASONING_MODEL,
+    "reasoning"
+  );
 
-  const [flashProbe, proProbe, interactionsProbe] = await Promise.all([
-    probeGenerateContentEngine({
-      id: "gemini_25_flash",
-      label: "Gemini 2.5 Flash (Motor Principal)",
+  const [flashProbe, argonProbe, b2bProbe] = await Promise.all([
+    probeInteractionsEngine({
+      id: "gemini_38_flash",
+      label: "Gemini 3.8 Flash (Motor Principal)",
       model: configuredFlashModel,
+      protocolLabel: GEMINI_INTERACTIONS_PROTOCOL,
       apiKey: keyInfo.primaryKey,
       keySourceLabel: keyInfo.primarySourceLabel,
       usedBy: ["OCR Pré-Check-in", "Avaliações & Camareiras", "Lista de Compras", "Fallback Sofia"]
     }),
-    probeGenerateContentEngine({
-      id: "gemini_25_pro",
-      label: "Gemini 2.5 Pro (Raciocínio & Tools)",
-      model: "gemini-2.5-pro",
+    probeInteractionsEngine({
+      id: "gemini_4_argon",
+      label: "Gemini 4 Argon (Raciocínio & Tools)",
+      model: GEMINI_REASONING_MODEL,
+      protocolLabel: GEMINI_INTERACTIONS_PROTOCOL,
       apiKey: keyInfo.primaryKey,
       keySourceLabel: keyInfo.primarySourceLabel,
       usedBy: ["Agente Sofia (WhatsApp)", "Copiloto IA Admin"]
     }),
     probeInteractionsEngine({
-      id: "gemini_38_interactions",
+      id: "gemini_38_b2b",
       label: "Gemini 3.8 Flash (Multimodal B2B)",
-      model: "gemini-3.8-flash",
+      model: GEMINI_FLASH_MODEL,
+      protocolLabel: `${GEMINI_INTERACTIONS_PROTOCOL} • JSON Schema`,
       apiKey: keyInfo.b2bKey,
       keySourceLabel: keyInfo.b2bSourceLabel,
-      usedBy: ["Leitor de Vouchers B2B (Zoho Mail)"]
+      usedBy: ["Leitor de Vouchers B2B (Zoho Mail)"],
+      promptText: 'Retorne exatamente o objeto JSON {"status":"OK"}',
+      responseFormat: {
+        type: "text",
+        mime_type: "application/json",
+        schema: {
+          type: "object",
+          properties: { status: { type: "string" } },
+          required: ["status"]
+        }
+      }
     })
   ]);
 
   let secondaryProbe = null;
   if (keyInfo.hasOverrideConflict && !flashProbe.ok && keyInfo.dbSettingsKey) {
-    const altProbe = await probeGenerateContentEngine({
-      id: "gemini_25_flash",
+    const altProbe = await probeInteractionsEngine({
+      id: "gemini_38_flash",
       label: "Sonda da chave secundária (/configuracoes)",
-      model: "gemini-2.5-flash",
+      model: GEMINI_FLASH_MODEL,
       apiKey: keyInfo.dbSettingsKey,
       keySourceLabel: "Configurações (/configuracoes)"
     });
@@ -93454,7 +93259,7 @@ app.get("/api/admin/ai-status", async (req, res) => {
     };
   }
 
-  const probes = [flashProbe, proProbe, interactionsProbe];
+  const probes = [flashProbe, argonProbe, b2bProbe];
   const onlineProbes = probes.filter(p => p.ok);
   const avgLatencyMs = onlineProbes.length > 0
     ? Math.round(onlineProbes.reduce((acc, p) => acc + p.latencyMs, 0) / onlineProbes.length)
@@ -93464,8 +93269,9 @@ app.get("/api/admin/ai-status", async (req, res) => {
   const aiAgentCfg = db?.zapiConfig?.aiAgent || {};
   const sofiaEnabled = Boolean(aiAgentCfg.enabled);
   const sofiaTestMode = aiAgentCfg.testMode !== undefined ? Boolean(aiAgentCfg.testMode) : Boolean(db?.zapiConfig?.testModeOnly);
-  const sofiaCanOperate = proProbe.ok || flashProbe.ok;
-  const sofiaPrimaryProbe = sofiaConfiguredModel.includes("pro") ? proProbe : flashProbe;
+  const sofiaCanOperate = argonProbe.ok || flashProbe.ok;
+  const sofiaUsesFlash = sofiaConfiguredModel.includes("flash");
+  const sofiaPrimaryProbe = sofiaUsesFlash ? flashProbe : argonProbe;
 
   const reviewsTotal = Array.isArray(db.reviews) ? db.reviews.length : 0;
   const lastReviewSync = db.reviewInsights?.lastAnalyzedAt
@@ -93478,9 +93284,9 @@ app.get("/api/admin/ai-status", async (req, res) => {
       id: "sofia_whatsapp",
       name: "Sofia — Concierge WhatsApp",
       area: "Atendimento & Vendas",
-      engineId: sofiaConfiguredModel.includes("pro") ? "gemini_25_pro" : "gemini_25_flash",
+      engineId: sofiaUsesFlash ? "gemini_38_flash" : "gemini_4_argon",
       configuredModel: sofiaConfiguredModel,
-      protocol: "generateContent + Tool Calling",
+      protocol: "Interactions API + Tool Calling",
       keySourceLabel: keyInfo.primarySourceLabel || "Sem chave",
       status: !sofiaEnabled
         ? "disabled"
@@ -93496,7 +93302,7 @@ app.get("/api/admin/ai-status", async (req, res) => {
           : sofiaCanOperate
             ? "Operando via modelo fallback"
             : "Sem resposta da IA",
-      fallbackStrategy: "Fallback automático entre modelos (2.5-pro → 2.5-flash → 2.0-flash) e transbordo ao gestor",
+      fallbackStrategy: "Fallback automático entre modelos (4-argon → 3.8-flash → 3.1-pro-preview → 3.5-flash-lite) e transbordo ao gestor",
       liveSummary: sofiaEnabled
         ? `Ativa (${sofiaTestMode ? "somente números de teste" : "todos os hóspedes"}) • Modelo preferido: ${sofiaConfiguredModel}`
         : "Agente WhatsApp desligado em /whatsapp-automation",
@@ -93507,28 +93313,28 @@ app.get("/api/admin/ai-status", async (req, res) => {
       id: "admin_copilot",
       name: "Copiloto IA Admin",
       area: "Gestão & BI Interno",
-      engineId: "gemini_25_pro",
+      engineId: "gemini_4_argon",
       configuredModel: sofiaConfiguredModel,
-      protocol: "generateContent + querySystemData",
+      protocol: "Interactions API + querySystemData",
       keySourceLabel: keyInfo.primarySourceLabel || "Sem chave",
-      status: sofiaCanOperate ? (proProbe.ok ? "operational" : "degraded") : "fallback_active",
-      statusLabel: proProbe.ok
+      status: sofiaCanOperate ? (argonProbe.ok ? "operational" : "degraded") : "fallback_active",
+      statusLabel: argonProbe.ok
         ? "IA Ativa"
         : flashProbe.ok
-          ? "Ativa via Flash (fallback)"
+          ? "Ativa via 3.8 Flash (fallback)"
           : "Heurística local ativa",
       fallbackStrategy: "Motor local determinístico (generateAdminCopilotLocalResponse)",
       liveSummary: "Consulta operacional em tempo real de flats, reservas, financeiro, limpeza e café",
-      latencyMs: proProbe.ok ? proProbe.latencyMs : flashProbe.latencyMs,
-      lastError: sofiaCanOperate ? null : proProbe.diagnosis
+      latencyMs: argonProbe.ok ? argonProbe.latencyMs : flashProbe.latencyMs,
+      lastError: sofiaCanOperate ? null : argonProbe.diagnosis
     },
     {
       id: "precheckin_ocr",
       name: "OCR & Validação Biométrica",
       area: "Pré-Check-in & Segurança",
-      engineId: "gemini_25_flash",
+      engineId: "gemini_38_flash",
       configuredModel: configuredFlashModel,
-      protocol: "generateContent Multimodal (Visão)",
+      protocol: "Interactions API Multimodal (Visão + PDF)",
       keySourceLabel: keyInfo.primarySourceLabel || "Sem chave",
       status: flashProbe.ok ? "operational" : "fallback_active",
       statusLabel: flashProbe.ok ? "Visão IA Ativa" : "Validação estrutural local",
@@ -93541,24 +93347,24 @@ app.get("/api/admin/ai-status", async (req, res) => {
       id: "b2b_vouchers",
       name: "Leitor de Vouchers B2B (E-mail)",
       area: "Zoho Mail & Reservas Corp.",
-      engineId: "gemini_38_interactions",
-      configuredModel: "gemini-3.8-flash",
+      engineId: "gemini_38_b2b",
+      configuredModel: GEMINI_FLASH_MODEL,
       protocol: "Interactions API (PDF + Imagem + JSON Schema)",
       keySourceLabel: keyInfo.b2bSourceLabel || "Sem chave",
-      status: interactionsProbe.ok ? "operational" : "fallback_active",
-      statusLabel: interactionsProbe.ok ? "IA Multimodal Ativa" : "Parser determinístico ativo",
+      status: b2bProbe.ok ? "operational" : "fallback_active",
+      statusLabel: b2bProbe.ok ? "IA Multimodal Ativa" : "Parser determinístico ativo",
       fallbackStrategy: "Parser determinístico de PDF/HTML do Zoho Mail",
       liveSummary: "Extrai CNPJ, razão social, endereço fiscal, e-mails de NF e diárias de vouchers corporativos",
-      latencyMs: interactionsProbe.latencyMs,
-      lastError: interactionsProbe.ok ? null : interactionsProbe.diagnosis
+      latencyMs: b2bProbe.latencyMs,
+      lastError: b2bProbe.ok ? null : b2bProbe.diagnosis
     },
     {
       id: "reviews_and_maids",
       name: "Avaliações IA, Sentimento & Camareiras",
       area: "Qualidade & Governança",
-      engineId: "gemini_25_flash",
+      engineId: "gemini_38_flash",
       configuredModel: configuredFlashModel,
-      protocol: "generateContent (v1beta)",
+      protocol: GEMINI_INTERACTIONS_PROTOCOL,
       keySourceLabel: keyInfo.primarySourceLabel || "Sem chave",
       status: flashProbe.ok ? "operational" : "fallback_active",
       statusLabel: flashProbe.ok ? "IA Ativa" : "Heurística local ativa",
@@ -93571,9 +93377,9 @@ app.get("/api/admin/ai-status", async (req, res) => {
       id: "shopping_list",
       name: "Auto-Categorização Lista de Compras",
       area: "Operação & Suprimentos",
-      engineId: "gemini_25_flash",
+      engineId: "gemini_38_flash",
       configuredModel: configuredFlashModel,
-      protocol: "generateContent (v1beta)",
+      protocol: GEMINI_INTERACTIONS_PROTOCOL,
       keySourceLabel: keyInfo.primarySourceLabel || "Sem chave",
       status: flashProbe.ok ? "operational" : "fallback_active",
       statusLabel: flashProbe.ok ? "IA Ativa" : "Regras de keywords ativas",
@@ -93679,7 +93485,7 @@ app.get("/api/admin/ai-status", async (req, res) => {
 
 // POST /api/admin/ai-status/test — Laboratório interativo real (sem cache)
 app.post("/api/admin/ai-status/test", async (req, res) => {
-  const { mode = "shopping", product = "", prompt = "", engine = "gemini_25_flash", keySource = "active" } = req.body || {};
+  const { mode = "shopping", product = "", prompt = "", engine = "gemini_38_flash", keySource = "active" } = req.body || {};
 
   if (mode === "shopping") {
     const testProduct = String(product || "").trim() || "queijo minas frescal";
@@ -93707,24 +93513,24 @@ app.post("/api/admin/ai-status/test", async (req, res) => {
     const useDbKey = keySource === "db_settings" && Boolean(keyInfo.dbSettingsKey);
 
     let probeRes;
-    if (engine === "gemini_38_interactions") {
+    if (engine === "gemini_38_b2b" || engine === "gemini_38_interactions") {
       const targetKey = useDbKey ? keyInfo.dbSettingsKey : keyInfo.b2bKey;
       const targetSource = useDbKey ? "Configurações (/configuracoes)" : keyInfo.b2bSourceLabel;
       probeRes = await probeInteractionsEngine({
-        id: "gemini_38_interactions",
-        label: "Gemini 3.8 Flash (Interactions API)",
-        model: "gemini-3.8-flash",
+        id: "gemini_38_b2b",
+        label: "Gemini 3.8 Flash (Multimodal B2B)",
+        model: GEMINI_FLASH_MODEL,
         apiKey: targetKey,
         keySourceLabel: targetSource,
         promptText: cleanPrompt
       });
-    } else if (engine === "gemini_25_pro") {
+    } else if (engine === "gemini_4_argon" || engine === "gemini_25_pro") {
       const targetKey = useDbKey ? keyInfo.dbSettingsKey : keyInfo.primaryKey;
       const targetSource = useDbKey ? "Configurações (/configuracoes)" : keyInfo.primarySourceLabel;
-      probeRes = await probeGenerateContentEngine({
-        id: "gemini_25_pro",
-        label: "Gemini 2.5 Pro",
-        model: "gemini-2.5-pro",
+      probeRes = await probeInteractionsEngine({
+        id: "gemini_4_argon",
+        label: "Gemini 4 Argon (Raciocínio & Tools)",
+        model: GEMINI_REASONING_MODEL,
         apiKey: targetKey,
         keySourceLabel: targetSource,
         promptText: cleanPrompt
@@ -93732,10 +93538,10 @@ app.post("/api/admin/ai-status/test", async (req, res) => {
     } else {
       const targetKey = useDbKey ? keyInfo.dbSettingsKey : keyInfo.primaryKey;
       const targetSource = useDbKey ? "Configurações (/configuracoes)" : keyInfo.primarySourceLabel;
-      probeRes = await probeGenerateContentEngine({
-        id: "gemini_25_flash",
-        label: "Gemini 2.5 Flash",
-        model: "gemini-2.5-flash",
+      probeRes = await probeInteractionsEngine({
+        id: "gemini_38_flash",
+        label: "Gemini 3.8 Flash (Motor Principal)",
+        model: GEMINI_FLASH_MODEL,
         apiKey: targetKey,
         keySourceLabel: targetSource,
         promptText: cleanPrompt

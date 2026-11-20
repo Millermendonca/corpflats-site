@@ -15,6 +15,12 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { getSmtpConfig, createTransporter, sendEmailAsync, renderWhatsAppMirrorEmail, parseEmailList, formatEmailList, getPrimaryEmail } from "./mail-service.mjs";
 import {
+  normalizeGeminiModel,
+  isLegacyOrRestrictedGeminiModel,
+  GEMINI_FLASH_MODEL,
+  GEMINI_REASONING_MODEL
+} from "./gemini-interactions-client.mjs";
+import {
   getWhatsAppAiConfig,
   generateAiWhatsAppResponse,
   processAiInboundMessage,
@@ -9631,17 +9637,20 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         ]
       };
     }
-    if (db.settings?.geminiModel && db.settings.geminiModel.includes("lite")) {
-      db.settings.geminiModel = "gemini-2.5-flash";
+    if (db.settings?.geminiModel && isLegacyOrRestrictedGeminiModel(db.settings.geminiModel)) {
+      db.settings.geminiModel = GEMINI_FLASH_MODEL;
     }
-    if (db.whatsappAiSettings?.preferredModel && db.whatsappAiSettings.preferredModel.includes("lite")) {
-      db.whatsappAiSettings.preferredModel = "gemini-2.5-flash";
+    if (db.zapiConfig?.aiAgent?.preferredModel && isLegacyOrRestrictedGeminiModel(db.zapiConfig.aiAgent.preferredModel)) {
+      db.zapiConfig.aiAgent.preferredModel = GEMINI_REASONING_MODEL;
     }
-    if (db.whatsappAiSettings?.geminiModel && db.whatsappAiSettings.geminiModel.includes("lite")) {
-      db.whatsappAiSettings.geminiModel = "gemini-2.5-flash";
+    if (db.whatsappAiSettings?.preferredModel && isLegacyOrRestrictedGeminiModel(db.whatsappAiSettings.preferredModel)) {
+      db.whatsappAiSettings.preferredModel = GEMINI_REASONING_MODEL;
     }
-    if (db.whatsappAiConfig?.preferredModel && db.whatsappAiConfig.preferredModel.includes("lite")) {
-      db.whatsappAiConfig.preferredModel = "gemini-2.5-flash";
+    if (db.whatsappAiSettings?.geminiModel && isLegacyOrRestrictedGeminiModel(db.whatsappAiSettings.geminiModel)) {
+      db.whatsappAiSettings.geminiModel = GEMINI_REASONING_MODEL;
+    }
+    if (db.whatsappAiConfig?.preferredModel && isLegacyOrRestrictedGeminiModel(db.whatsappAiConfig.preferredModel)) {
+      db.whatsappAiConfig.preferredModel = GEMINI_REASONING_MODEL;
     }
     if (!db.whatsappAiSettings.toneSettings) {
       db.whatsappAiSettings.toneSettings = {
@@ -12985,8 +12994,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     const aiConfig = getWhatsAppAiConfig(db);
     const geminiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
     const aiCh = db.zapiConfig?.channels?.ai_agent;
-    const rawModel = aiConfig.preferredModel || db.whatsappAiSettings?.preferredModel || db.settings?.geminiModel || "gemini-2.5-flash";
-    const resolvedModel = String(rawModel).includes("lite") ? "gemini-2.5-flash" : rawModel;
+    const rawModel = aiConfig.preferredModel || db.whatsappAiSettings?.preferredModel || db.whatsappAiSettings?.geminiModel || GEMINI_REASONING_MODEL;
+    const resolvedModel = normalizeGeminiModel(rawModel, "reasoning");
     res.json({
       success: true,
       aiConfig: {
@@ -13029,14 +13038,14 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     if (updates.systemPrompt) current.systemPrompt = String(updates.systemPrompt);
     if (updates.preferredModel || updates.geminiModel) {
       const rawModelVal = String(updates.preferredModel || updates.geminiModel).trim();
-      const modelVal = rawModelVal.toLowerCase().includes("lite") || rawModelVal === "gemini-4-argon"
-        ? "gemini-2.5-pro"
-        : rawModelVal;
+      const modelVal = normalizeGeminiModel(rawModelVal, "reasoning");
       current.preferredModel = modelVal;
       if (!db.whatsappAiSettings) db.whatsappAiSettings = {};
       db.whatsappAiSettings.preferredModel = modelVal;
       db.whatsappAiSettings.geminiModel = modelVal;
-      if (db.settings) db.settings.geminiModel = modelVal;
+      if (db.settings && (!db.settings.geminiModel || isLegacyOrRestrictedGeminiModel(db.settings.geminiModel))) {
+        db.settings.geminiModel = GEMINI_FLASH_MODEL;
+      }
     }
     if (updates.trainingBlocks && typeof updates.trainingBlocks === "object") {
       if (!db.whatsappAiSettings) db.whatsappAiSettings = {};

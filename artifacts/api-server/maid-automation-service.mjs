@@ -9,6 +9,14 @@
  */
 
 import { cleanWhatsAppPhone, sendZapiMessage } from "./zapi-service.mjs";
+import {
+  createGeminiInteraction,
+  convertLegacyContentsToInteractionsInput,
+  buildCompatGenerateContentData,
+  normalizeGeminiModel,
+  GEMINI_FLASH_FALLBACK_CHAIN,
+  GEMINI_INTERACTIONS_PROTOCOL
+} from "./gemini-interactions-client.mjs";
 
 export const DEFAULT_MAID_TRIGGERS = [
   {
@@ -868,59 +876,52 @@ export function deterministicTriageSub5Review({ score, comment = "", flatNumber 
 }
 
 /**
- * Helper de Descoberta de Endpoints Gemini para a Automação de Governança
+ * Helper de Descoberta de Modelos Gemini (Interactions API) para a Automação de Governança
  */
 export async function getMaidGeminiCandidateEndpoints(apiKey, db = null) {
-  const preferred = [
-    { ver: "v1beta", model: "gemini-2.5-flash" },
-    { ver: "v1beta", model: "gemini-2.5-pro" },
-    { ver: "v1beta", model: "gemini-2.0-flash" },
-    { ver: "v1beta", model: "gemini-1.5-flash" }
+  const savedModel = normalizeGeminiModel(db?.settings?.geminiModel, "flash");
+  const modelOrder = [
+    savedModel,
+    ...GEMINI_FLASH_FALLBACK_CHAIN.filter(m => m !== savedModel)
   ];
-  const savedModel = db?.settings?.geminiModel;
-  const savedVer = db?.settings?.geminiApiVersion || "v1beta";
-  if (savedModel && !savedModel.includes("tts") && !savedModel.includes("embed")) {
-    return [{ ver: savedVer, model: savedModel }, ...preferred.filter(p => p.model !== savedModel)];
-  }
-  return preferred;
+  return modelOrder.map(model => ({ ver: "v1beta", model }));
 }
 
 /**
- * Helper de Execução de Conteúdo no Gemini com thinkingBudget: 0
+ * Helper de Execução de Conteúdo no Gemini via Interactions API (v1beta)
  */
-export async function callMaidGeminiGenerateContent(apiKey, contents, { db = null, timeoutMs = 6000 } = {}) {
+export async function callMaidGeminiGenerateContent(apiKey, contents, { db = null, timeoutMs = 10000 } = {}) {
   const candidates = await getMaidGeminiCandidateEndpoints(apiKey, db);
+  const input = convertLegacyContentsToInteractionsInput(contents);
+  const effectiveTimeout = Math.max(Number(timeoutMs) || 10000, 10000);
   let lastError = null;
 
   for (const { ver, model } of candidates) {
     try {
-      const payload = { contents };
-      if (model.startsWith("gemini-2.5-flash")) {
-        payload.generationConfig = { thinkingConfig: { thinkingBudget: 0 } };
-      }
-
-      let res = await fetch(`https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${apiKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(timeoutMs)
+      const res = await createGeminiInteraction({
+        apiKey,
+        model,
+        input,
+        store: false,
+        thinkingLevel: "low",
+        maxOutputTokens: model.startsWith("gemini-4") ? 8192 : 2048,
+        timeoutMs: model.startsWith("gemini-4") ? Math.max(effectiveTimeout, 20000) : effectiveTimeout
       });
 
-      if (!res.ok && res.status === 400 && payload.generationConfig) {
-        res = await fetch(`https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${apiKey}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents }),
-          signal: AbortSignal.timeout(timeoutMs)
-        });
+      if (res.ok && res.text) {
+        return {
+          ok: true,
+          data: buildCompatGenerateContentData(res.data, res.text),
+          text: res.text,
+          model,
+          ver,
+          protocol: GEMINI_INTERACTIONS_PROTOCOL
+        };
       }
 
-      if (res.ok) {
-        const data = await res.json();
-        return { ok: true, data, model, ver };
-      } else {
-        const errJson = await res.json().catch(() => ({}));
-        lastError = errJson.error?.message || `Status ${res.status}`;
+      lastError = res.error || (res.status ? `Status ${res.status}` : "Resposta vazia da Interactions API");
+      if (res.status === 401 || res.status === 402 || res.status === 403) {
+        return { ok: false, error: lastError, status: res.status, model };
       }
     } catch (e) {
       lastError = e.message;
