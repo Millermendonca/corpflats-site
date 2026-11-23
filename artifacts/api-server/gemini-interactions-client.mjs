@@ -3,55 +3,227 @@
  *
  * Centraliza:
  * - Chamadas REST nativas para POST /v1beta/interactions (schema steps[])
- * - Normalização de modelos (upgrade automático de modelos 2.5 / 2.0 / 1.5 / lite)
+ * - Normalização de modelos (upgrade automático de modelos 2.5 / 2.0 / 1.5, liberando 3.x flash-lite)
  * - Extração unificada de texto (steps[].model_output → content[].text, com fallback outputs[])
  * - Extração de function_call steps e conversão de ferramentas/JSON Schema (lowercase types)
  * - Conversão de payloads multimodais legados (contents[].parts[] → Content[] / Step[])
  * - Remoção estrita de parâmetros depreciados (temperature, top_p, top_k, thinkingBudget)
+ * - Circuit breaker em memória para 429/402, AbortSignal e telemetria completa de tokens
  */
 
 export const GEMINI_INTERACTIONS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
 export const GEMINI_API_REVISION = "2026-05-20";
 export const GEMINI_INTERACTIONS_PROTOCOL = "Interactions API (v1beta)";
 
+export const GEMINI_LITE_MODEL = "gemini-3.5-flash-lite";
 export const GEMINI_FLASH_MODEL = "gemini-3.8-flash";
-export const GEMINI_REASONING_MODEL = "gemini-4-argon";
+export const GEMINI_ARGON_MODEL = "gemini-4-argon";
+export const GEMINI_REASONING_MODEL = "gemini-3.8-flash";
+
+export const GEMINI_LITE_FALLBACK_CHAIN = [
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite"
+];
 
 export const GEMINI_FLASH_FALLBACK_CHAIN = [
   "gemini-3.8-flash",
-  "gemini-4-argon",
-  "gemini-3.6-flash",
   "gemini-3.5-flash-lite"
 ];
 
 export const GEMINI_REASONING_FALLBACK_CHAIN = [
-  "gemini-4-argon",
   "gemini-3.8-flash",
-  "gemini-3.1-pro-preview",
-  "gemini-3.6-flash",
   "gemini-3.5-flash-lite"
 ];
 
+// ── Circuit Breaker (Cooldown 429/402) & Telemetria Unificada ─────────────────
+const _geminiCooldownMap = new Map();
+
+function getApiKeyFingerprint(apiKey) {
+  const k = String(apiKey || "").trim();
+  if (!k) return "none";
+  if (k.length <= 10) return `${k.slice(0, 3)}:${k.length}`;
+  return `${k.slice(0, 6)}:${k.slice(-4)}:${k.length}`;
+}
+
+function getCooldownEntry(key) {
+  const until = _geminiCooldownMap.get(key);
+  if (!until) return 0;
+  const remaining = until - Date.now();
+  if (remaining <= 0) {
+    _geminiCooldownMap.delete(key);
+    return 0;
+  }
+  return remaining;
+}
+
+export function getGeminiCooldownRemainingMs(apiKey, model) {
+  const fp = getApiKeyFingerprint(apiKey);
+  const billingRem = getCooldownEntry(`${fp}:__billing__`);
+  const modelRem = model ? getCooldownEntry(`${fp}:${model}`) : 0;
+  return Math.max(billingRem, modelRem);
+}
+
+export function isGeminiModelCoolingDown(apiKey, model) {
+  return getGeminiCooldownRemainingMs(apiKey, model) > 0;
+}
+
+export function clearGeminiCooldowns() {
+  _geminiCooldownMap.clear();
+}
+
+function parseRetryAfterMs(headers, fallbackMs = 60000) {
+  try {
+    const raw = headers?.get?.("retry-after");
+    if (!raw) return fallbackMs;
+    const secs = Number(raw);
+    if (Number.isFinite(secs) && secs > 0) {
+      return Math.min(180000, Math.max(30000, Math.round(secs * 1000)));
+    }
+    const dateMs = Date.parse(raw);
+    if (Number.isFinite(dateMs)) {
+      const diff = dateMs - Date.now();
+      if (diff > 0) return Math.min(180000, Math.max(30000, diff));
+    }
+  } catch {}
+  return fallbackMs;
+}
+
+function createEmptyModuleTotals() {
+  return {
+    calls: 0,
+    ok: 0,
+    errors: 0,
+    rateLimited429: 0,
+    skippedByCooldown: 0,
+    inputTokens: 0,
+    cachedTokens: 0,
+    outputTokens: 0,
+    thoughtTokens: 0,
+    totalTokens: 0
+  };
+}
+
+const _geminiTelemetry = {
+  maxEntries: 40,
+  recentCalls: [],
+  totals: createEmptyModuleTotals(),
+  totalsByModule: {}
+};
+
+function accumulateTelemetryBucket(bucket, entry) {
+  bucket.calls += 1;
+  if (entry.ok) bucket.ok += 1;
+  else bucket.errors += 1;
+  if (entry.status === 429 && !entry.skippedByCooldown) bucket.rateLimited429 += 1;
+  if (entry.skippedByCooldown) bucket.skippedByCooldown += 1;
+  if (entry.usage && typeof entry.usage === "object") {
+    bucket.inputTokens += Number(entry.usage.inputTokens) || 0;
+    bucket.cachedTokens += Number(entry.usage.cachedTokens) || 0;
+    bucket.outputTokens += Number(entry.usage.outputTokens) || 0;
+    bucket.thoughtTokens += Number(entry.usage.thoughtTokens) || 0;
+    bucket.totalTokens += Number(entry.usage.totalTokens) || 0;
+  }
+}
+
+export function recordGeminiTelemetryCall({
+  module = "gemini_untagged",
+  model = "unknown",
+  protocol = GEMINI_INTERACTIONS_PROTOCOL,
+  ok = false,
+  status = null,
+  latencyMs = 0,
+  error = null,
+  keySource = null,
+  skippedByCooldown = false,
+  aborted = false,
+  usage = null
+} = {}) {
+  const modName = String(module || "gemini_untagged").trim() || "gemini_untagged";
+  const normalizedEntry = {
+    at: new Date().toISOString(),
+    module: modName,
+    model: String(model || "unknown"),
+    protocol: String(protocol || GEMINI_INTERACTIONS_PROTOCOL),
+    ok: Boolean(ok),
+    status: status ?? (ok ? 200 : null),
+    latencyMs: Math.max(0, Math.round(Number(latencyMs) || 0)),
+    error: error ? String(error).slice(0, 260) : null,
+    keySource: keySource || null,
+    skippedByCooldown: Boolean(skippedByCooldown),
+    aborted: Boolean(aborted),
+    usage: usage && typeof usage === "object"
+      ? {
+          inputTokens: Number(usage.inputTokens) || 0,
+          cachedTokens: Number(usage.cachedTokens) || 0,
+          outputTokens: Number(usage.outputTokens) || 0,
+          thoughtTokens: Number(usage.thoughtTokens) || 0,
+          totalTokens: Number(usage.totalTokens) || 0
+        }
+      : null
+  };
+
+  _geminiTelemetry.recentCalls.unshift(normalizedEntry);
+  if (_geminiTelemetry.recentCalls.length > _geminiTelemetry.maxEntries) {
+    _geminiTelemetry.recentCalls.length = _geminiTelemetry.maxEntries;
+  }
+
+  accumulateTelemetryBucket(_geminiTelemetry.totals, normalizedEntry);
+  if (!_geminiTelemetry.totalsByModule[modName]) {
+    _geminiTelemetry.totalsByModule[modName] = createEmptyModuleTotals();
+  }
+  accumulateTelemetryBucket(_geminiTelemetry.totalsByModule[modName], normalizedEntry);
+
+  return normalizedEntry;
+}
+
+export function getGeminiTelemetrySnapshot() {
+  const byModuleCopy = {};
+  for (const [k, v] of Object.entries(_geminiTelemetry.totalsByModule)) {
+    byModuleCopy[k] = { ...v };
+  }
+  return {
+    recentCalls: _geminiTelemetry.recentCalls.map(c => ({
+      ...c,
+      usage: c.usage ? { ...c.usage } : null
+    })),
+    totals: { ..._geminiTelemetry.totals },
+    totalsByModule: byModuleCopy
+  };
+}
+
+export function resetGeminiTelemetry() {
+  _geminiTelemetry.recentCalls = [];
+  _geminiTelemetry.totals = createEmptyModuleTotals();
+  _geminiTelemetry.totalsByModule = {};
+}
+
 /**
  * Identifica modelos descontinuados, restritos a contas antigas (2.5) ou não adequados
- * como modelo principal salvo (lite, 8b, tts, embed, imagen, whisper, etc.).
+ * (8b, tts, embed, imagen, whisper, etc.), liberando modelos modernos 3.x flash-lite.
  */
 export function isLegacyOrRestrictedGeminiModel(rawModel) {
   const clean = String(rawModel || "").trim().toLowerCase();
   if (!clean) return true;
   if (/^gemini-(1\.0|1\.5|2\.0|2\.5)-/.test(clean)) return true;
-  if (/(^|[-_])(lite|8b|tts|embed|embedding|imagen|whisper|realtime|aqa)([-_]|$)/.test(clean)) return true;
-  if (clean.includes("lite") || clean.includes("8b") || clean.includes("tts") || clean.includes("embed")) return true;
+  if (/(^|[-_])(8b|tts|embed|embedding|imagen|whisper|realtime|aqa)([-_]|$)/.test(clean)) return true;
+  if (clean.includes("8b") || clean.includes("tts") || clean.includes("embed")) return true;
+  const isModernFlashLite = /^gemini-3\.\d+-flash-lite$/.test(clean);
+  if (!isModernFlashLite && (/(^|[-_])lite([-_]|$)/.test(clean) || clean.includes("lite"))) {
+    return true;
+  }
   return false;
 }
 
 /**
  * Normaliza o nome de modelo salvo em banco ou configuração para a geração atual.
  * @param {string} rawModel
- * @param {"flash"|"reasoning"} [role="flash"]
+ * @param {"flash"|"reasoning"|"lite"} [role="flash"]
  */
 export function normalizeGeminiModel(rawModel, role = "flash") {
-  const defaultModel = role === "reasoning" ? GEMINI_REASONING_MODEL : GEMINI_FLASH_MODEL;
+  const defaultModel =
+    role === "lite"
+      ? GEMINI_LITE_MODEL
+      : (role === "reasoning" ? GEMINI_REASONING_MODEL : GEMINI_FLASH_MODEL);
   const clean = String(rawModel || "").trim();
   if (!clean || isLegacyOrRestrictedGeminiModel(clean)) {
     return defaultModel;
@@ -300,7 +472,7 @@ export function buildInteractionsGenerationConfig(model, { thinkingLevel = "low"
   const cfg = {};
   const cleanModel = String(model || "").toLowerCase();
 
-  if (thinkingLevel) {
+  if (thinkingLevel && String(thinkingLevel).toLowerCase() !== "none") {
     let effLevel = String(thinkingLevel).toLowerCase();
     // gemini-3.8-flash, gemini-3.6-flash e gemini-4-argon rejeitam "minimal" com erro 400
     if (effLevel === "minimal" && !cleanModel.includes("flash-lite")) {
@@ -331,8 +503,14 @@ export async function createGeminiInteraction({
   thinkingLevel = "low",
   maxOutputTokens = null,
   store = false,
-  timeoutMs = 25000
+  timeoutMs = 25000,
+  telemetryModule = null,
+  keySourceLabel = null,
+  signal = null,
+  bypassCooldown = false
 } = {}) {
+  const resolvedModule = telemetryModule || "gemini_untagged";
+
   if (!apiKey) {
     return {
       ok: false,
@@ -343,10 +521,52 @@ export async function createGeminiInteraction({
       text: "",
       functionCalls: [],
       steps: [],
+      usage: null,
       error: "Chave de API Gemini não configurada.",
       model,
       protocol: GEMINI_INTERACTIONS_PROTOCOL
     };
+  }
+
+  const fp = getApiKeyFingerprint(apiKey);
+  if (!bypassCooldown) {
+    const cooldownRem = getGeminiCooldownRemainingMs(apiKey, model);
+    if (cooldownRem > 0) {
+      const isBillingCooldown = getCooldownEntry(`${fp}:__billing__`) > 0;
+      const waitSecs = Math.max(1, Math.ceil(cooldownRem / 1000));
+      const cooldownStatus = isBillingCooldown ? 402 : 429;
+      const cooldownErr = isBillingCooldown
+        ? `Circuit breaker ativo (créditos 402 esgotados) — aguarde ${waitSecs}s.`
+        : `Circuit breaker ativo para ${model} (HTTP 429 recente) — aguarde ${waitSecs}s.`;
+
+      recordGeminiTelemetryCall({
+        module: resolvedModule,
+        model,
+        protocol: GEMINI_INTERACTIONS_PROTOCOL,
+        ok: false,
+        status: cooldownStatus,
+        latencyMs: 0,
+        error: cooldownErr,
+        keySource: keySourceLabel,
+        skippedByCooldown: true
+      });
+
+      return {
+        ok: false,
+        status: cooldownStatus,
+        skippedByCooldown: true,
+        latencyMs: 0,
+        data: null,
+        rawText: "",
+        text: "",
+        functionCalls: [],
+        steps: [],
+        usage: null,
+        error: cooldownErr,
+        model,
+        protocol: GEMINI_INTERACTIONS_PROTOCOL
+      };
+    }
   }
 
   const normalizedTools = Array.isArray(tools) && tools.length > 0
@@ -390,12 +610,17 @@ export async function createGeminiInteraction({
     "Api-Revision": GEMINI_API_REVISION
   };
 
+  const timeoutSig = AbortSignal.timeout(timeoutMs);
+  const combinedSignal = signal
+    ? (typeof AbortSignal.any === "function" ? AbortSignal.any([signal, timeoutSig]) : signal)
+    : timeoutSig;
+
   try {
     let resp = await fetch(GEMINI_INTERACTIONS_ENDPOINT, {
       method: "POST",
       headers,
       body: JSON.stringify(buildPayload(true)),
-      signal: AbortSignal.timeout(timeoutMs)
+      signal: combinedSignal
     });
 
     let rawText = await resp.text();
@@ -406,7 +631,7 @@ export async function createGeminiInteraction({
         method: "POST",
         headers,
         body: JSON.stringify(buildPayload(false)),
-        signal: AbortSignal.timeout(timeoutMs)
+        signal: combinedSignal
       });
       rawText = await resp.text();
     }
@@ -417,8 +642,37 @@ export async function createGeminiInteraction({
       parsed = JSON.parse(rawText);
     } catch {}
 
+    const usage = parsed?.usage
+      ? {
+          inputTokens: Number(parsed.usage.total_input_tokens ?? parsed.usage.prompt_tokens ?? 0) || 0,
+          cachedTokens: Number(parsed.usage.total_cached_tokens ?? 0) || 0,
+          outputTokens: Number(parsed.usage.total_output_tokens ?? parsed.usage.completion_tokens ?? 0) || 0,
+          thoughtTokens: Number(parsed.usage.total_thought_tokens ?? 0) || 0,
+          totalTokens: Number(parsed.usage.total_tokens ?? 0) || 0
+        }
+      : null;
+
     if (!resp.ok) {
+      if (resp.status === 429) {
+        const waitMs = parseRetryAfterMs(resp.headers, 60000);
+        _geminiCooldownMap.set(`${fp}:${model}`, Date.now() + waitMs);
+      } else if (resp.status === 402) {
+        _geminiCooldownMap.set(`${fp}:__billing__`, Date.now() + 60000);
+      }
+
       const apiErrMsg = parsed?.error?.message || rawText.replace(/\s+/g, " ").trim().slice(0, 400) || `HTTP ${resp.status}`;
+      recordGeminiTelemetryCall({
+        module: resolvedModule,
+        model,
+        protocol: GEMINI_INTERACTIONS_PROTOCOL,
+        ok: false,
+        status: resp.status,
+        latencyMs,
+        error: apiErrMsg,
+        keySource: keySourceLabel,
+        usage
+      });
+
       return {
         ok: false,
         status: resp.status,
@@ -428,15 +682,31 @@ export async function createGeminiInteraction({
         text: "",
         functionCalls: [],
         steps: [],
+        usage,
         error: apiErrMsg,
         model,
         protocol: GEMINI_INTERACTIONS_PROTOCOL
       };
     }
 
+    // Limpa eventuais cooldowns antigos após sucesso real do modelo/chave
+    _geminiCooldownMap.delete(`${fp}:${model}`);
+    _geminiCooldownMap.delete(`${fp}:__billing__`);
+
     const text = extractTextFromInteractionResponse(parsed);
     const functionCalls = extractFunctionCallsFromInteractionResponse(parsed);
     const steps = Array.isArray(parsed?.steps) ? parsed.steps : [];
+
+    recordGeminiTelemetryCall({
+      module: resolvedModule,
+      model,
+      protocol: GEMINI_INTERACTIONS_PROTOCOL,
+      ok: true,
+      status: resp.status,
+      latencyMs,
+      keySource: keySourceLabel,
+      usage
+    });
 
     return {
       ok: true,
@@ -447,22 +717,40 @@ export async function createGeminiInteraction({
       text,
       functionCalls,
       steps,
+      usage,
       error: null,
       model,
       protocol: GEMINI_INTERACTIONS_PROTOCOL
     };
   } catch (err) {
     const latencyMs = Date.now() - startedAt;
+    const isAborted = Boolean(signal?.aborted) || err?.name === "AbortError";
+    const errMsg = err?.message || "Erro de rede ao contatar Interactions API";
+
+    recordGeminiTelemetryCall({
+      module: resolvedModule,
+      model,
+      protocol: GEMINI_INTERACTIONS_PROTOCOL,
+      ok: false,
+      status: null,
+      latencyMs,
+      error: errMsg,
+      keySource: keySourceLabel,
+      aborted: isAborted
+    });
+
     return {
       ok: false,
       status: null,
+      aborted: isAborted,
       latencyMs,
       data: null,
       rawText: "",
       text: "",
       functionCalls: [],
       steps: [],
-      error: err?.message || "Erro de rede ao contatar Interactions API",
+      usage: null,
+      error: errMsg,
       model,
       protocol: GEMINI_INTERACTIONS_PROTOCOL
     };

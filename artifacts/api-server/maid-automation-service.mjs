@@ -14,7 +14,8 @@ import {
   convertLegacyContentsToInteractionsInput,
   buildCompatGenerateContentData,
   normalizeGeminiModel,
-  GEMINI_FLASH_FALLBACK_CHAIN,
+  GEMINI_LITE_MODEL,
+  GEMINI_LITE_FALLBACK_CHAIN,
   GEMINI_INTERACTIONS_PROTOCOL
 } from "./gemini-interactions-client.mjs";
 
@@ -879,10 +880,9 @@ export function deterministicTriageSub5Review({ score, comment = "", flatNumber 
  * Helper de Descoberta de Modelos Gemini (Interactions API) para a Automação de Governança
  */
 export async function getMaidGeminiCandidateEndpoints(apiKey, db = null) {
-  const savedModel = normalizeGeminiModel(db?.settings?.geminiModel, "flash");
   const modelOrder = [
-    savedModel,
-    ...GEMINI_FLASH_FALLBACK_CHAIN.filter(m => m !== savedModel)
+    GEMINI_LITE_MODEL,
+    ...GEMINI_LITE_FALLBACK_CHAIN.filter(m => m !== GEMINI_LITE_MODEL)
   ];
   return modelOrder.map(model => ({ ver: "v1beta", model }));
 }
@@ -903,9 +903,10 @@ export async function callMaidGeminiGenerateContent(apiKey, contents, { db = nul
         model,
         input,
         store: false,
-        thinkingLevel: "low",
-        maxOutputTokens: model.startsWith("gemini-4") ? 8192 : 2048,
-        timeoutMs: model.startsWith("gemini-4") ? Math.max(effectiveTimeout, 20000) : effectiveTimeout
+        thinkingLevel: "minimal",
+        maxOutputTokens: 1024,
+        timeoutMs: effectiveTimeout,
+        telemetryModule: "maid_triage"
       });
 
       if (res.ok && res.text) {

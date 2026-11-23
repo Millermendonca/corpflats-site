@@ -21,6 +21,9 @@ import {
 import {
   createGeminiInteraction,
   normalizeGeminiModel,
+  isLegacyOrRestrictedGeminiModel,
+  GEMINI_LITE_MODEL,
+  GEMINI_LITE_FALLBACK_CHAIN,
   GEMINI_REASONING_MODEL,
   GEMINI_REASONING_FALLBACK_CHAIN,
   GEMINI_INTERACTIONS_PROTOCOL
@@ -422,9 +425,9 @@ export function getWhatsAppAiConfig(db) {
         ? Boolean(db.zapiConfig.channels.ai_agent.testMode)
         : Boolean(db.zapiConfig?.testModeOnly);
     }
-    if (!current.preferredModel || String(current.preferredModel).toLowerCase().includes("lite")) {
+    if (!current.preferredModel || isLegacyOrRestrictedGeminiModel(current.preferredModel)) {
       const candidateModel = db.whatsappAiSettings?.geminiModel || db.settings?.geminiModel || DEFAULT_AI_CONFIG.preferredModel;
-      current.preferredModel = String(candidateModel).toLowerCase().includes("lite")
+      current.preferredModel = isLegacyOrRestrictedGeminiModel(candidateModel)
         ? DEFAULT_AI_CONFIG.preferredModel
         : candidateModel;
     }
@@ -5481,7 +5484,10 @@ Retorne EXCLUSIVAMENTE um objeto JSON no formato:
       systemInstruction,
       prompt: `Sintetize a instrução recebida: "${rawText}"`,
       db,
-      customPrompt: true
+      customPrompt: true,
+      role: "lite",
+      thinkingLevel: "minimal",
+      telemetryModule: "dev_coaching"
     });
 
     if (res?.ok && res?.text) {
@@ -9140,21 +9146,41 @@ export async function executeMultiTurnAgenticToolFallback({
  * Chama o Google Gemini via Interactions API (v1beta • steps[]) com cascata de modelos
  * e suporte multi-turn stateless a Function Calling.
  */
-export async function callGeminiAi({ apiKey, systemInstruction, prompt, quotedText = "", history = [], db, tools = [], customPrompt = false, requesterRole = "guest", requesterPhone = "", saveDatabase = null, sendZapiMessage = null, createNotification = null, conversation = null, guestContext = null }) {
+export async function callGeminiAi({
+  apiKey,
+  systemInstruction,
+  prompt,
+  quotedText = "",
+  history = [],
+  db,
+  tools = [],
+  customPrompt = false,
+  requesterRole = "guest",
+  requesterPhone = "",
+  saveDatabase = null,
+  sendZapiMessage = null,
+  createNotification = null,
+  conversation = null,
+  guestContext = null,
+  role = "reasoning",
+  thinkingLevel = null,
+  maxOutputTokensOverride = null,
+  telemetryModule = "sofia_whatsapp"
+}) {
   if (!apiKey) return { ok: false, error: "Sem chave Gemini" };
 
+  const effectiveRole = role === "lite" ? "lite" : "reasoning";
   const rawPrefModel = String(
     db?.zapiConfig?.aiAgent?.preferredModel ||
     db?.whatsappAiSettings?.preferredModel ||
     db?.whatsappAiSettings?.geminiModel ||
     GEMINI_REASONING_MODEL
   ).trim();
-  const preferredModel = normalizeGeminiModel(rawPrefModel, "reasoning");
+  const preferredModel = normalizeGeminiModel(rawPrefModel, effectiveRole);
 
-  const rawModelList = [
-    preferredModel,
-    ...GEMINI_REASONING_FALLBACK_CHAIN
-  ];
+  const rawModelList = effectiveRole === "lite"
+    ? [...GEMINI_LITE_FALLBACK_CHAIN]
+    : [preferredModel, ...GEMINI_REASONING_FALLBACK_CHAIN];
   const seenModels = new Set();
   const candidateModels = [];
   for (const modelName of rawModelList) {
@@ -9162,7 +9188,9 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, quotedTe
     if (!clean || seenModels.has(clean)) continue;
     seenModels.add(clean);
     candidateModels.push({ ver: "v1beta", model: clean });
+    if (candidateModels.length >= 2) break;
   }
+  const effectiveThinking = thinkingLevel ?? (effectiveRole === "lite" ? "minimal" : "low");
 
   // Injeta as últimas 15 mensagens conversacionais trocadas (filtrando alertas operacionais de OS/sistema)
   const rawHistory = Array.isArray(history)
@@ -9225,7 +9253,8 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, quotedTe
   for (const { ver, model } of candidateModels) {
     try {
       const isGemini4 = model.startsWith("gemini-4");
-      const maxOutputTokens = isGemini4 ? 32768 : 8192;
+      const defaultMaxOut = effectiveRole === "lite" ? 2048 : (isGemini4 ? 4096 : 2048);
+      const maxOutputTokens = maxOutputTokensOverride || defaultMaxOut;
       const timeoutMs = isGemini4 ? 35000 : 25000;
 
       const firstRes = await createGeminiInteraction({
@@ -9235,9 +9264,10 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, quotedTe
         systemInstruction: systemInstruction ? String(systemInstruction) : null,
         tools,
         store: false,
-        thinkingLevel: "low",
+        thinkingLevel: effectiveThinking,
         maxOutputTokens,
-        timeoutMs
+        timeoutMs,
+        telemetryModule
       });
 
       if (!firstRes.ok) {
@@ -9338,9 +9368,10 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, quotedTe
           systemInstruction: systemInstruction ? String(systemInstruction) : null,
           tools,
           store: false,
-          thinkingLevel: "low",
+          thinkingLevel: effectiveThinking,
           maxOutputTokens,
-          timeoutMs
+          timeoutMs,
+          telemetryModule
         });
 
         if (!nextRes.ok) {
@@ -9424,7 +9455,7 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, quotedTe
 /**
  * Gera a resposta completa do Agente de IA para WhatsApp
  */
-export async function generateAiWhatsAppResponse({ db, phone, messageText, quotedText = "", referenceMessageId = "", history = [], isCopilot = false, saveDatabase = null, sendZapiMessage = null, createNotification = null, conv: passedConv = null }) {
+export async function generateAiWhatsAppResponse({ db, phone, messageText, quotedText = "", referenceMessageId = "", history = [], isCopilot = false, saveDatabase = null, sendZapiMessage = null, createNotification = null, conv: passedConv = null, telemetryModule = "sofia_whatsapp" }) {
   const aiConfig = getWhatsAppAiConfig(db);
 
   const conv = passedConv || (db?.whatsappConversations || []).find(c => {
@@ -9574,7 +9605,7 @@ ${formattedFaqs}
 - Pré-reserva ativa gerada: ${convState.activePreReservation ? `SIM (Código ${convState.activePreReservation.code} - Flat ${convState.activePreReservation.flatNumber})` : "NÃO"}
 `;
 
-  const contextString = `
+  const dynamicGuestContextSection = `
 [CONTEXTO EM TEMPO REAL]
 - Data atual: ${guestContext.todayStr} | Horário: ${guestContext.timeStr} (Brasília)
 - Telefone do contato: ${guestContext.phone}
@@ -9589,6 +9620,9 @@ ${guestContext.hasReservation ? `- Flat atribuído: ${guestContext.flatNumber ||
 ${guestContext.isCheckoutDay && !guestContext.isCheckoutCompleted && guestContext.checkoutUrl ? `- Link de Confirmação de Check-out: ${guestContext.checkoutUrl}\n` : ""}${guestContext.minibarUrl ? `- Link do Frigobar / Autoatendimento Anserve: ${guestContext.minibarUrl}\n` : ""}- Status da higienização/limpeza hoje: ${guestContext.cleaningStatus.toUpperCase()} | Conferência de frigobar hoje: ${guestContext.isMinibarInspected ? "CONCLUÍDA" : "PENDENTE"}${guestContext.isMinibarPendingForEarlyCheckin ? " (OBRIGATÓRIA PARA EARLY CHECK-IN ANTES DAS 14:00)" : ""} (Liberado/Pronto agora: ${guestContext.isRoomReady ? "SIM" : "NÃO"})` : "- Modo: Atendimento a novo cliente / Cotação"}
 ${preAnalysis.promptBlock}
 ${conversationStateSection}
+`;
+
+  const staticKnowledgeSection = `
 [BASE DE CONHECIMENTO OFICIAL CORPFLATS]
 - Endereço: ${aiConfig.knowledgeBase.address}
 - Horário de Check-in: ${aiConfig.knowledgeBase.checkinTime}
@@ -9638,12 +9672,23 @@ ${systemActionsNotice}
 
   let lastGeminiDiagnostics = null;
 
+  // Ordem otimizada para Implicit Caching do Gemini: todo conteúdo estático/compartilhado no início e contexto dinâmico por hóspede/horário no final
+  const optimizedSystemInstruction = [
+    aiConfig.systemPrompt,
+    toneSection,
+    guidelinesSection,
+    flatsCatalogSection || "",
+    staticKnowledgeSection,
+    stateRoutedPromptBlock,
+    dynamicGuestContextSection
+  ].filter(Boolean).join("\n");
+
   // 3. Tenta responder via Google Gemini (com Function Calling adaptativo se disponível)
   if (apiKey) {
     try {
       const geminiRes = await callGeminiAi({
         apiKey,
-        systemInstruction: `${aiConfig.systemPrompt}\n${stateRoutedPromptBlock}\n${toneSection}${guidelinesSection}\n${flatsCatalogSection || ""}\n${contextString}`,
+        systemInstruction: optimizedSystemInstruction,
         prompt: messageText,
         quotedText: effectiveQuotedText,
         history: effectiveHistory,
@@ -9655,7 +9700,8 @@ ${systemActionsNotice}
         sendZapiMessage,
         createNotification,
         conversation: conv,
-        guestContext
+        guestContext,
+        telemetryModule
       });
       lastGeminiDiagnostics = geminiRes?.geminiDiagnostics || null;
 
@@ -13133,7 +13179,10 @@ RESPONDA EXCLUSIVAMENTE COM O OBJETO JSON NO FORMATO:
           prompt: `[MENSAGEM DO HÓSPEDE]:\n"${text}"`,
           history: [],
           db,
-          customPrompt: true
+          customPrompt: true,
+          role: "lite",
+          thinkingLevel: "minimal",
+          telemetryModule: "fiscal_nlu"
         });
         if (geminiRes?.ok && geminiRes.text) {
           const cleanText = geminiRes.text.replace(/```(?:json)?/gi, "").trim();
@@ -16205,7 +16254,10 @@ Retorne EXCLUSIVAMENTE um objeto JSON no seguinte formato:
         systemInstruction,
         prompt,
         db,
-        customPrompt: true
+        customPrompt: true,
+        role: "lite",
+        thinkingLevel: "minimal",
+        telemetryModule: "faq_suggestions"
       });
 
       if (res?.ok && res?.text) {
@@ -16779,7 +16831,8 @@ export async function generateSofiaRealtimeAssistance({
           phone: cleanPhone,
           messageText: draftText || lastInboundText,
           history,
-          isCopilot: true
+          isCopilot: true,
+          telemetryModule: "sofia_assist"
         });
         if (aiRes?.replyText) {
           primaryReply = aiRes.replyText;

@@ -375,13 +375,151 @@ export default function GuestPreCheckin() {
       message: "Sua sessão de assinatura de 2 horas expirou por motivos de segurança jurídica."
     })
   })
+  const [autosaveStatus, setAutosaveStatus] = useState<"idle" | "saving" | "saved" | "offline">("idle")
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null)
+  const [preCheckinBlockedByServer, setPreCheckinBlockedByServer] = useState(false)
+  const clientSessionIdRef = useRef<string>(`pre_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`)
+  const clientSeqRef = useRef<number>(0)
+  const isHydratingRef = useRef<boolean>(true)
+  const hydratedKeyRef = useRef<string | null>(null)
+  const lastSavedHashRef = useRef<string>("")
+  const needsImmediateServerSyncRef = useRef<boolean>(false)
+  const inFlightAutosaveRef = useRef<Promise<any> | null>(null)
+  const prevDiscreteKeyRef = useRef<string>("")
+  const docUploadGenRef = useRef<number>(0)
+  const minorAuthUploadGenRef = useRef<number>(0)
+  const lastInspectedDocGenRef = useRef<number>(-1)
+
   const draftDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const serverAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingTextDraftRef = useRef<{ key: string; payload: Record<string, any> } | null>(null)
+  const pendingServerPayloadRef = useRef<{ code: string; guestIndex: number; payload: Record<string, any> } | null>(null)
   const prevDraftStepRef = useRef<{ key: string; step: number } | null>(null)
-  const flushPendingTextDraft = useStableCallback(() => {
+
+  const isPreReservationRecordBlocked = (resObj: any): boolean => {
+    if (!resObj) return false
+    const chan = String(resObj.channel || "").toLowerCase()
+    const isOtaChan =
+      chan.includes("booking") ||
+      chan.includes("airbnb") ||
+      chan.includes("b2b") ||
+      Boolean(resObj.agencyId || resObj.b2bReservationNumber)
+    if (isOtaChan) return false
+    const st = String(resObj.status || "").toLowerCase()
+    return st === "pre_reserva" || st === "pendente"
+  }
+
+  const sendAutosaveToServer = useStableCallback(
+    async (
+      targetCode: string,
+      targetGuestIndex: number,
+      payload: Record<string, any>,
+      opts?: { keepalive?: boolean; priorityLow?: boolean }
+    ) => {
+      const cleanCode = String(targetCode || "").trim()
+      if (!cleanCode) return null
+
+      const seq = ++clientSeqRef.current
+      const bodyObj: Record<string, any> = {
+        guestIndex: targetGuestIndex,
+        reservationId: reservation?.id,
+        clientSessionId: clientSessionIdRef.current,
+        clientSeq: seq,
+        ...payload
+      }
+      const url = `/api/pms/pre-checkin/${encodeURIComponent(cleanCode)}/autosave`
+
+      if (opts?.keepalive) {
+        try {
+          const json = JSON.stringify(bodyObj)
+          if (json.length < 60_000) {
+            fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: json,
+              keepalive: true
+            }).catch(() => {
+              try {
+                if (typeof navigator !== "undefined" && navigator.sendBeacon) {
+                  navigator.sendBeacon(url, new Blob([json], { type: "application/json" }))
+                }
+              } catch {}
+            })
+            return null
+          }
+          fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: json
+          }).catch(() => {})
+        } catch {}
+        return null
+      }
+
+      setAutosaveStatus("saving")
+      let reqPromise: Promise<any> | null = null
+      reqPromise = (async () => {
+        try {
+          const fetchOpts: RequestInit & { priority?: string } = {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(bodyObj)
+          }
+          if (opts?.priorityLow) {
+            fetchOpts.priority = "low"
+          }
+          const res = await fetch(url, fetchOpts)
+          if (!res.ok) {
+            if (res.status >= 500) {
+              pendingServerPayloadRef.current = { code: cleanCode, guestIndex: targetGuestIndex, payload }
+              setAutosaveStatus("offline")
+            }
+            return null
+          }
+          const data = await res.json().catch(() => null)
+          if (data?.ok) {
+            if (data.guestCode && !guestCode) {
+              setGuestCode(data.guestCode)
+            }
+            if (data.savedAtMs && typeof window !== "undefined") {
+              try {
+                const draftKey = `cf_precheckin_draft_${cleanCode.toUpperCase()}_g${targetGuestIndex}`
+                const raw = localStorage.getItem(draftKey)
+                if (raw) {
+                  const parsed = JSON.parse(raw)
+                  parsed.updatedAt = data.savedAtMs
+                  localStorage.setItem(draftKey, JSON.stringify(parsed))
+                }
+              } catch {}
+            }
+            setAutosaveStatus("saved")
+            setLastSavedAt(Date.now())
+          }
+          return data
+        } catch {
+          pendingServerPayloadRef.current = { code: cleanCode, guestIndex: targetGuestIndex, payload }
+          setAutosaveStatus("offline")
+          return null
+        } finally {
+          if (inFlightAutosaveRef.current === reqPromise) {
+            inFlightAutosaveRef.current = null
+          }
+        }
+      })()
+
+      inFlightAutosaveRef.current = reqPromise
+      return reqPromise
+    }
+  )
+
+  const flushPendingTextDraft = useStableCallback((opts?: { keepalive?: boolean }) => {
     if (draftDebounceTimerRef.current !== null) {
       clearTimeout(draftDebounceTimerRef.current)
       draftDebounceTimerRef.current = null
+    }
+    if (serverAutosaveTimerRef.current !== null) {
+      clearTimeout(serverAutosaveTimerRef.current)
+      serverAutosaveTimerRef.current = null
     }
     const pending = pendingTextDraftRef.current
     if (pending && typeof window !== "undefined") {
@@ -393,13 +531,26 @@ export default function GuestPreCheckin() {
         )
       } catch {}
     }
+    const pendingServer = pendingServerPayloadRef.current
+    if (pendingServer) {
+      pendingServerPayloadRef.current = null
+      void sendAutosaveToServer(pendingServer.code, pendingServer.guestIndex, pendingServer.payload, {
+        keepalive: Boolean(opts?.keepalive)
+      })
+    }
   })
+
   const cancelPendingTextDraft = useStableCallback(() => {
     if (draftDebounceTimerRef.current !== null) {
       clearTimeout(draftDebounceTimerRef.current)
       draftDebounceTimerRef.current = null
     }
+    if (serverAutosaveTimerRef.current !== null) {
+      clearTimeout(serverAutosaveTimerRef.current)
+      serverAutosaveTimerRef.current = null
+    }
     pendingTextDraftRef.current = null
+    pendingServerPayloadRef.current = null
   })
   const [isRefreshingToken, setIsRefreshingToken] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
@@ -834,23 +985,63 @@ export default function GuestPreCheckin() {
     if (tit.travelReason) setTravelReason(tit.travelReason)
   }
 
+  const buildCurrentDraftPayload = useStableCallback((overrideStep?: number) => ({
+    step: overrideStep ?? step,
+    fullName,
+    phone,
+    email,
+    document,
+    birthDate,
+    birthDateInput,
+    gender,
+    cep,
+    street,
+    streetNumber,
+    complement,
+    neighborhood,
+    city,
+    state,
+    address,
+    travelReason,
+    transportMethod,
+    estimatedArrivalTime,
+    originCity,
+    originState,
+    destinationCity,
+    destinationState,
+    vehiclePlate,
+    vehicleModel,
+    vehicleBrand,
+    vehicleColor,
+    minorKinship,
+    optInMarketing,
+    acceptedHouseRules,
+    acceptedContract,
+    legalDeclarationAccepted,
+    ...(aiDocResult ? { aiDocResult } : {})
+  }))
+
+  const handleSwitchGuest = useStableCallback((targetIdx: number) => {
+    flushPendingTextDraft()
+    setSelectedGuestIndex(targetIdx)
+    setStep(1)
+  })
+
   const loadGuestData = (resData: any, gIdx: number) => {
     flushPendingTextDraft()
+    isHydratingRef.current = true
+    hydratedKeyRef.current = null
+    docUploadGenRef.current += 1
+    minorAuthUploadGenRef.current += 1
+    lastInspectedDocGenRef.current = -1
+
     const gList = resData.guests || []
     setGuestList(gList)
-    const currentG = gList.find((g: any) => g.index === gIdx) || gList[0]
+    const currentG = gList.find((g: any) => Number(g.index) === Number(gIdx)) || gList[0]
     const res = resData.reservation || {}
     const guest = resData.guest || {}
 
-    // Limpeza completa para evitar vazamento de estado entre hóspedes
-    setDocPhoto(null)
-    setIsSavedDocFromProfile(false)
-    setAiDocResult(null)
-    setSelfiePhoto(null)
-    setSignatureData(null)
     setGeneratedPdfInfo(null)
-    setMinorAuthDocPhoto(null)
-    setMinorKinship("filho")
 
     // Isolamento estrito de 2FA / OTP entre titular e acompanhantes (preserva status de OTP ativo se gerado nos últimos 10 min)
     const activeOtp = currentG?.activeOtpStatus || (gIdx === 1 ? resData.activeOtpStatus : null) || null
@@ -871,7 +1062,6 @@ export default function GuestPreCheckin() {
     setOtpSuccessMessage(isInitialOtpVerified ? "✓ Código confirmado e preenchido automaticamente via WhatsApp!" : null)
 
     const isTitular = gIdx === 1
-
     const gCode = currentG?.guestCode || (isTitular ? (res.guestCode || guest.guestCode || "") : "")
     setGuestCode(gCode)
 
@@ -890,11 +1080,6 @@ export default function GuestPreCheckin() {
     const gDoc = currentG?.cpf || currentG?.document
       ? (currentG.cpf || currentG.document)
       : (isTitular ? (res.guestDocument || res.document || guest.document || guest.documentNumber || "") : "")
-
-    setFullName(gName)
-    setPhone(formatSmartPhone(gPhone))
-    setEmail(gEmail)
-    setDocument(formatCpfOrPassport(gDoc))
 
     try {
       const activeCode = res.code || code
@@ -915,178 +1100,6 @@ export default function GuestPreCheckin() {
       if (url.includes("doc_g33_") && !isMillerSlot) return true
       if (isMillerSlot && /\bdoc_g(?!33_)\d+_/i.test(url)) return true
       return false
-    }
-
-    let rawBirth = currentG?.birthDate || (isTitular ? (guest.birthDate || res.birthDate || "") : "")
-    if (isMillerSlot && (!rawBirth || rawBirth === "1970-01-19" || rawBirth === "19/01/1970")) {
-      rawBirth = "1990-10-09"
-    }
-    setBirthDate(toIsoDate(rawBirth))
-    setBirthDateInput(toDisplayDate(rawBirth))
-    setGender(currentG?.gender || (isTitular ? (guest.gender || res.gender || "masculino") : "masculino"))
-    const rawAddress = currentG?.address || (isTitular ? (guest.address || res.guestAddress || "") : "")
-    setAddress(rawAddress)
-    setStreet(currentG?.street || (isTitular ? (guest.street || res.guestStreet || "") : "") || rawAddress || "")
-    setStreetNumber(currentG?.streetNumber || (isTitular ? (guest.streetNumber || res.guestStreetNumber || "") : "") || currentG?.number || "")
-    setComplement(currentG?.complement || (isTitular ? (guest.complement || res.guestComplement || "") : "") || "")
-    setNeighborhood(currentG?.neighborhood || (isTitular ? (guest.neighborhood || res.guestNeighborhood || "") : "") || currentG?.bairro || "")
-    setCity(currentG?.city || (isTitular ? (guest.city || res.guestCity || "") : ""))
-    setState(currentG?.state || (isTitular ? (guest.state || res.guestState || "RJ") : "RJ"))
-    setCep(currentG?.cep || (isTitular ? (guest.cep || res.guestCep || "") : ""))
-
-    // Dados da Viagem MTur (isolamento estrito: acompanhante não herda dados de estadia do titular automaticamente)
-    const travelReasonVal = currentG?.travelReason || (isTitular ? (guest.travelReason || res.travelReason || "") : "")
-    setTravelReason(travelReasonVal || "")
-
-    const transportVal = currentG?.transportMethod || (isTitular ? (guest.transportMethod || res.transportMethod || "") : "")
-    setTransportMethod(transportVal || "")
-
-    const etaVal = currentG?.estimatedArrivalTime || res.estimatedArrivalTime || ""
-    setEstimatedArrivalTime(etaVal || "")
-
-    const originCityVal = currentG?.originCity || (isTitular ? (guest.originCity || res.originCity || "") : "")
-    setOriginCity(originCityVal || "")
-
-    const originStateVal = currentG?.originState || (isTitular ? (guest.originState || res.originState || "RJ") : "RJ")
-    setOriginState(originStateVal || "RJ")
-
-    const destCityVal = currentG?.destinationCity || (isTitular ? (guest.destinationCity || res.destinationCity || "") : "")
-    setDestinationCity(destCityVal || "")
-
-    const destStateVal = currentG?.destinationState || (isTitular ? (guest.destinationState || res.destinationState || "RJ") : "RJ")
-    setDestinationState(destStateVal || "RJ")
-
-    setMinorKinship(currentG?.minorKinship || "filho")
-    setMinorAuthDocPhoto(currentG?.minorAuthDocUrl || null)
-
-    // Isolamento estrito de veículo: titular lê da reserva; acompanhante lê SOMENTE de currentG.vehicle
-    const v = isTitular 
-      ? (res.vehicle || guest.vehicle || (guest.vehiclePlate ? {
-          plate: guest.vehiclePlate,
-          brand: guest.vehicleBrand || "",
-          model: guest.vehicleModel || "",
-          color: guest.vehicleColor || ""
-        } : null))
-      : (currentG?.vehicle || null)
-
-    if (v && v.plate) {
-      setVehiclePlate(v.plate)
-      setVehicleModel(v.model || "")
-      setVehicleBrand(v.brand || "")
-      setVehicleColor(v.color || "")
-      if (!transportVal) {
-        setTransportMethod(prev => ["Carro próprio", "Carro alugado", "Moto", "moto", "Moto própria", "Moto alugada"].includes(prev) ? prev : "Carro próprio")
-      }
-    } else {
-      setVehiclePlate("")
-      setVehicleModel("")
-      setVehicleBrand("")
-      setVehicleColor("")
-    }
-
-    // Isolamento estrito de fotos e biometria:
-    // Hóspede 1: pode ler do cadastro titular
-    // Hóspede 2+: lê SOMENTE de currentG (NUNCA herda fotos do hóspede 1!)
-    let selfie = currentG?.selfieUrl || (isTitular ? (res.selfieUrl || guest.photoUrl || null) : null)
-    const rawCandidateDocs = isTitular
-      ? [currentG?.docPhotoUrl, res.docPhotoUrl, res.documentPhotoUrl, guest.docPhotoUrl, guest.documentPhotoUrl]
-      : [currentG?.docPhotoUrl]
-    let doc = rawCandidateDocs.find((u) => u && !isForeignContaminatedDocUrl(u)) || null
-
-    if (!doc && isTitular && typeof window !== "undefined") {
-      try {
-        const rawProf = localStorage.getItem("corpflats_guest_profile")
-        if (rawProf) {
-          const prof = JSON.parse(rawProf)
-          const profCpf = String(prof?.document || "").replace(/\D/g, "")
-          const resCpf = String(gDoc || "").replace(/\D/g, "")
-          const profEmail = String(prof?.email || "").trim().toLowerCase()
-          const resEmail = String(gEmail || "").trim().toLowerCase()
-          const profPhone = String(prof?.phone || "").replace(/\D/g, "")
-          const resPhone = String(gPhone || "").replace(/\D/g, "")
-          const profName = String(prof?.name || prof?.fullName || "").trim().toLowerCase()
-          const resName = String(gName || "").trim().toLowerCase()
-          const isSamePersonCache = Boolean(
-            (profCpf.length >= 8 && resCpf.length >= 8 && profCpf === resCpf) ||
-            (profEmail.includes("@") && resEmail.includes("@") && profEmail === resEmail) ||
-            (profPhone.length >= 8 && resPhone.length >= 8 && profPhone === resPhone) ||
-            (profName.length >= 5 && resName.length >= 5 && profName === resName)
-          )
-          if (isSamePersonCache && prof?.docPhotoUrl && !isForeignContaminatedDocUrl(prof.docPhotoUrl)) {
-            doc = prof.docPhotoUrl
-          } else if (prof?.docPhotoUrl && isForeignContaminatedDocUrl(prof.docPhotoUrl)) {
-            delete prof.docPhotoUrl
-            localStorage.setItem("corpflats_guest_profile", JSON.stringify(prof))
-          }
-          if (isSamePersonCache && !selfie && prof?.photoUrl) {
-            selfie = prof.photoUrl
-          }
-        }
-      } catch {}
-    }
-
-    // Sincronização direta com perfil permanente do hóspede autenticado (somente se for a mesma pessoa da reserva)
-    if (isTitular) {
-      getCurrentSession().then((sessionUser) => {
-        if (!sessionUser) return
-        const sessCpf = String(sessionUser.document || "").replace(/\D/g, "")
-        const resCpf = String(gDoc || "").replace(/\D/g, "")
-        const sessEmail = String(sessionUser.email || "").trim().toLowerCase()
-        const resEmail = String(gEmail || "").trim().toLowerCase()
-        const sessPhone = String(sessionUser.phone || "").replace(/\D/g, "")
-        const resPhone = String(gPhone || "").replace(/\D/g, "")
-        const sessName = String(sessionUser.name || sessionUser.fullName || "").trim().toLowerCase()
-        const resName = String(gName || "").trim().toLowerCase()
-        const isGenericResName = !resName || /^h[oó]spede\s*\d*$/i.test(resName)
-        const isSameSess = Boolean(
-          (sessCpf.length >= 8 && resCpf.length >= 8 && sessCpf === resCpf) ||
-          (sessEmail.includes("@") && resEmail.includes("@") && sessEmail === resEmail) ||
-          (sessPhone.length >= 8 && resPhone.length >= 8 && sessPhone === resPhone) ||
-          (sessName.length >= 5 && resName.length >= 5 && sessName === resName) ||
-          (!resCpf && !resEmail && !resPhone && isGenericResName)
-        )
-        if (!isSameSess) return
-
-        if (!gName && sessionUser.name) setFullName(sessionUser.name)
-        if (!gEmail && sessionUser.email) setEmail(sessionUser.email)
-        if (!gPhone && sessionUser.phone) setPhone(formatSmartPhone(sessionUser.phone))
-        if (!gDoc && sessionUser.document) setDocument(formatCpfOrPassport(sessionUser.document))
-        if (!currentG?.birthDate && !guest.birthDate && !res.birthDate && sessionUser.birthDate) {
-          setBirthDate(toIsoDate(sessionUser.birthDate))
-          setBirthDateInput(toDisplayDate(sessionUser.birthDate))
-        }
-        if (!currentG?.address && !guest.address && !res.guestAddress && sessionUser.address) {
-          setAddress(sessionUser.address)
-          setStreet(sessionUser.street || sessionUser.address)
-          if (sessionUser.streetNumber) setStreetNumber(sessionUser.streetNumber)
-          if (sessionUser.complement) setComplement(sessionUser.complement)
-          if (sessionUser.neighborhood) setNeighborhood(sessionUser.neighborhood)
-        }
-        if (!currentG?.city && !guest.city && !res.guestCity && sessionUser.city) {
-          setCity(sessionUser.city)
-        }
-        if (!currentG?.state && !guest.state && !res.guestState && sessionUser.state) {
-          setState(sessionUser.state)
-        }
-        const sessCleanCep = String(sessionUser.cep || "").replace(/\D/g, "")
-        if (!currentG?.cep && !guest.cep && !res.guestCep && !res.cep && sessCleanCep && sessCleanCep !== "28035000") {
-          setCep(sessionUser.cep)
-        }
-        if (sessionUser.vehicle?.plate && !v?.plate) {
-          setVehiclePlate(sessionUser.vehicle.plate)
-          setVehicleModel(sessionUser.vehicle.model || "")
-          setVehicleBrand(sessionUser.vehicle.brand || "")
-          setVehicleColor(sessionUser.vehicle.color || "")
-          setTransportMethod(prev => ["Carro próprio", "Carro alugado", "Moto", "moto", "Moto própria", "Moto alugada"].includes(prev) ? prev : "Carro próprio")
-        }
-        if (!doc && sessionUser.docPhotoUrl && !isForeignContaminatedDocUrl(sessionUser.docPhotoUrl)) {
-          setDocPhoto(sessionUser.docPhotoUrl)
-          setIsSavedDocFromProfile(true)
-        }
-        if (!selfie && sessionUser.photoUrl) {
-          setSelfiePhoto(sessionUser.photoUrl)
-        }
-      }).catch(() => {})
     }
 
     // Avaliação estritamente individual da necessidade de re-assinatura
@@ -1111,10 +1124,107 @@ export default function GuestPreCheckin() {
     const isReSignatureNeeded = isGuestPendingReSign
     const sig = isReSignatureNeeded ? null : (currentG?.signatureUrl || (isTitular ? res.signatureUrl : null))
 
-    setSelfiePhoto(selfie || null)
-    setDocPhoto(doc || null)
-    setIsSavedDocFromProfile(Boolean(doc))
-    setSignatureData(sig || null)
+    let rawBirth = currentG?.birthDate || (isTitular ? (guest.birthDate || res.birthDate || "") : "")
+    if (isMillerSlot && (!rawBirth || rawBirth === "1970-01-19" || rawBirth === "19/01/1970")) {
+      rawBirth = "1990-10-09"
+    }
+
+    let nextFullName = gName
+    let nextPhone = formatSmartPhone(gPhone)
+    let nextEmail = gEmail
+    let nextDocument = formatCpfOrPassport(gDoc)
+    let nextBirthDate = toIsoDate(rawBirth)
+    let nextBirthDateInput = toDisplayDate(rawBirth)
+    let nextGender = currentG?.gender || (isTitular ? (guest.gender || res.gender || "masculino") : "masculino")
+    let nextAddress = currentG?.address || (isTitular ? (guest.address || res.guestAddress || "") : "")
+    let nextStreet = currentG?.street || (isTitular ? (guest.street || res.guestStreet || "") : "") || nextAddress || ""
+    let nextStreetNumber = currentG?.streetNumber || (isTitular ? (guest.streetNumber || res.guestStreetNumber || "") : "") || currentG?.number || ""
+    let nextComplement = currentG?.complement || (isTitular ? (guest.complement || res.guestComplement || "") : "") || ""
+    let nextNeighborhood = currentG?.neighborhood || (isTitular ? (guest.neighborhood || res.guestNeighborhood || "") : "") || currentG?.bairro || ""
+    let nextCity = currentG?.city || (isTitular ? (guest.city || res.guestCity || "") : "")
+    let nextState = currentG?.state || (isTitular ? (guest.state || res.guestState || "RJ") : "RJ")
+    let nextCep = currentG?.cep || (isTitular ? (guest.cep || res.guestCep || "") : "")
+
+    // Dados da Viagem MTur (isolamento estrito: acompanhante não herda dados de estadia do titular automaticamente)
+    let nextTravelReason = currentG?.travelReason || (isTitular ? (guest.travelReason || res.travelReason || "") : "") || ""
+    let nextTransportMethod = currentG?.transportMethod || (isTitular ? (guest.transportMethod || res.transportMethod || "") : "") || ""
+    let nextEstimatedArrivalTime = currentG?.estimatedArrivalTime || (isTitular ? (res.estimatedArrivalTime || "") : "") || ""
+    let nextOriginCity = currentG?.originCity || (isTitular ? (guest.originCity || res.originCity || "") : "") || ""
+    let nextOriginState = currentG?.originState || (isTitular ? (guest.originState || res.originState || "RJ") : "RJ") || "RJ"
+    let nextDestinationCity = currentG?.destinationCity || (isTitular ? (guest.destinationCity || res.destinationCity || "") : "") || ""
+    let nextDestinationState = currentG?.destinationState || (isTitular ? (guest.destinationState || res.destinationState || "RJ") : "RJ") || "RJ"
+
+    let nextMinorKinship = currentG?.minorKinship || "filho"
+    let nextMinorAuthDocPhoto: string | null = currentG?.minorAuthDocUrl || null
+    let nextOptInMarketing = Boolean(currentG?.optInMarketing ?? (isTitular ? guest.optInMarketing : false))
+    let nextAcceptedHouseRules = false
+    let nextAcceptedContract = false
+    let nextLegalDeclarationAccepted = false
+
+    // Isolamento estrito de veículo: titular lê da reserva; acompanhante lê SOMENTE de currentG.vehicle
+    const v = isTitular
+      ? (res.vehicle || guest.vehicle || (guest.vehiclePlate ? {
+          plate: guest.vehiclePlate,
+          brand: guest.vehicleBrand || "",
+          model: guest.vehicleModel || "",
+          color: guest.vehicleColor || ""
+        } : null))
+      : (currentG?.vehicle || null)
+
+    let nextVehiclePlate = ""
+    let nextVehicleModel = ""
+    let nextVehicleBrand = ""
+    let nextVehicleColor = ""
+    if (v && (v.plate || v.model || v.brand || v.color)) {
+      nextVehiclePlate = v.plate || ""
+      nextVehicleModel = v.model || ""
+      nextVehicleBrand = v.brand || ""
+      nextVehicleColor = v.color || ""
+      if (!nextTransportMethod && v.plate) {
+        nextTransportMethod = "Carro próprio"
+      }
+    }
+
+    // Isolamento estrito de fotos e biometria:
+    let nextSelfie: string | null = currentG?.selfieUrl || (isTitular ? (res.selfieUrl || guest.photoUrl || null) : null)
+    const rawCandidateDocs = isTitular
+      ? [currentG?.docPhotoUrl, res.docPhotoUrl, res.documentPhotoUrl, guest.docPhotoUrl, guest.documentPhotoUrl]
+      : [currentG?.docPhotoUrl]
+    let nextDoc: string | null = rawCandidateDocs.find((u) => u && !isForeignContaminatedDocUrl(u)) || null
+    let nextAiDocResult: any = currentG?.aiDocInspection || (isTitular ? (res.aiDocInspection || guest.aiDocInspection || null) : null)
+    let nextSigData: string | null = sig || null
+
+    if (!nextDoc && isTitular && typeof window !== "undefined") {
+      try {
+        const rawProf = localStorage.getItem("corpflats_guest_profile")
+        if (rawProf) {
+          const prof = JSON.parse(rawProf)
+          const profCpf = String(prof?.document || "").replace(/\D/g, "")
+          const resCpf = String(gDoc || "").replace(/\D/g, "")
+          const profEmail = String(prof?.email || "").trim().toLowerCase()
+          const resEmail = String(gEmail || "").trim().toLowerCase()
+          const profPhone = String(prof?.phone || "").replace(/\D/g, "")
+          const resPhone = String(gPhone || "").replace(/\D/g, "")
+          const profName = String(prof?.name || prof?.fullName || "").trim().toLowerCase()
+          const resName = String(gName || "").trim().toLowerCase()
+          const isSamePersonCache = Boolean(
+            (profCpf.length >= 8 && resCpf.length >= 8 && profCpf === resCpf) ||
+            (profEmail.includes("@") && resEmail.includes("@") && profEmail === resEmail) ||
+            (profPhone.length >= 8 && resPhone.length >= 8 && profPhone === resPhone) ||
+            (profName.length >= 5 && resName.length >= 5 && profName === resName)
+          )
+          if (isSamePersonCache && prof?.docPhotoUrl && !isForeignContaminatedDocUrl(prof.docPhotoUrl)) {
+            nextDoc = prof.docPhotoUrl
+          } else if (prof?.docPhotoUrl && isForeignContaminatedDocUrl(prof.docPhotoUrl)) {
+            delete prof.docPhotoUrl
+            localStorage.setItem("corpflats_guest_profile", JSON.stringify(prof))
+          }
+          if (isSamePersonCache && !nextSelfie && prof?.photoUrl) {
+            nextSelfie = prof.photoUrl
+          }
+        }
+      } catch {}
+    }
 
     // O Hóspede só é considerado concluído se ELE MESMO (currentG) tiver check-in feito nesta reserva e não precisar re-assinar!
     const fnhrDone = Boolean(
@@ -1123,13 +1233,86 @@ export default function GuestPreCheckin() {
         currentG?.status === "CHECKED_IN" ||
         Boolean(currentG?.fnrhSignedAt) ||
         Boolean(currentG?.fnrhDocumentUuid) ||
-        (isTitular && (res.fnhrCompleted || res.preCheckinCompleted) && (sig || res.signatureUrl || res.fnrhDocumentUuid) && selfie)
+        (isTitular && (res.fnhrCompleted || res.preCheckinCompleted) && (sig || res.signatureUrl || res.fnrhDocumentUuid) && nextSelfie)
       )
     )
 
-    // Restaura rascunho local em andamento (evita perder campos digitados ao trocar de aba Hóspede 1/2 ou clicar em "Preencher na Tela" no WhatsApp)
+    const hasDraftKey = (obj: any, k: string) => Boolean(obj && typeof obj === "object" && Object.prototype.hasOwnProperty.call(obj, k) && obj[k] !== undefined)
+    const serverDraft = (!fnhrDone && !isReadOnlyDocument && currentG?.preCheckinDraft && typeof currentG.preCheckinDraft === "object")
+      ? currentG.preCheckinDraft
+      : null
+    const serverDraftMs = Number(
+      serverDraft?.updatedAtMs || (serverDraft?.updatedAt ? new Date(serverDraft.updatedAt).getTime() : 0)
+    ) || 0
+
     let restoredDraftStep: number | null = null
-    let hasRestoredDoc = Boolean(doc)
+    let docCameFromCurrentDraft = false
+    let hasNewerLocalEdits = false
+
+    // 1. Reconciliação Server-First: aplica campos do rascunho persistido no servidor (cross-device / pós-reload)
+    if (serverDraft) {
+      if (hasDraftKey(serverDraft, "fullName")) nextFullName = String(serverDraft.fullName ?? "")
+      if (hasDraftKey(serverDraft, "phone")) nextPhone = String(serverDraft.phone ?? "")
+      if (hasDraftKey(serverDraft, "email")) nextEmail = String(serverDraft.email ?? "")
+      if (hasDraftKey(serverDraft, "document")) nextDocument = String(serverDraft.document ?? "")
+      if (hasDraftKey(serverDraft, "birthDate")) nextBirthDate = String(serverDraft.birthDate ?? "")
+      if (hasDraftKey(serverDraft, "birthDateInput")) {
+        nextBirthDateInput = String(serverDraft.birthDateInput ?? "")
+      } else if (nextBirthDate) {
+        nextBirthDateInput = toDisplayDate(nextBirthDate)
+      }
+      if (hasDraftKey(serverDraft, "gender") && serverDraft.gender) nextGender = String(serverDraft.gender)
+      if (hasDraftKey(serverDraft, "cep")) nextCep = String(serverDraft.cep ?? "")
+      if (hasDraftKey(serverDraft, "street")) nextStreet = String(serverDraft.street ?? "")
+      if (hasDraftKey(serverDraft, "streetNumber")) nextStreetNumber = String(serverDraft.streetNumber ?? "")
+      if (hasDraftKey(serverDraft, "complement")) nextComplement = String(serverDraft.complement ?? "")
+      if (hasDraftKey(serverDraft, "neighborhood")) nextNeighborhood = String(serverDraft.neighborhood ?? "")
+      if (hasDraftKey(serverDraft, "city")) nextCity = String(serverDraft.city ?? "")
+      if (hasDraftKey(serverDraft, "state") && serverDraft.state) nextState = String(serverDraft.state)
+      if (hasDraftKey(serverDraft, "address")) nextAddress = String(serverDraft.address ?? "")
+      if (hasDraftKey(serverDraft, "travelReason")) nextTravelReason = String(serverDraft.travelReason ?? "")
+      if (hasDraftKey(serverDraft, "transportMethod")) nextTransportMethod = String(serverDraft.transportMethod ?? "")
+      if (hasDraftKey(serverDraft, "estimatedArrivalTime")) nextEstimatedArrivalTime = String(serverDraft.estimatedArrivalTime ?? "")
+      if (hasDraftKey(serverDraft, "originCity")) nextOriginCity = String(serverDraft.originCity ?? "")
+      if (hasDraftKey(serverDraft, "originState")) nextOriginState = String(serverDraft.originState ?? "")
+      if (hasDraftKey(serverDraft, "destinationCity")) nextDestinationCity = String(serverDraft.destinationCity ?? "")
+      if (hasDraftKey(serverDraft, "destinationState")) nextDestinationState = String(serverDraft.destinationState ?? "")
+      if (hasDraftKey(serverDraft, "vehiclePlate")) nextVehiclePlate = String(serverDraft.vehiclePlate ?? "")
+      if (hasDraftKey(serverDraft, "vehicleModel")) nextVehicleModel = String(serverDraft.vehicleModel ?? "")
+      if (hasDraftKey(serverDraft, "vehicleBrand")) nextVehicleBrand = String(serverDraft.vehicleBrand ?? "")
+      if (hasDraftKey(serverDraft, "vehicleColor")) nextVehicleColor = String(serverDraft.vehicleColor ?? "")
+      if (hasDraftKey(serverDraft, "minorKinship") && serverDraft.minorKinship) nextMinorKinship = String(serverDraft.minorKinship)
+      if (hasDraftKey(serverDraft, "optInMarketing")) nextOptInMarketing = Boolean(serverDraft.optInMarketing)
+      if (hasDraftKey(serverDraft, "acceptedHouseRules")) nextAcceptedHouseRules = Boolean(serverDraft.acceptedHouseRules)
+      if (hasDraftKey(serverDraft, "acceptedContract")) nextAcceptedContract = Boolean(serverDraft.acceptedContract)
+      if (hasDraftKey(serverDraft, "legalDeclarationAccepted")) nextLegalDeclarationAccepted = Boolean(serverDraft.legalDeclarationAccepted)
+      if (typeof serverDraft.step === "number" && serverDraft.step >= 1 && serverDraft.step <= 3) {
+        restoredDraftStep = serverDraft.step
+      }
+
+      if (serverDraft.docPhotoCleared) {
+        nextDoc = null
+        nextAiDocResult = null
+      } else if (serverDraft.docPhotoUrl && !isForeignContaminatedDocUrl(serverDraft.docPhotoUrl)) {
+        nextDoc = serverDraft.docPhotoUrl
+        docCameFromCurrentDraft = true
+      }
+
+      if (serverDraft.minorAuthDocCleared) {
+        nextMinorAuthDocPhoto = null
+      } else if (serverDraft.minorAuthDocUrl) {
+        nextMinorAuthDocPhoto = serverDraft.minorAuthDocUrl
+      }
+
+      if (serverDraft.aiDocResult && !serverDraft.docPhotoCleared) {
+        nextAiDocResult = serverDraft.aiDocResult
+      }
+      if (!isReSignatureNeeded && !sig && serverDraft.signatureBase64) {
+        nextSigData = serverDraft.signatureBase64
+      }
+    }
+
+    // 2. Fallback / Anti-race com rascunho local (somente se for estritamente mais recente que o servidor)
     if (!fnhrDone && !isReadOnlyDocument && typeof window !== "undefined") {
       try {
         const activeCode = String(res.code || code || "").trim().toUpperCase()
@@ -1157,47 +1340,7 @@ export default function GuestPreCheckin() {
             } catch {}
           }
 
-          if (validTextDraft) {
-            const draft = validTextDraft
-            if (draft.fullName) setFullName(draft.fullName)
-            if (draft.phone) setPhone(draft.phone)
-            if (draft.email) setEmail(draft.email)
-            if (draft.document) setDocument(draft.document)
-            if (draft.birthDate && !(isMillerSlot && (draft.birthDate === "1970-01-19" || draft.birthDate === "19/01/1970"))) {
-              setBirthDate(draft.birthDate)
-              setBirthDateInput(draft.birthDateInput || toDisplayDate(draft.birthDate))
-            } else if (draft.birthDateInput && !(isMillerSlot && (draft.birthDateInput === "19/01/1970" || draft.birthDateInput === "1970-01-19"))) {
-              setBirthDateInput(draft.birthDateInput)
-            }
-            if (draft.gender) setGender(draft.gender)
-            if (draft.cep) setCep(draft.cep)
-            if (draft.street) setStreet(draft.street)
-            if (draft.streetNumber) setStreetNumber(draft.streetNumber)
-            if (draft.complement) setComplement(draft.complement)
-            if (draft.neighborhood) setNeighborhood(draft.neighborhood)
-            if (draft.city) setCity(draft.city)
-            if (draft.state) setState(draft.state)
-            if (draft.address) setAddress(draft.address)
-            if (draft.travelReason) setTravelReason(draft.travelReason)
-            if (draft.transportMethod) setTransportMethod(draft.transportMethod)
-            if (draft.estimatedArrivalTime) setEstimatedArrivalTime(draft.estimatedArrivalTime)
-            if (draft.originCity) setOriginCity(draft.originCity)
-            if (draft.originState) setOriginState(draft.originState)
-            if (draft.destinationCity) setDestinationCity(draft.destinationCity)
-            if (draft.destinationState) setDestinationState(draft.destinationState)
-            if (draft.vehiclePlate) setVehiclePlate(draft.vehiclePlate)
-            if (draft.vehicleModel) setVehicleModel(draft.vehicleModel)
-            if (draft.vehicleBrand) setVehicleBrand(draft.vehicleBrand)
-            if (draft.vehicleColor) setVehicleColor(draft.vehicleColor)
-            if (draft.acceptedHouseRules) setAcceptedHouseRules(true)
-            if (draft.acceptedContract) setAcceptedContract(true)
-            if (draft.legalDeclarationAccepted) setLegalDeclarationAccepted(true)
-            if (typeof draft.step === "number" && draft.step >= 1 && draft.step <= 3) {
-              restoredDraftStep = draft.step
-            }
-          }
-
-          // Migra mídia inline legada (se presente no rascunho de texto) para a chave dedicada e evita ressuscitar fotos removidas quando validMediaDraft existe com docPhoto: null
+          // Migra mídia inline legada (se presente no rascunho de texto) para a chave dedicada
           const hasLegacyInlineMedia = Boolean(
             validTextDraft &&
               ("docPhoto" in validTextDraft ||
@@ -1238,68 +1381,144 @@ export default function GuestPreCheckin() {
             } catch {}
           }
 
-          const hasMediaDraft = validMediaDraft !== null
-          const restoredDocPhoto = hasMediaDraft
-            ? (validMediaDraft.docPhoto ?? null)
-            : (validTextDraft?.docPhoto ?? null)
-          const restoredAiDocResult = hasMediaDraft
-            ? (validMediaDraft.aiDocResult ?? null)
-            : (validTextDraft?.aiDocResult ?? null)
-          const restoredSigData = hasMediaDraft
-            ? (validMediaDraft.signatureData ?? null)
-            : (validTextDraft?.signatureData ?? null)
-          if (!doc && restoredDocPhoto && !isForeignContaminatedDocUrl(restoredDocPhoto)) {
-            setDocPhoto(restoredDocPhoto)
-            hasRestoredDoc = true
-            if (restoredAiDocResult) setAiDocResult(restoredAiDocResult)
+          const localTextMs = Number(validTextDraft?.updatedAt || 0)
+          const localMediaMs = Number(validMediaDraft?.updatedAt || 0)
+          const shouldApplyLocalText = Boolean(validTextDraft && (!serverDraft || localTextMs > serverDraftMs))
+          const shouldApplyLocalMedia = Boolean(validMediaDraft && (!serverDraft || localMediaMs > serverDraftMs))
+
+          if (shouldApplyLocalText && validTextDraft) {
+            hasNewerLocalEdits = true
+            const draft = validTextDraft
+            if (hasDraftKey(draft, "fullName")) nextFullName = String(draft.fullName ?? "")
+            if (hasDraftKey(draft, "phone")) nextPhone = String(draft.phone ?? "")
+            if (hasDraftKey(draft, "email")) nextEmail = String(draft.email ?? "")
+            if (hasDraftKey(draft, "document")) nextDocument = String(draft.document ?? "")
+            if (draft.birthDate && !(isMillerSlot && (draft.birthDate === "1970-01-19" || draft.birthDate === "19/01/1970"))) {
+              nextBirthDate = draft.birthDate
+              nextBirthDateInput = draft.birthDateInput || toDisplayDate(draft.birthDate)
+            } else if (hasDraftKey(draft, "birthDateInput") && !(isMillerSlot && (draft.birthDateInput === "19/01/1970" || draft.birthDateInput === "1970-01-19"))) {
+              nextBirthDateInput = String(draft.birthDateInput ?? "")
+            }
+            if (draft.gender) nextGender = draft.gender
+            if (hasDraftKey(draft, "cep")) nextCep = String(draft.cep ?? "")
+            if (hasDraftKey(draft, "street")) nextStreet = String(draft.street ?? "")
+            if (hasDraftKey(draft, "streetNumber")) nextStreetNumber = String(draft.streetNumber ?? "")
+            if (hasDraftKey(draft, "complement")) nextComplement = String(draft.complement ?? "")
+            if (hasDraftKey(draft, "neighborhood")) nextNeighborhood = String(draft.neighborhood ?? "")
+            if (hasDraftKey(draft, "city")) nextCity = String(draft.city ?? "")
+            if (draft.state) nextState = draft.state
+            if (hasDraftKey(draft, "address")) nextAddress = String(draft.address ?? "")
+            if (hasDraftKey(draft, "travelReason")) nextTravelReason = String(draft.travelReason ?? "")
+            if (hasDraftKey(draft, "transportMethod")) nextTransportMethod = String(draft.transportMethod ?? "")
+            if (hasDraftKey(draft, "estimatedArrivalTime")) nextEstimatedArrivalTime = String(draft.estimatedArrivalTime ?? "")
+            if (hasDraftKey(draft, "originCity")) nextOriginCity = String(draft.originCity ?? "")
+            if (hasDraftKey(draft, "originState")) nextOriginState = String(draft.originState ?? "")
+            if (hasDraftKey(draft, "destinationCity")) nextDestinationCity = String(draft.destinationCity ?? "")
+            if (hasDraftKey(draft, "destinationState")) nextDestinationState = String(draft.destinationState ?? "")
+            if (hasDraftKey(draft, "vehiclePlate")) nextVehiclePlate = String(draft.vehiclePlate ?? "")
+            if (hasDraftKey(draft, "vehicleModel")) nextVehicleModel = String(draft.vehicleModel ?? "")
+            if (hasDraftKey(draft, "vehicleBrand")) nextVehicleBrand = String(draft.vehicleBrand ?? "")
+            if (hasDraftKey(draft, "vehicleColor")) nextVehicleColor = String(draft.vehicleColor ?? "")
+            if (draft.minorKinship) nextMinorKinship = draft.minorKinship
+            if (hasDraftKey(draft, "optInMarketing")) nextOptInMarketing = Boolean(draft.optInMarketing)
+            if (hasDraftKey(draft, "acceptedHouseRules")) nextAcceptedHouseRules = Boolean(draft.acceptedHouseRules)
+            if (hasDraftKey(draft, "acceptedContract")) nextAcceptedContract = Boolean(draft.acceptedContract)
+            if (hasDraftKey(draft, "legalDeclarationAccepted")) nextLegalDeclarationAccepted = Boolean(draft.legalDeclarationAccepted)
+            if (typeof draft.step === "number" && draft.step >= 1 && draft.step <= 3) {
+              restoredDraftStep = draft.step
+            }
           }
-          if (!sig && restoredSigData) {
-            setSignatureData(restoredSigData)
+
+          if (shouldApplyLocalMedia && validMediaDraft) {
+            const restoredDocPhoto = validMediaDraft.docPhoto ?? null
+            const restoredAiDocResult = validMediaDraft.aiDocResult ?? null
+            const restoredSigData = validMediaDraft.signatureData ?? null
+            if (restoredDocPhoto && !isForeignContaminatedDocUrl(restoredDocPhoto)) {
+              nextDoc = restoredDocPhoto
+              docCameFromCurrentDraft = true
+              hasNewerLocalEdits = true
+              if (restoredAiDocResult) nextAiDocResult = restoredAiDocResult
+            }
+            if (!isReSignatureNeeded && !sig && restoredSigData) {
+              nextSigData = restoredSigData
+              hasNewerLocalEdits = true
+            }
+          } else if (serverDraft && serverDraftMs >= localTextMs && serverDraftMs > 0) {
+            // Alinha o timestamp local ao do servidor quando o servidor é mais recente
+            try {
+              localStorage.setItem(
+                `cf_precheckin_draft_${activeCode}_g${gIdx}`,
+                JSON.stringify({
+                  updatedAt: serverDraftMs,
+                  step: restoredDraftStep || 1,
+                  fullName: nextFullName,
+                  phone: nextPhone,
+                  email: nextEmail,
+                  document: nextDocument,
+                  birthDate: nextBirthDate,
+                  birthDateInput: nextBirthDateInput,
+                  gender: nextGender,
+                  cep: nextCep,
+                  street: nextStreet,
+                  streetNumber: nextStreetNumber,
+                  complement: nextComplement,
+                  neighborhood: nextNeighborhood,
+                  city: nextCity,
+                  state: nextState,
+                  address: nextAddress,
+                  travelReason: nextTravelReason,
+                  transportMethod: nextTransportMethod,
+                  estimatedArrivalTime: nextEstimatedArrivalTime,
+                  originCity: nextOriginCity,
+                  originState: nextOriginState,
+                  destinationCity: nextDestinationCity,
+                  destinationState: nextDestinationState,
+                  vehiclePlate: nextVehiclePlate,
+                  vehicleModel: nextVehicleModel,
+                  vehicleBrand: nextVehicleBrand,
+                  vehicleColor: nextVehicleColor,
+                  minorKinship: nextMinorKinship,
+                  optInMarketing: nextOptInMarketing,
+                  acceptedHouseRules: nextAcceptedHouseRules,
+                  acceptedContract: nextAcceptedContract,
+                  legalDeclarationAccepted: nextLegalDeclarationAccepted
+                })
+              )
+            } catch {}
           }
         }
       } catch {}
     }
 
-    // Detecção de cadastro prévio / hóspede frequente salvo
-    const hasPreviousProfile = Boolean(
-      (isTitular && (guest.fnhrCompleted || guest.id)) ||
-      (doc && gName && gDoc) ||
-      currentG?.hasCompletedCheckin
-    )
-    setIsReturningGuest(hasPreviousProfile)
-
-    if (currentG?.checkinCompletedAt || (isTitular && res.updatedAt)) {
-      setCompletedTimestamp(currentG?.checkinCompletedAt || res.updatedAt)
-    } else {
-      setCompletedTimestamp(null)
-    }
-
+    const hasRestoredDoc = Boolean(nextDoc)
     const urlStepParam = typeof window !== "undefined" ? Number(new URLSearchParams(window.location.search).get("step") || 0) : 0
     const hasUrlOtpParam = Boolean(urlOtp && urlOtp.length === 6)
 
+    let nextFinalStep = 1
     if (isReadOnlyDocument) {
       setIsCompleted(true)
       setIsEditing(false)
-      setStep(1)
+      nextFinalStep = 1
     } else if (isReSignatureNeeded) {
       setIsCompleted(false)
       setIsEditing(true)
-      // Fast-track: se já possui os dados cadastrais preservados e não há ?step= na URL, direciona diretamente para o Passo 3 (Assinatura)
-      const hasBaseData = Boolean(gName && gDoc && gPhone)
+      const hasBaseData = Boolean(nextFullName && nextDocument && nextPhone)
       if ((hasBaseData && !urlStepParam) || urlStepParam === 3 || hasUrlOtpParam) {
-        setStep(3)
+        nextFinalStep = 3
+      } else if (restoredDraftStep && (restoredDraftStep === 2 || (restoredDraftStep === 3 && hasRestoredDoc))) {
+        nextFinalStep = restoredDraftStep
       } else {
-        setStep(1)
+        nextFinalStep = 1
       }
     } else {
       setIsCompleted(fnhrDone)
       setIsEditing(!fnhrDone)
       if (!fnhrDone && (urlStepParam === 3 || hasUrlOtpParam)) {
-        setStep(3)
+        nextFinalStep = 3
       } else if (!fnhrDone && restoredDraftStep && (restoredDraftStep === 2 || (restoredDraftStep === 3 && hasRestoredDoc))) {
-        setStep(restoredDraftStep)
+        nextFinalStep = restoredDraftStep
       } else {
-        setStep(1)
+        nextFinalStep = 1
       }
       if (fnhrDone && typeof window !== "undefined") {
         try {
@@ -1312,77 +1531,254 @@ export default function GuestPreCheckin() {
         } catch {}
       }
     }
+
+    setFullName(nextFullName)
+    setPhone(nextPhone)
+    setEmail(nextEmail)
+    setDocument(nextDocument)
+    setBirthDate(nextBirthDate)
+    setBirthDateInput(nextBirthDateInput)
+    setGender(nextGender)
+    setAddress(nextAddress)
+    setStreet(nextStreet)
+    setStreetNumber(nextStreetNumber)
+    setComplement(nextComplement)
+    setNeighborhood(nextNeighborhood)
+    setCity(nextCity)
+    setState(nextState)
+    setCep(nextCep)
+    setTravelReason(nextTravelReason)
+    setTransportMethod(nextTransportMethod)
+    setEstimatedArrivalTime(nextEstimatedArrivalTime)
+    setOriginCity(nextOriginCity)
+    setOriginState(nextOriginState)
+    setDestinationCity(nextDestinationCity)
+    setDestinationState(nextDestinationState)
+    setMinorKinship(nextMinorKinship)
+    setMinorAuthDocPhoto(nextMinorAuthDocPhoto)
+    setOptInMarketing(nextOptInMarketing)
+    setAcceptedHouseRules(nextAcceptedHouseRules)
+    setAcceptedContract(nextAcceptedContract)
+    setLegalDeclarationAccepted(nextLegalDeclarationAccepted)
+    setVehiclePlate(nextVehiclePlate)
+    setVehicleModel(nextVehicleModel)
+    setVehicleBrand(nextVehicleBrand)
+    setVehicleColor(nextVehicleColor)
+    setSelfiePhoto(nextSelfie)
+    setDocPhoto(nextDoc)
+    setIsSavedDocFromProfile(Boolean(nextDoc && !docCameFromCurrentDraft))
+    setAiDocResult(nextAiDocResult)
+    setSignatureData(nextSigData)
+    setStep(nextFinalStep)
+
+    needsImmediateServerSyncRef.current = hasNewerLocalEdits
+    if (serverDraftMs > 0 && !hasNewerLocalEdits) {
+      setAutosaveStatus("saved")
+      setLastSavedAt(serverDraftMs)
+    } else {
+      setAutosaveStatus("idle")
+      setLastSavedAt(null)
+    }
+
+    // Sincronização direta com perfil permanente do hóspede autenticado (nunca sobrescreve dados já hidratados do rascunho)
+    if (isTitular) {
+      const hasDraftComplement = Boolean(serverDraft && hasDraftKey(serverDraft, "complement"))
+      const wasDocCleared = Boolean(serverDraft?.docPhotoCleared)
+      getCurrentSession().then((sessionUser) => {
+        if (!sessionUser) return
+        const sessCpf = String(sessionUser.document || "").replace(/\D/g, "")
+        const resCpf = String(gDoc || "").replace(/\D/g, "")
+        const sessEmail = String(sessionUser.email || "").trim().toLowerCase()
+        const resEmail = String(gEmail || "").trim().toLowerCase()
+        const sessPhone = String(sessionUser.phone || "").replace(/\D/g, "")
+        const resPhone = String(gPhone || "").replace(/\D/g, "")
+        const sessName = String(sessionUser.name || (sessionUser as any).fullName || "").trim().toLowerCase()
+        const resName = String(gName || "").trim().toLowerCase()
+        const isGenericResName = !resName || /^h[oó]spede\s*\d*$/i.test(resName)
+        const isSameSess = Boolean(
+          (sessCpf.length >= 8 && resCpf.length >= 8 && sessCpf === resCpf) ||
+          (sessEmail.includes("@") && resEmail.includes("@") && sessEmail === resEmail) ||
+          (sessPhone.length >= 8 && resPhone.length >= 8 && sessPhone === resPhone) ||
+          (sessName.length >= 5 && resName.length >= 5 && sessName === resName) ||
+          (!resCpf && !resEmail && !resPhone && isGenericResName)
+        )
+        if (!isSameSess) return
+
+        const sessNameVal = sessionUser.name || ""
+        const sessEmailVal = sessionUser.email || ""
+        const sessPhoneVal = sessionUser.phone || ""
+        const sessDocVal = sessionUser.document || ""
+        const sessBirthVal = sessionUser.birthDate || ""
+        const sessAddrVal = sessionUser.address || ""
+        const sessStreetVal = sessionUser.street || sessAddrVal
+        const sessNumVal = sessionUser.streetNumber || ""
+        const sessCompVal = sessionUser.complement || ""
+        const sessNeighVal = sessionUser.neighborhood || ""
+        const sessCityVal = sessionUser.city || ""
+        const sessStateVal = sessionUser.state || ""
+        const sessCepVal = sessionUser.cep || ""
+        const sessVeh = sessionUser.vehicle
+        const sessDocPhotoVal = sessionUser.docPhotoUrl || ""
+        const sessPhotoVal = sessionUser.photoUrl || ""
+
+        if (sessNameVal) setFullName(prev => prev || sessNameVal)
+        if (sessEmailVal) setEmail(prev => prev || sessEmailVal)
+        if (sessPhoneVal) setPhone(prev => prev || formatSmartPhone(sessPhoneVal))
+        if (sessDocVal) setDocument(prev => prev || formatCpfOrPassport(sessDocVal))
+        if (sessBirthVal) {
+          setBirthDate(prev => prev || toIsoDate(sessBirthVal))
+          setBirthDateInput(prev => prev || toDisplayDate(sessBirthVal))
+        }
+        if (sessAddrVal) {
+          setAddress(prev => prev || sessAddrVal)
+          setStreet(prev => prev || sessStreetVal)
+          if (sessNumVal) setStreetNumber(prev => prev || sessNumVal)
+          if (sessCompVal && !hasDraftComplement) setComplement(prev => prev || sessCompVal)
+          if (sessNeighVal) setNeighborhood(prev => prev || sessNeighVal)
+        }
+        if (sessCityVal) setCity(prev => prev || sessCityVal)
+        if (sessStateVal) setState(prev => prev || sessStateVal)
+        const sessCleanCep = String(sessCepVal).replace(/\D/g, "")
+        if (sessCleanCep && sessCleanCep !== "28035000") {
+          setCep(prev => prev || sessCepVal)
+        }
+        if (sessVeh?.plate && !nextVehiclePlate) {
+          const vPlate = sessVeh.plate
+          const vModel = sessVeh.model || ""
+          const vBrand = sessVeh.brand || ""
+          const vColor = sessVeh.color || ""
+          setVehiclePlate(prev => prev || vPlate)
+          setVehicleModel(prev => prev || vModel)
+          setVehicleBrand(prev => prev || vBrand)
+          setVehicleColor(prev => prev || vColor)
+          setTransportMethod(prev => prev || "Carro próprio")
+        }
+        if (!wasDocCleared && sessDocPhotoVal && !isForeignContaminatedDocUrl(sessDocPhotoVal)) {
+          setDocPhoto(prev => {
+            if (prev) return prev
+            setIsSavedDocFromProfile(true)
+            return sessDocPhotoVal
+          })
+        }
+        if (sessPhotoVal) {
+          setSelfiePhoto(prev => prev || sessPhotoVal)
+        }
+      }).catch(() => {})
+    }
+
+    // Detecção de cadastro prévio / hóspede frequente salvo
+    const hasPreviousProfile = Boolean(
+      (isTitular && (guest.fnhrCompleted || guest.id)) ||
+      (nextDoc && gName && gDoc) ||
+      currentG?.hasCompletedCheckin
+    )
+    setIsReturningGuest(hasPreviousProfile)
+
+    if (currentG?.checkinCompletedAt || (isTitular && res.updatedAt)) {
+      setCompletedTimestamp(currentG?.checkinCompletedAt || res.updatedAt)
+    } else {
+      setCompletedTimestamp(null)
+    }
   }
 
-  // Flush imediato ao ocultar aba (ex: alternar para o WhatsApp no celular para copiar o OTP) ou desmontar a página
+  // Flush imediato ao ocultar aba (ex: alternar para o WhatsApp no celular para copiar o OTP), fechar/recarregar ou voltar a ficar online
   useEffect(() => {
     if (typeof window === "undefined") return
     const handleVisibilityChange = () => {
       if (window.document.visibilityState === "hidden") {
+        flushPendingTextDraft({ keepalive: true })
+      }
+    }
+    const handlePageHide = () => flushPendingTextDraft({ keepalive: true })
+    const handleBeforeUnload = () => flushPendingTextDraft({ keepalive: true })
+    const handleOnline = () => {
+      if (pendingServerPayloadRef.current || autosaveStatus === "offline") {
         flushPendingTextDraft()
       }
     }
-    const handlePageHide = () => flushPendingTextDraft()
     window.document.addEventListener("visibilitychange", handleVisibilityChange)
     window.addEventListener("pagehide", handlePageHide)
+    window.addEventListener("beforeunload", handleBeforeUnload)
+    window.addEventListener("online", handleOnline)
     return () => {
       window.document.removeEventListener("visibilitychange", handleVisibilityChange)
       window.removeEventListener("pagehide", handlePageHide)
-      flushPendingTextDraft()
+      window.removeEventListener("beforeunload", handleBeforeUnload)
+      window.removeEventListener("online", handleOnline)
+      flushPendingTextDraft({ keepalive: true })
     }
-  }, [flushPendingTextDraft])
+  }, [flushPendingTextDraft, autosaveStatus])
 
-  // Auto-save leve (texto/campos cadastrais) com debounce de 380ms — evita bloquear a thread principal mobile a cada tecla
+  // Auto-save imediato no cadastro do hóspede (local + servidor: 0ms em seletores/etapas, 350ms em digitação contínua)
   useEffect(() => {
-    if (loading || isCompleted || !isEditing || typeof window === "undefined") return
+    if (
+      loading ||
+      isCompleted ||
+      !isEditing ||
+      isReadOnlyDocument ||
+      preCheckinBlockedByServer ||
+      isPreReservationRecordBlocked(reservation) ||
+      typeof window === "undefined"
+    ) {
+      return
+    }
     const activeCode = String(reservation?.code || code || "").trim().toUpperCase()
-    if (!activeCode || !selectedGuestIndex) return
+    const rawCodeForApi = String(reservation?.code || code || "").trim()
+    if (!activeCode || !rawCodeForApi || !selectedGuestIndex) return
 
     const draftKey = `cf_precheckin_draft_${activeCode}_g${selectedGuestIndex}`
-    const prevStepInfo = prevDraftStepRef.current
-    if (!prevStepInfo || prevStepInfo.key !== draftKey) {
-      // Primeira renderização deste hóspede após hidratação/troca de aba: registra a etapa inicial sem gravar rascunho não editado
+    const payload = buildCurrentDraftPayload()
+    const payloadHash = JSON.stringify(payload)
+    const discreteKey = JSON.stringify({
+      step,
+      gender,
+      minorKinship,
+      travelReason,
+      transportMethod,
+      estimatedArrivalTime,
+      optInMarketing,
+      acceptedHouseRules,
+      acceptedContract,
+      legalDeclarationAccepted,
+      hasAiDoc: Boolean(aiDocResult),
+      aiSummary: aiDocResult?.summary || ""
+    })
+
+    if (hydratedKeyRef.current !== draftKey) {
+      hydratedKeyRef.current = draftKey
       prevDraftStepRef.current = { key: draftKey, step }
+      lastSavedHashRef.current = payloadHash
+      prevDiscreteKeyRef.current = discreteKey
+      isHydratingRef.current = false
+
+      if (needsImmediateServerSyncRef.current) {
+        needsImmediateServerSyncRef.current = false
+        const syncPayload: Record<string, any> = {
+          ...payload,
+          ...(docPhoto && docPhoto.startsWith("data:") ? { docPhotoBase64: docPhoto } : {}),
+          ...(signatureData && signatureData.startsWith("data:image/") ? { signatureDraftBase64: signatureData } : {})
+        }
+        const syncGen = docUploadGenRef.current
+        void sendAutosaveToServer(rawCodeForApi, selectedGuestIndex, syncPayload).then((saved) => {
+          if (saved?.docPhotoUrl && docUploadGenRef.current === syncGen && docPhoto?.startsWith("data:")) {
+            setDocPhoto(saved.docPhotoUrl)
+          }
+        })
+      }
       return
     }
 
-    pendingTextDraftRef.current = {
-      key: draftKey,
-      payload: {
-        step,
-        fullName,
-        phone,
-        email,
-        document,
-        birthDate,
-        birthDateInput,
-        gender,
-        cep,
-        street,
-        streetNumber,
-        complement,
-        neighborhood,
-        city,
-        state,
-        address,
-        travelReason,
-        transportMethod,
-        estimatedArrivalTime,
-        originCity,
-        originState,
-        destinationCity,
-        destinationState,
-        vehiclePlate,
-        vehicleModel,
-        vehicleBrand,
-        vehicleColor,
-        acceptedHouseRules,
-        acceptedContract,
-        legalDeclarationAccepted
-      }
-    }
+    if (isHydratingRef.current) return
+    if (payloadHash === lastSavedHashRef.current) return
 
-    if (prevStepInfo.step !== step) {
+    lastSavedHashRef.current = payloadHash
+    pendingTextDraftRef.current = { key: draftKey, payload }
+    pendingServerPayloadRef.current = { code: rawCodeForApi, guestIndex: selectedGuestIndex, payload }
+
+    const discreteChanged = prevDiscreteKeyRef.current !== discreteKey
+    prevDiscreteKeyRef.current = discreteKey
+
+    if (prevDraftStepRef.current?.step !== step || discreteChanged) {
       prevDraftStepRef.current = { key: draftKey, step }
       flushPendingTextDraft()
       return
@@ -1392,15 +1788,40 @@ export default function GuestPreCheckin() {
       clearTimeout(draftDebounceTimerRef.current)
     }
     draftDebounceTimerRef.current = setTimeout(() => {
-      flushPendingTextDraft()
-    }, 380)
+      draftDebounceTimerRef.current = null
+      const pending = pendingTextDraftRef.current
+      if (pending) {
+        pendingTextDraftRef.current = null
+        try {
+          localStorage.setItem(
+            pending.key,
+            JSON.stringify({ ...pending.payload, updatedAt: Date.now() })
+          )
+        } catch {}
+      }
+    }, 180)
+
+    if (serverAutosaveTimerRef.current !== null) {
+      clearTimeout(serverAutosaveTimerRef.current)
+    }
+    serverAutosaveTimerRef.current = setTimeout(() => {
+      serverAutosaveTimerRef.current = null
+      const pendingSrv = pendingServerPayloadRef.current
+      if (pendingSrv) {
+        pendingServerPayloadRef.current = null
+        void sendAutosaveToServer(pendingSrv.code, pendingSrv.guestIndex, pendingSrv.payload, {
+          priorityLow: true
+        })
+      }
+    }, 350)
   }, [
-    loading, isCompleted, isEditing, reservation?.code, code, selectedGuestIndex, step,
+    loading, isCompleted, isEditing, isReadOnlyDocument, preCheckinBlockedByServer, reservation, code, selectedGuestIndex, step,
     fullName, phone, email, document, birthDate, birthDateInput, gender,
     cep, street, streetNumber, complement, neighborhood, city, state, address,
     travelReason, transportMethod, estimatedArrivalTime, originCity, originState,
     destinationCity, destinationState, vehiclePlate, vehicleModel, vehicleBrand, vehicleColor,
-    acceptedHouseRules, acceptedContract, legalDeclarationAccepted, flushPendingTextDraft
+    minorKinship, optInMarketing, acceptedHouseRules, acceptedContract, legalDeclarationAccepted, aiDocResult,
+    buildCurrentDraftPayload, flushPendingTextDraft, sendAutosaveToServer
   ])
 
   // Auto-save isolado de mídia pesada (foto do documento até 2.5MB e assinatura até 500KB) APENAS quando a mídia muda
@@ -1433,41 +1854,58 @@ export default function GuestPreCheckin() {
 
   useEffect(() => {
     let cancelled = false
-    if (code) {
+    const loadReservation = async () => {
+      if (!code) return
       const targetGuestIndex = selectedGuestIndex
+      const activeWait = inFlightAutosaveRef.current
+      if (activeWait) {
+        await Promise.race([activeWait, new Promise(r => setTimeout(r, 1500))])
+      }
+      if (cancelled) return
+
       const sp = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams()
       const queryToken = sp.get("token") || ""
-      const url = `/api/pms/pre-checkin/${code}${queryToken ? `?token=${encodeURIComponent(queryToken)}` : ""}`
+      const params = new URLSearchParams()
       if (queryToken) {
         setSignatureToken(queryToken)
+        params.set("token", queryToken)
       }
-      fetch(url)
-        .then(r => r.json())
-        .then(data => {
-          if (cancelled) return
-          if (data.tokenStatus) {
-            setTokenInfo(data.tokenStatus)
-            if (data.tokenStatus.valid && data.tokenStatus.expiresAt) {
-              setTokenExpiresAt(data.tokenStatus.expiresAt)
-              const diff = Math.floor((new Date(data.tokenStatus.expiresAt).getTime() - Date.now()) / 1000)
-              setIsTokenClockExpired(diff <= 0)
-            } else if (!data.tokenStatus.valid) {
-              setIsTokenClockExpired(true)
-            }
+      params.set("guest", String(targetGuestIndex))
+      const qs = params.toString()
+      const url = `/api/pms/pre-checkin/${encodeURIComponent(code)}${qs ? `?${qs}` : ""}`
+
+      try {
+        const r = await fetch(url)
+        const data = await r.json()
+        if (cancelled) return
+        setPreCheckinBlockedByServer(Boolean(data.preCheckinBlocked))
+        if (data.tokenStatus) {
+          setTokenInfo(data.tokenStatus)
+          if (data.tokenStatus.valid && data.tokenStatus.expiresAt) {
+            setTokenExpiresAt(data.tokenStatus.expiresAt)
+            const diff = Math.floor((new Date(data.tokenStatus.expiresAt).getTime() - Date.now()) / 1000)
+            setIsTokenClockExpired(diff <= 0)
+          } else if (!data.tokenStatus.valid) {
+            setIsTokenClockExpired(true)
           }
-          if (data.checkinProvider) {
-            setCheckinProvider(data.checkinProvider)
-          }
-          if (data.serproPrecheckinUrl) {
-            setSerproPrecheckinUrl(data.serproPrecheckinUrl)
-          }
-          if (data.reservation) {
-            setReservation(data.reservation)
-            loadGuestData(data, targetGuestIndex)
-          }
-        })
-        .catch(() => {})
+        }
+        if (data.checkinProvider) {
+          setCheckinProvider(data.checkinProvider)
+        }
+        if (data.serproPrecheckinUrl) {
+          setSerproPrecheckinUrl(data.serproPrecheckinUrl)
+        }
+        if (data.reservation) {
+          setReservation(data.reservation)
+          loadGuestData(data, targetGuestIndex)
+        }
+      } catch {
+        if (!cancelled && reservation) {
+          loadGuestData({ reservation, guests: guestList }, targetGuestIndex)
+        }
+      }
     }
+    void loadReservation()
 
     fetch("/api/settings")
       .then(r => r.json())
@@ -1632,7 +2070,12 @@ export default function GuestPreCheckin() {
     setIsDrawing(false)
     isDrawingRef.current = false
     if (canvasRef.current) {
-      setSignatureData(canvasRef.current.toDataURL("image/png"))
+      const dataUrl = canvasRef.current.toDataURL("image/png")
+      setSignatureData(dataUrl)
+      const activeCode = String(reservation?.code || code || "").trim()
+      if (activeCode && !isCompleted && isEditing && !isReadOnlyDocument && !isPreReservationRecordBlocked(reservation)) {
+        void sendAutosaveToServer(activeCode, selectedGuestIndex, { signatureDraftBase64: dataUrl })
+      }
     }
   }
 
@@ -1643,8 +2086,29 @@ export default function GuestPreCheckin() {
     if (ctx) {
       ctx.clearRect(0, 0, canvas.width, canvas.height)
       setSignatureData(null)
+      const activeCode = String(reservation?.code || code || "").trim()
+      if (activeCode && !isCompleted && isEditing && !isReadOnlyDocument && !isPreReservationRecordBlocked(reservation)) {
+        void sendAutosaveToServer(activeCode, selectedGuestIndex, { clearSignatureDraft: true })
+      }
     }
   }
+
+  // Redesenha a assinatura restaurada no canvas ao voltar para a Etapa 3 após recarregar
+  useEffect(() => {
+    if (step !== 3 || !signatureData || isDrawingRef.current) return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const img = new Image()
+    img.onload = () => {
+      if (isDrawingRef.current || !canvasRef.current) return
+      const c = canvasRef.current
+      const ctx = c.getContext("2d")
+      if (!ctx) return
+      ctx.clearRect(0, 0, c.width, c.height)
+      ctx.drawImage(img, 0, 0, c.width, c.height)
+    }
+    img.src = signatureData
+  }, [step, signatureData])
 
   const runAiDocInspection = async (base64String: string, fileNameStr: string) => {
     setAiInspectingDoc(true)
@@ -1728,10 +2192,47 @@ export default function GuestPreCheckin() {
 
   // Disparo automático da inspeção do documento ao navegar para a etapa de documento se a foto já existir
   useEffect(() => {
-    if (step === 2 && docPhoto && !aiDocResult && !aiInspectingDoc) {
+    if (step === 2 && docPhoto && !aiDocResult && !aiInspectingDoc && lastInspectedDocGenRef.current !== docUploadGenRef.current) {
+      lastInspectedDocGenRef.current = docUploadGenRef.current
       runAiDocInspection(docPhoto, "documento_hospede")
     }
   }, [step, docPhoto, aiDocResult, aiInspectingDoc])
+
+  const persistUploadedMediaNow = useStableCallback(
+    async (type: "doc" | "selfie" | "auth", base64Val: string) => {
+      const activeCode = String(reservation?.code || code || "").trim()
+      const canAutosaveNow = Boolean(
+        activeCode &&
+        !isCompleted &&
+        isEditing &&
+        !isReadOnlyDocument &&
+        !preCheckinBlockedByServer &&
+        !isPreReservationRecordBlocked(reservation)
+      )
+      if (!canAutosaveNow) return
+
+      const extraField: Record<string, any> =
+        type === "doc"
+          ? { docPhotoBase64: base64Val }
+          : type === "auth"
+          ? { minorAuthDocBase64: base64Val }
+          : { selfieBase64: base64Val }
+
+      const myDocGen = type === "doc" ? docUploadGenRef.current : -1
+      const myAuthGen = type === "auth" ? minorAuthUploadGenRef.current : -1
+
+      const saved = await sendAutosaveToServer(activeCode, selectedGuestIndex, {
+        ...buildCurrentDraftPayload(),
+        ...extraField
+      })
+
+      if (type === "doc" && saved?.docPhotoUrl && docUploadGenRef.current === myDocGen) {
+        setDocPhoto(saved.docPhotoUrl)
+      } else if (type === "auth" && saved?.minorAuthDocUrl && minorAuthUploadGenRef.current === myAuthGen) {
+        setMinorAuthDocPhoto(saved.minorAuthDocUrl)
+      }
+    }
+  )
 
   // Handle file uploads with automatic client-side WebP compression
   const handleFileUpload = async (
@@ -1749,8 +2250,12 @@ export default function GuestPreCheckin() {
     }
 
     if (type === "doc") {
+      docUploadGenRef.current += 1
+      lastInspectedDocGenRef.current = docUploadGenRef.current
       setIsSavedDocFromProfile(false)
       setAiDocResult(null)
+    } else if (type === "auth") {
+      minorAuthUploadGenRef.current += 1
     }
 
     setCompressing(true)
@@ -1766,6 +2271,7 @@ export default function GuestPreCheckin() {
           }
           setter(b64)
           setCompressing(false)
+          void persistUploadedMediaNow(type, b64)
           if (type === "doc") {
             await runAiDocInspection(b64, file.name)
           }
@@ -1781,6 +2287,7 @@ export default function GuestPreCheckin() {
         })
         payloadBase64 = result.base64
         setter(payloadBase64)
+        void persistUploadedMediaNow(type, payloadBase64)
       }
     } catch (err) {
       console.warn("Erro ao processar imagem, usando fallback FileReader:", err)
@@ -1788,6 +2295,8 @@ export default function GuestPreCheckin() {
       reader.onload = async () => {
         const b64 = reader.result as string
         setter(b64)
+        setCompressing(false)
+        void persistUploadedMediaNow(type, b64)
         if (type === "doc") {
           await runAiDocInspection(b64, file.name)
         }
@@ -2046,6 +2555,44 @@ export default function GuestPreCheckin() {
       clearTimeout(timeoutId)
       setLoading(false)
     }
+  }
+
+  const renderAutosaveStatusBadge = () => {
+    if (isCompleted || !isEditing || isReadOnlyDocument || autosaveStatus === "idle") return null
+    const savedTimeTitle = lastSavedAt
+      ? `Último salvamento às ${new Date(lastSavedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
+      : undefined
+    return (
+      <span
+        role="status"
+        aria-live="polite"
+        title={savedTimeTitle}
+        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold border transition-colors shrink-0 ${
+          autosaveStatus === "saving"
+            ? "bg-sky-50 text-sky-700 border-sky-200"
+            : autosaveStatus === "offline"
+            ? "bg-amber-50 text-amber-800 border-amber-200"
+            : "bg-emerald-50 text-emerald-700 border-emerald-200"
+        }`}
+      >
+        {autosaveStatus === "saving" ? (
+          <>
+            <RefreshCw className="w-2.5 h-2.5 animate-spin shrink-0" />
+            <span>Salvando...</span>
+          </>
+        ) : autosaveStatus === "offline" ? (
+          <>
+            <Clock className="w-2.5 h-2.5 shrink-0" />
+            <span>Salvo localmente • sincronizando...</span>
+          </>
+        ) : (
+          <>
+            <Check className="w-2.5 h-2.5 shrink-0" />
+            <span>Salvo no seu cadastro</span>
+          </>
+        )}
+      </span>
+    )
   }
 
   // ══════════════════════════════════════════════════════════════════════════════
@@ -2518,13 +3065,7 @@ export default function GuestPreCheckin() {
                     <button
                       key={g.index}
                       type="button"
-                      onClick={() => {
-                        setSelectedGuestIndex(g.index)
-                        setStep(1)
-                        if (reservation) {
-                          loadGuestData({ reservation, guests: guestList }, g.index)
-                        }
-                      }}
+                      onClick={() => handleSwitchGuest(g.index)}
                       className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all text-left flex items-center justify-between gap-2 border cursor-pointer min-w-0 ${
                         isCurrent
                           ? "bg-slate-900 text-white border-slate-900 shadow-sm"
@@ -2574,13 +3115,7 @@ export default function GuestPreCheckin() {
                         key={pg.index}
                         type="button"
                         size="sm"
-                        onClick={() => {
-                          setSelectedGuestIndex(pg.index)
-                          setStep(1)
-                          if (reservation) {
-                            loadGuestData({ reservation, guests: guestList }, pg.index)
-                          }
-                        }}
+                        onClick={() => handleSwitchGuest(pg.index)}
                         className="w-full sm:w-auto max-w-full whitespace-normal h-auto min-h-9 py-2 px-3 text-left leading-snug bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs gap-1.5 rounded-xl shadow-xs cursor-pointer"
                       >
                         <PenTool className="w-3.5 h-3.5 shrink-0" />
@@ -2605,13 +3140,7 @@ export default function GuestPreCheckin() {
                         key={pg.index}
                         type="button"
                         size="sm"
-                        onClick={() => {
-                          setSelectedGuestIndex(pg.index)
-                          setStep(1)
-                          if (reservation) {
-                            loadGuestData({ reservation, guests: guestList }, pg.index)
-                          }
-                        }}
+                        onClick={() => handleSwitchGuest(pg.index)}
                         className="w-full sm:w-auto max-w-full whitespace-normal h-auto min-h-9 py-2 px-3 text-left leading-snug bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs gap-1.5 rounded-xl shadow-xs cursor-pointer"
                       >
                         <User className="w-3.5 h-3.5 shrink-0" />
@@ -3261,13 +3790,7 @@ export default function GuestPreCheckin() {
                       key={og.index}
                       type="button"
                       size="sm"
-                      onClick={() => {
-                        setSelectedGuestIndex(og.index)
-                        setStep(1)
-                        if (reservation) {
-                          loadGuestData({ reservation, guests: guestList }, og.index)
-                        }
-                      }}
+                      onClick={() => handleSwitchGuest(og.index)}
                       className="w-full sm:w-auto max-w-full whitespace-normal h-auto min-h-9 py-2 px-3 text-left leading-snug bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold gap-1.5 rounded-xl shadow-xs cursor-pointer"
                     >
                       <PenTool className="w-3.5 h-3.5 shrink-0" />
@@ -3333,13 +3856,7 @@ export default function GuestPreCheckin() {
                   <button
                     key={g.index}
                     type="button"
-                    onClick={() => {
-                      setSelectedGuestIndex(g.index)
-                      setStep(1)
-                      if (reservation) {
-                        loadGuestData({ reservation, guests: guestList }, g.index)
-                      }
-                    }}
+                    onClick={() => handleSwitchGuest(g.index)}
                     className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all text-left flex items-center justify-between gap-2 border cursor-pointer min-w-0 ${
                       isCurrent
                         ? "bg-slate-900 text-white border-slate-900 shadow-sm"
@@ -3409,7 +3926,10 @@ export default function GuestPreCheckin() {
         </div>
 
         {/* Form Container */}
-        <Card className="bg-white border border-slate-200/80 rounded-3xl p-4 sm:p-7 shadow-xl">
+        <Card
+          onBlurCapture={() => flushPendingTextDraft()}
+          className="bg-white border border-slate-200/80 rounded-3xl p-4 sm:p-7 shadow-xl"
+        >
           {/* ── Passo 1: Dados Pessoais & Endereço ────────────────────────── */}
           {step === 1 && (
             <div className="space-y-4 sm:space-y-5">
@@ -3418,11 +3938,14 @@ export default function GuestPreCheckin() {
                   <User className="w-4 h-4 text-sky-600 shrink-0" />
                   <span>{isGovTriagemMode ? "1. Triagem Rápida da Portaria Soho & Garagem" : "1. Dados Cadastrais do Hóspede"}</span>
                 </h3>
-                {(guestCode || reservation?.guestCode) && (
-                  <Badge className="bg-slate-100 text-slate-800 border-slate-200 text-[10px] font-mono font-bold">
-                    {guestCode || reservation?.guestCode}
-                  </Badge>
-                )}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {renderAutosaveStatusBadge()}
+                  {(guestCode || reservation?.guestCode) && (
+                    <Badge className="bg-slate-100 text-slate-800 border-slate-200 text-[10px] font-mono font-bold">
+                      {guestCode || reservation?.guestCode}
+                    </Badge>
+                  )}
+                </div>
               </div>
 
               {isGovTriagemMode && (
@@ -3561,7 +4084,14 @@ export default function GuestPreCheckin() {
                               type="button"
                               variant="outline"
                               size="sm"
-                              onClick={() => setMinorAuthDocPhoto(null)}
+                              onClick={() => {
+                                minorAuthUploadGenRef.current += 1
+                                setMinorAuthDocPhoto(null)
+                                const activeCode = String(reservation?.code || code || "").trim()
+                                if (activeCode && !isCompleted && isEditing && !isReadOnlyDocument && !isPreReservationRecordBlocked(reservation)) {
+                                  void sendAutosaveToServer(activeCode, selectedGuestIndex, { clearMinorAuthDoc: true })
+                                }
+                              }}
                               className="text-[11px] h-7 px-2.5 border-rose-300 text-rose-800 hover:bg-rose-100 font-bold rounded-lg shrink-0"
                             >
                               Trocar Foto
@@ -4037,11 +4567,14 @@ export default function GuestPreCheckin() {
                   <FileText className="w-5 h-5 text-sky-600 shrink-0" />
                   <span>2. Documento Pessoal de Identidade ou CNH</span>
                 </h3>
-                {docPhoto && isSavedDocFromProfile && (
-                  <Badge className="bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-[10px] py-0.5 px-2.5 shadow-none">
-                    ✓ Recuperado do seu cadastro
-                  </Badge>
-                )}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {renderAutosaveStatusBadge()}
+                  {docPhoto && isSavedDocFromProfile && (
+                    <Badge className="bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-[10px] py-0.5 px-2.5 shadow-none">
+                      ✓ Recuperado do seu cadastro
+                    </Badge>
+                  )}
+                </div>
               </div>
 
               {docPhoto && isSavedDocFromProfile ? (
@@ -4106,9 +4639,15 @@ export default function GuestPreCheckin() {
                         variant="outline" 
                         size="sm" 
                         onClick={() => {
+                          docUploadGenRef.current += 1
+                          lastInspectedDocGenRef.current = -1
                           setDocPhoto(null)
                           setIsSavedDocFromProfile(false)
                           setAiDocResult(null)
+                          const activeCode = String(reservation?.code || code || "").trim()
+                          if (activeCode && !isCompleted && isEditing && !isReadOnlyDocument && !isPreReservationRecordBlocked(reservation)) {
+                            void sendAutosaveToServer(activeCode, selectedGuestIndex, { clearDocPhoto: true })
+                          }
                         }}
                         className="border-slate-200 text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 rounded-xl"
                       >
@@ -4433,11 +4972,12 @@ export default function GuestPreCheckin() {
           {/* ── Passo 3: Assinatura Digital & Validade Jurídica de 2 Horas ── */}
           {step === 3 && (
             <div className="space-y-4 sm:space-y-5">
-              <div className="border-b border-slate-100 pb-3">
+              <div className="border-b border-slate-100 pb-3 flex items-center justify-between gap-2 flex-wrap">
                 <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
                   <PenTool className="w-4 h-4 text-sky-600 shrink-0" />
                   <span>{isGovTriagemMode ? "3. Regras do Condomínio Soho & Prosseguir para o Gov.br" : "3. Assinatura Digital com Validade Jurídica"}</span>
                 </h3>
+                {renderAutosaveStatusBadge()}
               </div>
 
               {isGovTriagemMode ? (

@@ -79,10 +79,15 @@ import {
   buildCompatGenerateContentData,
   normalizeGeminiModel,
   isLegacyOrRestrictedGeminiModel,
+  GEMINI_LITE_MODEL,
   GEMINI_FLASH_MODEL,
+  GEMINI_ARGON_MODEL,
   GEMINI_REASONING_MODEL,
+  GEMINI_LITE_FALLBACK_CHAIN,
   GEMINI_FLASH_FALLBACK_CHAIN,
-  GEMINI_INTERACTIONS_PROTOCOL
+  GEMINI_INTERACTIONS_PROTOCOL,
+  getGeminiTelemetrySnapshot,
+  clearGeminiCooldowns
 } from "./gemini-interactions-client.mjs";
 import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
 import {
@@ -157,7 +162,8 @@ import {
   hasPdfAlreadyBeenSentOrInFlight,
   evaluateStayContactEligibility,
   sanitizeRequesterStayQueues,
-  matchClientPhone
+  matchClientPhone,
+  markReservationConfirmationDispatched
 } from "./zapi-service.mjs";
 import {
   initMaidAutomationEngine,
@@ -8996,6 +9002,7 @@ export async function reconcileFromAuditLogs(db, pgPool) {
       if (d.companyId) r.companyId = Number(d.companyId);
       if (d.companyName) r.companyName = d.companyName;
       if (d.requesterInfo) r.requesterInfo = d.requesterInfo;
+      if (d.channel) r.channel = d.channel;
       if (d.dailyRate !== undefined && d.dailyRate !== null) r.dailyRate = Number(d.dailyRate);
       if (Array.isArray(d.dailyRates) && d.dailyRates.length > 0) r.dailyRates = d.dailyRates;
       if (Array.isArray(d.payments) && d.payments.length > 0) r.payments = d.payments;
@@ -9083,7 +9090,16 @@ export async function reconcileFromAuditLogs(db, pgPool) {
         if (ch.field === "requesterType") r.requesterType = ch.newValue;
         if (ch.field === "companyName") r.companyName = ch.newValue;
         if (ch.field === "companyId") r.companyId = Number(ch.newValue);
-        if (ch.field === "channel") r.channel = ch.newValue;
+        if (ch.field === "channel" && ch.newValue) {
+          const chLow = String(ch.newValue).toLowerCase().trim();
+          if (chLow.includes("whatsapp")) r.channel = "whatsapp";
+          else if (chLow.includes("booking")) r.channel = "booking";
+          else if (chLow.includes("airbnb")) r.channel = "airbnb";
+          else if (chLow.includes("b2b") || chLow.includes("corporat") || chLow.includes("agenc")) r.channel = "b2b";
+          else if (chLow.includes("site")) r.channel = "site";
+          else if (chLow.includes("diret")) r.channel = "direta";
+          else r.channel = ch.newValue;
+        }
         if (ch.field === "paymentMethod") r.paymentMethod = ch.newValue;
         if (ch.field === "status") {
           r.status = (ch.newValue || "").toLowerCase().includes("canc") ? "cancelada" : "confirmada";
@@ -9196,6 +9212,15 @@ export async function reconcileFromAuditLogs(db, pgPool) {
             if (!merged.guestEmail && existing.guestEmail) merged.guestEmail = existing.guestEmail;
             if ((!merged.guests || merged.guests.length === 0) && existing.guests && existing.guests.length > 0) merged.guests = existing.guests;
           }
+          if (existing._manualChannelProtected && existing.channel && (!r._manualChannelUpdatedAt || (existing._manualChannelUpdatedAt && existing._manualChannelUpdatedAt >= (r._manualChannelUpdatedAt || logDate)))) {
+            merged.channel = existing.channel;
+            merged._manualChannelProtected = true;
+            if (existing._manualChannelUpdatedAt) merged._manualChannelUpdatedAt = existing._manualChannelUpdatedAt;
+            if (Array.isArray(merged.dailyRates) && merged.dailyRates.length > 0 && Array.isArray(existing.dailyRates)) {
+              const exRateMap = new Map(existing.dailyRates.map(d => [d?.date, d?.channel]));
+              merged.dailyRates = merged.dailyRates.map(d => (d && exRateMap.get(d.date) ? { ...d, channel: exRateMap.get(d.date) } : d));
+            }
+          }
           if (!merged.roomReadySentDate && existing.roomReadySentDate) {
             merged.roomReadySentDate = existing.roomReadySentDate;
             merged.roomReadySentAt = merged.roomReadySentAt || existing.roomReadySentAt;
@@ -9203,6 +9228,22 @@ export async function reconcileFromAuditLogs(db, pgPool) {
           if (!merged.morningEmailSentDate && existing.morningEmailSentDate) {
             merged.morningEmailSentDate = existing.morningEmailSentDate;
             merged.morningEmailSentAt = merged.morningEmailSentAt || existing.morningEmailSentAt;
+          }
+          if (!merged.confirmationWhatsappSentAt && existing.confirmationWhatsappSentAt) {
+            merged.confirmationWhatsappSentAt = existing.confirmationWhatsappSentAt;
+          }
+          if (Array.isArray(existing.confirmationSentPhones) && existing.confirmationSentPhones.length > 0) {
+            const mSet = new Set(Array.isArray(merged.confirmationSentPhones) ? merged.confirmationSentPhones : []);
+            for (const p of existing.confirmationSentPhones) mSet.add(p);
+            merged.confirmationSentPhones = Array.from(mSet);
+          }
+          if (!merged.manualPdfSentAt && existing.manualPdfSentAt) {
+            merged.manualPdfSentAt = existing.manualPdfSentAt;
+          }
+          if (Array.isArray(existing.manualPdfSentPhones) && existing.manualPdfSentPhones.length > 0) {
+            const pSet = new Set(Array.isArray(merged.manualPdfSentPhones) ? merged.manualPdfSentPhones : []);
+            for (const p of existing.manualPdfSentPhones) pSet.add(p);
+            merged.manualPdfSentPhones = Array.from(pSet);
           }
           if (!merged.fnhrCompleted && existing.fnhrCompleted && !r.needsReSignature) {
             merged.fnhrCompleted = existing.fnhrCompleted;
@@ -9249,6 +9290,32 @@ export async function reconcileFromAuditLogs(db, pgPool) {
             existing.morningEmailSentDate = r.morningEmailSentDate;
             existing.morningEmailSentAt = r.morningEmailSentAt || existing.morningEmailSentAt;
             changed = true;
+          }
+          if (r.confirmationWhatsappSentAt && !existing.confirmationWhatsappSentAt) {
+            existing.confirmationWhatsappSentAt = r.confirmationWhatsappSentAt;
+            changed = true;
+          }
+          if (Array.isArray(r.confirmationSentPhones) && r.confirmationSentPhones.length > 0) {
+            if (!Array.isArray(existing.confirmationSentPhones)) existing.confirmationSentPhones = [];
+            for (const p of r.confirmationSentPhones) {
+              if (!existing.confirmationSentPhones.includes(p)) {
+                existing.confirmationSentPhones.push(p);
+                changed = true;
+              }
+            }
+          }
+          if (r.manualPdfSentAt && !existing.manualPdfSentAt) {
+            existing.manualPdfSentAt = r.manualPdfSentAt;
+            changed = true;
+          }
+          if (Array.isArray(r.manualPdfSentPhones) && r.manualPdfSentPhones.length > 0) {
+            if (!Array.isArray(existing.manualPdfSentPhones)) existing.manualPdfSentPhones = [];
+            for (const p of r.manualPdfSentPhones) {
+              if (!existing.manualPdfSentPhones.includes(p)) {
+                existing.manualPdfSentPhones.push(p);
+                changed = true;
+              }
+            }
           }
         }
       }
@@ -16569,37 +16636,7 @@ export function checkYouthLocalRisk({ birthDate, city, address, phone, state, or
   };
 }
 
-// ── Telemetria leve em memória de chamadas reais de IA (para /ia-status) ─────
-const _aiRuntimeTelemetry = {
-  maxEntries: 30,
-  calls: []
-};
-
-function recordAiRuntimeCall({
-  module = "gemini_core",
-  model = "unknown",
-  protocol = GEMINI_INTERACTIONS_PROTOCOL,
-  ok = false,
-  status = null,
-  latencyMs = 0,
-  error = null,
-  keySource = null
-} = {}) {
-  _aiRuntimeTelemetry.calls.unshift({
-    at: new Date().toISOString(),
-    module,
-    model,
-    protocol,
-    ok: Boolean(ok),
-    status: status ?? (ok ? 200 : null),
-    latencyMs: Math.max(0, Math.round(Number(latencyMs) || 0)),
-    error: error ? String(error).slice(0, 260) : null,
-    keySource
-  });
-  if (_aiRuntimeTelemetry.calls.length > _aiRuntimeTelemetry.maxEntries) {
-    _aiRuntimeTelemetry.calls.length = _aiRuntimeTelemetry.maxEntries;
-  }
-}
+// ── Telemetria leve em memória centralizada em gemini-interactions-client.mjs ──
 
 function maskGeminiKey(rawKey) {
   const k = String(rawKey || "").trim();
@@ -16808,9 +16845,13 @@ const AI_STATUS_OVERVIEW_CACHE_MS = 5 * 60 * 1000;
 // ── Helper Universal para Chamadas Google Gemini AI via Interactions API (v1beta) ──
 let _geminiListModelsCache = { key: null, expiresAt: 0, candidates: null };
 
-async function getGeminiCandidateEndpoints(apiKey) {
+async function getGeminiCandidateEndpoints(apiKey, role = "flash") {
+  if (role === "lite") {
+    return GEMINI_LITE_FALLBACK_CHAIN.map(model => ({ ver: "v1beta", model }));
+  }
+
   let savedModel = db.settings?.geminiModel;
-  // Auto-migra modelos legados/restritos (2.5, 2.0, 1.5, lite, 8b) para gemini-3.8-flash
+  // Auto-migra modelos legados/restritos (2.5, 2.0, 1.5, 8b) para gemini-3.8-flash
   if (savedModel && isLegacyOrRestrictedGeminiModel(savedModel)) {
     savedModel = GEMINI_FLASH_MODEL;
     if (db.settings) db.settings.geminiModel = GEMINI_FLASH_MODEL;
@@ -16820,7 +16861,7 @@ async function getGeminiCandidateEndpoints(apiKey) {
   const modelOrder = [
     primaryModel,
     ...GEMINI_FLASH_FALLBACK_CHAIN.filter(m => m !== primaryModel)
-  ];
+  ].slice(0, 2);
 
   const candidates = modelOrder.map(model => ({ ver: "v1beta", model }));
   _geminiListModelsCache = {
@@ -16831,10 +16872,21 @@ async function getGeminiCandidateEndpoints(apiKey) {
   return candidates;
 }
 
-async function callGeminiGenerateContent(apiKey, contents, telemetryModule = "gemini_core") {
-  const candidates = await getGeminiCandidateEndpoints(apiKey);
+async function callGeminiGenerateContent(apiKey, contents, telemetryModule = "gemini_core", options = {}) {
+  const {
+    role = "flash",
+    thinkingLevel = null,
+    signal = null,
+    timeoutMs = null,
+    maxOutputTokens = null
+  } = options || {};
+  const candidates = await getGeminiCandidateEndpoints(apiKey, role);
   const keyInfo = resolvePrimaryGeminiKeyInfo();
   const input = convertLegacyContentsToInteractionsInput(contents);
+  const effectiveThinking = thinkingLevel ?? (role === "lite" ? "minimal" : "low");
+  const defaultMaxOut = role === "lite" ? 2048 : 4096;
+  const effectiveMaxOut = maxOutputTokens ?? defaultMaxOut;
+  const effectiveTimeout = timeoutMs ?? (role === "lite" ? 15000 : 22000);
   let lastError = null;
   let lastStatus = null;
   const startedAll = Date.now();
@@ -16847,27 +16899,21 @@ async function callGeminiGenerateContent(apiKey, contents, telemetryModule = "ge
         model,
         input,
         store: false,
-        thinkingLevel: "low",
-        maxOutputTokens: isGemini4 ? 16384 : 8192,
-        timeoutMs: isGemini4 ? 30000 : 20000
+        thinkingLevel: effectiveThinking,
+        maxOutputTokens: isGemini4 ? Math.max(effectiveMaxOut, 4096) : effectiveMaxOut,
+        timeoutMs: isGemini4 ? Math.max(effectiveTimeout, 30000) : effectiveTimeout,
+        telemetryModule,
+        keySourceLabel: keyInfo.primarySourceLabel,
+        signal
       });
 
       if (res.ok && res.text) {
         if (!db.settings) db.settings = {};
-        if (!db.settings.geminiModel || isLegacyOrRestrictedGeminiModel(db.settings.geminiModel)) {
+        if (role !== "lite" && (!db.settings.geminiModel || isLegacyOrRestrictedGeminiModel(db.settings.geminiModel))) {
           db.settings.geminiModel = model.includes("lite") ? GEMINI_FLASH_MODEL : model;
           db.settings.geminiApiVersion = ver;
           saveDatabase();
         }
-        recordAiRuntimeCall({
-          module: telemetryModule,
-          model,
-          protocol: GEMINI_INTERACTIONS_PROTOCOL,
-          ok: true,
-          status: res.status,
-          latencyMs: res.latencyMs,
-          keySource: keyInfo.primarySourceLabel
-        });
         return {
           ok: true,
           text: res.text,
@@ -16877,28 +16923,21 @@ async function callGeminiGenerateContent(apiKey, contents, telemetryModule = "ge
           ver,
           protocol: GEMINI_INTERACTIONS_PROTOCOL,
           latencyMs: res.latencyMs,
-          status: res.status
+          status: res.status,
+          usage: res.usage || null
         };
       }
 
       const msg = res.error || (res.ok ? "Resposta vazia da Interactions API" : `Status ${res.status}`);
       lastError = msg;
       lastStatus = res.status;
-      console.warn(`[Gemini Candidate] ${model} (${GEMINI_INTERACTIONS_PROTOCOL}) -> Status ${res.status || "ERR"}: ${msg}`);
+      if (!res.skippedByCooldown) {
+        console.warn(`[Gemini Candidate] ${model} (${GEMINI_INTERACTIONS_PROTOCOL}) -> Status ${res.status || "ERR"}: ${msg}`);
+      }
 
-      // Erros definitivos de faturamento ou chave inválida não melhoram tentando outros modelos com a mesma chave
-      if (res.status === 401 || res.status === 402 || res.status === 403) {
-        recordAiRuntimeCall({
-          module: telemetryModule,
-          model,
-          protocol: GEMINI_INTERACTIONS_PROTOCOL,
-          ok: false,
-          status: res.status,
-          latencyMs: res.latencyMs,
-          error: msg,
-          keySource: keyInfo.primarySourceLabel
-        });
-        return { ok: false, error: msg, status: res.status, model, ver, protocol: GEMINI_INTERACTIONS_PROTOCOL, latencyMs: res.latencyMs };
+      // Erros definitivos de faturamento, chave inválida ou abort externo não melhoram tentando outros modelos
+      if (res.aborted || res.status === 401 || res.status === 402 || res.status === 403) {
+        return { ok: false, error: msg, status: res.status, aborted: Boolean(res.aborted), model, ver, protocol: GEMINI_INTERACTIONS_PROTOCOL, latencyMs: res.latencyMs };
       }
     } catch (e) {
       lastError = e.message;
@@ -16907,17 +16946,6 @@ async function callGeminiGenerateContent(apiKey, contents, telemetryModule = "ge
   }
 
   const totalLatencyMs = Date.now() - startedAll;
-  recordAiRuntimeCall({
-    module: telemetryModule,
-    model: candidates[0]?.model || GEMINI_FLASH_MODEL,
-    protocol: GEMINI_INTERACTIONS_PROTOCOL,
-    ok: false,
-    status: lastStatus,
-    latencyMs: totalLatencyMs,
-    error: lastError || "Falha em todos os candidatos Gemini",
-    keySource: keyInfo.primarySourceLabel
-  });
-
   return { ok: false, error: lastError || "Não foi possível conectar a nenhum modelo Gemini.", status: lastStatus, latencyMs: totalLatencyMs };
 }
 
@@ -17172,7 +17200,7 @@ export function compareBirthDates(docBirthDate, expectedBirthDate) {
   return isoDoc === isoExp;
 }
 
-async function evaluateGuestIdentityWithAI({ fullName, document, birthDate, selfieBase64, docPhotoBase64, selfieUrl, docPhotoUrl }) {
+async function evaluateGuestIdentityWithAI({ fullName, document, birthDate, selfieBase64, docPhotoBase64, selfieUrl, docPhotoUrl, signal = null, timeoutMs = 10000 }) {
   const apiKey = (process.env.NODE_ENV === "test" || process.env.PORT === "5055")
     ? null
     : (process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY);
@@ -17233,7 +17261,11 @@ Tarefas:
     addImagePart(docPhotoBase64);
     addImagePart(selfieBase64);
 
-    const geminiResult = await callGeminiGenerateContent(apiKey, [{ parts }]);
+    const geminiResult = await callGeminiGenerateContent(apiKey, [{ parts }], "precheckin_ocr", {
+      role: "flash",
+      signal,
+      timeoutMs
+    });
 
     if (geminiResult.ok) {
       const data = geminiResult.data;
@@ -17300,7 +17332,9 @@ export async function inspectDocumentWithAI({
   originState = "",
   state = "",
   cep = "",
-  fileUrl = ""
+  fileUrl = "",
+  signal = null,
+  timeoutMs = 10000
 }) {
   let effectiveFile = fileBase64 || documentFile || fileUrl || "";
   const effectiveName = providedName || declaredName;
@@ -17877,7 +17911,7 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
         }
       ];
 
-      const aiRes = await callGeminiGenerateContent(apiKey, [{ parts }]);
+      const aiRes = await callGeminiGenerateContent(apiKey, [{ parts }], "precheckin_ocr", { role: "flash", signal, timeoutMs });
       if (aiRes.ok && aiRes.data) {
         const rawText = aiRes.data.candidates?.[0]?.content?.parts?.[0]?.text || "";
         const jsonMatch = rawText.match(/\{[\s\S]*\}/);
@@ -18786,7 +18820,7 @@ async function flushPgState() {
 // ── Pruning Engine — Limita coleções em memória e compacta db_state para proteger PostgreSQL (256MB RAM) ──
 function pruneDatabase() {
   const LIMITS = {
-    whatsappHistory: 300,
+    whatsappHistory: 1500,
     whatsappConversations: 120,
     whatsappQueue: 500,
     whatsappInboundMessages: 150,
@@ -18806,7 +18840,7 @@ function pruneDatabase() {
     emailQueue: 40,
     serviceOrders: 500,
     flatDiaryEntries: 800,
-    auditLogs: 100,
+    auditLogs: 250,
     notifications: 150,
     nfseRetryQueue: 100,
     periodicExecutions: 100,
@@ -24433,6 +24467,16 @@ function getRequestsForDate(dateStr, isNested = false) {
     return cleaned.length > 0 ? cleaned : null;
   };
 
+  const toBrlDateStr = (val) => {
+    if (!val) return null;
+    if (typeof getExecutionDateStr === "function") return getExecutionDateStr(val);
+    const s = String(val).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const ms = Date.parse(s);
+    if (!Number.isNaN(ms)) return new Date(ms - 3 * 3600 * 1000).toISOString().substring(0, 10);
+    return s.substring(0, 10);
+  };
+
   // Busca observação manual de card anterior do mesmo flat que ficou pendente (não limpo) até ser concluído
   const findUncleanedPriorManualNote = (fNumber, fId, targetDate) => {
     if (typeof getTodayStr === "function" && targetDate < getTodayStr()) return null;
@@ -24453,8 +24497,8 @@ function getRequestsForDate(dateStr, isNested = false) {
         c.source !== "manual_instruction" &&
         c.type !== "instruction" &&
         c.type !== "bed_adjustment_only" &&
-        (c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate)) >= r.requestDate &&
-        (c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate)) <= targetDate &&
+        (c.effectiveDate || (c.completedAt ? toBrlDateStr(c.completedAt) : c.requestDate)) >= r.requestDate &&
+        (c.effectiveDate || (c.completedAt ? toBrlDateStr(c.completedAt) : c.requestDate)) <= targetDate &&
         c.status === "clean"
       );
       return !alreadyResolvedAfter;
@@ -24668,7 +24712,7 @@ function getRequestsForDate(dateStr, isNested = false) {
         c.source !== "manual_instruction" &&
         c.type !== "instruction" &&
         c.type !== "bed_adjustment_only" &&
-        (c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate)) >= resDate &&
+        (c.effectiveDate || (c.completedAt ? toBrlDateStr(c.completedAt) : c.requestDate)) >= resDate &&
         c.status === "clean"
       );
 
@@ -24696,6 +24740,15 @@ function getRequestsForDate(dateStr, isNested = false) {
           arrivingNote = parts.join(" • ");
         }
 
+        const isFutureResDate = typeof getTodayStr === "function" && resDate > getTodayStr();
+        const actualOutBrl = pmsRes.actualCheckoutAt ? toBrlDateStr(pmsRes.actualCheckoutAt) : null;
+        const isValidActualOut = !actualOutBrl || actualOutBrl >= resDate || Boolean(pmsRes.earlyCheckout);
+        const isConfirmedPmsCheckout = Boolean(
+          !isFutureResDate &&
+          isValidActualOut &&
+          (pmsRes.checkoutDone || pmsRes.status === "completed" || pmsRes.status === "checked_out" || pmsRes.actualCheckoutAt)
+        );
+
         const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
         const card = {
           id: maxId + 1,
@@ -24707,7 +24760,9 @@ function getRequestsForDate(dateStr, isNested = false) {
           assignedUserId: null,
           assignedUsername: null,
           assignedUserName: null,
-          isVacant: false,
+          isVacant: isConfirmedPmsCheckout,
+          isVacantExplicitlySet: isConfirmedPmsCheckout,
+          vacantSource: isConfirmedPmsCheckout ? (pmsRes.checkoutMethod || "reception_checkout") : null,
           isPriority: Boolean(pmsRes.isPriority),
           isExtended: false,
           twinBeds: nextResHasTwin,
@@ -24877,7 +24932,7 @@ function getRequestsForDate(dateStr, isNested = false) {
     const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
     const isFutureDate = typeof getTodayStr === "function" && dateStr > getTodayStr();
     let resolvedStatus = existingCleaning ? existingCleaning.status : (auditCleanEvent ? "clean" : "dirty");
-    if (isFutureDate && resolvedStatus === "clean" && (!existingCleaning?.completedAt || existingCleaning.completedAt.substring(0, 10) < dateStr)) {
+    if (isFutureDate && resolvedStatus === "clean" && (!existingCleaning?.completedAt || toBrlDateStr(existingCleaning.completedAt) < dateStr)) {
       resolvedStatus = "dirty";
     }
 
@@ -25005,7 +25060,7 @@ function getRequestsForDate(dateStr, isNested = false) {
         existingCleaning.smokedInRoom = resolvedSmoked;
         existingCleaning.guestSmoked = resolvedSmoked;
       }
-      if (isFutureDate && existingCleaning.status === "clean" && (!existingCleaning.completedAt || existingCleaning.completedAt.substring(0, 10) < dateStr)) {
+      if (isFutureDate && existingCleaning.status === "clean" && (!existingCleaning.completedAt || toBrlDateStr(existingCleaning.completedAt) < dateStr)) {
         existingCleaning.status = "dirty";
         existingCleaning.isPriority = false;
         delete existingCleaning.priorityReason;
@@ -25154,9 +25209,9 @@ function getRequestsForDate(dateStr, isNested = false) {
     if (isOrphanCheckoutRequest(r, fNumber)) continue;
     if (!existingFlatNumbersForDate.has(fNumber)) {
       const execDate = r.effectiveDate ||
-        (r.completedAt ? r.completedAt.substring(0, 10) : null) ||
-        (r.cleaningStartedAt ? r.cleaningStartedAt.substring(0, 10) : null) ||
-        (r.willCleanAt ? r.willCleanAt.substring(0, 10) : null);
+        (r.completedAt ? toBrlDateStr(r.completedAt) : null) ||
+        (r.cleaningStartedAt ? toBrlDateStr(r.cleaningStartedAt) : null) ||
+        (r.willCleanAt ? toBrlDateStr(r.willCleanAt) : null);
 
       if (execDate === dateStr && r.requestDate < dateStr) {
         requestsForDate.push({
@@ -25204,7 +25259,7 @@ function getRequestsForDate(dateStr, isNested = false) {
         if (String(c.flatNumber) !== fNumber && c.flatId !== r.flatId) return false;
         if (c.isInstructionOnly || c.isBedAdjustmentOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only") return false;
         if (c.status !== "clean") return false;
-        const cExecDate = c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate);
+        const cExecDate = c.effectiveDate || (c.completedAt ? toBrlDateStr(c.completedAt) : c.requestDate);
         return Boolean(cExecDate && cExecDate >= r.requestDate && cExecDate <= dateStr);
       });
       if (alreadyCleanedOnOrAfter) return false;
@@ -25254,8 +25309,47 @@ function getRequestsForDate(dateStr, isNested = false) {
           }
         }
 
+        const isPrevStayover = Boolean(prevReq.source === "stayover" || prevReq.cleaningType === "stayover");
+        const origReqDate = prevReq.originalRequestDate || prevReq.requestDate;
+        const todayRefCarry = typeof getTodayStr === "function" ? getTodayStr() : dateStr;
+        let carriedIsVacant = Boolean(prevReq.isVacant);
+        let carriedIsVacantExplicit = Boolean(prevReq.isVacantExplicitlySet);
+        let carriedVacantSource = prevReq.vacantSource || null;
+        if (!isPrevStayover && !carriedIsVacant && !carriedIsVacantExplicit && origReqDate && origReqDate <= todayRefCarry) {
+          const isResActiveForCarry = (res) =>
+            res &&
+            res.status !== "cancelada" && res.status !== "cancelado" && res.status !== "cancelled" &&
+            res.status !== "expirada" && res.status !== "pre_reserva" && res.status !== "pendente" && res.status !== "no_show";
+          const prevCheckoutRes = (prevReq.checkoutReservationId
+            ? (db.reservations || []).find(res => isResActiveForCarry(res) && Number(res.id) === Number(prevReq.checkoutReservationId))
+            : null) || (db.reservations || []).find(res =>
+            isResActiveForCarry(res) &&
+            (
+              String(res.flatNumber || (db.flats.find(f => f.id === res.flatId)?.number || "")) === fNumber ||
+              (prevReq.flatId && Number(res.flatId) === Number(prevReq.flatId))
+            ) &&
+            (res.checkoutDate === origReqDate || res.earlyCheckoutDate === origReqDate)
+          );
+          if (prevCheckoutRes) {
+            const actualOutBrl = prevCheckoutRes.actualCheckoutAt ? toBrlDateStr(prevCheckoutRes.actualCheckoutAt) : null;
+            const isValidOut = !actualOutBrl || actualOutBrl >= origReqDate || Boolean(prevCheckoutRes.earlyCheckout);
+            if (isValidOut && (prevCheckoutRes.checkoutDone || prevCheckoutRes.status === "completed" || prevCheckoutRes.status === "checked_out" || prevCheckoutRes.actualCheckoutAt)) {
+              carriedIsVacant = true;
+              carriedIsVacantExplicit = true;
+              carriedVacantSource = prevCheckoutRes.checkoutMethod || "reception_checkout";
+              prevReq.isVacant = true;
+              prevReq.isVacantExplicitlySet = true;
+              prevReq.vacantSource = carriedVacantSource;
+              shouldSaveDb = true;
+            }
+          }
+        }
+
         requestsForDate.push({
           ...prevReq,
+          isVacant: carriedIsVacant,
+          isVacantExplicitlySet: carriedIsVacantExplicit,
+          vacantSource: carriedVacantSource,
           twinBeds: resolvedTwin,
           extraMattress: resolvedMattress,
           adminNote: sanitizeCardNote(resolvedNote),
@@ -25540,11 +25634,15 @@ app.get("/api/reservations/checkouts", (req, res) => {
     ) || activeResToday) : null;
 
     // Identifica a reserva do hóspede saindo hoje ou ativa no flat
-    const checkoutRes = (isInst || isServiceCleaning) ? null : (stayoverRes || ((db.reservations || []).find(r =>
+    const checkoutRes = (isInst || isServiceCleaning) ? null : (stayoverRes || (req_.checkoutReservationId ? (db.reservations || []).find(r =>
+      Number(r.id) === Number(req_.checkoutReservationId) &&
+      r.status !== "cancelada" && r.status !== "cancelado" && r.status !== "cancelled" &&
+      r.status !== "expirada" && r.status !== "pre_reserva" && r.status !== "pendente" && r.status !== "no_show"
+    ) : null) || ((db.reservations || []).find(r =>
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
       r.status !== "cancelada" && r.status !== "cancelado" && r.status !== "cancelled" &&
       r.status !== "expirada" && r.status !== "pre_reserva" && r.status !== "pendente" && r.status !== "no_show" &&
-      r.checkoutDate === (req_.originalRequestDate || req_.requestDate || dateStr)
+      (r.checkoutDate === (req_.originalRequestDate || req_.requestDate || dateStr) || r.earlyCheckoutDate === (req_.originalRequestDate || req_.requestDate || dateStr))
     ) || (req_.leavingGuest ? (db.reservations || []).find(r =>
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
       r.status !== "cancelada" && r.status !== "cancelado" && r.status !== "cancelled" &&
@@ -33657,10 +33755,7 @@ app.get("/api/reservations/availability", (req, res) => {
         if (r.flatId != null) occupiedFlatIds.add(String(r.flatId));
       }
       if (r.pendingModification && (r.pendingModification.status === "pending" || r.pendingModification.status === "pending_payment")) {
-        if (r.pendingModification.expiresAt && new Date(r.pendingModification.expiresAt).getTime() < nowMs) {
-          r.pendingModification.status = "expired";
-          r.pendingModification.expiredAt = new Date(nowMs).toISOString();
-        } else {
+        if (!r.pendingModification.expiresAt || new Date(r.pendingModification.expiresAt).getTime() >= nowMs) {
           const pHoldIn = r.pendingModification.newCheckinDate || r.pendingModification.proposedCheckinDate;
           const pHoldOut = r.pendingModification.newCheckoutDate || r.pendingModification.proposedCheckoutDate;
           const pHoldFlatNum = r.pendingModification.newFlatNumber || r.pendingModification.proposedFlatNumber;
@@ -34999,10 +35094,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
         if (r.flatId != null) occupiedFlatNumbers.add(String(r.flatId));
       }
       if (r.pendingModification && (r.pendingModification.status === "pending" || r.pendingModification.status === "pending_payment")) {
-        if (r.pendingModification.expiresAt && new Date(r.pendingModification.expiresAt).getTime() < nowMs) {
-          r.pendingModification.status = "expired";
-          r.pendingModification.expiredAt = new Date(nowMs).toISOString();
-        } else {
+        if (!r.pendingModification.expiresAt || new Date(r.pendingModification.expiresAt).getTime() >= nowMs) {
           const pHoldIn = r.pendingModification.newCheckinDate || r.pendingModification.proposedCheckinDate;
           const pHoldOut = r.pendingModification.newCheckoutDate || r.pendingModification.proposedCheckoutDate;
           const pHoldFlatNum = r.pendingModification.newFlatNumber || r.pendingModification.proposedFlatNumber;
@@ -36918,10 +37010,24 @@ export function rollbackExpiredOrCancelledStayExtension(targetDb = db, r, option
     )
   );
 
+  const shouldPreserveProtectedChannelOnRollback = Boolean(
+    r._manualChannelProtected ||
+    (ext.oldChannel && r.channel && String(r.channel).toLowerCase() !== String(ext.oldChannel).toLowerCase())
+  );
   if (Array.isArray(ext.oldDailyRates) && ext.oldDailyRates.length > 0) {
-    r.dailyRates = ext.oldDailyRates.map(d => ({ ...d }));
+    r.dailyRates = ext.oldDailyRates.map(d =>
+      shouldPreserveProtectedChannelOnRollback && r.channel
+        ? { ...d, channel: r.channel }
+        : { ...d }
+    );
   } else if (Array.isArray(r.dailyRates) && r.dailyRates.length > 0) {
-    r.dailyRates = r.dailyRates.filter(d => d && d.date && d.date >= origCheckin && d.date < origCheckout);
+    r.dailyRates = r.dailyRates
+      .filter(d => d && d.date && d.date >= origCheckin && d.date < origCheckout)
+      .map(d =>
+        shouldPreserveProtectedChannelOnRollback && r.channel
+          ? { ...d, channel: r.channel }
+          : d
+      );
   }
 
   if (Array.isArray(ext.oldCharges)) {
@@ -37079,6 +37185,7 @@ export function rollbackExpiredOrCancelledStayExtension(targetDb = db, r, option
       newTotalAmount: attemptedTotal,
       expiresAt: ext.expiresAt || null,
       expiredAt: nowIso,
+      txid: ext.txid || null,
       holdPreset: ext.holdPreset || null,
       holdDurationMinutes: ext.holdDurationMinutes || null,
       holdDurationLabel: ext.holdDurationLabel || null,
@@ -37369,6 +37476,19 @@ export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase
       continue;
     }
 
+    // Carência de 90s em produção quando ainda não houve checagem de pagamento após o vencimento (evita expirar antes do Auto-Sync Inter/MP)
+    const allowGraceDeferral = Boolean(!options?.nowOverride && !options?.forceSyncRollback && process.env.NODE_ENV !== "test");
+    if (allowGraceDeferral) {
+      const checkedAfterExpire = Boolean(
+        ext._lastPaymentCheckedAt &&
+        !isNaN(new Date(ext._lastPaymentCheckedAt).getTime()) &&
+        new Date(ext._lastPaymentCheckedAt).getTime() >= expMs
+      );
+      if (!checkedAfterExpire && (nowMs - expMs) < 90 * 1000) {
+        continue;
+      }
+    }
+
     // Expiração parcial da diária extra quando expMs <= nowMs (mantém reserva principal intacta e confirmada)
     const rbResult = rollbackExpiredOrCancelledStayExtension(targetDb, r, {
       reason: "expired",
@@ -37593,6 +37713,19 @@ export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase
         }
       }
       continue;
+    }
+
+    // Carência de 90s em produção quando ainda não houve checagem de pagamento após o vencimento (evita expirar antes do Auto-Sync Inter/MP)
+    const allowMainGraceDeferral = Boolean(!options?.nowOverride && !options?.forceSyncRollback && process.env.NODE_ENV !== "test");
+    if (allowMainGraceDeferral) {
+      const checkedAfterExpire = Boolean(
+        r._lastPaymentCheckedAt &&
+        !isNaN(new Date(r._lastPaymentCheckedAt).getTime()) &&
+        new Date(r._lastPaymentCheckedAt).getTime() >= expMs
+      );
+      if (!checkedAfterExpire && (nowMs - expMs) < 90 * 1000) {
+        continue;
+      }
     }
 
     // 2. Expiração definitiva quando expMs <= nowMs
@@ -43002,6 +43135,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   const oldFlatId = r.flatId;
   const oldFlatNumber = r.flatNumber;
   const oldStatus = r.status;
+  const oldChannelBeforePut = r.channel || "";
   const oldGuestId = r.guestId;
   const oldGuestObj = oldGuestId ? (db.guests || []).find(g => g && Number(g.id) === Number(oldGuestId)) : null;
   const oldGuestName = r.guestName;
@@ -43195,6 +43329,24 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     if (req.body[f] !== undefined) r[f] = req.body[f];
   }
   r._manualEditProtected = true;
+  if (req.body.channel !== undefined && req.body.source !== "ota_sync" && req.body.source !== "channex_sync") {
+    r._manualChannelProtected = true;
+    r._manualChannelUpdatedAt = new Date().toISOString();
+    if (req.body.dailyRates === undefined && oldChannelBeforePut && r.channel && r.channel !== oldChannelBeforePut && Array.isArray(r.dailyRates)) {
+      const oldChLow = String(oldChannelBeforePut).toLowerCase();
+      r.dailyRates = r.dailyRates.map(d => {
+        if (!d) return d;
+        const dCh = String(d.channel || "").toLowerCase();
+        return (!dCh || dCh === oldChLow) ? { ...d, channel: r.channel } : d;
+      });
+    }
+    if (priorActiveExt && r.channel && r.channel !== oldChannelBeforePut) {
+      priorActiveExt.oldChannel = r.channel;
+      if (Array.isArray(priorActiveExt.oldDailyRates)) {
+        priorActiveExt.oldDailyRates = priorActiveExt.oldDailyRates.map(d => ({ ...d, channel: r.channel }));
+      }
+    }
+  }
   if ((r.channel === "b2b" || r.requesterType === "agency_b2b") && req.body.agencyAgentEmail !== undefined) {
     const cleanEditedSolicitante = String(req.body.agencyAgentEmail || "").trim();
     r.requesterInfo = {
@@ -45529,6 +45681,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         newTotalAmount: totalAmt,
         oldPaidAmount: baselineOldPaid,
         oldPaymentStatus: baselineOldPaymentStatus,
+        oldChannel: priorActiveExt?.oldChannel || r.channel || oldChannelBeforePut || "",
         alreadyAppliedToReservation: true,
         isPreReservationHold: useExtensionPreResHold,
         extensionHoldMode: useExtensionPreResHold ? "pre_reserva" : (hasActiveOrNewExtraNightsWithPending ? "confirmada_sem_prazo" : "charge_only"),
@@ -46698,9 +46851,8 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
         console.warn("[Guest Portal] Erro ao checar Mercado Pago:", errMp.message);
       }
     }
-  } else if (!isCancelledRes && isPaid && !isOta && !isB2b && !(r.packageId || r.packageCode) && (r.guestPhone || reservationHasAnyContact(r, db))) {
-    ensurePaymentConfirmationDispatched(r);
   }
+  // Rotas GET de leitura do portal nunca devem disparar reenvios automáticos de confirmação de reserva
 
   const isSettledByCard = Boolean(
     isPaid &&
@@ -49803,10 +49955,8 @@ export function hasReservationConflict({
     if (!pending) return false;
     if (pending.status !== "pending" && pending.status !== "pending_payment") return false;
 
-    // Se o hold expirou, atualiza status para expired e não bloqueia
+    // Se o hold expirou, ignora sem expirar definitivamente (verificação assíncrona Inter/MP decide expiração)
     if (pending.expiresAt && new Date(pending.expiresAt).getTime() < nowMs) {
-      pending.status = "expired";
-      pending.expiredAt = new Date(nowMs).toISOString();
       return false;
     }
 
@@ -49846,6 +49996,190 @@ export function hasReservationConflict({
 
 // ── M1: In-Flight Commit Map para Concorrência em Modificações de Reserva ──────
 const activeModificationCommits = new Map();
+
+// ── M1: Verificação Ativa Inter/MP Antes de Expirar Modificação Pendente ─────
+export async function verifyPendingModificationPayment(r, pending, deps = {}) {
+  if (!r || !pending) return null;
+  const cobCheck = deps.checkInterPixCobStatus || checkInterPixCobStatus;
+  const extratoCheck = deps.checkInterBankingExtratoPixForPending || checkInterBankingExtratoPixForPending;
+  const mpCheck = deps.checkMercadoPagoPaymentByRef || checkMercadoPagoPaymentByRef;
+
+  if (pending.pixTxId && typeof cobCheck === "function") {
+    try {
+      const cobData = await cobCheck(pending.pixTxId);
+      if (cobData && (cobData.status === "CONCLUIDA" || (Array.isArray(cobData.pix) && cobData.pix.length > 0))) {
+        const valorPago = Number(cobData.pix?.[0]?.valor || cobData.valor?.original || pending.additionalAmountToPay);
+        return {
+          found: true,
+          amount: valorPago,
+          paidAt: cobData.pix?.[0]?.horario || new Date().toISOString(),
+          endToEndId: cobData.pix?.[0]?.endToEndId || null,
+          txId: pending.pixTxId,
+          paymentMethod: "pix",
+          source: "Banco Inter Cobrança"
+        };
+      }
+    } catch (err) {
+      console.warn("[PendingModification Verify] Erro Inter Cob:", err?.message || err);
+    }
+  }
+
+  if (typeof extratoCheck === "function") {
+    try {
+      const extratoMatch = await extratoCheck(r, pending);
+      if (extratoMatch && extratoMatch.found) {
+        return {
+          found: true,
+          amount: extratoMatch.amount,
+          paidAt: extratoMatch.paidAt,
+          endToEndId: extratoMatch.endToEndId,
+          txId: extratoMatch.txId,
+          pagador: extratoMatch.pagador,
+          paymentMethod: "pix",
+          source: "Banco Inter Extrato"
+        };
+      }
+    } catch (err) {
+      console.warn("[PendingModification Verify] Erro Inter Extrato:", err?.message || err);
+    }
+  }
+
+  if (typeof mpCheck === "function") {
+    try {
+      const mpSearchRef = `MOD-${r.code}`;
+      let mpPayment = await mpCheck(mpSearchRef);
+      if (!mpPayment && pending.pendingId) {
+        mpPayment = await mpCheck(pending.pendingId);
+      }
+      if (mpPayment && mpPayment.status === "approved") {
+        const valorPago = Number(mpPayment.transaction_amount || mpPayment.total_paid_amount || pending.additionalAmountToPay);
+        return {
+          found: true,
+          amount: valorPago,
+          paidAt: mpPayment.date_approved || new Date().toISOString(),
+          txId: String(mpPayment.id),
+          paymentMethod: "cartao_credito",
+          source: "Mercado Pago"
+        };
+      }
+    } catch (err) {
+      console.warn("[PendingModification Verify] Erro Mercado Pago:", err?.message || err);
+    }
+  }
+
+  return null;
+}
+
+export async function reconcilePendingModificationBeforeExpire(r, pending, {
+  nowMs = Date.now(),
+  source = "Auto-Sync",
+  saveFn = saveDatabase,
+  verifyFn = null,
+  deps = {}
+} = {}) {
+  if (!r || !pending) return { paid: false, committed: false };
+  const reservationCode = r.code || `RES-${r.id}`;
+
+  if (activeModificationCommits.has(reservationCode)) {
+    try {
+      await activeModificationCommits.get(reservationCode);
+    } catch (_) {}
+    if (!r.pendingModification || r.pendingModification.status === "paid" || r.pendingModification._committed) {
+      return { paid: true, committed: true, reservation: r };
+    }
+  }
+
+  const paymentDetails = typeof verifyFn === "function"
+    ? await verifyFn(r, pending)
+    : await verifyPendingModificationPayment(r, pending, deps);
+
+  pending._lastPaymentCheckedAt = new Date(nowMs).toISOString();
+
+  if (!paymentDetails || !paymentDetails.found) {
+    return { paid: false, committed: false };
+  }
+
+  const targetCheckin = pending.newCheckinDate || pending.proposedCheckinDate || r.checkinDate;
+  const targetCheckout = pending.newCheckoutDate || pending.proposedCheckoutDate || r.checkoutDate;
+  const targetFlatId = pending.newFlatId || pending.proposedFlatId || r.flatId;
+  const targetFlatNumber = pending.newFlatNumber || pending.proposedFlatNumber || r.flatNumber;
+
+  const expMs = pending.expiresAt ? new Date(pending.expiresAt).getTime() : Infinity;
+  const paidAtMs = paymentDetails.paidAt ? new Date(paymentDetails.paidAt).getTime() : NaN;
+  const paidWithinDeadline = Boolean(
+    isNaN(expMs) || (!isNaN(paidAtMs) ? paidAtMs <= expMs : nowMs <= expMs)
+  );
+
+  const hasConflictFn = deps.hasReservationConflict || hasReservationConflict;
+  const hasConflictNow = hasConflictFn({
+    flatId: targetFlatId,
+    flatNumber: targetFlatNumber,
+    checkinDate: targetCheckin,
+    checkoutDate: targetCheckout,
+    excludeReservationId: r.id,
+    excludePendingHoldReservationId: r.id,
+    nowMs
+  });
+
+  if (hasConflictNow) {
+    pending.status = "paid_conflict_needs_admin";
+    pending.paidAt = paymentDetails.paidAt || new Date(nowMs).toISOString();
+    pending.paidAmount = Number(paymentDetails.amount || pending.additionalAmountToPay || 0);
+    if (paymentDetails.txId) pending.pixTxId = paymentDetails.txId;
+    if (paymentDetails.endToEndId) pending.pixEndToEndId = paymentDetails.endToEndId;
+    r.updatedAt = new Date(nowMs).toISOString();
+
+    try {
+      ensureReservationAuditLogs(r);
+      addReservationAuditLog(r, {
+        action: "portal_modify_paid_conflict",
+        actor: { id: null, name: source, role: "system", type: "system" },
+        source,
+        description: `Pagamento de R$ ${pending.paidAmount.toFixed(2)} detectado (${paidWithinDeadline ? "dentro do prazo" : "após o vencimento do hold"}), porém o Flat ${targetFlatNumber || r.flatNumber} (${targetCheckin} a ${targetCheckout}) já foi ocupado. Requer ação administrativa.`
+      });
+    } catch (_) {}
+
+    try {
+      createNotification({
+        category: "checkout",
+        title: `🚨 Pagamento ${paidWithinDeadline ? "com Conflito" : "Tardio com Conflito"}: ${r.code} (Flat ${targetFlatNumber || r.flatNumber})`,
+        message: `${r.guestName || "Hóspede"} pagou R$ ${pending.paidAmount.toFixed(2)} para alteração (${targetCheckin} a ${targetCheckout}) ${paidWithinDeadline ? "no prazo" : "após vencimento"}, mas o flat já está ocupado.`,
+        severity: "error",
+        metadata: { reservationCode: r.code, pendingId: pending.pendingId, targetFlatNumber, targetCheckin, targetCheckout, paidWithinDeadline },
+        targetUrl: `/reservas`
+      });
+    } catch (_) {}
+
+    if (typeof saveFn === "function") saveFn("pending_modification_paid_conflict");
+    return {
+      paid: true,
+      committed: false,
+      conflict: true,
+      paidWithinDeadline,
+      status: "paid_conflict_needs_admin"
+    };
+  }
+
+  pending.status = "committing";
+  const commitPromise = commitPendingModification(r, pending, paymentDetails);
+  activeModificationCommits.set(reservationCode, commitPromise);
+  try {
+    const commitRes = await commitPromise;
+    if (commitRes?.success && typeof saveFn === "function") {
+      saveFn("pending_modification_auto_committed");
+    }
+    return {
+      paid: true,
+      committed: Boolean(commitRes?.success),
+      paidWithinDeadline,
+      conflict: false,
+      reservation: r,
+      error: commitRes?.error || null
+    };
+  } finally {
+    activeModificationCommits.delete(reservationCode);
+  }
+}
 
 // ── M1: Função de Commit Atômico da Modificação Liquidada ───────────────────
 export async function commitPendingModification(r, pending, {
@@ -49905,6 +50239,7 @@ export async function commitPendingModification(r, pending, {
   // 2. Atualiza datas, flat e ocupantes
   r.checkinDate = targetCheckin;
   r.checkoutDate = targetCheckout;
+  r.nights = newNights;
   if (targetFlatNumber && targetFlatNumber !== String(r.flatNumber)) {
     r.flatNumber = targetFlatNumber;
     if (targetFlatId) r.flatId = Number(targetFlatId) || targetFlatId;
@@ -50927,10 +51262,50 @@ app.get("/api/pms/guest-portal/:code/modify-status", async (req, res) => {
       });
     }
 
-    // 3. Verificação de Expiração do Hold (30 minutos)
+    // 3. Verificação de Status / Expiração do Hold (sempre valida pagamento Inter/MP antes de expirar)
+    if (pending.status === "paid_conflict_needs_admin") {
+      return res.json({
+        success: true,
+        paid: true,
+        status: "paid_conflict_needs_admin",
+        committed: false,
+        conflict: true,
+        message: "Recebemos o seu pagamento, porém o período/flat selecionado acabou sendo ocupado após o prazo. Nossa equipe já foi alertada e entrará em contato."
+      });
+    }
+
     const nowMs = Date.now();
-    const expiresMs = new Date(pending.expiresAt).getTime();
-    if (pending.status === "expired" || expiresMs < nowMs) {
+    const expiresMs = pending.expiresAt ? new Date(pending.expiresAt).getTime() : NaN;
+    if (pending.status === "expired" || (!isNaN(expiresMs) && expiresMs < nowMs)) {
+      const reconcilePreExpire = await reconcilePendingModificationBeforeExpire(r, pending, {
+        nowMs,
+        source: "Modify Status Check",
+        saveFn: saveDatabase
+      });
+      if (reconcilePreExpire.committed) {
+        return res.json({
+          success: true,
+          paid: true,
+          status: "paid",
+          committed: true,
+          message: "Pagamento confirmado! As datas da sua estadia foram atualizadas com sucesso.",
+          newCheckinDate: r.checkinDate,
+          newCheckoutDate: r.checkoutDate,
+          flatNumber: r.flatNumber,
+          needsReSignature: Boolean(r.needsReSignature),
+          reSignatureUrl: r.needsReSignature ? `/pre-checkin/${r.code}?resign=1` : null
+        });
+      }
+      if (reconcilePreExpire.conflict) {
+        return res.json({
+          success: true,
+          paid: true,
+          status: "paid_conflict_needs_admin",
+          committed: false,
+          conflict: true,
+          message: "Recebemos o seu pagamento, porém o período/flat selecionado acabou sendo ocupado após o prazo. Nossa equipe já foi alertada."
+        });
+      }
       if (pending.status !== "expired") {
         pending.status = "expired";
         pending.expiredAt = new Date().toISOString();
@@ -59651,6 +60026,7 @@ app.post("/api/settings/gemini", (req, res) => {
   if (!apiKey || apiKey.trim().length < 10) return res.status(400).json({ error: "Chave inválida. Informe a chave completa do Google AI Studio." });
   if (!db.settings) db.settings = {};
   db.settings.geminiApiKey = apiKey.trim();
+  clearGeminiCooldowns();
   _aiStatusOverviewCache = { result: null, ts: 0 };
   _geminiListModelsCache = { key: null, expiresAt: 0, candidates: null };
   saveDatabase();
@@ -61194,7 +61570,7 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
   // Garante a lista de hóspedes com slots isolados
   if (!r.guests || r.guests.length === 0) {
     const titularDone = Boolean(r.fnhrCompleted && !r.needsReSignature);
-    r.guests = [
+      r.guests = [
       {
         index: 1,
         guestId: guest?.id || null,
@@ -61206,6 +61582,10 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
         birthDate: guest?.birthDate || "",
         gender: guest?.gender || "masculino",
         address: guest?.address || "",
+        street: guest?.street || "",
+        streetNumber: guest?.streetNumber || "",
+        complement: guest?.complement || "",
+        neighborhood: guest?.neighborhood || "",
         city: guest?.city || "",
         state: guest?.state || "RJ",
         cep: guest?.cep || "",
@@ -61221,7 +61601,13 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
         isCamposResident: Boolean(guest?.isCamposResident || r.isCamposResident),
         originCity: guest?.originCity || r.originCity || "",
         originState: guest?.originState || r.originState || "RJ",
+        destinationCity: guest?.destinationCity || r.destinationCity || "",
+        destinationState: guest?.destinationState || r.destinationState || "RJ",
+        transportMethod: guest?.transportMethod || r.transportMethod || "",
+        travelReason: guest?.travelReason || r.travelReason || "",
+        estimatedArrivalTime: r.estimatedArrivalTime || "",
         aiVerification: guest?.aiVerification || null,
+        aiDocInspection: guest?.aiDocInspection || r.aiDocInspection || null,
         hasCompletedCheckin: titularDone,
         checkinCompletedAt: titularDone ? (r.updatedAt || new Date().toISOString()) : null
       }
@@ -61248,7 +61634,7 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
       if (!r.guests[0].cpf) r.guests[0].cpf = r.guestDocument || guest?.document || "";
       if (!r.guests[0].phone) r.guests[0].phone = r.guestPhone || guest?.phone || "";
       if (!r.guests[0].email) r.guests[0].email = r.guestEmail || guest?.email || "";
-      if (!r.guests[0].docPhotoUrl) r.guests[0].docPhotoUrl = savedDocPhotoUrl || guest?.docPhotoUrl || r.docPhotoUrl || null;
+      if (!r.guests[0].docPhotoUrl && !r.guests[0].preCheckinDraft?.docPhotoCleared) r.guests[0].docPhotoUrl = savedDocPhotoUrl || guest?.docPhotoUrl || r.docPhotoUrl || null;
       if (!r.guests[0].selfieUrl) r.guests[0].selfieUrl = savedSelfieUrl || guest?.photoUrl || r.selfieUrl || null;
       if (guest) {
         if (!r.guests[0].guestId) r.guests[0].guestId = guest.id;
@@ -61266,15 +61652,18 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
         if (guest.isMinor !== undefined && r.guests[0].isMinor === undefined) r.guests[0].isMinor = Boolean(guest.isMinor);
         if (guest.minorAge && !r.guests[0].minorAge) r.guests[0].minorAge = guest.minorAge;
         if (guest.minorKinship && !r.guests[0].minorKinship) r.guests[0].minorKinship = guest.minorKinship;
-        if (guest.minorAuthDocUrl && !r.guests[0].minorAuthDocUrl) r.guests[0].minorAuthDocUrl = guest.minorAuthDocUrl;
+        if (guest.minorAuthDocUrl && !r.guests[0].minorAuthDocUrl && !r.guests[0].preCheckinDraft?.minorAuthDocCleared) r.guests[0].minorAuthDocUrl = guest.minorAuthDocUrl;
         if (guest.originCity && !r.guests[0].originCity) r.guests[0].originCity = guest.originCity;
         if (guest.originState && !r.guests[0].originState) r.guests[0].originState = guest.originState;
+        if (guest.destinationCity && !r.guests[0].destinationCity) r.guests[0].destinationCity = guest.destinationCity;
+        if (guest.destinationState && !r.guests[0].destinationState) r.guests[0].destinationState = guest.destinationState;
         if (guest.transportMethod && !r.guests[0].transportMethod) r.guests[0].transportMethod = guest.transportMethod;
         if (guest.travelReason && !r.guests[0].travelReason) r.guests[0].travelReason = guest.travelReason;
         if (guest.aiVerification && !r.guests[0].aiVerification) r.guests[0].aiVerification = guest.aiVerification;
+        if (guest.aiDocInspection && !r.guests[0].aiDocInspection && !r.guests[0].preCheckinDraft?.docPhotoCleared) r.guests[0].aiDocInspection = guest.aiDocInspection;
       }
     }
-    // Se acompanhantes (slots >= 2) já possuírem ficha própria em db.guests por guestId/CPF, recupera o docPhotoUrl próprio daquele acompanhante
+    // Se acompanhantes (slots >= 2) já possuírem ficha própria em db.guests por guestId/CPF, recupera os dados próprios daquele acompanhante
     for (let i = 1; i < r.guests.length; i++) {
       const compSlot = r.guests[i];
       if (!compSlot) continue;
@@ -61285,8 +61674,37 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
           (compDoc.length >= 8 && (g.documentNumber || g.document || "").replace(/\D/g, "") === compDoc)
         );
         if (compGuest && compGuest.id !== guest?.id) {
-          if (!compSlot.docPhotoUrl && compGuest.docPhotoUrl) compSlot.docPhotoUrl = compGuest.docPhotoUrl;
+          if (!compSlot.guestId) compSlot.guestId = compGuest.id;
+          if (!compSlot.guestCode && compGuest.guestCode) compSlot.guestCode = compGuest.guestCode;
+          if (!compSlot.docPhotoUrl && !compSlot.preCheckinDraft?.docPhotoCleared && compGuest.docPhotoUrl) compSlot.docPhotoUrl = compGuest.docPhotoUrl;
           if (!compSlot.selfieUrl && compGuest.photoUrl) compSlot.selfieUrl = compGuest.photoUrl;
+          if (!compSlot.birthDate && compGuest.birthDate) compSlot.birthDate = compGuest.birthDate;
+          if (!compSlot.gender && compGuest.gender) compSlot.gender = compGuest.gender;
+          if (!compSlot.address && compGuest.address) compSlot.address = compGuest.address;
+          if (!compSlot.street && compGuest.street) compSlot.street = compGuest.street;
+          if (!compSlot.streetNumber && compGuest.streetNumber) compSlot.streetNumber = compGuest.streetNumber;
+          if (!compSlot.complement && compGuest.complement) compSlot.complement = compGuest.complement;
+          if (!compSlot.neighborhood && compGuest.neighborhood) compSlot.neighborhood = compGuest.neighborhood;
+          if (!compSlot.cep && compGuest.cep) compSlot.cep = compGuest.cep;
+          if (!compSlot.city && compGuest.city) compSlot.city = compGuest.city;
+          if (!compSlot.state && compGuest.state) compSlot.state = compGuest.state;
+          if (!compSlot.travelReason && compGuest.travelReason) compSlot.travelReason = compGuest.travelReason;
+          if (!compSlot.transportMethod && compGuest.transportMethod) compSlot.transportMethod = compGuest.transportMethod;
+          if (!compSlot.originCity && compGuest.originCity) compSlot.originCity = compGuest.originCity;
+          if (!compSlot.originState && compGuest.originState) compSlot.originState = compGuest.originState;
+          if (!compSlot.destinationCity && compGuest.destinationCity) compSlot.destinationCity = compGuest.destinationCity;
+          if (!compSlot.destinationState && compGuest.destinationState) compSlot.destinationState = compGuest.destinationState;
+          if (!compSlot.minorKinship && compGuest.minorKinship) compSlot.minorKinship = compGuest.minorKinship;
+          if (!compSlot.minorAuthDocUrl && !compSlot.preCheckinDraft?.minorAuthDocCleared && compGuest.minorAuthDocUrl) compSlot.minorAuthDocUrl = compGuest.minorAuthDocUrl;
+          if (!compSlot.aiDocInspection && !compSlot.preCheckinDraft?.docPhotoCleared && compGuest.aiDocInspection) compSlot.aiDocInspection = compGuest.aiDocInspection;
+          if (compGuest.vehiclePlate && !compSlot.vehicle) {
+            compSlot.vehicle = {
+              plate: compGuest.vehiclePlate,
+              brand: compGuest.vehicleBrand || "",
+              model: compGuest.vehicleModel || "",
+              color: compGuest.vehicleColor || ""
+            };
+          }
         }
       }
     }
@@ -61427,6 +61845,878 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
       ? "Esta é uma pré-reserva aguardando pagamento. Apenas após a confirmação do pagamento o check-in digital é liberado e a reserva é enviada para a recepção/portaria."
       : null
   });
+});
+
+// Salvamento automático progressivo do Pré-Check-in direto no cadastro do hóspede (db.guests / db.guestAccounts / reserva)
+app.post("/api/pms/pre-checkin/:code/autosave", async (req, res) => {
+  try {
+    const code = req.params.code;
+    let body = req.body;
+    if (typeof body === "string") {
+      try {
+        body = JSON.parse(body);
+      } catch {
+        body = {};
+      }
+    }
+    if (!body || typeof body !== "object") body = {};
+
+    const r =
+      (db.reservations || []).find(
+        x =>
+          x.code === code ||
+          String(x.id) === String(code) ||
+          (body.reservationId && Number(x.id) === Number(body.reservationId))
+      ) || findReservationByLocatorOrContact(code);
+
+    if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+    if (isPreReservationBlocked(r)) {
+      return res.status(403).json({
+        error: "Pré-reserva aguardando pagamento.",
+        preCheckinBlocked: true
+      });
+    }
+    const statusLower = String(r.status || "").toLowerCase();
+    if (["cancelada", "cancelled", "expirada"].includes(statusLower)) {
+      return res.status(403).json({ error: "Reserva encerrada ou cancelada." });
+    }
+
+    const guestIndex = Math.min(Math.max(Number(body.guestIndex) || 1, 1), 3);
+    const isTitular = guestIndex === 1;
+    const now = new Date().toISOString();
+    const nowMs = Date.now();
+    if (!db.guests) db.guests = [];
+
+    const guestCount = Math.max(Math.min(Math.max(Number(r.guestCount) || Number(r.adults) || 1, 1), 3), guestIndex);
+    if (!Array.isArray(r.guests) || r.guests.length === 0) {
+      const titularDone = Boolean(r.fnhrCompleted && !r.needsReSignature);
+      const existingTitularGuest = r.guestId ? db.guests.find(g => Number(g.id) === Number(r.guestId)) : null;
+      r.guests = [
+        {
+          index: 1,
+          guestId: existingTitularGuest?.id || r.guestId || null,
+          guestCode: existingTitularGuest?.guestCode || r.guestCode || null,
+          name: r.guestName || existingTitularGuest?.fullName || existingTitularGuest?.name || "Hóspede 1",
+          cpf: r.guestDocument || existingTitularGuest?.document || "",
+          phone: r.guestPhone || existingTitularGuest?.phone || "",
+          email: r.guestEmail || existingTitularGuest?.email || "",
+          birthDate: existingTitularGuest?.birthDate || r.birthDate || "",
+          gender: existingTitularGuest?.gender || "masculino",
+          address: existingTitularGuest?.address || r.guestAddress || "",
+          street: existingTitularGuest?.street || r.guestStreet || "",
+          streetNumber: existingTitularGuest?.streetNumber || r.guestStreetNumber || "",
+          complement: existingTitularGuest?.complement || r.guestComplement || "",
+          neighborhood: existingTitularGuest?.neighborhood || r.guestNeighborhood || "",
+          city: existingTitularGuest?.city || r.guestCity || "",
+          state: existingTitularGuest?.state || r.guestState || "RJ",
+          cep: existingTitularGuest?.cep || r.guestCep || "",
+          docPhotoUrl: existingTitularGuest?.docPhotoUrl || r.docPhotoUrl || null,
+          selfieUrl: existingTitularGuest?.photoUrl || r.selfieUrl || null,
+          signatureUrl: r.needsReSignature ? null : (r.signatureUrl || null),
+          hasCompletedCheckin: titularDone,
+          checkinCompletedAt: titularDone ? (r.updatedAt || now) : null
+        }
+      ];
+      for (let i = 2; i <= guestCount; i++) {
+        r.guests.push({
+          index: i,
+          name: `Hóspede ${i}`,
+          cpf: "",
+          phone: "",
+          email: "",
+          birthDate: "",
+          docPhotoUrl: null,
+          selfieUrl: null,
+          signatureUrl: null,
+          hasCompletedCheckin: false,
+          checkinCompletedAt: null
+        });
+      }
+    }
+
+    let targetGuest = r.guests.find(g => Number(g.index) === guestIndex);
+    if (!targetGuest) {
+      targetGuest = {
+        index: guestIndex,
+        name: isTitular ? (r.guestName || "Hóspede 1") : `Hóspede ${guestIndex}`,
+        cpf: "",
+        phone: "",
+        email: "",
+        birthDate: "",
+        docPhotoUrl: null,
+        selfieUrl: null,
+        signatureUrl: null,
+        hasCompletedCheckin: false,
+        checkinCompletedAt: null
+      };
+      r.guests.push(targetGuest);
+    }
+
+    if (targetGuest.hasCompletedCheckin && !targetGuest.needsReSignature) {
+      return res.json({
+        ok: true,
+        skipped: true,
+        reason: "already_completed",
+        guestIndex
+      });
+    }
+
+    if (!targetGuest.preCheckinDraft || typeof targetGuest.preCheckinDraft !== "object") {
+      targetGuest.preCheckinDraft = {};
+    }
+    const draft = targetGuest.preCheckinDraft;
+
+    if (
+      body.clientSessionId &&
+      draft.lastClientSessionId === body.clientSessionId &&
+      body.clientSeq !== undefined &&
+      Number(body.clientSeq) < Number(draft.lastClientSeq || 0)
+    ) {
+      return res.json({
+        ok: true,
+        stale: true,
+        guestIndex,
+        guestId: targetGuest.guestId || (isTitular ? r.guestId : null) || null,
+        guestCode: targetGuest.guestCode || (isTitular ? r.guestCode : "") || "",
+        docPhotoUrl: draft.docPhotoCleared ? null : (draft.docPhotoUrl || targetGuest.docPhotoUrl || null),
+        minorAuthDocUrl: draft.minorAuthDocCleared ? null : (draft.minorAuthDocUrl || targetGuest.minorAuthDocUrl || null)
+      });
+    }
+
+    if (body.clientSessionId) {
+      draft.lastClientSessionId = String(body.clientSessionId);
+    }
+    if (body.clientSeq !== undefined && !isNaN(Number(body.clientSeq))) {
+      draft.lastClientSeq = Number(body.clientSeq);
+    }
+
+    const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key) && obj[key] !== undefined;
+
+    // Extração e validação dos campos de identidade
+    const hasNameField = hasOwn(body, "fullName");
+    const rawFullName = hasNameField ? String(body.fullName ?? "") : "";
+    let trimmedName = rawFullName.trim();
+    if (/^l(ago|gor|uri|van|talo|lan|sabel|sabela|sadora|saac|smael|srael|ris|vone|caro|rene)\b/.test(trimmedName)) {
+      trimmedName = trimmedName.replace(/^l/, "I");
+    }
+    const isValidName = Boolean(trimmedName.length >= 2 && !isPlaceholderOrEmptyGuestName(trimmedName));
+    const nameWordCount = trimmedName.split(/\s+/).filter(Boolean).length;
+
+    const hasDocField = hasOwn(body, "document");
+    const rawDocument = hasDocField ? String(body.document ?? "") : "";
+    const docTrimmed = rawDocument.trim();
+    const cleanDocDigits = docTrimmed.replace(/\D/g, "");
+    const docHasLetters = /[A-Za-z]/.test(docTrimmed);
+    const passportAlnum = docTrimmed.replace(/[^A-Za-z0-9]/g, "");
+    const isValidDoc = Boolean(
+      docTrimmed &&
+      (
+        (!docHasLetters && cleanDocDigits.length === 11 && isValidBrazilianCpf(cleanDocDigits)) ||
+        (docHasLetters && passportAlnum.length >= 5)
+      )
+    );
+    const validDocClean = isValidDoc ? normalizeDoc(docTrimmed) : "";
+
+    const hasPhoneField = hasOwn(body, "phone");
+    const rawPhone = hasPhoneField ? String(body.phone ?? "") : "";
+    const trimmedPhone = rawPhone.trim();
+    const cleanPhoneDigits = trimmedPhone.replace(/\D/g, "");
+    const isIntlPhone = trimmedPhone.startsWith("+") && !cleanPhoneDigits.startsWith("55");
+    const isValidPhone = Boolean(trimmedPhone && cleanPhoneDigits.length >= (isIntlPhone ? 8 : 10));
+
+    const hasEmailField = hasOwn(body, "email");
+    const rawEmail = hasEmailField ? String(body.email ?? "") : "";
+    const cleanEmail = rawEmail.trim().toLowerCase();
+    const isValidEmail = Boolean(cleanEmail && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanEmail));
+
+    let validIsoBirthDate = "";
+    const hasBirthDateField = hasOwn(body, "birthDate");
+    if (hasBirthDateField && typeof body.birthDate === "string" && body.birthDate.trim()) {
+      let bStr = body.birthDate.trim();
+      if (bStr.includes("/")) {
+        const p = bStr.split("/");
+        if (p.length === 3 && p[2].length === 4) {
+          bStr = `${p[2]}-${p[1].padStart(2, "0")}-${p[0].padStart(2, "0")}`;
+        }
+      }
+      const m = bStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (m) {
+        const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+        const currentYear = new Date().getFullYear();
+        if (y >= 1900 && y <= currentYear && mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+          const dt = new Date(y, mo - 1, d);
+          if (dt.getFullYear() === y && dt.getMonth() === mo - 1 && dt.getDate() === d) {
+            validIsoBirthDate = `${m[1]}-${m[2]}-${m[3]}`;
+          }
+        }
+      }
+    }
+
+    const effectiveName = isValidName
+      ? trimmedName
+      : (targetGuest.name && !isPlaceholderOrEmptyGuestName(targetGuest.name)
+          ? targetGuest.name
+          : (isTitular && r.guestName && !isPlaceholderOrEmptyGuestName(r.guestName) ? r.guestName : ""));
+
+    // Resolve ou cria registro permanente do hóspede em db.guests com isolamento estrito
+    let guest = null;
+    if (isTitular) {
+      if (r.guestId) {
+        guest = db.guests.find(g => Number(g.id) === Number(r.guestId)) || null;
+      }
+      if (!guest) {
+        const resDocNorm = validDocClean || normalizeDoc(r.guestDocument || targetGuest.cpf || "");
+        const resDocValid = Boolean(
+          resDocNorm &&
+          ((/[A-Z]/.test(resDocNorm) && resDocNorm.length >= 5) || (!/[A-Z]/.test(resDocNorm) && resDocNorm.length === 11 && isValidBrazilianCpf(resDocNorm)))
+        );
+        const resEmailCand = isValidEmail ? cleanEmail : String(r.guestEmail || targetGuest.email || "").trim().toLowerCase();
+        const resEmailValid = Boolean(resEmailCand && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(resEmailCand));
+        const resPhoneCand = isValidPhone ? trimmedPhone : String(r.guestPhone || targetGuest.phone || "").trim();
+        const resPhoneNorm = normalizePhone(resPhoneCand);
+        const resPhoneValid = Boolean(resPhoneNorm && resPhoneNorm.length >= 8);
+
+        guest = db.guests.find(g => {
+          if (!areGuestNamesCompatible(g.fullName || g.name, effectiveName)) return false;
+          const gDoc = normalizeDoc(g.documentNumber || g.document || "");
+          if (resDocValid && gDoc && gDoc === resDocNorm) return true;
+          const gEmail = String(g.email || "").trim().toLowerCase();
+          if (resEmailValid && gEmail && gEmail === resEmailCand) return true;
+          if (resPhoneValid && g.phone && phonesMatch(g.phone, resPhoneCand)) return true;
+          return false;
+        }) || null;
+      }
+
+      // Auto-dedup caso o autosave tenha criado ficha provisória e o CPF/passaporte digitado depois corresponda a um hóspede já existente
+      if (guest && guest.createdFromPreCheckinAutosave === true && validDocClean) {
+        const olderGuest = db.guests.find(g =>
+          g.id !== guest.id &&
+          normalizeDoc(g.documentNumber || g.document || "") === validDocClean &&
+          areGuestNamesCompatible(g.fullName || g.name, effectiveName || guest.fullName || guest.name)
+        );
+        if (olderGuest) {
+          mergeGuestRecords(olderGuest, guest, db);
+          const tempIdx = db.guests.findIndex(g => g.id === guest.id);
+          if (tempIdx !== -1) db.guests.splice(tempIdx, 1);
+          guest = olderGuest;
+          r.guestId = olderGuest.id;
+          r.guestCode = olderGuest.guestCode || `HOSP-${String(olderGuest.id).padStart(5, "0")}`;
+          targetGuest.guestId = olderGuest.id;
+          targetGuest.guestCode = r.guestCode;
+        }
+      }
+
+      if (!guest && (isValidDoc || isValidPhone || isValidEmail || (isValidName && nameWordCount >= 2 && trimmedName.length >= 5))) {
+        const nextGuestId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
+        guest = {
+          id: nextGuestId,
+          guestCode: `HOSP-${String(nextGuestId).padStart(5, "0")}`,
+          name: effectiveName || "Hóspede",
+          fullName: effectiveName || "Hóspede",
+          phone: isValidPhone ? trimmedPhone : (r.guestPhone || ""),
+          email: isValidEmail ? cleanEmail : String(r.guestEmail || "").trim().toLowerCase(),
+          docType: docHasLetters ? "Passaporte" : "CPF",
+          document: isValidDoc ? docTrimmed : (r.guestDocument || ""),
+          documentNumber: isValidDoc ? docTrimmed : (r.guestDocument || ""),
+          createdFromPreCheckinAutosave: true,
+          createdAt: now
+        };
+        db.guests.push(guest);
+      }
+
+      if (guest) {
+        if (!guest.guestCode) guest.guestCode = `HOSP-${String(guest.id).padStart(5, "0")}`;
+        if (!r.guestId || Number(r.guestId) !== Number(guest.id)) r.guestId = guest.id;
+        if (!r.guestCode) r.guestCode = guest.guestCode;
+        targetGuest.guestId = guest.id;
+        targetGuest.guestCode = guest.guestCode;
+      }
+    } else {
+      // Acompanhante (guestIndex >= 2): isolamento estrito — NUNCA lê nem altera o cadastro do titular
+      if (targetGuest.guestId && Number(targetGuest.guestId) !== Number(r.guestId)) {
+        guest = db.guests.find(g => Number(g.id) === Number(targetGuest.guestId)) || null;
+      }
+      if (!guest) {
+        const titularEmailLower = String(r.guestEmail || "").trim().toLowerCase();
+        const titularPhone = String(r.guestPhone || "").trim();
+        const compEmailOk = isValidEmail && cleanEmail !== titularEmailLower;
+        const compPhoneOk = isValidPhone && (!titularPhone || !phonesMatch(trimmedPhone, titularPhone));
+
+        guest = db.guests.find(g => {
+          if (r.guestId && Number(g.id) === Number(r.guestId)) return false;
+          if (!areGuestNamesCompatible(g.fullName || g.name, effectiveName)) return false;
+          const gDoc = normalizeDoc(g.documentNumber || g.document || "");
+          if (validDocClean && gDoc && gDoc === validDocClean) return true;
+          const gEmail = String(g.email || "").trim().toLowerCase();
+          if (compEmailOk && gEmail && gEmail === cleanEmail) return true;
+          if (compPhoneOk && g.phone && phonesMatch(g.phone, trimmedPhone)) return true;
+          return false;
+        }) || null;
+      }
+
+      if (guest && guest.createdFromPreCheckinAutosave === true && validDocClean) {
+        const olderComp = db.guests.find(g =>
+          g.id !== guest.id &&
+          (!r.guestId || Number(g.id) !== Number(r.guestId)) &&
+          normalizeDoc(g.documentNumber || g.document || "") === validDocClean &&
+          areGuestNamesCompatible(g.fullName || g.name, effectiveName || guest.fullName || guest.name)
+        );
+        if (olderComp) {
+          mergeGuestRecords(olderComp, guest, db);
+          const tempIdx = db.guests.findIndex(g => g.id === guest.id);
+          if (tempIdx !== -1) db.guests.splice(tempIdx, 1);
+          guest = olderComp;
+        }
+      }
+
+      if (!guest && isValidName && trimmedName.length >= 3 && (isValidDoc || isValidPhone || isValidEmail || nameWordCount >= 2)) {
+        const nextGuestId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
+        guest = {
+          id: nextGuestId,
+          guestCode: `HOSP-${String(nextGuestId).padStart(5, "0")}`,
+          name: trimmedName,
+          fullName: trimmedName,
+          phone: isValidPhone ? trimmedPhone : "",
+          email: isValidEmail ? cleanEmail : "",
+          docType: docHasLetters ? "Passaporte" : "CPF",
+          document: isValidDoc ? docTrimmed : "",
+          documentNumber: isValidDoc ? docTrimmed : "",
+          createdFromPreCheckinAutosave: true,
+          createdAt: now
+        };
+        db.guests.push(guest);
+      }
+
+      if (guest) {
+        if (!guest.guestCode) guest.guestCode = `HOSP-${String(guest.id).padStart(5, "0")}`;
+        targetGuest.guestId = guest.id;
+        targetGuest.guestCode = guest.guestCode;
+      }
+    }
+
+    const account = guest && Array.isArray(db.guestAccounts)
+      ? db.guestAccounts.find(a =>
+          (guest.accountId && Number(a.id) === Number(guest.accountId)) ||
+          (a.guestId && Number(a.guestId) === Number(guest.id))
+        ) || null
+      : null;
+
+    // Caso o cadastro CRM (guest) tenha sido recém-criado/vinculado nesta etapa, propaga campos prévios já preenchidos no slot/rascunho
+    if (guest) {
+      const prevName = targetGuest.name && !isPlaceholderOrEmptyGuestName(targetGuest.name) ? targetGuest.name : "";
+      if (prevName && (!guest.name || isPlaceholderOrEmptyGuestName(guest.name))) {
+        guest.name = prevName;
+        guest.fullName = prevName;
+      }
+      if (targetGuest.cpf && !guest.document && !guest.documentNumber) {
+        guest.document = targetGuest.cpf;
+        guest.documentNumber = targetGuest.cpf;
+        guest.docType = /[A-Za-z]/.test(targetGuest.cpf) ? "Passaporte" : "CPF";
+      }
+      if (targetGuest.phone && !guest.phone) guest.phone = targetGuest.phone;
+      if (targetGuest.email && !guest.email) guest.email = targetGuest.email;
+      if (targetGuest.birthDate && !guest.birthDate) guest.birthDate = targetGuest.birthDate;
+      if (targetGuest.gender && !guest.gender) guest.gender = targetGuest.gender;
+      if (targetGuest.cep && !guest.cep) guest.cep = cleanCep(targetGuest.cep);
+      if (targetGuest.street && !guest.street) {
+        guest.street = targetGuest.street;
+        guest.logradouro = targetGuest.street;
+      }
+      if (targetGuest.streetNumber && !guest.streetNumber) {
+        guest.streetNumber = targetGuest.streetNumber;
+        guest.number = targetGuest.streetNumber;
+        guest.numero = targetGuest.streetNumber;
+      }
+      if (targetGuest.complement && !guest.complement) {
+        guest.complement = targetGuest.complement;
+        guest.complemento = targetGuest.complement;
+      }
+      if (targetGuest.neighborhood && !guest.neighborhood) {
+        guest.neighborhood = targetGuest.neighborhood;
+        guest.bairro = targetGuest.neighborhood;
+      }
+      if (targetGuest.address && !guest.address) guest.address = targetGuest.address;
+      if (targetGuest.city && !guest.city) {
+        guest.city = targetGuest.city;
+        guest.cidade = targetGuest.city;
+      }
+      if (targetGuest.state && !guest.state) {
+        guest.state = targetGuest.state;
+        guest.uf = targetGuest.state;
+      }
+      if (targetGuest.travelReason && !guest.travelReason) guest.travelReason = targetGuest.travelReason;
+      if (targetGuest.transportMethod && !guest.transportMethod) guest.transportMethod = targetGuest.transportMethod;
+      if (targetGuest.originCity && !guest.originCity) guest.originCity = targetGuest.originCity;
+      if (targetGuest.originState && !guest.originState) guest.originState = targetGuest.originState;
+      if (targetGuest.destinationCity && !guest.destinationCity) guest.destinationCity = targetGuest.destinationCity;
+      if (targetGuest.destinationState && !guest.destinationState) guest.destinationState = targetGuest.destinationState;
+      if (targetGuest.minorKinship && !guest.minorKinship) guest.minorKinship = targetGuest.minorKinship;
+      if (targetGuest.docPhotoUrl && !guest.docPhotoUrl && !draft.docPhotoCleared) guest.docPhotoUrl = targetGuest.docPhotoUrl;
+      if (targetGuest.minorAuthDocUrl && !guest.minorAuthDocUrl && !draft.minorAuthDocCleared) guest.minorAuthDocUrl = targetGuest.minorAuthDocUrl;
+      if (targetGuest.selfieUrl && !guest.photoUrl) guest.photoUrl = targetGuest.selfieUrl;
+      if (targetGuest.vehicle?.plate && !guest.vehiclePlate) {
+        guest.vehiclePlate = targetGuest.vehicle.plate;
+        guest.vehicleBrand = targetGuest.vehicle.brand || "";
+        guest.vehicleModel = targetGuest.vehicle.model || "";
+        guest.vehicleColor = targetGuest.vehicle.color || "";
+        guest.vehicle = { ...targetGuest.vehicle };
+      }
+    }
+
+    // 1. Campos de texto e progresso do wizard salvos no draft e propagados imediatamente ao CRM/reserva
+    if (hasOwn(body, "step") && [1, 2, 3].includes(Number(body.step))) {
+      draft.step = Number(body.step);
+    }
+
+    if (hasNameField) {
+      draft.fullName = rawFullName;
+      if (isValidName) {
+        targetGuest.name = trimmedName;
+        if (guest) {
+          guest.name = trimmedName;
+          guest.fullName = trimmedName;
+        }
+        if (account) account.name = trimmedName;
+        if (isTitular) r.guestName = trimmedName;
+      }
+    }
+
+    if (hasDocField) {
+      draft.document = rawDocument;
+      if (isValidDoc) {
+        const docTypeStr = docHasLetters ? "Passaporte" : "CPF";
+        targetGuest.cpf = docTrimmed;
+        if (guest) {
+          guest.docType = docTypeStr;
+          guest.document = docTrimmed;
+          guest.documentNumber = docTrimmed;
+        }
+        if (account) {
+          account.docType = docTypeStr;
+          account.document = validDocClean || docTrimmed;
+        }
+        if (isTitular) r.guestDocument = docTrimmed;
+      }
+    }
+
+    if (hasPhoneField) {
+      draft.phone = rawPhone;
+      if (isValidPhone) {
+        targetGuest.phone = trimmedPhone;
+        if (guest) guest.phone = trimmedPhone;
+        if (account) account.phone = trimmedPhone;
+        if (isTitular) r.guestPhone = trimmedPhone;
+      }
+    }
+
+    if (hasEmailField) {
+      draft.email = rawEmail;
+      if (isValidEmail) {
+        targetGuest.email = cleanEmail;
+        if (guest) guest.email = cleanEmail;
+        if (account) account.email = cleanEmail;
+        if (isTitular) r.guestEmail = cleanEmail;
+      }
+    }
+
+    if (hasOwn(body, "birthDateInput")) {
+      draft.birthDateInput = String(body.birthDateInput ?? "");
+    }
+    if (hasBirthDateField) {
+      draft.birthDate = validIsoBirthDate || String(body.birthDate ?? "");
+      if (validIsoBirthDate) {
+        targetGuest.birthDate = validIsoBirthDate;
+        const ageCalc = calculateGuestAge(validIsoBirthDate);
+        if (ageCalc !== null) {
+          targetGuest.isMinor = ageCalc < 18;
+          targetGuest.minorAge = ageCalc;
+        }
+        if (guest) {
+          guest.birthDate = validIsoBirthDate;
+          if (ageCalc !== null) {
+            guest.isMinor = ageCalc < 18;
+            guest.minorAge = ageCalc;
+          }
+        }
+        if (account) account.birthDate = validIsoBirthDate;
+        if (isTitular) {
+          r.birthDate = validIsoBirthDate;
+          if (ageCalc !== null && ageCalc < 18) r.hasMinor = true;
+        }
+      }
+    }
+
+    if (hasOwn(body, "gender")) {
+      const genderVal = String(body.gender ?? "").trim();
+      draft.gender = genderVal;
+      if (genderVal) {
+        targetGuest.gender = genderVal;
+        if (guest) guest.gender = genderVal;
+        if (account) account.gender = genderVal;
+        if (isTitular) r.gender = genderVal;
+      }
+    }
+
+    if (hasOwn(body, "cep")) {
+      const cepRaw = String(body.cep ?? "").trim();
+      const cepDigits = cleanCep(cepRaw);
+      draft.cep = cepRaw;
+      if (cepDigits.length === 8 || cepRaw === "") {
+        targetGuest.cep = cepRaw;
+        if (guest) guest.cep = cepDigits;
+        if (account) account.cep = cepDigits;
+        if (isTitular) r.guestCep = cepRaw;
+      }
+    }
+
+    const streetVal = hasOwn(body, "street") ? String(body.street ?? "") : undefined;
+    const numberVal = hasOwn(body, "streetNumber") ? String(body.streetNumber ?? "") : undefined;
+    const compVal = hasOwn(body, "complement") ? String(body.complement ?? "") : undefined;
+    const neighVal = hasOwn(body, "neighborhood") ? String(body.neighborhood ?? "") : undefined;
+    const addrVal = hasOwn(body, "address") ? String(body.address ?? "") : undefined;
+    const cityVal = hasOwn(body, "city") ? String(body.city ?? "") : undefined;
+    const stateVal = hasOwn(body, "state") ? String(body.state ?? "").trim().toUpperCase() : undefined;
+
+    if (streetVal !== undefined) {
+      draft.street = streetVal;
+      const t = streetVal.trim();
+      targetGuest.street = t;
+      if (guest) {
+        guest.street = t;
+        guest.logradouro = t;
+      }
+      if (account) account.street = t;
+      if (isTitular) r.guestStreet = t;
+    }
+
+    if (numberVal !== undefined) {
+      draft.streetNumber = numberVal;
+      const t = numberVal.trim();
+      targetGuest.streetNumber = t;
+      if (guest) {
+        guest.streetNumber = t;
+        guest.number = t;
+        guest.numero = t;
+      }
+      if (account) {
+        account.streetNumber = t;
+        account.number = t;
+      }
+      if (isTitular) r.guestStreetNumber = t;
+    }
+
+    if (compVal !== undefined) {
+      draft.complement = compVal;
+      const t = compVal.trim();
+      targetGuest.complement = t;
+      if (guest) {
+        guest.complement = t;
+        guest.complemento = t;
+      }
+      if (account) account.complement = t;
+      if (isTitular) r.guestComplement = t;
+    }
+
+    if (neighVal !== undefined) {
+      draft.neighborhood = neighVal;
+      const t = neighVal.trim();
+      targetGuest.neighborhood = t;
+      if (guest) {
+        guest.neighborhood = t;
+        guest.bairro = t;
+      }
+      if (account) account.neighborhood = t;
+      if (isTitular) r.guestNeighborhood = t;
+    }
+
+    if (addrVal !== undefined) {
+      draft.address = addrVal;
+      const t = addrVal.trim();
+      targetGuest.address = t;
+      if (guest) guest.address = t;
+      if (account) account.address = t;
+      if (isTitular) r.guestAddress = t;
+    }
+
+    if (cityVal !== undefined) {
+      draft.city = cityVal;
+      const t = cityVal.trim();
+      targetGuest.city = t;
+      if (guest) {
+        guest.city = t;
+        guest.cidade = t;
+      }
+      if (account) account.city = t;
+      if (isTitular) r.guestCity = t;
+    }
+
+    if (stateVal !== undefined) {
+      draft.state = stateVal;
+      if (stateVal) {
+        targetGuest.state = stateVal;
+        const hasAddressContext = Boolean(
+          (cityVal && cityVal.trim()) ||
+          (streetVal && streetVal.trim()) ||
+          draft.city ||
+          draft.street ||
+          draft.cep ||
+          guest?.city ||
+          guest?.street ||
+          stateVal !== "RJ"
+        );
+        if (hasAddressContext) {
+          if (guest) {
+            guest.state = stateVal;
+            guest.uf = stateVal;
+          }
+          if (account) account.state = stateVal;
+          if (isTitular) r.guestState = stateVal;
+        }
+      }
+    }
+
+    if (hasOwn(body, "travelReason")) {
+      const tr = String(body.travelReason ?? "").trim();
+      draft.travelReason = tr;
+      if (tr) {
+        targetGuest.travelReason = tr;
+        if (guest) guest.travelReason = tr;
+        if (isTitular) r.travelReason = tr;
+      }
+    }
+
+    if (hasOwn(body, "transportMethod")) {
+      const tm = String(body.transportMethod ?? "").trim();
+      draft.transportMethod = tm;
+      if (tm) {
+        targetGuest.transportMethod = tm;
+        if (guest) guest.transportMethod = tm;
+        if (isTitular) r.transportMethod = tm;
+      }
+    }
+
+    if (hasOwn(body, "estimatedArrivalTime")) {
+      const eta = String(body.estimatedArrivalTime ?? "").trim();
+      draft.estimatedArrivalTime = eta;
+      targetGuest.estimatedArrivalTime = eta;
+      if (isTitular) r.estimatedArrivalTime = eta;
+    }
+
+    if (hasOwn(body, "originCity")) {
+      const oc = String(body.originCity ?? "");
+      draft.originCity = oc;
+      targetGuest.originCity = oc.trim();
+      if (guest) guest.originCity = oc.trim();
+      if (isTitular) r.originCity = oc.trim();
+    }
+
+    if (hasOwn(body, "originState")) {
+      const os = String(body.originState ?? "").trim().toUpperCase();
+      draft.originState = os;
+      if (os) {
+        targetGuest.originState = os;
+        if (os !== "RJ" || draft.originCity || guest?.originCity) {
+          if (guest) guest.originState = os;
+          if (isTitular) r.originState = os;
+        }
+      }
+    }
+
+    if (hasOwn(body, "destinationCity")) {
+      const dc = String(body.destinationCity ?? "");
+      draft.destinationCity = dc;
+      targetGuest.destinationCity = dc.trim();
+      if (guest) guest.destinationCity = dc.trim();
+      if (isTitular) r.destinationCity = dc.trim();
+    }
+
+    if (hasOwn(body, "destinationState")) {
+      const ds = String(body.destinationState ?? "").trim().toUpperCase();
+      draft.destinationState = ds;
+      if (ds) {
+        targetGuest.destinationState = ds;
+        if (ds !== "RJ" || draft.destinationCity || guest?.destinationCity) {
+          if (guest) guest.destinationState = ds;
+          if (isTitular) r.destinationState = ds;
+        }
+      }
+    }
+
+    if (hasOwn(body, "minorKinship")) {
+      const mk = String(body.minorKinship ?? "").trim();
+      draft.minorKinship = mk;
+      if (mk) {
+        targetGuest.minorKinship = mk;
+        if (guest) guest.minorKinship = mk;
+      }
+    }
+
+    if (hasOwn(body, "optInMarketing") && typeof body.optInMarketing === "boolean") {
+      draft.optInMarketing = body.optInMarketing;
+      targetGuest.optInMarketing = body.optInMarketing;
+      if (guest) guest.optInMarketing = body.optInMarketing;
+    }
+    if (hasOwn(body, "acceptedHouseRules") && typeof body.acceptedHouseRules === "boolean") {
+      draft.acceptedHouseRules = body.acceptedHouseRules;
+    }
+    if (hasOwn(body, "acceptedContract") && typeof body.acceptedContract === "boolean") {
+      draft.acceptedContract = body.acceptedContract;
+    }
+    if (hasOwn(body, "legalDeclarationAccepted") && typeof body.legalDeclarationAccepted === "boolean") {
+      draft.legalDeclarationAccepted = body.legalDeclarationAccepted;
+    }
+
+    // 2. Veículo (salva no draft + slot do hóspede e, com placa >= 3 chars, no cadastro CRM/reserva sem disparar e-mail de garagem)
+    const hasVehicleField =
+      hasOwn(body, "vehiclePlate") ||
+      hasOwn(body, "vehicleBrand") ||
+      hasOwn(body, "vehicleModel") ||
+      hasOwn(body, "vehicleColor");
+
+    if (hasOwn(body, "vehiclePlate")) draft.vehiclePlate = String(body.vehiclePlate ?? "").toUpperCase();
+    if (hasOwn(body, "vehicleBrand")) draft.vehicleBrand = String(body.vehicleBrand ?? "");
+    if (hasOwn(body, "vehicleModel")) draft.vehicleModel = String(body.vehicleModel ?? "");
+    if (hasOwn(body, "vehicleColor")) draft.vehicleColor = String(body.vehicleColor ?? "");
+
+    if (hasVehicleField) {
+      const effectiveTransport = hasOwn(body, "transportMethod")
+        ? String(body.transportMethod ?? "")
+        : (draft.transportMethod ?? targetGuest.transportMethod ?? "");
+      const isVehicleTransport =
+        !effectiveTransport ||
+        ["carro", "Carro próprio", "Carro alugado", "moto", "Moto", "Moto própria", "Moto alugada"].includes(effectiveTransport);
+
+      if (isVehicleTransport) {
+        const vPlate = String(hasOwn(body, "vehiclePlate") ? body.vehiclePlate : (draft.vehiclePlate ?? targetGuest.vehicle?.plate ?? "")).toUpperCase().trim();
+        const vBrand = String(hasOwn(body, "vehicleBrand") ? body.vehicleBrand : (draft.vehicleBrand ?? targetGuest.vehicle?.brand ?? "")).trim();
+        const vModel = String(hasOwn(body, "vehicleModel") ? body.vehicleModel : (draft.vehicleModel ?? targetGuest.vehicle?.model ?? "")).trim();
+        const vColor = String(hasOwn(body, "vehicleColor") ? body.vehicleColor : (draft.vehicleColor ?? targetGuest.vehicle?.color ?? "")).trim();
+
+        if (vPlate || vBrand || vModel || vColor) {
+          targetGuest.vehicle = { plate: vPlate, brand: vBrand, model: vModel, color: vColor };
+        }
+        if (vPlate.length >= 3) {
+          const mergedVeh = mergeVehicleData(
+            guest ? { plate: guest.vehiclePlate, brand: guest.vehicleBrand, model: guest.vehicleModel, color: guest.vehicleColor } : null,
+            { plate: vPlate, brand: vBrand, model: vModel, color: vColor }
+          ) || { plate: vPlate, brand: vBrand, model: vModel, color: vColor };
+
+          if (guest) {
+            guest.vehiclePlate = mergedVeh.plate;
+            guest.vehicleBrand = mergedVeh.brand;
+            guest.vehicleModel = mergedVeh.model;
+            guest.vehicleColor = mergedVeh.color;
+            guest.vehicle = { ...mergedVeh };
+          }
+          if (account) account.vehicle = { ...mergedVeh };
+          if (isTitular) {
+            r.vehiclePlate = mergedVeh.plate;
+            r.vehicle = { ...(r.vehicle || {}), ...mergedVeh, updatedAt: now };
+          }
+        }
+      }
+    }
+
+    // 3. Documentos, mídia e rascunho de assinatura
+    if (body.clearDocPhoto === true) {
+      draft.docPhotoUrl = null;
+      draft.docPhotoCleared = true;
+      draft.aiDocResult = null;
+      targetGuest.docPhotoUrl = null;
+      targetGuest.aiDocInspection = null;
+    } else if (typeof body.docPhotoBase64 === "string" && body.docPhotoBase64.startsWith("data:")) {
+      const uploadedDocUrl = await uploadImageToStorage(
+        body.docPhotoBase64,
+        `doc_g${guest?.id || `res${r.id}_i${guestIndex}`}_${nowMs}`,
+        db,
+        "guests"
+      );
+      if (uploadedDocUrl) {
+        draft.docPhotoUrl = uploadedDocUrl;
+        draft.docPhotoCleared = false;
+        targetGuest.docPhotoUrl = uploadedDocUrl;
+        if (guest) guest.docPhotoUrl = uploadedDocUrl;
+        if (account) account.docPhotoUrl = uploadedDocUrl;
+        if (isTitular) {
+          r.docPhotoUrl = uploadedDocUrl;
+          r.pendingDocumentUpload = false;
+        }
+      }
+    }
+
+    if (body.clearMinorAuthDoc === true) {
+      draft.minorAuthDocUrl = null;
+      draft.minorAuthDocCleared = true;
+      targetGuest.minorAuthDocUrl = null;
+    } else if (typeof body.minorAuthDocBase64 === "string" && body.minorAuthDocBase64.startsWith("data:")) {
+      const uploadedAuthUrl = await uploadImageToStorage(
+        body.minorAuthDocBase64,
+        `minor_auth_g${guest?.id || `res${r.id}_i${guestIndex}`}_${nowMs}`,
+        db,
+        "guests"
+      );
+      if (uploadedAuthUrl) {
+        draft.minorAuthDocUrl = uploadedAuthUrl;
+        draft.minorAuthDocCleared = false;
+        targetGuest.minorAuthDocUrl = uploadedAuthUrl;
+        if (guest) guest.minorAuthDocUrl = uploadedAuthUrl;
+      }
+    }
+
+    if (typeof body.selfieBase64 === "string" && body.selfieBase64.startsWith("data:")) {
+      const uploadedSelfieUrl = await uploadImageToStorage(
+        body.selfieBase64,
+        `selfie_g${guest?.id || `res${r.id}_i${guestIndex}`}_${nowMs}`,
+        db,
+        "guests"
+      );
+      if (uploadedSelfieUrl) {
+        draft.selfieUrl = uploadedSelfieUrl;
+        targetGuest.selfieUrl = uploadedSelfieUrl;
+        if (guest) guest.photoUrl = uploadedSelfieUrl;
+        if (account) account.photoUrl = uploadedSelfieUrl;
+        if (isTitular) r.selfieUrl = uploadedSelfieUrl;
+      }
+    }
+
+    if (body.aiDocResult && typeof body.aiDocResult === "object") {
+      draft.aiDocResult = body.aiDocResult;
+      targetGuest.aiDocInspection = body.aiDocResult;
+      if (guest) guest.aiDocInspection = body.aiDocResult;
+      if (isTitular) r.aiDocInspection = body.aiDocResult;
+    }
+
+    if (body.clearSignatureDraft === true) {
+      draft.signatureBase64 = null;
+    } else if (
+      typeof body.signatureDraftBase64 === "string" &&
+      body.signatureDraftBase64.startsWith("data:image/") &&
+      body.signatureDraftBase64.length < 500_000
+    ) {
+      draft.signatureBase64 = body.signatureDraftBase64;
+    }
+
+    draft.updatedAt = now;
+    draft.updatedAtMs = nowMs;
+    r.updatedAt = now;
+
+    saveDatabase("precheckin_autosave");
+
+    res.json({
+      ok: true,
+      savedAt: now,
+      savedAtMs: nowMs,
+      guestIndex,
+      guestId: guest?.id || targetGuest.guestId || null,
+      guestCode: guest?.guestCode || targetGuest.guestCode || (isTitular ? r.guestCode : "") || "",
+      docPhotoUrl: draft.docPhotoCleared ? null : (draft.docPhotoUrl || targetGuest.docPhotoUrl || null),
+      minorAuthDocUrl: draft.minorAuthDocCleared ? null : (draft.minorAuthDocUrl || targetGuest.minorAuthDocUrl || null),
+      selfieUrl: draft.selfieUrl || targetGuest.selfieUrl || null
+    });
+  } catch (err) {
+    console.error("[POST /api/pms/pre-checkin/:code/autosave] Erro:", err);
+    res.status(500).json({ error: err?.message || "Erro ao salvar progresso do check-in." });
+  }
 });
 
 // Endpoint para Gerar Link Temporário de Assinatura com Token Único (2 horas)
@@ -62038,7 +63328,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     minorAuthDocBase64 ? uploadImageToStorage(minorAuthDocBase64, `minor_auth_g${guest.id}_${nowTs}`, db) : Promise.resolve(guest.minorAuthDocUrl || null)
   ]);
 
-  // Executa Validação com Inteligência Artificial (Biometria Facial / Selfie vs Documento) com timeout seguro de 2.5s
+  // Executa Validação com Inteligência Artificial (Biometria Facial / Selfie vs Documento) com AbortController real de 8s
   let aiVerification = {
     status: "heuristic_ok",
     confidence: 90,
@@ -62048,53 +63338,59 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     summary: "Validação estrutural realizada com sucesso. Documento e dados cadastrais em conformidade.",
     checkedAt: new Date().toISOString()
   };
+  const facialCtrl = new AbortController();
+  const facialTimer = setTimeout(() => facialCtrl.abort(new Error("Timeout AI facial")), 8000);
   try {
-    aiVerification = await Promise.race([
-      evaluateGuestIdentityWithAI({
-        fullName: validName,
-        document: document || guest.document,
-        birthDate: normalizedBirthDate || guest.birthDate,
-        selfieBase64,
-        docPhotoBase64,
-        selfieUrl,
-        docPhotoUrl
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout AI facial")), 2500))
-    ]);
+    aiVerification = await evaluateGuestIdentityWithAI({
+      fullName: validName,
+      document: document || guest.document,
+      birthDate: normalizedBirthDate || guest.birthDate,
+      selfieBase64,
+      docPhotoBase64,
+      selfieUrl,
+      docPhotoUrl,
+      signal: facialCtrl.signal,
+      timeoutMs: 8000
+    });
   } catch (aiErr) {
     console.warn("[POST /api/pms/pre-checkin] AI facial verification fallback:", aiErr.message);
+  } finally {
+    clearTimeout(facialTimer);
   }
 
   // Executa Inspeção Pericial de Documento Oficial com IA (se já inspecionado na tela, reaproveita resultado)
   let aiDocInspection = req.body.aiDocResult || null;
   const docToInspect = docPhotoBase64 || guest.docPhotoUrl;
   if (!aiDocInspection && docToInspect) {
+    const docCtrl = new AbortController();
+    const docTimer = setTimeout(() => docCtrl.abort(new Error("Timeout AI doc")), 8000);
     try {
-      aiDocInspection = await Promise.race([
-        inspectDocumentWithAI({
-          fileBase64: docToInspect,
-          fileName: `doc_pre_checkin_g${guest.id}`,
-          providedName: validName,
-          providedCpf: cleanDoc,
-          reservationName: Number(guestIndex) === 1 ? (r.guestName || "") : "",
-          reservationCpf: Number(guestIndex) === 1 ? (r.guestDocument || "") : "",
-          guestIndex: Number(guestIndex) || 1,
-          providedCity: city || guest.city,
-          providedAddress: address || guest.address,
-          providedBirthDate: normalizedBirthDate || guest.birthDate,
-          providedOriginCity: originCity || req.body.originCity || guest.originCity,
-          providedOriginState: originState || req.body.originState || guest.originState,
-          providedState: state || req.body.state || guest.state,
-          providedCep: cep || req.body.cep || guest.cep,
-          originCity: originCity || req.body.originCity || guest.originCity,
-          originState: originState || req.body.originState || guest.originState,
-          state: state || req.body.state || guest.state,
-          cep: cep || req.body.cep || guest.cep
-        }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout AI doc")), 2500))
-      ]);
+      aiDocInspection = await inspectDocumentWithAI({
+        fileBase64: docToInspect,
+        fileName: `doc_pre_checkin_g${guest.id}`,
+        providedName: validName,
+        providedCpf: cleanDoc,
+        reservationName: Number(guestIndex) === 1 ? (r.guestName || "") : "",
+        reservationCpf: Number(guestIndex) === 1 ? (r.guestDocument || "") : "",
+        guestIndex: Number(guestIndex) || 1,
+        providedCity: city || guest.city,
+        providedAddress: address || guest.address,
+        providedBirthDate: normalizedBirthDate || guest.birthDate,
+        providedOriginCity: originCity || req.body.originCity || guest.originCity,
+        providedOriginState: originState || req.body.originState || guest.originState,
+        providedState: state || req.body.state || guest.state,
+        providedCep: cep || req.body.cep || guest.cep,
+        originCity: originCity || req.body.originCity || guest.originCity,
+        originState: originState || req.body.originState || guest.originState,
+        state: state || req.body.state || guest.state,
+        cep: cep || req.body.cep || guest.cep,
+        signal: docCtrl.signal,
+        timeoutMs: 8000
+      });
     } catch (docAiErr) {
       console.warn("[POST /api/pms/pre-checkin] Erro/timeout na inspeção IA de documento:", docAiErr.message);
+    } finally {
+      clearTimeout(docTimer);
     }
   }
 
@@ -62304,6 +63600,10 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   targetGuest.hadCompletedCheckinBefore = true;
   targetGuest.checkinCompletedAt = now;
   targetGuest.needsReSignature = false;
+  delete targetGuest.preCheckinDraft;
+  if (guest) {
+    delete guest.createdFromPreCheckinAutosave;
+  }
 
   // Se for hóspede titular (índice 1)
   if (Number(guestIndex) === 1) {
@@ -64418,10 +65718,7 @@ app.get("/api/bot-actions/availability", verifyBotActionPermission("checkAvailab
 
       // Hold provisório de modificação
       if (r.pendingModification && (r.pendingModification.status === "pending" || r.pendingModification.status === "pending_payment")) {
-        if (r.pendingModification.expiresAt && new Date(r.pendingModification.expiresAt).getTime() < nowMs) {
-          r.pendingModification.status = "expired";
-          r.pendingModification.expiredAt = new Date(nowMs).toISOString();
-        } else {
+        if (!r.pendingModification.expiresAt || new Date(r.pendingModification.expiresAt).getTime() >= nowMs) {
           const pHoldIn = r.pendingModification.newCheckinDate || r.pendingModification.proposedCheckinDate;
           const pHoldOut = r.pendingModification.newCheckoutDate || r.pendingModification.proposedCheckoutDate;
           const pHoldFlatNum = r.pendingModification.newFlatNumber || r.pendingModification.proposedFlatNumber;
@@ -64674,10 +65971,7 @@ app.post("/api/bot-actions/pre-reserve", verifyBotActionPermission("createPreRes
 
       // Hold provisório de modificação
       if (r.pendingModification && (r.pendingModification.status === "pending" || r.pendingModification.status === "pending_payment")) {
-        if (r.pendingModification.expiresAt && new Date(r.pendingModification.expiresAt).getTime() < nowMs) {
-          r.pendingModification.status = "expired";
-          r.pendingModification.expiredAt = new Date(nowMs).toISOString();
-        } else {
+        if (!r.pendingModification.expiresAt || new Date(r.pendingModification.expiresAt).getTime() >= nowMs) {
           const pHoldIn = r.pendingModification.newCheckinDate || r.pendingModification.proposedCheckinDate;
           const pHoldOut = r.pendingModification.newCheckoutDate || r.pendingModification.proposedCheckoutDate;
           const pHoldFlatNum = r.pendingModification.newFlatNumber || r.pendingModification.proposedFlatNumber;
@@ -64954,10 +66248,7 @@ app.post("/api/bot-actions/commit-reservation", verifyBotActionPermission("commi
 
       // Hold provisório de modificação
       if (r.pendingModification && (r.pendingModification.status === "pending" || r.pendingModification.status === "pending_payment")) {
-        if (r.pendingModification.expiresAt && new Date(r.pendingModification.expiresAt).getTime() < nowMs) {
-          r.pendingModification.status = "expired";
-          r.pendingModification.expiredAt = new Date(nowMs).toISOString();
-        } else {
+        if (!r.pendingModification.expiresAt || new Date(r.pendingModification.expiresAt).getTime() >= nowMs) {
           const pHoldIn = r.pendingModification.newCheckinDate || r.pendingModification.proposedCheckinDate;
           const pHoldOut = r.pendingModification.newCheckoutDate || r.pendingModification.proposedCheckoutDate;
           const pHoldFlatNum = r.pendingModification.newFlatNumber || r.pendingModification.proposedFlatNumber;
@@ -81108,7 +82399,7 @@ app.post("/api/ai/analyze-reviews", async (req, res) => {
         try {
           const sampleText = positiveReviews.slice(0, 10).map(r => `- "${r.comment.trim()}" (${r.author || "Hóspede"})`).join("\n");
           const prompt = `Você é um analista de hospitalidade do hotel CorpFlats. A seguir estão comentários REAIS de avaliações positivas de hóspedes:\n${sampleText}\n\nCom base ESTRITAMENTE nesses comentários reais, resuma de 1 a 4 principais pontos fortes ou elogios reais (máximo 12 palavras por item). NUNCA invente nada que não esteja citado nesses comentários.\nRetorne APENAS um JSON no formato: ["ponto 1", "ponto 2"]`;
-          const aiRes = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: prompt }] }]);
+          const aiRes = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: prompt }] }], "reviews_highlights", { role: "lite", thinkingLevel: "minimal", maxOutputTokens: 1024 });
           if (aiRes.ok) {
             const raw = aiRes.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
             const jsonMatch = raw.match(/\[[\s\S]*\]/);
@@ -81296,6 +82587,10 @@ async function analyzeTextSentimentWithAI(text, context) {
     };
   };
 
+  if (String(text || "").trim().length < 20) {
+    return runHeuristicAnalysis("texto curto (<20 chars)");
+  }
+
   if (!apiKey) {
     return runHeuristicAnalysis("sem chave Gemini");
   }
@@ -81303,7 +82598,7 @@ async function analyzeTextSentimentWithAI(text, context) {
   try {
     const prompt = `Você é um analista de experiência do cliente de um hotel boutique brasileiro chamado CorpFlats.\nAnalise o seguinte texto${ctx ? " (" + ctx + ")" : ""} e retorne um JSON estrito com os campos abaixo.\nTexto para análise: """${text}"""\n\nRetorne APENAS um JSON válido (sem markdown) no formato:\n{\n  "score": 82,\n  "tone": "positive",\n  "keywords": ["limpeza", "wi-fi", "ar condicionado"],\n  "positiveKeywords": ["impecável", "rápido", "confortável"],\n  "negativeKeywords": ["gotejando"],\n  "suggestions": ["Verificar ar condicionado do flat 304"],\n  "flatsMentioned": ["304"],\n  "summary": "Hóspede muito satisfeito, elogia limpeza e internet mas relata problema no AC"\n}\nOnde "score" é de 0 (péssimo) a 100 (excelente), "tone" é "positive", "neutral" ou "negative".`;
 
-    const geminiResult = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: prompt }] }]);
+    const geminiResult = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: prompt }] }], "sentiment_ai", { role: "lite", thinkingLevel: "minimal", maxOutputTokens: 1024 });
 
     if (geminiResult.ok) {
       const data = geminiResult.data;
@@ -81868,7 +83163,7 @@ app.post("/api/ai/improvements-summary/refresh", async (req, res) => {
           `- [${it.category}] ${it.title} (Flats: ${it.flats.join(", ") || "Geral"} | ${it.mentionsCount}x | menor nota ${it.minScore}⭐): ${it.quotes.slice(0, 2).map(q => `"${q.comment}"`).join("; ")}`
         ).join("\n");
         const prompt = `Você é o consultor de gestão do hotel CorpFlats. Com base ESTRITAMENTE nos pontos de melhoria reais abaixo (extraídos das respostas de hóspedes que deram nota de 1 a 4), escreva um resumo executivo direto (em tópicos curtos, máximo 5 linhas no total) indicando o que deve ser melhorado com prioridade:\n${sample}\nNUNCA invente informações fora da lista.`;
-        const aiRes = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: prompt }] }]);
+        const aiRes = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: prompt }] }], "nps_improvements", { role: "lite", thinkingLevel: "minimal", maxOutputTokens: 1024 });
         if (aiRes.ok) {
           return aiRes.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
         }
@@ -82343,8 +83638,6 @@ Mantenha um tom profissional, ágil e focado na tomada de decisão gerencial.`;
 
   let geminiRes = null;
   if (apiKey) {
-    const copilotStart = Date.now();
-    const keyInfo = resolvePrimaryGeminiKeyInfo();
     try {
       geminiRes = await callGeminiAi({
         apiKey,
@@ -82354,29 +83647,10 @@ Mantenha um tom profissional, ágil e focado na tomada de decisão gerencial.`;
         db,
         tools: adminTools,
         customPrompt: true,
-        requesterRole: "admin"
-      });
-      recordAiRuntimeCall({
-        module: "admin_copilot",
-        model: geminiRes?.model || normalizeGeminiModel(db?.zapiConfig?.aiAgent?.preferredModel || db?.whatsappAiSettings?.preferredModel, "reasoning"),
-        protocol: geminiRes?.protocol || GEMINI_INTERACTIONS_PROTOCOL,
-        ok: Boolean(geminiRes?.ok && geminiRes?.text),
-        status: geminiRes?.ok ? 200 : (geminiRes?.geminiDiagnostics?.[0]?.status || null),
-        latencyMs: Date.now() - copilotStart,
-        error: geminiRes?.ok ? null : (geminiRes?.error || geminiRes?.geminiDiagnostics?.[0]?.error || "Fallback local acionado"),
-        keySource: keyInfo.primarySourceLabel
+        requesterRole: "admin",
+        telemetryModule: "admin_copilot"
       });
     } catch (gErr) {
-      recordAiRuntimeCall({
-        module: "admin_copilot",
-        model: normalizeGeminiModel(db?.zapiConfig?.aiAgent?.preferredModel || db?.whatsappAiSettings?.preferredModel, "reasoning"),
-        protocol: GEMINI_INTERACTIONS_PROTOCOL,
-        ok: false,
-        status: null,
-        latencyMs: Date.now() - copilotStart,
-        error: gErr.message,
-        keySource: keyInfo.primarySourceLabel
-      });
       console.warn("[Admin Copilot] Erro na chamada Gemini:", gErr.message);
     }
   }
@@ -83153,12 +84427,15 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
         const valorPago = Number(item.valor || 0);
 
         if (txid) {
-          // 0. Verifica se o pagamento é referente a Limpeza Durante a Estadia (R$ 70,00), Early Check-in, Late Check-out, 2ª via de Cartão NFC (R$ 15,00), Prorrogação de Estadia ou Domingo Sem Pressa
+          // 0. Verifica se o pagamento é referente a Limpeza Durante a Estadia (R$ 70,00), Early Check-in, Late Check-out, 2ª via de Cartão NFC (R$ 15,00), Modificação Pendente, Prorrogação de Estadia ou Domingo Sem Pressa
+          const cleanModWebhookTx = String(txid || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
           const resServiceOrder = (db.reservations || []).find(resItem =>
             resItem.pendingStayoverCleaning?.txid === txid ||
             resItem.pendingEarlyCheckin?.txid === txid ||
             resItem.pendingLateCheckout?.txid === txid ||
             resItem.pendingNfcCardReplacement?.txid === txid ||
+            resItem.pendingModification?.pixTxId === txid ||
+            (cleanModWebhookTx.length >= 5 && resItem.pendingModification?.pixTxId && String(resItem.pendingModification.pixTxId).replace(/[^a-zA-Z0-9]/g, "").toUpperCase() === cleanModWebhookTx) ||
             resItem.pendingStayExtension?.txid === txid ||
             resItem.pendingSundayUpsell?.txid === txid ||
             (resItem.pendingSundayUpsell && txid && String(txid).includes("UPSELL_SUN") && String(txid).includes(String(resItem.code || resItem.id)))
@@ -83410,17 +84687,56 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
               continue;
             }
 
+            const pendingModMatch = resServiceOrder.pendingModification && (
+              resServiceOrder.pendingModification.pixTxId === txid ||
+              (cleanModWebhookTx.length >= 5 && resServiceOrder.pendingModification.pixTxId && String(resServiceOrder.pendingModification.pixTxId).replace(/[^a-zA-Z0-9]/g, "").toUpperCase() === cleanModWebhookTx)
+            );
+            if (pendingModMatch && resServiceOrder.pendingModification.status !== "paid") {
+              const modMeta = resServiceOrder.pendingModification;
+              await reconcilePendingModificationBeforeExpire(resServiceOrder, modMeta, {
+                nowMs: Date.now(),
+                source: "Banco Inter Webhook",
+                saveFn: saveDatabase,
+                verifyFn: async () => ({
+                  found: true,
+                  amount: valorPago > 0 ? valorPago : (Number(modMeta.additionalAmountToPay) || 0),
+                  paidAt: paidIso,
+                  endToEndId: item.endToEndId || `E2E_INTER_${Date.now()}`,
+                  txId: txid,
+                  paymentMethod: "pix",
+                  source: "Banco Inter Webhook"
+                })
+              });
+              saveDatabase();
+              continue;
+            }
+
             if (resServiceOrder.pendingStayExtension?.txid === txid && resServiceOrder.pendingStayExtension.status !== "paid") {
               const extMeta = resServiceOrder.pendingStayExtension;
               const extAmt = valorPago > 0 ? valorPago : (Number(extMeta.amount) || 0);
               const alreadyApplied = Boolean(
                 extMeta.alreadyAppliedToReservation ||
-                (extMeta.newCheckoutDate && resServiceOrder.checkoutDate === extMeta.newCheckoutDate && Number(resServiceOrder.totalAmount || 0) > Number(resServiceOrder.paidAmount || 0) + 0.05)
+                (((!extMeta.newCheckoutDate || resServiceOrder.checkoutDate === extMeta.newCheckoutDate) &&
+                  (!extMeta.newCheckinDate || resServiceOrder.checkinDate === extMeta.newCheckinDate)) &&
+                  (extMeta.newCheckoutDate || extMeta.newCheckinDate) &&
+                  Number(resServiceOrder.totalAmount || 0) > Number(resServiceOrder.paidAmount || 0) + 0.05)
               );
               const oldCheckout = extMeta.oldCheckoutDate || resServiceOrder.previousCheckoutDate || resServiceOrder.checkoutDate;
+              if (extMeta.newCheckinDate && resServiceOrder.checkinDate !== extMeta.newCheckinDate) {
+                resServiceOrder.previousCheckinDate = resServiceOrder.checkinDate;
+                resServiceOrder.checkinDate = extMeta.newCheckinDate;
+              }
               if (extMeta.newCheckoutDate && resServiceOrder.checkoutDate !== extMeta.newCheckoutDate) {
                 resServiceOrder.previousCheckoutDate = resServiceOrder.checkoutDate;
                 resServiceOrder.checkoutDate = extMeta.newCheckoutDate;
+              }
+              if (resServiceOrder.checkinDate && resServiceOrder.checkoutDate) {
+                resServiceOrder.nights = Math.max(
+                  1,
+                  Math.round(
+                    (new Date(`${resServiceOrder.checkoutDate}T12:00:00Z`).getTime() - new Date(`${resServiceOrder.checkinDate}T12:00:00Z`).getTime()) / 86400000
+                  )
+                );
               }
               if (extMeta.newFlatNumber && String(extMeta.newFlatNumber) !== String(resServiceOrder.flatNumber)) {
                 const targetFlatObj = (db.flats || []).find(f => String(f.number) === String(extMeta.newFlatNumber));
@@ -84218,13 +85534,15 @@ async function checkInterBankingExtratoPix(r) {
       : [];
     const cleanPkgCode = String(r.packageCode || r.packageId || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
     const cleanPixTxId = String(r.pixTxId || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+    const cleanExtTxId = String(r.pendingStayExtension?.txid || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
     const cleanPkgPixTxId = String(r.packagePixTxId || pkgSumExtrato?.pixTxId || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
     const expectedAmount = pkgSumExtrato
       ? Number(pkgSumExtrato.totalAmount || 0)
       : (hasRmExtrato ? Number(rmSumExtrato.totalAmount || 0) : Number(r.totalAmount || 0));
-    const pendingAmount = pkgSumExtrato
+    const basePendingAmt = pkgSumExtrato
       ? Math.max(0, Number(pkgSumExtrato.pendingAmount || 0))
       : (hasRmExtrato ? Math.max(0, Number(rmSumExtrato.pendingAmount || 0)) : Math.max(0, expectedAmount - (Number(r.paidAmount) || 0)));
+    const pendingAmount = basePendingAmt > 0 ? basePendingAmt : (Number(r.pendingStayExtension?.amount) || 0);
 
     for (const t of data.transacoes) {
       if (t.tipoTransacao !== "PIX" || t.tipoOperacao !== "C") continue;
@@ -84233,13 +85551,28 @@ async function checkInterBankingExtratoPix(r) {
       const txIdFromDetails = String(t.detalhes?.txId || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
       const endToEndId = t.detalhes?.endToEndId || t.idTransacao;
 
+      // Impede re-vincular uma transação já contabilizada na própria reserva (ex: sinal antigo vs diária extra)
+      const alreadyClaimedBySelf = Boolean(
+        (endToEndId && r.pixEndToEndId === endToEndId) ||
+        (Array.isArray(r.payments) && r.payments.some(p =>
+          p && (
+            (endToEndId && p.endToEndId === endToEndId) ||
+            (txIdFromDetails && p.txId && String(p.txId).replace(/[^a-zA-Z0-9]/g, "").toUpperCase() === txIdFromDetails)
+          )
+        ))
+      );
+      if (alreadyClaimedBySelf) continue;
+
       // Verifica se essa transação já foi vinculada a OUTRA reserva (ignorando irmãs do mesmo pacote ou grupo de troca de flat)
       const alreadyClaimedByOther = (db.reservations || []).some(other =>
         other.id !== r.id &&
         !(r.packageId && other.packageId === r.packageId) &&
         !(r.packageCode && other.packageCode === r.packageCode) &&
         !(r.roomMoveGroupId && other.roomMoveGroupId === r.roomMoveGroupId) &&
-        other.pixEndToEndId === endToEndId &&
+        (
+          other.pixEndToEndId === endToEndId ||
+          (other.payments || []).some(p => p && p.endToEndId === endToEndId)
+        ) &&
         other.paymentStatus === "pago_total"
       );
       if (alreadyClaimedByOther) continue;
@@ -84251,10 +85584,12 @@ async function checkInterBankingExtratoPix(r) {
           cleanRmCodes.some(rc => txIdFromDetails === rc || txIdFromDetails.includes(rc) || rc.includes(txIdFromDetails)) ||
           (cleanPkgCode && txIdFromDetails === cleanPkgCode) ||
           txIdFromDetails === cleanPixTxId ||
+          (cleanExtTxId && txIdFromDetails === cleanExtTxId) ||
           (cleanPkgPixTxId && txIdFromDetails === cleanPkgPixTxId) ||
           (cleanResCode.length >= 5 && txIdFromDetails.includes(cleanResCode)) ||
           (cleanPkgCode.length >= 5 && txIdFromDetails.includes(cleanPkgCode)) ||
           (cleanPixTxId.length >= 5 && txIdFromDetails.includes(cleanPixTxId)) ||
+          (cleanExtTxId.length >= 5 && (txIdFromDetails.includes(cleanExtTxId) || cleanExtTxId.includes(txIdFromDetails))) ||
           (cleanPkgPixTxId.length >= 5 && txIdFromDetails.includes(cleanPkgPixTxId)) ||
           (cleanResCode.length >= 5 && cleanResCode.includes(txIdFromDetails)) ||
           (cleanPkgCode.length >= 5 && cleanPkgCode.includes(txIdFromDetails))
@@ -84363,17 +85698,42 @@ async function checkInterBankingExtratoPixForPending(r, pending) {
 
       const amountMatched = Math.abs(txValor - expectedAmount) < 0.05;
 
-      const guestNameNormalized = (r.guestName || "")
-        .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
-      const firstGuestName = guestNameNormalized.split(" ")[0] || "";
+      const allGuestNames = [
+        r.guestName || "",
+        r.requesterInfo?.name || "",
+        r.requesterName || "",
+        r.companyName || "",
+        r.agencyName || "",
+        r.agencyTradeName || "",
+        ...((r.guests || []).map(g => g?.name || ""))
+      ].map(n => n.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim()).filter(Boolean);
+
       const pagadorNormalized = (t.detalhes?.nomePagador || t.descricao || "")
         .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 
-      const nameMatched = Boolean(
-        firstGuestName.length >= 3 && pagadorNormalized.includes(firstGuestName)
+      const nameMatched = allGuestNames.some(gn => {
+        const first = gn.split(" ")[0] || "";
+        return first.length >= 3 && pagadorNormalized.includes(first);
+      });
+
+      const cpfPagador = String(t.detalhes?.cpfCnpjPagador || "").replace(/\D/g, "");
+      const allGuestDocs = [
+        r.guestDocument || r.document || "",
+        r.requesterInfo?.cpf || "",
+        r.requesterInfo?.document || "",
+        r.companyCnpj || "",
+        r.agencyCnpj || "",
+        ...((r.guests || []).map(g => g?.cpf || g?.document || ""))
+      ].map(d => String(d).replace(/\D/g, "")).filter(d => d.length >= 11);
+      const cpfMatched = Boolean(cpfPagador.length >= 11 && allGuestDocs.includes(cpfPagador));
+
+      const descPixUpper = String(t.detalhes?.descricaoPix || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+      const descMatched = Boolean(
+        (cleanResCode.length >= 5 && descPixUpper.includes(cleanResCode)) ||
+        (cleanPixTxId.length >= 5 && descPixUpper.includes(cleanPixTxId))
       );
 
-      if (txIdMatched || (amountMatched && (nameMatched || (cleanResCode && txIdFromDetails.includes("MOD"))))) {
+      if (txIdMatched || (amountMatched && (nameMatched || cpfMatched || descMatched || (cleanResCode && txIdFromDetails.includes("MOD"))))) {
         console.log(`[Banco Inter Extrato] MATCH de acréscimo de alteração confirmado para reserva ${r.code}! TxID: ${t.detalhes?.txId || t.idTransacao}, Valor: ${txValor}`);
         return {
           found: true,
@@ -84404,6 +85764,8 @@ function isConfirmationAlreadyDispatched(r) {
   const rCode = String(r.code || "").toUpperCase();
   const rId = String(r.id || "");
   const recips = getReservationRecipients(r, db);
+  const rawGuestPhone = recips.guest?.phone || r.guestPhone || "";
+  const rawReqPhone = recips.requester?.phone || "";
   const guestPhoneNorm = String(recips.guest?.cleanDigits || "").replace(/^55/, "");
   const reqPhoneNorm = String(recips.requester?.cleanDigits || "").replace(/^55/, "");
   const requireGuestConfirmation = Boolean(
@@ -84411,6 +85773,14 @@ function isConfirmationAlreadyDispatched(r) {
     !isMissingGuestDataForCredential(r) &&
     guestPhoneNorm.length >= 10
   );
+
+  const stampedPhones = Array.isArray(r.confirmationSentPhones) ? r.confirmationSentPhones : [];
+  if (stampedPhones.length > 0) {
+    if (!requireGuestConfirmation) return true;
+    if (stampedPhones.some(p => matchClientPhone(p, rawGuestPhone))) return true;
+  } else if (r.confirmationWhatsappSentAt && !requireGuestConfirmation) {
+    return true;
+  }
 
   return history.some(h => {
     const hCode = String(h.reservationCode || "").toUpperCase();
@@ -84424,8 +85794,7 @@ function isConfirmationAlreadyDispatched(r) {
     if (!isConfirmEv || !isWaHistoryStatusDispatched(h.status)) return false;
     if (requireGuestConfirmation) {
       if (h.recipientType === "requester" || h.recipientRole === "solicitante") return false;
-      const hPhoneNorm = String(h.guestPhone || "").replace(/\D/g, "").replace(/^55/, "");
-      if (reqPhoneNorm && reqPhoneNorm !== guestPhoneNorm && hPhoneNorm === reqPhoneNorm) return false;
+      if (reqPhoneNorm && !matchClientPhone(rawReqPhone, rawGuestPhone) && matchClientPhone(h.guestPhone, rawReqPhone)) return false;
     }
     return true;
   });
@@ -84688,10 +86057,18 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
     await dispatchConfirmedReservationToReceptionAndGarage(r, "payment_confirmed");
   }
 
+  if (!wasPreReserva && !r.b2bCredentialCompletedAt && !r.guestPhoneUpdatedAt) {
+    const refAgeIso = r.paidAt || r.confirmedAt || r.createdAt;
+    if (refAgeIso && !isNaN(new Date(refAgeIso).getTime()) && (Date.now() - new Date(refAgeIso).getTime()) > 48 * 3600 * 1000) {
+      return;
+    }
+  }
+
   const brNow = typeof getBrasiliaNow === "function" ? getBrasiliaNow() : { date: getTodayStr(), hour: new Date().getHours(), minute: new Date().getMinutes() };
   const todayStr = brNow.date;
   const isSameDay = r.checkinDate === todayStr;
-  const paidBrIso = r.paidAt ? new Date(new Date(r.paidAt).getTime() - (3 * 3600000)).toISOString().substring(0, 16) : "";
+  const paidOrCreatedRef = r.paidAt || r.confirmedAt || r.createdAt;
+  const paidBrIso = paidOrCreatedRef ? new Date(new Date(paidOrCreatedRef).getTime() - (3 * 3600000)).toISOString().substring(0, 16) : "";
   const wasPaidBeforeToday0701 = Boolean(paidBrIso && paidBrIso < `${todayStr}T07:01`);
   const isAfter0701 = isSameDay && !wasPaidBeforeToday0701 && (brNow.hour > 7 || (brNow.hour === 7 && brNow.minute >= 1));
   const chan = String(r.channel || "").toLowerCase();
@@ -84763,7 +86140,7 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
       (Array.isArray(recipsPay.companions) && recipsPay.companions.length > 0)
     );
 
-    const hasSameDayDispatched = (db.whatsappHistory || []).some(h => {
+    const hasSameDayDispatched = isConfirmationAlreadyDispatched(r) || (db.whatsappHistory || []).some(h => {
       const hCode = String(h.reservationCode || "").toUpperCase();
       const hId = h.reservationId ? String(h.reservationId) : "";
       const rCode = String(r.code || "").toUpperCase();
@@ -84771,9 +86148,8 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
       const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
       if (!isSameRes) return false;
       if (h.recipientType === "requester" || h.recipientRole === "solicitante") return false;
-      if (recipsPay.requester?.isDifferentFromGuest && reqPhoneNorm && reqPhoneNorm !== guestPhoneNorm) {
-        const hPhoneNorm = String(h.guestPhone || "").replace(/\D/g, "").replace(/^55/, "");
-        if (hPhoneNorm === reqPhoneNorm) return false;
+      if (recipsPay.requester?.isDifferentFromGuest && reqPhoneNorm && !matchClientPhone(recipsPay.requester?.phone, recipsPay.guest?.phone)) {
+        if (matchClientPhone(h.guestPhone, recipsPay.requester?.phone)) return false;
       }
       return (
         h.triggerEvent === "sameday_reservation" ||
@@ -84911,6 +86287,8 @@ async function ensureExtensionPaymentConfirmationDispatched(r, {
   ) * 100) / 100;
   const effectiveMethod = paymentMethod || lastPay?.method || r.paymentMethod || "pix";
 
+  let oldCheckinDate = extMeta?.oldCheckinDate || r.previousCheckinDate || "";
+  const newCheckinDate = r.checkinDate || extMeta?.newCheckinDate || "";
   let oldCheckoutDate = extMeta?.oldCheckoutDate || r.previousCheckoutDate || "";
   if (!oldCheckoutDate && Array.isArray(r.auditLogs)) {
     for (const logItem of r.auditLogs) {
@@ -84931,6 +86309,14 @@ async function ensureExtensionPaymentConfirmationDispatched(r, {
       if (c.field === "paymentStatus" || c.field === "paidAmount" || c.field === "status") continue;
       extChanges.push({ ...c });
     }
+  }
+  if (oldCheckinDate && newCheckinDate && oldCheckinDate !== newCheckinDate && !extChanges.some(c => c.field === "checkinDate")) {
+    extChanges.unshift({
+      field: "checkinDate",
+      label: "Data de Entrada (Check-in)",
+      oldValue: oldCheckinDate,
+      newValue: newCheckinDate
+    });
   }
   if (oldCheckoutDate && newCheckoutDate && oldCheckoutDate !== newCheckoutDate && !extChanges.some(c => c.field === "checkoutDate")) {
     extChanges.unshift({
@@ -85271,16 +86657,29 @@ async function confirmReservationPayment(r, {
     return;
   }
 
-  // Se havia uma prorrogação pendente que ainda não tinha atualizado checkoutDate/totalAmount (ex: Opção 2 c/ troca de flat), aplica antes do cálculo
+  // Se havia uma alteração/prorrogação pendente que ainda não tinha atualizado datas/totalAmount (ex: Opção 2 c/ troca de flat), aplica antes do cálculo
   if (r.pendingStayExtension && r.pendingStayExtension.status !== "paid") {
     const extMeta = r.pendingStayExtension;
     const alreadyApplied = Boolean(
       extMeta.alreadyAppliedToReservation ||
-      (extMeta.newCheckoutDate && r.checkoutDate === extMeta.newCheckoutDate && Number(r.totalAmount || 0) > Number(r.paidAmount || 0) + 0.05)
+      (((!extMeta.newCheckoutDate || r.checkoutDate === extMeta.newCheckoutDate) &&
+        (!extMeta.newCheckinDate || r.checkinDate === extMeta.newCheckinDate)) &&
+        (extMeta.newCheckoutDate || extMeta.newCheckinDate) &&
+        Number(r.totalAmount || 0) > Number(r.paidAmount || 0) + 0.05)
     );
+    if (extMeta.newCheckinDate && r.checkinDate !== extMeta.newCheckinDate) {
+      r.previousCheckinDate = r.checkinDate;
+      r.checkinDate = extMeta.newCheckinDate;
+    }
     if (extMeta.newCheckoutDate && r.checkoutDate !== extMeta.newCheckoutDate) {
       r.previousCheckoutDate = r.checkoutDate;
       r.checkoutDate = extMeta.newCheckoutDate;
+    }
+    if (r.checkinDate && r.checkoutDate) {
+      r.nights = Math.max(
+        1,
+        Math.round((new Date(`${r.checkoutDate}T12:00:00Z`).getTime() - new Date(`${r.checkinDate}T12:00:00Z`).getTime()) / 86400000)
+      );
     }
     if (extMeta.newFlatNumber && String(extMeta.newFlatNumber) !== String(r.flatNumber)) {
       const targetFlatObj = (db.flats || []).find(f => String(f.number) === String(extMeta.newFlatNumber));
@@ -85640,7 +87039,11 @@ async function confirmReservationPayment(r, {
 
   if (
     r.paymentStatus === "pago_total" &&
-    (isComplementaryPayment || Boolean(r.pendingStayExtension) || (r.previousCheckoutDate && r.previousCheckoutDate < r.checkoutDate) || hadAdditionalDailyPendingWa)
+    (isComplementaryPayment ||
+      Boolean(r.pendingStayExtension) ||
+      (r.previousCheckoutDate && r.previousCheckoutDate < r.checkoutDate) ||
+      (r.previousCheckinDate && r.previousCheckinDate > r.checkinDate) ||
+      hadAdditionalDailyPendingWa)
   ) {
     await ensureExtensionPaymentConfirmationDispatched(r, {
       valorPago,
@@ -85917,12 +87320,9 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
 
     // Se já está marcado como pago ou canal OTA sem saldo direto pendente (Booking/Airbnb), retorna de imediato
     if (!isUnverifiedPreReservation(r) && !hasPendingDirectBalance && (isOta || (hasRmGroupStatus ? rmSummaryStatus.isFullyPaid : (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0))))) {
-      if (!isOta && (r.guestPhone || reservationHasAnyContact(r, db))) {
-        ensurePaymentConfirmationDispatched(r);
-      }
       if (
         (r.paymentStatus === "pago_total" || r.paymentStatus === "pago") &&
-        (r.pendingStayExtension || (r.previousCheckoutDate && r.previousCheckoutDate < r.checkoutDate)) &&
+        (r.pendingStayExtension || (r.previousCheckoutDate && r.previousCheckoutDate < r.checkoutDate) || (r.previousCheckinDate && r.previousCheckinDate > r.checkinDate)) &&
         Array.isArray(r.payments) &&
         r.payments.length >= 2 &&
         r.payments.some(p => /complemento|prorroga|extens/i.test(String(p?.notes || "")))
@@ -86694,17 +88094,44 @@ app.post("/api/pms/mercadopago/webhook", async (req, res) => {
               }
             }
           } else {
+            const isModExternalRef = String(resCode || "").toUpperCase().startsWith("MOD-");
+            const strippedModCode = isModExternalRef ? String(resCode).replace(/^MOD-/i, "").trim() : resCode;
             const r = isPackageCode(resCode)
               ? getPrimaryPackageReservation(db, resCode)
-              : (db.reservations || []).find(resItem => resItem.code === resCode || String(resItem.id) === resCode);
+              : (db.reservations || []).find(resItem =>
+                  resItem.code === resCode ||
+                  String(resItem.id) === resCode ||
+                  (isModExternalRef && (
+                    resItem.code === strippedModCode ||
+                    String(resItem.id) === strippedModCode ||
+                    resItem.pendingModification?.pendingId === resCode
+                  )) ||
+                  (resItem.pendingModification?.pendingId && resItem.pendingModification.pendingId === resCode)
+                );
             if (r) {
-              await confirmReservationPayment(r, {
-                amount: valorPago || r.totalAmount,
-                paidAt: dateApproved,
-                mpPaymentId: effectivePaymentId,
-                paymentMethod: "cartao_credito",
-                source: "Mercado Pago Webhook"
-              });
+              if (r.pendingModification && r.pendingModification.status !== "paid" && (isModExternalRef || r.pendingModification.pendingId === resCode)) {
+                await reconcilePendingModificationBeforeExpire(r, r.pendingModification, {
+                  nowMs: Date.now(),
+                  source: "Mercado Pago Webhook",
+                  saveFn: saveDatabase,
+                  verifyFn: async () => ({
+                    found: true,
+                    amount: valorPago || Number(r.pendingModification.additionalAmountToPay || 0),
+                    paidAt: dateApproved,
+                    txId: effectivePaymentId,
+                    paymentMethod: "cartao_credito",
+                    source: "Mercado Pago Webhook"
+                  })
+                });
+              } else {
+                await confirmReservationPayment(r, {
+                  amount: valorPago || r.totalAmount,
+                  paidAt: dateApproved,
+                  mpPaymentId: effectivePaymentId,
+                  paymentMethod: "cartao_credito",
+                  source: "Mercado Pago Webhook"
+                });
+              }
             }
           }
         }
@@ -92860,7 +94287,7 @@ Regras:
 
   const startedAt = Date.now();
   try {
-    const aiRes = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: prompt }] }], "shopping_list");
+    const aiRes = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: prompt }] }], "shopping_list", { role: "lite", thinkingLevel: "minimal", maxOutputTokens: 256 });
     const latencyMs = aiRes.latencyMs ?? (Date.now() - startedAt);
     if (!aiRes.ok) {
       const classified = classifyGeminiHttpResult(aiRes.status || 500, aiRes.error || "");
@@ -92868,7 +94295,7 @@ Regras:
         ok: false,
         categories: [],
         serialized: null,
-        usedModel: aiRes.model || normalizeGeminiModel(db.settings?.geminiModel, "flash"),
+        usedModel: aiRes.model || GEMINI_LITE_MODEL,
         latencyMs,
         status: aiRes.status || null,
         ...classified,
@@ -92917,7 +94344,7 @@ Regras:
       ok: false,
       categories: [],
       serialized: null,
-      usedModel: normalizeGeminiModel(db.settings?.geminiModel, "flash"),
+      usedModel: GEMINI_LITE_MODEL,
       latencyMs,
       status: null,
       code: "provider_outage",
@@ -92931,6 +94358,11 @@ Regras:
 }
 
 async function autoCategorize(name) {
+  const localSerialized = autoCategorizeRules(name);
+  const localCats = parseCategories(localSerialized);
+  if (localCats.length > 0 && !(localCats.length === 1 && localCats[0] === "Geral")) {
+    return localSerialized;
+  }
   const detailed = await autoCategorizeDetailed(name);
   return detailed.ok && detailed.serialized ? detailed.serialized : detailed.fallbackSerialized;
 }
@@ -93111,7 +94543,10 @@ async function probeInteractionsEngine({
   keySourceLabel,
   usedBy = [],
   promptText = "Responda apenas: OK",
-  responseFormat = null
+  responseFormat = null,
+  thinkingLevel = "low",
+  telemetryModule = "ai_status_probe",
+  bypassCooldown = true
 }) {
   if (!apiKey) {
     return {
@@ -93138,10 +94573,13 @@ async function probeInteractionsEngine({
     model,
     input: [{ type: "text", text: promptText }],
     store: false,
-    thinkingLevel: "low",
+    thinkingLevel,
     maxOutputTokens: isGemini4 ? 1024 : 256,
     responseFormat,
-    timeoutMs: isGemini4 ? 22000 : 15000
+    timeoutMs: isGemini4 ? 22000 : 15000,
+    telemetryModule,
+    keySourceLabel,
+    bypassCooldown
   });
 
   const classified = aiRes.status === null
@@ -93169,10 +94607,50 @@ async function probeInteractionsEngine({
   };
 }
 
+function buildStandbyProbe({
+  id,
+  label,
+  model,
+  protocolLabel = GEMINI_INTERACTIONS_PROTOCOL,
+  apiKey,
+  keySourceLabel,
+  usedBy = [],
+  diagnosis = null,
+  actionHint = null
+}) {
+  const hasKey = Boolean(apiKey);
+  return {
+    id,
+    label,
+    model,
+    protocol: protocolLabel,
+    keySourceLabel: keySourceLabel || (hasKey ? "Chave ativa" : "Nenhuma chave configurada"),
+    usedBy,
+    ok: false,
+    status: null,
+    latencyMs: 0,
+    code: hasKey ? "standby" : "unconfigured",
+    diagnosis: hasKey
+      ? (diagnosis || "Em espera (modo econômico — nenhuma sonda ativa executada para preservar cota)")
+      : "Chave de API não configurada",
+    actionHint: hasKey
+      ? (actionHint || "Clique em 'Atualizar / Sondar' para testar a conexão ativa com a API Gemini.")
+      : "Configure GEMINI_API_KEY no Render ou em /configuracoes.",
+    rawError: null,
+    responsePreview: null
+  };
+}
+
 // GET /api/admin/ai-status — Central real de saúde, latência, chaves e módulos de IA
 app.get("/api/admin/ai-status", async (req, res) => {
   const forceRefresh = req.query.refresh === "1";
   const now = Date.now();
+  const telemetry = getGeminiTelemetrySnapshot();
+  const recentRuntimeCalls = telemetry.recentCalls.slice(0, 30);
+  const telemetrySummary = {
+    totals: telemetry.totals,
+    totalsByModule: telemetry.totalsByModule
+  };
 
   if (!forceRefresh && _aiStatusOverviewCache.result && (now - _aiStatusOverviewCache.ts) < AI_STATUS_OVERVIEW_CACHE_MS) {
     const cacheAgeSeconds = Math.max(0, Math.round((now - _aiStatusOverviewCache.ts) / 1000));
@@ -93180,7 +94658,8 @@ app.get("/api/admin/ai-status", async (req, res) => {
       ..._aiStatusOverviewCache.result,
       cached: true,
       cacheAgeSeconds,
-      recentRuntimeCalls: _aiRuntimeTelemetry.calls.slice(0, 15)
+      recentRuntimeCalls,
+      telemetrySummary
     });
   }
 
@@ -93199,7 +94678,209 @@ app.get("/api/admin/ai-status", async (req, res) => {
     "reasoning"
   );
 
-  const [flashProbe, argonProbe, b2bProbe] = await Promise.all([
+  const aiAgentCfg = db?.zapiConfig?.aiAgent || {};
+  const sofiaEnabled = Boolean(aiAgentCfg.enabled);
+  const sofiaTestMode = aiAgentCfg.testMode !== undefined ? Boolean(aiAgentCfg.testMode) : Boolean(db?.zapiConfig?.testModeOnly);
+  const sofiaUsesFlash = sofiaConfiguredModel.includes("flash");
+  const sofiaEngineId = sofiaConfiguredModel === GEMINI_LITE_MODEL
+    ? "gemini_35_flash_lite"
+    : (sofiaUsesFlash ? "gemini_38_flash" : "gemini_4_argon");
+
+  const reviewsTotal = Array.isArray(db.reviews) ? db.reviews.length : 0;
+  const lastReviewSync = db.reviewInsights?.lastAnalyzedAt
+    ? new Date(db.reviewInsights.lastAnalyzedAt).toLocaleDateString("pt-BR")
+    : "ainda não executado";
+  const shoppingCount = Array.isArray(db.shoppingList) ? db.shoppingList.filter(i => !i.completed).length : 0;
+
+  // Modo passivo econômico (0 chamadas à API Gemini ao abrir /ia-status sem ?refresh=1)
+  if (!forceRefresh) {
+    const hasAnyKey = Boolean(keyInfo.primaryKey || keyInfo.b2bKey);
+    const passiveProbes = [
+      buildStandbyProbe({
+        id: "gemini_38_flash",
+        label: "Gemini 3.8 Flash (Motor Principal)",
+        model: configuredFlashModel,
+        protocolLabel: GEMINI_INTERACTIONS_PROTOCOL,
+        apiKey: keyInfo.primaryKey,
+        keySourceLabel: keyInfo.primarySourceLabel,
+        usedBy: ["Agente Sofia (WhatsApp)", "Copiloto IA Admin", "OCR Pré-Check-in", "Vouchers B2B Multimodal"]
+      }),
+      buildStandbyProbe({
+        id: "gemini_35_flash_lite",
+        label: "Gemini 3.5 Flash-Lite (Triagem & Tarefas Leves)",
+        model: GEMINI_LITE_MODEL,
+        protocolLabel: GEMINI_INTERACTIONS_PROTOCOL,
+        apiKey: keyInfo.primaryKey,
+        keySourceLabel: keyInfo.primarySourceLabel,
+        usedBy: ["Camareiras & Triagem", "Sentimento & Avaliações", "Lista de Compras", "Fiscal & Vouchers B2B Texto"]
+      }),
+      buildStandbyProbe({
+        id: "gemini_4_argon",
+        label: "Gemini 4 Argon (Raciocínio Opcional)",
+        model: GEMINI_ARGON_MODEL,
+        protocolLabel: GEMINI_INTERACTIONS_PROTOCOL,
+        apiKey: keyInfo.primaryKey,
+        keySourceLabel: keyInfo.primarySourceLabel,
+        usedBy: ["Opcional em /whatsapp-automation (não ativo como padrão)"],
+        diagnosis: keyInfo.primaryKey ? "Opcional em espera (economia de cota)" : undefined
+      }),
+      buildStandbyProbe({
+        id: "gemini_38_b2b",
+        label: "Gemini 3.8 Flash (Multimodal B2B)",
+        model: GEMINI_FLASH_MODEL,
+        protocolLabel: `${GEMINI_INTERACTIONS_PROTOCOL} • JSON Schema`,
+        apiKey: keyInfo.b2bKey,
+        keySourceLabel: keyInfo.b2bSourceLabel,
+        usedBy: ["Leitor de Vouchers B2B (Zoho Mail)"]
+      })
+    ];
+
+    const standbyOrFallback = (keyAvailable) => (keyAvailable ? "standby" : "fallback_active");
+    const standbyLabel = (keyAvailable, fallbackText) => (keyAvailable ? "Em espera (econômico)" : fallbackText);
+
+    const passiveModules = [
+      {
+        id: "sofia_whatsapp",
+        name: "Sofia — Concierge WhatsApp",
+        area: "Atendimento & Vendas",
+        engineId: sofiaEngineId,
+        configuredModel: sofiaConfiguredModel,
+        protocol: "Interactions API + Tool Calling",
+        keySourceLabel: keyInfo.primarySourceLabel || "Sem chave",
+        status: !sofiaEnabled ? "disabled" : standbyOrFallback(keyInfo.primaryKey),
+        statusLabel: !sofiaEnabled
+          ? "Desativada nas configurações"
+          : standbyLabel(keyInfo.primaryKey, "Sem chave Gemini configurada"),
+        fallbackStrategy: "Fallback enxuto de até 2 modelos (ex.: 3.8-flash → 3.5-flash-lite) + circuit breaker 429/402 e transbordo ao gestor",
+        liveSummary: sofiaEnabled
+          ? `Ativa (${sofiaTestMode ? "somente números de teste" : "todos os hóspedes"}) • Modelo preferido: ${sofiaConfiguredModel}`
+          : "Agente WhatsApp desligado em /whatsapp-automation",
+        latencyMs: null,
+        lastError: null
+      },
+      {
+        id: "admin_copilot",
+        name: "Copiloto IA Admin",
+        area: "Gestão & BI Interno",
+        engineId: sofiaEngineId,
+        configuredModel: sofiaConfiguredModel,
+        protocol: "Interactions API + querySystemData",
+        keySourceLabel: keyInfo.primarySourceLabel || "Sem chave",
+        status: standbyOrFallback(keyInfo.primaryKey),
+        statusLabel: standbyLabel(keyInfo.primaryKey, "Heurística local ativa"),
+        fallbackStrategy: "Motor local determinístico (generateAdminCopilotLocalResponse)",
+        liveSummary: "Consulta operacional em tempo real de flats, reservas, financeiro, limpeza e café",
+        latencyMs: null,
+        lastError: null
+      },
+      {
+        id: "precheckin_ocr",
+        name: "OCR & Validação Biométrica",
+        area: "Pré-Check-in & Segurança",
+        engineId: "gemini_38_flash",
+        configuredModel: configuredFlashModel,
+        protocol: "Interactions API Multimodal (Visão + PDF)",
+        keySourceLabel: keyInfo.primarySourceLabel || "Sem chave",
+        status: standbyOrFallback(keyInfo.primaryKey),
+        statusLabel: standbyLabel(keyInfo.primaryKey, "Validação estrutural local"),
+        fallbackStrategy: "Validação estrutural de CPF/datas + aprovação manual na recepção",
+        liveSummary: "Lê RG, CNH e Passaporte, compara selfie x documento e bloqueia CRLV/arquivos inválidos",
+        latencyMs: null,
+        lastError: null
+      },
+      {
+        id: "b2b_vouchers",
+        name: "Leitor de Vouchers B2B (E-mail)",
+        area: "Zoho Mail & Reservas Corp.",
+        engineId: "gemini_38_b2b",
+        configuredModel: `${GEMINI_LITE_MODEL} / ${GEMINI_FLASH_MODEL}`,
+        protocol: "Interactions API (PDF + Imagem + JSON Schema)",
+        keySourceLabel: keyInfo.b2bSourceLabel || "Sem chave",
+        status: standbyOrFallback(keyInfo.b2bKey),
+        statusLabel: standbyLabel(keyInfo.b2bKey, "Parser determinístico ativo"),
+        fallbackStrategy: "Parser determinístico de PDF/HTML do Zoho Mail (IA apenas quando campos faltam)",
+        liveSummary: "Extrai CNPJ, razão social, endereço fiscal, e-mails de NF e diárias de vouchers corporativos",
+        latencyMs: null,
+        lastError: null
+      },
+      {
+        id: "reviews_and_maids",
+        name: "Avaliações IA, Sentimento & Camareiras",
+        area: "Qualidade & Governança",
+        engineId: "gemini_35_flash_lite",
+        configuredModel: GEMINI_LITE_MODEL,
+        protocol: GEMINI_INTERACTIONS_PROTOCOL,
+        keySourceLabel: keyInfo.primarySourceLabel || "Sem chave",
+        status: standbyOrFallback(keyInfo.primaryKey),
+        statusLabel: standbyLabel(keyInfo.primaryKey, "Heurística local ativa"),
+        fallbackStrategy: "Classificador local de palavras-chave de sentimento e manutenção",
+        liveSummary: `${reviewsTotal} avaliação(ões) na base • Última análise: ${lastReviewSync}`,
+        latencyMs: null,
+        lastError: null
+      },
+      {
+        id: "shopping_list",
+        name: "Auto-Categorização Lista de Compras",
+        area: "Operação & Suprimentos",
+        engineId: "gemini_35_flash_lite",
+        configuredModel: GEMINI_LITE_MODEL,
+        protocol: GEMINI_INTERACTIONS_PROTOCOL,
+        keySourceLabel: keyInfo.primarySourceLabel || "Sem chave",
+        status: standbyOrFallback(keyInfo.primaryKey),
+        statusLabel: standbyLabel(keyInfo.primaryKey, "Regras de keywords ativas"),
+        fallbackStrategy: "Dicionário local determinístico prioritário (IA só para itens sem categoria)",
+        liveSummary: `${shoppingCount} item(ns) pendente(s) na lista de compras`,
+        latencyMs: null,
+        lastError: null
+      }
+    ];
+
+    return res.json({
+      checkedAt: new Date().toISOString(),
+      passive: true,
+      cached: false,
+      cacheAgeSeconds: 0,
+      cacheTtlSeconds: Math.round(AI_STATUS_OVERVIEW_CACHE_MS / 1000),
+      overallStatus: hasAnyKey ? "standby" : "unconfigured",
+      overallTitle: hasAnyKey
+        ? "Modo econômico ativo (chaves configuradas em espera)"
+        : "Nenhuma chave Gemini configurada",
+      overallSummary: hasAnyKey
+        ? "Nenhuma sonda ativa foi disparada ao carregar /ia-status para preservar sua cota. Clique em 'Atualizar / Sondar' caso queira testar a API ao vivo."
+        : "Configure GEMINI_API_KEY no Render ou salve uma chave em /configuracoes para ativar os recursos de IA.",
+      actionRequired: hasAnyKey
+        ? null
+        : "Configure uma chave válida do Google AI Studio em /configuracoes ou nas variáveis de ambiente do Render.",
+      actionUrl: hasAnyKey ? null : "https://ai.studio/projects",
+      summary: {
+        enginesOnline: 0,
+        enginesTotal: passiveProbes.length,
+        avgLatencyMs: null,
+        modulesAiActive: 0,
+        modulesTotal: passiveModules.length
+      },
+      keys: {
+        primaryActiveSource: keyInfo.primarySourceLabel,
+        primaryMasked: maskGeminiKey(keyInfo.primaryKey),
+        b2bActiveSource: keyInfo.b2bSourceLabel,
+        b2bMasked: maskGeminiKey(keyInfo.b2bKey),
+        hasOverrideConflict: keyInfo.hasOverrideConflict,
+        overrideMessage: keyInfo.overrideMessage,
+        sources: keyInfo.sources,
+        secondaryProbe: null
+      },
+      probes: passiveProbes,
+      modules: passiveModules,
+      recentRuntimeCalls,
+      telemetrySummary
+    });
+  }
+
+  // Modo sonda ativa (?refresh=1): testa os motores em uso real evitando probes duplicados/opcionais
+  const includeArgon = sofiaConfiguredModel === GEMINI_ARGON_MODEL || req.query.includeArgon === "1";
+  const b2bSharesPrimary = Boolean(keyInfo.b2bKey && keyInfo.primaryKey && keyInfo.b2bKey === keyInfo.primaryKey);
+
+  const [flashProbe, liteProbe, argonProbe, separateB2bProbe] = await Promise.all([
     probeInteractionsEngine({
       id: "gemini_38_flash",
       label: "Gemini 3.8 Flash (Motor Principal)",
@@ -93207,37 +94888,99 @@ app.get("/api/admin/ai-status", async (req, res) => {
       protocolLabel: GEMINI_INTERACTIONS_PROTOCOL,
       apiKey: keyInfo.primaryKey,
       keySourceLabel: keyInfo.primarySourceLabel,
-      usedBy: ["OCR Pré-Check-in", "Avaliações & Camareiras", "Lista de Compras", "Fallback Sofia"]
+      usedBy: ["Agente Sofia (WhatsApp)", "Copiloto IA Admin", "OCR Pré-Check-in", "Vouchers B2B Multimodal"],
+      thinkingLevel: "low",
+      telemetryModule: "ai_status_probe",
+      bypassCooldown: true
     }),
     probeInteractionsEngine({
-      id: "gemini_4_argon",
-      label: "Gemini 4 Argon (Raciocínio & Tools)",
-      model: GEMINI_REASONING_MODEL,
+      id: "gemini_35_flash_lite",
+      label: "Gemini 3.5 Flash-Lite (Triagem & Tarefas Leves)",
+      model: GEMINI_LITE_MODEL,
       protocolLabel: GEMINI_INTERACTIONS_PROTOCOL,
       apiKey: keyInfo.primaryKey,
       keySourceLabel: keyInfo.primarySourceLabel,
-      usedBy: ["Agente Sofia (WhatsApp)", "Copiloto IA Admin"]
+      usedBy: ["Camareiras & Triagem", "Sentimento & Avaliações", "Lista de Compras", "Fiscal & Vouchers B2B Texto"],
+      thinkingLevel: "minimal",
+      telemetryModule: "ai_status_probe",
+      bypassCooldown: true
     }),
-    probeInteractionsEngine({
-      id: "gemini_38_b2b",
-      label: "Gemini 3.8 Flash (Multimodal B2B)",
-      model: GEMINI_FLASH_MODEL,
-      protocolLabel: `${GEMINI_INTERACTIONS_PROTOCOL} • JSON Schema`,
-      apiKey: keyInfo.b2bKey,
-      keySourceLabel: keyInfo.b2bSourceLabel,
-      usedBy: ["Leitor de Vouchers B2B (Zoho Mail)"],
-      promptText: 'Retorne exatamente o objeto JSON {"status":"OK"}',
-      responseFormat: {
-        type: "text",
-        mime_type: "application/json",
-        schema: {
-          type: "object",
-          properties: { status: { type: "string" } },
-          required: ["status"]
-        }
-      }
-    })
+    includeArgon
+      ? probeInteractionsEngine({
+          id: "gemini_4_argon",
+          label: "Gemini 4 Argon (Raciocínio Opcional)",
+          model: GEMINI_ARGON_MODEL,
+          protocolLabel: GEMINI_INTERACTIONS_PROTOCOL,
+          apiKey: keyInfo.primaryKey,
+          keySourceLabel: keyInfo.primarySourceLabel,
+          usedBy: ["Agente Sofia (Opcional)", "Copiloto IA Admin (Opcional)"],
+          thinkingLevel: "low",
+          telemetryModule: "ai_status_probe",
+          bypassCooldown: true
+        })
+      : Promise.resolve(
+          buildStandbyProbe({
+            id: "gemini_4_argon",
+            label: "Gemini 4 Argon (Raciocínio Opcional)",
+            model: GEMINI_ARGON_MODEL,
+            protocolLabel: GEMINI_INTERACTIONS_PROTOCOL,
+            apiKey: keyInfo.primaryKey,
+            keySourceLabel: keyInfo.primarySourceLabel,
+            usedBy: ["Opcional em /whatsapp-automation (não ativo como padrão)"],
+            diagnosis: keyInfo.primaryKey
+              ? "Opcional em espera (não sondado para economizar cota)"
+              : undefined,
+            actionHint: keyInfo.primaryKey
+              ? "Se precisar testar o Gemini 4 Argon diretamente, use a aba 'Prompt Direto' no Laboratório abaixo."
+              : undefined
+          })
+        ),
+    b2bSharesPrimary
+      ? Promise.resolve(null)
+      : probeInteractionsEngine({
+          id: "gemini_38_b2b",
+          label: "Gemini 3.8 Flash (Multimodal B2B)",
+          model: GEMINI_FLASH_MODEL,
+          protocolLabel: `${GEMINI_INTERACTIONS_PROTOCOL} • JSON Schema`,
+          apiKey: keyInfo.b2bKey,
+          keySourceLabel: keyInfo.b2bSourceLabel,
+          usedBy: ["Leitor de Vouchers B2B (Zoho Mail)"],
+          promptText: 'Retorne exatamente o objeto JSON {"status":"OK"}',
+          responseFormat: {
+            type: "text",
+            mime_type: "application/json",
+            schema: {
+              type: "object",
+              properties: { status: { type: "string" } },
+              required: ["status"]
+            }
+          },
+          thinkingLevel: "low",
+          telemetryModule: "ai_status_probe",
+          bypassCooldown: true
+        })
   ]);
+
+  const b2bProbe = b2bSharesPrimary
+    ? {
+        id: "gemini_38_b2b",
+        label: "Gemini 3.8 Flash (Multimodal B2B)",
+        model: GEMINI_FLASH_MODEL,
+        protocol: `${GEMINI_INTERACTIONS_PROTOCOL} • JSON Schema`,
+        keySourceLabel: keyInfo.b2bSourceLabel || keyInfo.primarySourceLabel || "Chave ativa",
+        usedBy: ["Leitor de Vouchers B2B (Zoho Mail)"],
+        ok: flashProbe.ok,
+        status: flashProbe.status,
+        latencyMs: flashProbe.latencyMs,
+        code: flashProbe.code,
+        diagnosis: flashProbe.ok
+          ? "Operacional (compartilha a mesma chave do Gemini 3.8 Flash — sonda reaproveitada sem chamada duplicada)"
+          : flashProbe.diagnosis,
+        actionHint: flashProbe.actionHint,
+        rawError: flashProbe.rawError,
+        responsePreview: flashProbe.responsePreview
+      }
+    : separateB2bProbe;
 
   let secondaryProbe = null;
   if (keyInfo.hasOverrideConflict && !flashProbe.ok && keyInfo.dbSettingsKey) {
@@ -93246,7 +94989,10 @@ app.get("/api/admin/ai-status", async (req, res) => {
       label: "Sonda da chave secundária (/configuracoes)",
       model: GEMINI_FLASH_MODEL,
       apiKey: keyInfo.dbSettingsKey,
-      keySourceLabel: "Configurações (/configuracoes)"
+      keySourceLabel: "Configurações (/configuracoes)",
+      thinkingLevel: "low",
+      telemetryModule: "ai_status_probe",
+      bypassCooldown: true
     });
     secondaryProbe = {
       testedSource: "Configurações (/configuracoes)",
@@ -93259,32 +95005,25 @@ app.get("/api/admin/ai-status", async (req, res) => {
     };
   }
 
-  const probes = [flashProbe, argonProbe, b2bProbe];
-  const onlineProbes = probes.filter(p => p.ok);
+  const probes = [flashProbe, liteProbe, argonProbe, b2bProbe];
+  const testedProbes = probes.filter(p => p.code !== "standby");
+  const onlineProbes = testedProbes.filter(p => p.ok);
   const avgLatencyMs = onlineProbes.length > 0
     ? Math.round(onlineProbes.reduce((acc, p) => acc + p.latencyMs, 0) / onlineProbes.length)
     : null;
 
   // Mapeamento dos 6 módulos reais de IA do CorpFlats
-  const aiAgentCfg = db?.zapiConfig?.aiAgent || {};
-  const sofiaEnabled = Boolean(aiAgentCfg.enabled);
-  const sofiaTestMode = aiAgentCfg.testMode !== undefined ? Boolean(aiAgentCfg.testMode) : Boolean(db?.zapiConfig?.testModeOnly);
-  const sofiaCanOperate = argonProbe.ok || flashProbe.ok;
-  const sofiaUsesFlash = sofiaConfiguredModel.includes("flash");
-  const sofiaPrimaryProbe = sofiaUsesFlash ? flashProbe : argonProbe;
-
-  const reviewsTotal = Array.isArray(db.reviews) ? db.reviews.length : 0;
-  const lastReviewSync = db.reviewInsights?.lastAnalyzedAt
-    ? new Date(db.reviewInsights.lastAnalyzedAt).toLocaleDateString("pt-BR")
-    : "ainda não executado";
-  const shoppingCount = Array.isArray(db.shoppingList) ? db.shoppingList.filter(i => !i.completed).length : 0;
+  const sofiaPrimaryProbe = sofiaEngineId === "gemini_35_flash_lite"
+    ? liteProbe
+    : (sofiaEngineId === "gemini_4_argon" ? argonProbe : flashProbe);
+  const sofiaCanOperate = sofiaPrimaryProbe.ok || flashProbe.ok || liteProbe.ok;
 
   const modules = [
     {
       id: "sofia_whatsapp",
       name: "Sofia — Concierge WhatsApp",
       area: "Atendimento & Vendas",
-      engineId: sofiaUsesFlash ? "gemini_38_flash" : "gemini_4_argon",
+      engineId: sofiaEngineId,
       configuredModel: sofiaConfiguredModel,
       protocol: "Interactions API + Tool Calling",
       keySourceLabel: keyInfo.primarySourceLabel || "Sem chave",
@@ -93302,31 +95041,31 @@ app.get("/api/admin/ai-status", async (req, res) => {
           : sofiaCanOperate
             ? "Operando via modelo fallback"
             : "Sem resposta da IA",
-      fallbackStrategy: "Fallback automático entre modelos (4-argon → 3.8-flash → 3.1-pro-preview → 3.5-flash-lite) e transbordo ao gestor",
+      fallbackStrategy: "Fallback enxuto de até 2 modelos (ex.: 3.8-flash → 3.5-flash-lite) + circuit breaker 429/402 e transbordo ao gestor",
       liveSummary: sofiaEnabled
         ? `Ativa (${sofiaTestMode ? "somente números de teste" : "todos os hóspedes"}) • Modelo preferido: ${sofiaConfiguredModel}`
         : "Agente WhatsApp desligado em /whatsapp-automation",
-      latencyMs: sofiaPrimaryProbe.ok ? sofiaPrimaryProbe.latencyMs : (flashProbe.ok ? flashProbe.latencyMs : sofiaPrimaryProbe.latencyMs),
+      latencyMs: sofiaPrimaryProbe.ok ? sofiaPrimaryProbe.latencyMs : (flashProbe.ok ? flashProbe.latencyMs : liteProbe.latencyMs),
       lastError: sofiaCanOperate ? null : sofiaPrimaryProbe.diagnosis
     },
     {
       id: "admin_copilot",
       name: "Copiloto IA Admin",
       area: "Gestão & BI Interno",
-      engineId: "gemini_4_argon",
+      engineId: sofiaEngineId,
       configuredModel: sofiaConfiguredModel,
       protocol: "Interactions API + querySystemData",
       keySourceLabel: keyInfo.primarySourceLabel || "Sem chave",
-      status: sofiaCanOperate ? (argonProbe.ok ? "operational" : "degraded") : "fallback_active",
-      statusLabel: argonProbe.ok
+      status: sofiaCanOperate ? (sofiaPrimaryProbe.ok ? "operational" : "degraded") : "fallback_active",
+      statusLabel: sofiaPrimaryProbe.ok
         ? "IA Ativa"
-        : flashProbe.ok
-          ? "Ativa via 3.8 Flash (fallback)"
+        : (flashProbe.ok || liteProbe.ok)
+          ? "Ativa via fallback enxuto"
           : "Heurística local ativa",
       fallbackStrategy: "Motor local determinístico (generateAdminCopilotLocalResponse)",
       liveSummary: "Consulta operacional em tempo real de flats, reservas, financeiro, limpeza e café",
-      latencyMs: argonProbe.ok ? argonProbe.latencyMs : flashProbe.latencyMs,
-      lastError: sofiaCanOperate ? null : argonProbe.diagnosis
+      latencyMs: sofiaPrimaryProbe.ok ? sofiaPrimaryProbe.latencyMs : (flashProbe.ok ? flashProbe.latencyMs : liteProbe.latencyMs),
+      lastError: sofiaCanOperate ? null : sofiaPrimaryProbe.diagnosis
     },
     {
       id: "precheckin_ocr",
@@ -93348,12 +95087,12 @@ app.get("/api/admin/ai-status", async (req, res) => {
       name: "Leitor de Vouchers B2B (E-mail)",
       area: "Zoho Mail & Reservas Corp.",
       engineId: "gemini_38_b2b",
-      configuredModel: GEMINI_FLASH_MODEL,
+      configuredModel: `${GEMINI_LITE_MODEL} / ${GEMINI_FLASH_MODEL}`,
       protocol: "Interactions API (PDF + Imagem + JSON Schema)",
       keySourceLabel: keyInfo.b2bSourceLabel || "Sem chave",
       status: b2bProbe.ok ? "operational" : "fallback_active",
       statusLabel: b2bProbe.ok ? "IA Multimodal Ativa" : "Parser determinístico ativo",
-      fallbackStrategy: "Parser determinístico de PDF/HTML do Zoho Mail",
+      fallbackStrategy: "Parser determinístico de PDF/HTML do Zoho Mail (IA apenas quando campos faltam)",
       liveSummary: "Extrai CNPJ, razão social, endereço fiscal, e-mails de NF e diárias de vouchers corporativos",
       latencyMs: b2bProbe.latencyMs,
       lastError: b2bProbe.ok ? null : b2bProbe.diagnosis
@@ -93362,44 +95101,44 @@ app.get("/api/admin/ai-status", async (req, res) => {
       id: "reviews_and_maids",
       name: "Avaliações IA, Sentimento & Camareiras",
       area: "Qualidade & Governança",
-      engineId: "gemini_38_flash",
-      configuredModel: configuredFlashModel,
+      engineId: "gemini_35_flash_lite",
+      configuredModel: GEMINI_LITE_MODEL,
       protocol: GEMINI_INTERACTIONS_PROTOCOL,
       keySourceLabel: keyInfo.primarySourceLabel || "Sem chave",
-      status: flashProbe.ok ? "operational" : "fallback_active",
-      statusLabel: flashProbe.ok ? "IA Ativa" : "Heurística local ativa",
+      status: liteProbe.ok ? "operational" : (flashProbe.ok ? "degraded" : "fallback_active"),
+      statusLabel: liteProbe.ok ? "IA Econômica Ativa (3.5 Lite)" : (flashProbe.ok ? "Operando via 3.8 Flash" : "Heurística local ativa"),
       fallbackStrategy: "Classificador local de palavras-chave de sentimento e manutenção",
       liveSummary: `${reviewsTotal} avaliação(ões) na base • Última análise: ${lastReviewSync}`,
-      latencyMs: flashProbe.latencyMs,
-      lastError: flashProbe.ok ? null : flashProbe.diagnosis
+      latencyMs: liteProbe.ok ? liteProbe.latencyMs : flashProbe.latencyMs,
+      lastError: (liteProbe.ok || flashProbe.ok) ? null : liteProbe.diagnosis
     },
     {
       id: "shopping_list",
       name: "Auto-Categorização Lista de Compras",
       area: "Operação & Suprimentos",
-      engineId: "gemini_38_flash",
-      configuredModel: configuredFlashModel,
+      engineId: "gemini_35_flash_lite",
+      configuredModel: GEMINI_LITE_MODEL,
       protocol: GEMINI_INTERACTIONS_PROTOCOL,
       keySourceLabel: keyInfo.primarySourceLabel || "Sem chave",
-      status: flashProbe.ok ? "operational" : "fallback_active",
-      statusLabel: flashProbe.ok ? "IA Ativa" : "Regras de keywords ativas",
-      fallbackStrategy: "Dicionário local determinístico (400+ keywords de supermercado/hotelaria)",
+      status: liteProbe.ok ? "operational" : (flashProbe.ok ? "degraded" : "fallback_active"),
+      statusLabel: liteProbe.ok ? "IA Econômica Ativa (3.5 Lite)" : (flashProbe.ok ? "Operando via 3.8 Flash" : "Regras de keywords ativas"),
+      fallbackStrategy: "Dicionário local determinístico prioritário (IA só para itens sem categoria)",
       liveSummary: `${shoppingCount} item(ns) pendente(s) na lista de compras`,
-      latencyMs: flashProbe.latencyMs,
-      lastError: flashProbe.ok ? null : flashProbe.diagnosis
+      latencyMs: liteProbe.ok ? liteProbe.latencyMs : flashProbe.latencyMs,
+      lastError: (liteProbe.ok || flashProbe.ok) ? null : liteProbe.diagnosis
     }
   ];
 
   const modulesAiActive = modules.filter(m => m.status === "operational" || m.status === "degraded").length;
 
-  // Diagnóstico consolidado de saúde geral
-  const hasBillingError = probes.some(p => p.code === "billing_depleted");
-  const hasQuotaError = probes.some(p => p.code === "quota_exceeded");
-  const hasAuthError = probes.some(p => p.code === "auth_error");
+  // Diagnóstico consolidado de saúde geral (ignora motores opcionais em standby)
+  const hasBillingError = testedProbes.some(p => p.code === "billing_depleted");
+  const hasQuotaError = testedProbes.some(p => p.code === "quota_exceeded");
+  const hasAuthError = testedProbes.some(p => p.code === "auth_error");
 
   let overallStatus = "operational";
   let overallTitle = "Todos os motores de IA estão operacionais";
-  let overallSummary = `Os ${probes.length} motores Gemini responderam normalmente (latência média de ${avgLatencyMs ?? 0}ms).`;
+  let overallSummary = `Os ${testedProbes.length} motores Gemini sondados responderam normalmente (latência média de ${avgLatencyMs ?? 0}ms).`;
   let actionRequired = null;
   let actionUrl = null;
 
@@ -93436,10 +95175,10 @@ app.get("/api/admin/ai-status", async (req, res) => {
       overallSummary = "Nenhum dos motores Gemini respondeu ao diagnóstico. Módulos com fallback heurístico permanecem ativos.";
       actionRequired = "Verifique o detalhamento técnico de cada motor na tabela abaixo e tente novamente.";
     }
-  } else if (onlineProbes.length < probes.length) {
+  } else if (onlineProbes.length < testedProbes.length) {
     overallStatus = "degraded";
-    overallTitle = `Operação parcial (${onlineProbes.length} de ${probes.length} motores online)`;
-    const failedLabels = probes.filter(p => !p.ok).map(p => `${p.model} (${p.status ? `HTTP ${p.status}` : p.code})`).join(", ");
+    overallTitle = `Operação parcial (${onlineProbes.length} de ${testedProbes.length} motores online)`;
+    const failedLabels = testedProbes.filter(p => !p.ok).map(p => `${p.model} (${p.status ? `HTTP ${p.status}` : p.code})`).join(", ");
     overallSummary = `Parte dos motores respondeu normalmente, mas houve falha em: ${failedLabels}.`;
     actionRequired = hasBillingError
       ? "Um dos motores recebeu HTTP 402 (créditos esgotados). Verifique qual chave cada motor está utilizando."
@@ -93447,8 +95186,10 @@ app.get("/api/admin/ai-status", async (req, res) => {
     actionUrl = hasBillingError || hasQuotaError ? "https://ai.studio/projects" : null;
   }
 
+  const latestTelemetry = getGeminiTelemetrySnapshot();
   const payload = {
     checkedAt: new Date().toISOString(),
+    passive: false,
     cached: false,
     cacheAgeSeconds: 0,
     cacheTtlSeconds: Math.round(AI_STATUS_OVERVIEW_CACHE_MS / 1000),
@@ -93459,7 +95200,7 @@ app.get("/api/admin/ai-status", async (req, res) => {
     actionUrl,
     summary: {
       enginesOnline: onlineProbes.length,
-      enginesTotal: probes.length,
+      enginesTotal: testedProbes.length,
       avgLatencyMs,
       modulesAiActive,
       modulesTotal: modules.length
@@ -93476,7 +95217,11 @@ app.get("/api/admin/ai-status", async (req, res) => {
     },
     probes,
     modules,
-    recentRuntimeCalls: _aiRuntimeTelemetry.calls.slice(0, 15)
+    recentRuntimeCalls: latestTelemetry.recentCalls.slice(0, 30),
+    telemetrySummary: {
+      totals: latestTelemetry.totals,
+      totalsByModule: latestTelemetry.totalsByModule
+    }
   };
 
   _aiStatusOverviewCache = { result: payload, ts: Date.now() };
@@ -93522,18 +95267,35 @@ app.post("/api/admin/ai-status/test", async (req, res) => {
         model: GEMINI_FLASH_MODEL,
         apiKey: targetKey,
         keySourceLabel: targetSource,
-        promptText: cleanPrompt
+        promptText: cleanPrompt,
+        thinkingLevel: "low",
+        telemetryModule: "ai_status_lab"
+      });
+    } else if (engine === "gemini_35_flash_lite") {
+      const targetKey = useDbKey ? keyInfo.dbSettingsKey : keyInfo.primaryKey;
+      const targetSource = useDbKey ? "Configurações (/configuracoes)" : keyInfo.primarySourceLabel;
+      probeRes = await probeInteractionsEngine({
+        id: "gemini_35_flash_lite",
+        label: "Gemini 3.5 Flash-Lite (Econômico)",
+        model: GEMINI_LITE_MODEL,
+        apiKey: targetKey,
+        keySourceLabel: targetSource,
+        promptText: cleanPrompt,
+        thinkingLevel: "minimal",
+        telemetryModule: "ai_status_lab"
       });
     } else if (engine === "gemini_4_argon" || engine === "gemini_25_pro") {
       const targetKey = useDbKey ? keyInfo.dbSettingsKey : keyInfo.primaryKey;
       const targetSource = useDbKey ? "Configurações (/configuracoes)" : keyInfo.primarySourceLabel;
       probeRes = await probeInteractionsEngine({
         id: "gemini_4_argon",
-        label: "Gemini 4 Argon (Raciocínio & Tools)",
-        model: GEMINI_REASONING_MODEL,
+        label: "Gemini 4 Argon (Raciocínio Opcional)",
+        model: GEMINI_ARGON_MODEL,
         apiKey: targetKey,
         keySourceLabel: targetSource,
-        promptText: cleanPrompt
+        promptText: cleanPrompt,
+        thinkingLevel: "low",
+        telemetryModule: "ai_status_lab"
       });
     } else {
       const targetKey = useDbKey ? keyInfo.dbSettingsKey : keyInfo.primaryKey;
@@ -93544,20 +95306,11 @@ app.post("/api/admin/ai-status/test", async (req, res) => {
         model: GEMINI_FLASH_MODEL,
         apiKey: targetKey,
         keySourceLabel: targetSource,
-        promptText: cleanPrompt
+        promptText: cleanPrompt,
+        thinkingLevel: "low",
+        telemetryModule: "ai_status_lab"
       });
     }
-
-    recordAiRuntimeCall({
-      module: "ai_status_lab",
-      model: probeRes.model,
-      protocol: probeRes.protocol,
-      ok: probeRes.ok,
-      status: probeRes.status,
-      latencyMs: probeRes.latencyMs,
-      error: probeRes.rawError,
-      keySource: probeRes.keySourceLabel
-    });
 
     return res.json({
       ok: probeRes.ok,
@@ -94439,52 +96192,99 @@ setInterval(async () => {
   try {
     if (!db.reservations || !Array.isArray(db.reservations)) return;
 
-    // 0) Varredura de pré-reservas expiradas (remove do calendário e avisa no WhatsApp)
-    sweepExpiredPreReservations(db, saveDatabase);
-
-    // 0.1) Recuperação automática via WhatsApp de carrinhos abandonados qualificados (com travas anti-spam e horário comercial)
-    await sweepAbandonedCartsAutoRecovery(db, saveDatabase);
-
     const now = new Date();
     const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
     const brDate = new Date(nowUtc - (3 * 3600000));
     const todayStr = brDate.toISOString().substring(0, 10);
+    const nowMs = now.getTime();
+    const checkIso = now.toISOString();
 
-    // A) Checa pagamentos pendentes no extrato do Inter APENAS para reservas ativas/futuras (checkout >= hoje)
+    // 0) Verifica pagamentos de alterações pendentes (pendingModification) ANTES de expirar definitivamente
+    const pendingModReservations = db.reservations.filter(r =>
+      r &&
+      r.pendingModification &&
+      r.status !== "cancelada" &&
+      r.status !== "cancelled" &&
+      (
+        r.pendingModification.status === "pending" ||
+        r.pendingModification.status === "pending_payment" ||
+        (r.pendingModification.status === "expired" &&
+          r.pendingModification.expiredAt &&
+          (nowMs - new Date(r.pendingModification.expiredAt).getTime()) < 2 * 3600 * 1000 &&
+          (!r.pendingModification._lastPaymentCheckedAt ||
+            new Date(r.pendingModification._lastPaymentCheckedAt).getTime() < new Date(r.pendingModification.expiredAt).getTime()))
+      )
+    );
+    for (const rMod of pendingModReservations) {
+      const pendingMod = rMod.pendingModification;
+      if (!pendingMod) continue;
+      const recMod = await reconcilePendingModificationBeforeExpire(rMod, pendingMod, {
+        nowMs,
+        source: "Auto-Sync Modificação",
+        saveFn: saveDatabase
+      });
+      if (!recMod.paid && pendingMod.expiresAt) {
+        const modExpMs = new Date(pendingMod.expiresAt).getTime();
+        if (!isNaN(modExpMs) && modExpMs <= nowMs && pendingMod.status !== "expired") {
+          pendingMod.status = "expired";
+          pendingMod.expiredAt = checkIso;
+          saveDatabase("modify_hold_expired_autosync");
+        }
+      }
+    }
+
+    // A) Checa pagamentos pendentes no Inter e Mercado Pago ANTES da varredura de expiração
     const pendingReservations = db.reservations.filter(r =>
       r.status !== "cancelada" &&
       r.status !== "cancelled" &&
       r.checkoutDate &&
       r.checkoutDate >= todayStr &&
-      Number(r.totalAmount) > 0 &&
       (
-        isUnverifiedPreReservation(r) ||
+        r.pendingStayExtension?.status === "pending_payment" ||
         (
-          r.paymentStatus !== "pago_total" &&
-          r.paymentStatus !== "pago" &&
-          (!r.paidAmount || Number(r.paidAmount) < Number(r.totalAmount))
+          Number(r.totalAmount) > 0 &&
+          (
+            isUnverifiedPreReservation(r) ||
+            (
+              r.paymentStatus !== "pago_total" &&
+              r.paymentStatus !== "pago" &&
+              (!r.paidAmount || Number(r.paidAmount) < Number(r.totalAmount))
+            )
+          )
         )
       )
     );
 
     for (const r of pendingReservations) {
       // Se um pacote multi-flat foi liquidado na iteração anterior do mesmo ciclo, pula as irmãs já quitadas!
+      const hasPendingExtActive = r.pendingStayExtension?.status === "pending_payment";
       if (
         !r ||
         r.status === "cancelada" ||
         r.status === "cancelled" ||
         r.status === "expirada" ||
-        r.paymentStatus === "pago_total" ||
-        r.paymentStatus === "pago"
+        (!hasPendingExtActive && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago"))
       ) {
         continue;
       }
-      const syncTxId = r.packagePixTxId || r.pixTxId;
-      if (syncTxId) {
+
+      const candidateTxIds = [
+        r.pendingStayExtension?.txid,
+        r.packagePixTxId,
+        r.pixTxId
+      ].filter((tx, idx, arr) => Boolean(tx) && arr.indexOf(tx) === idx);
+
+      let confirmedThisCycle = false;
+      for (const syncTxId of candidateTxIds) {
         const cobData = await checkInterPixCobStatus(syncTxId);
         if (cobData && (cobData.status === "CONCLUIDA" || (Array.isArray(cobData.pix) && cobData.pix.length > 0))) {
-          const pkgSumSync = (r.packageId || r.packageCode) ? computePackageSummary(db, r.packageId || r.packageCode, { computeCardAmountFromPix }) : null;
-          const valorPago = Number(cobData.pix?.[0]?.valor || cobData.valor?.original || (pkgSumSync ? pkgSumSync.pendingAmount : r.totalAmount));
+          const pkgSumSync = (!hasPendingExtActive && (r.packageId || r.packageCode))
+            ? computePackageSummary(db, r.packageId || r.packageCode, { computeCardAmountFromPix })
+            : null;
+          const fallbackAmt = hasPendingExtActive
+            ? (Number(r.pendingStayExtension?.amount) || Math.max(0, Number(r.totalAmount || 0) - Number(r.paidAmount || 0)))
+            : (pkgSumSync ? pkgSumSync.pendingAmount : r.totalAmount);
+          const valorPago = Number(cobData.pix?.[0]?.valor || cobData.valor?.original || fallbackAmt);
           await confirmReservationPayment(r, {
             amount: valorPago,
             paidAt: cobData.pix?.[0]?.horario,
@@ -94492,9 +96292,12 @@ setInterval(async () => {
             txId: syncTxId,
             source: "Banco Inter Cobrança (Auto-Sync)"
           });
-          continue;
+          confirmedThisCycle = true;
+          break;
         }
       }
+      if (confirmedThisCycle) continue;
+
       const extratoMatch = await checkInterBankingExtratoPix(r);
       if (extratoMatch && extratoMatch.found) {
         await confirmReservationPayment(r, {
@@ -94505,8 +96308,42 @@ setInterval(async () => {
           pagador: extratoMatch.pagador,
           source: "Banco Inter Extrato (Auto-Sync)"
         });
+        continue;
+      }
+
+      if (hasPendingExtActive || r.mpPreferenceId || /cart[aã]o|card|mercadopago/i.test(String(r.paymentMethod || ""))) {
+        const mpRefCode = (!hasPendingExtActive && (r.packageCode || r.packageId)) ? (r.packageCode || r.packageId) : r.code;
+        const mpPayment = mpRefCode ? await checkMercadoPagoPaymentByRef(mpRefCode) : null;
+        if (mpPayment && mpPayment.status === "approved") {
+          const mpPayIdStr = String(mpPayment.id);
+          const alreadyProcessedMp =
+            String(r.mpPaymentId || "") === mpPayIdStr ||
+            (Array.isArray(r.payments) && r.payments.some(p => p && String(p.mpPaymentId || p.txId || "") === mpPayIdStr));
+          if (!alreadyProcessedMp) {
+            const valorPagoMp = Number(mpPayment.transaction_amount || mpPayment.total_paid_amount || r.pendingStayExtension?.amount || r.totalAmount);
+            await confirmReservationPayment(r, {
+              amount: valorPagoMp,
+              paidAt: mpPayment.date_approved,
+              mpPaymentId: mpPayIdStr,
+              paymentMethod: "cartao_credito",
+              source: "Mercado Pago (Auto-Sync)"
+            });
+            continue;
+          }
+        }
+      }
+
+      r._lastPaymentCheckedAt = checkIso;
+      if (r.pendingStayExtension && r.pendingStayExtension.status === "pending_payment") {
+        r.pendingStayExtension._lastPaymentCheckedAt = checkIso;
       }
     }
+
+    // 0) Somente APÓS verificar pagamentos em Inter e MP executa varredura de pré-reservas/extensões expiradas
+    sweepExpiredPreReservations(db, saveDatabase);
+
+    // 0.1) Recuperação automática via WhatsApp de carrinhos abandonados qualificados (com travas anti-spam e horário comercial)
+    await sweepAbandonedCartsAutoRecovery(db, saveDatabase);
 
     // B) Auto-healing de reservas diretas recentes (id > 560, criadas ou pagas nas últimas 48h, check-in >= hoje) já pagas que ainda não receberam confirmação no WhatsApp (incluindo hóspede distinto do solicitante)
     const recentPaidMissingConfirm = db.reservations.filter(r => {
@@ -94586,7 +96423,8 @@ setInterval(async () => {
       const hasCheckoutExt = Boolean(
         r.pendingStayExtension ||
         (r.previousCheckoutDate && r.previousCheckoutDate < r.checkoutDate) ||
-        (Array.isArray(r.auditLogs) && r.auditLogs.some(l => l && l.action === "dates_changed" && Array.isArray(l.changes) && l.changes.some(c => c && c.field === "checkoutDate")))
+        (r.previousCheckinDate && r.previousCheckinDate > r.checkinDate) ||
+        (Array.isArray(r.auditLogs) && r.auditLogs.some(l => l && l.action === "dates_changed" && Array.isArray(l.changes) && l.changes.some(c => c && (c.field === "checkoutDate" || c.field === "checkinDate"))))
       );
       return hasComplementaryPayment && hasCheckoutExt;
     });
@@ -108014,6 +109852,9 @@ export {
   app,
   httpServer,
   db,
+  isConfirmationAlreadyDispatched,
+  ensurePaymentConfirmationDispatched,
+  pruneDatabase,
   updateSmokingStatusForCleaning,
   calculateCanonicalAvailability,
   checkReservationConflicts,

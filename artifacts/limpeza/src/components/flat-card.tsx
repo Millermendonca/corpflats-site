@@ -1,6 +1,11 @@
 import { useState, useEffect, useRef } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { format, addDays, parseISO, differenceInDays, isValid } from "date-fns"
+import { format, addDays, subDays, parseISO, differenceInDays, isValid } from "date-fns"
+import {
+  formatShortBrDate,
+  resolveEffectiveCheckoutDate,
+  resolveLeavingGuestLabel,
+} from "@/lib/cleaning-card-labels"
 import { useToast } from "@/hooks/use-toast"
 import { 
   useUpdateFlat,
@@ -1443,11 +1448,27 @@ export function FlatCard({
   }
 
   const todayStr = format(new Date(), "yyyy-MM-dd")
+  const yesterdayStr = format(subDays(new Date(), 1), "yyyy-MM-dd")
   const tomorrowStr = format(addDays(new Date(), 1), "yyyy-MM-dd")
   const isViewingToday = date === todayStr
   const isViewingTomorrow = date === tomorrowStr
   const isViewingFuture = date > todayStr
   const isViewingPast = date < todayStr
+
+  const checkoutDateRef = resolveEffectiveCheckoutDate({
+    originalRequestDate: flat.originalRequestDate || request?.originalRequestDate,
+    checkoutDate: flat.checkoutDate,
+    requestDate: request?.requestDate,
+    reservationCheckoutDate: flat.reservation?.checkoutDate,
+    viewDate: date,
+  })
+  const leavingGuestLabel = resolveLeavingGuestLabel({
+    checkoutDateRef,
+    todayStr,
+    yesterdayStr,
+    tomorrowStr,
+    currentStatus,
+  })
 
   // Occupancy precedence: cleaning_now or clean automatically means the guest has checked out (Desocupado).
   // Otherwise prioritize flat.isOccupied over request.isVacant so future checkouts for occupied rooms don't falsely show "Desocupado"
@@ -1491,10 +1512,10 @@ export function FlatCard({
               Estendeu
             </div>
             <p className="text-xs text-purple-900 dark:text-purple-300 font-medium max-w-xs pt-1">
-              {isViewingTomorrow 
+              {isViewingTomorrow
                 ? "O hóspede estendeu a estadia. A limpeza deste quarto foi cancelada para amanhã."
-                : isViewingFuture
-                  ? "O hóspede estendeu a estadia. A limpeza deste quarto foi cancelada para esta data."
+                : isViewingFuture || isViewingPast
+                  ? `O hóspede estendeu a estadia. A limpeza deste quarto foi cancelada para ${formatShortBrDate(date)}.`
                   : "O hóspede estendeu a estadia. A limpeza deste quarto foi cancelada para hoje."}
             </p>
           </div>
@@ -1856,8 +1877,8 @@ export function FlatCard({
                   <span>
                     {isViewingTomorrow
                       ? "🟢 Entra Amanhã"
-                      : isViewingFuture
-                        ? `🟢 Entra em ${(() => { try { return format(parseISO(date), "dd/MM") } catch { return date } })()}`
+                      : isViewingFuture || isViewingPast
+                        ? `🟢 Entra em ${formatShortBrDate(date)}`
                         : "🟢 Entra Hoje"}
                   </span>
                 </Badge>
@@ -1903,13 +1924,7 @@ export function FlatCard({
                   flat.leavingGuest && (
                     <div className="flex items-start gap-1.5 text-slate-700 dark:text-slate-300">
                       <span className="font-bold text-slate-500 shrink-0">
-                        {isViewingTomorrow
-                          ? "Check-out amanhã:"
-                          : isViewingFuture
-                            ? "Saída Prevista:"
-                            : currentStatus === "clean"
-                              ? "Saiu:"
-                              : "Check-out hoje:"}
+                        {leavingGuestLabel}
                       </span>
                       <span className="font-semibold break-words">{flat.leavingGuest}</span>
                     </div>
@@ -1922,7 +1937,9 @@ export function FlatCard({
                         ? "Entra amanhã:"
                         : isViewingFuture
                           ? "Entrada Prevista:"
-                          : "Entra:"}
+                          : isViewingPast
+                            ? `Entrou (${formatShortBrDate(date)}):`
+                            : "Entra:"}
                     </span>
                     <span className="font-semibold break-words">{flat.arrivingGuest}</span>
                   </div>
@@ -1985,7 +2002,9 @@ export function FlatCard({
                     ? "🟢 Há novo check-in previsto para este flat amanhã."
                     : isViewingFuture
                       ? "🟢 Há novo check-in previsto para este flat nesta data."
-                      : "🟢 Há novo check-in previsto para este flat hoje."}
+                      : isViewingPast
+                        ? `🟢 Houve check-in previsto para este flat em ${formatShortBrDate(date)}.`
+                        : "🟢 Há novo check-in previsto para este flat hoje."}
                 </span>
               </div>
             )}

@@ -1307,13 +1307,25 @@ export function handleOtaModification({ db, normalized, alertsManager = null }) 
   const applyAdjustedDailyRates = (targetRes) => {
     const stayNights = getNightsBetween(newCheckin, newCheckout);
     if (stayNights.length === 0) return;
+    const resolveRateChannel = (nightDate) => {
+      if (targetRes._manualChannelProtected && targetRes.channel) {
+        const prevMatch = Array.isArray(targetRes.dailyRates)
+          ? targetRes.dailyRates.find((d) => d?.date === nightDate && d?.channel)
+          : null;
+        return prevMatch?.channel || targetRes.channel;
+      }
+      return targetRes.channel || normalized.channel || "booking";
+    };
     if (Array.isArray(normalized.dayRates) && normalized.dayRates.length > 0) {
       const filtered = normalized.dayRates
-        .map((d) => ({
-          date: normalizeDateStr(d.Date || d.date),
-          rate: Number(d.Rate ?? d.rate ?? 0),
-          channel: targetRes.channel || normalized.channel || "booking"
-        }))
+        .map((d) => {
+          const dt = normalizeDateStr(d.Date || d.date);
+          return {
+            date: dt,
+            rate: Number(d.Rate ?? d.rate ?? 0),
+            channel: resolveRateChannel(dt)
+          };
+        })
         .filter((d) => d.date && d.date >= newCheckin && d.date < newCheckout);
       if (filtered.length === stayNights.length) {
         targetRes.dailyRates = filtered;
@@ -1326,7 +1338,7 @@ export function handleOtaModification({ db, normalized, alertsManager = null }) 
       targetRes.dailyRates = stayNights.map((dt, idx) => ({
         date: dt,
         rate: idx === stayNights.length - 1 ? Math.max(0, Number((baseRate + rem).toFixed(2))) : baseRate,
-        channel: targetRes.channel || normalized.channel || "booking"
+        channel: resolveRateChannel(dt)
       }));
     }
   };

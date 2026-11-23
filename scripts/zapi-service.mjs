@@ -9652,6 +9652,21 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     if (db.whatsappAiConfig?.preferredModel && isLegacyOrRestrictedGeminiModel(db.whatsappAiConfig.preferredModel)) {
       db.whatsappAiConfig.preferredModel = GEMINI_REASONING_MODEL;
     }
+    if (!db.whatsappAiSettings.quotaOpt20261123Applied) {
+      if (db.zapiConfig?.aiAgent?.preferredModel === "gemini-4-argon") {
+        db.zapiConfig.aiAgent.preferredModel = GEMINI_REASONING_MODEL;
+      }
+      if (db.whatsappAiSettings?.preferredModel === "gemini-4-argon") {
+        db.whatsappAiSettings.preferredModel = GEMINI_REASONING_MODEL;
+      }
+      if (db.whatsappAiSettings?.geminiModel === "gemini-4-argon") {
+        db.whatsappAiSettings.geminiModel = GEMINI_REASONING_MODEL;
+      }
+      if (db.whatsappAiConfig?.preferredModel === "gemini-4-argon") {
+        db.whatsappAiConfig.preferredModel = GEMINI_REASONING_MODEL;
+      }
+      db.whatsappAiSettings.quotaOpt20261123Applied = true;
+    }
     if (!db.whatsappAiSettings.toneSettings) {
       db.whatsappAiSettings.toneSettings = {
         conciseness: "normal",
@@ -13043,6 +13058,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       if (!db.whatsappAiSettings) db.whatsappAiSettings = {};
       db.whatsappAiSettings.preferredModel = modelVal;
       db.whatsappAiSettings.geminiModel = modelVal;
+      db.whatsappAiSettings.quotaOpt20261123Applied = true;
       if (db.settings && (!db.settings.geminiModel || isLegacyOrRestrictedGeminiModel(db.settings.geminiModel))) {
         db.settings.geminiModel = GEMINI_FLASH_MODEL;
       }
@@ -14311,6 +14327,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 // ── Controle de Concorrência (In-Flight Lock) e Desduplicação Global ───────────
 const inFlightDispatches = new Set();
 const inFlightPdfAttachments = new Set();
+const inFlightRoomReadyLocks = new Set();
 
 export const MUTUALLY_EXCLUSIVE_CONFIRMATION_EVENTS = new Set([
   "reservation_created",
@@ -14377,14 +14394,56 @@ function isWhatsappHistorySuccessStatus(status) {
   return s === "sent" || s === "delivered" || s === "read" || s === "received" || s === "played" || s === "viewed";
 }
 
+export function markReservationConfirmationDispatched(
+  db,
+  reservation,
+  { phone = "", sentAt = new Date().toISOString(), eventName = "", sentPdf = false } = {}
+) {
+  if (!reservation) return;
+  const targets = [reservation];
+  if (Array.isArray(db?.reservations)) {
+    const dbRes = db.reservations.find(r =>
+      r &&
+      r !== reservation &&
+      ((reservation.id !== undefined && reservation.id !== null && String(r.id) === String(reservation.id)) ||
+        (reservation.code && r.code && String(r.code).trim().toUpperCase() === String(reservation.code).trim().toUpperCase()))
+    );
+    if (dbRes) targets.push(dbRes);
+  }
+
+  const isConfirmEvent = MUTUALLY_EXCLUSIVE_CONFIRMATION_EVENTS.has(eventName);
+  const normPhone = normalizePhoneForDedup(phone);
+
+  for (const resObj of targets) {
+    if (isConfirmEvent) {
+      resObj.confirmationWhatsappSentAt = resObj.confirmationWhatsappSentAt || sentAt;
+      if (normPhone) {
+        if (!Array.isArray(resObj.confirmationSentPhones)) resObj.confirmationSentPhones = [];
+        if (!resObj.confirmationSentPhones.some(p => matchClientPhone(p, phone) || p === normPhone)) {
+          resObj.confirmationSentPhones.push(normPhone);
+        }
+      }
+    }
+    if (sentPdf && normPhone) {
+      resObj.manualPdfSentAt = resObj.manualPdfSentAt || sentAt;
+      if (!Array.isArray(resObj.manualPdfSentPhones)) resObj.manualPdfSentPhones = [];
+      if (!resObj.manualPdfSentPhones.some(p => matchClientPhone(p, phone) || p === normPhone)) {
+        resObj.manualPdfSentPhones.push(normPhone);
+      }
+    }
+  }
+}
+
 export function isInitialConfirmationInFlightOrSent(db, reservation) {
   if (!reservation) return false;
   const resKey = getReservationDedupKey(reservation);
   const rCode = String(reservation.code || reservation.reservationCode || "").trim().toUpperCase();
   const rId = reservation.id ? String(reservation.id) : "";
   const recips = getReservationRecipients(reservation, db || {});
-  const guestPhoneNorm = normalizePhoneForDedup(recips.guest?.phone || "");
-  const reqPhoneNorm = normalizePhoneForDedup(recips.requester?.phone || "");
+  const rawGuestPhone = recips.guest?.phone || "";
+  const rawReqPhone = recips.requester?.phone || "";
+  const guestPhoneNorm = normalizePhoneForDedup(rawGuestPhone);
+  const reqPhoneNorm = normalizePhoneForDedup(rawReqPhone);
   const requireGuestConfirmation = Boolean(
     recips.requester?.isDifferentFromGuest &&
     !isMissingGuestDataForCredential(reservation) &&
@@ -14393,10 +14452,20 @@ export function isInitialConfirmationInFlightOrSent(db, reservation) {
 
   for (const key of inFlightDispatches) {
     if (resKey && key.startsWith(`${resKey}:INITIAL_CONFIRMATION:`)) {
-      if (!requireGuestConfirmation || key.endsWith(`:${guestPhoneNorm}`)) {
+      if (!requireGuestConfirmation) return true;
+      const keyPhone = key.slice(`${resKey}:INITIAL_CONFIRMATION:`.length);
+      if (keyPhone === guestPhoneNorm || matchClientPhone(keyPhone, rawGuestPhone)) {
         return true;
       }
     }
+  }
+
+  const stampedPhones = Array.isArray(reservation.confirmationSentPhones) ? reservation.confirmationSentPhones : [];
+  if (stampedPhones.length > 0) {
+    if (!requireGuestConfirmation) return true;
+    if (stampedPhones.some(p => matchClientPhone(p, rawGuestPhone))) return true;
+  } else if (reservation.confirmationWhatsappSentAt && !requireGuestConfirmation) {
+    return true;
   }
 
   const history = db?.whatsappHistory || [];
@@ -14410,7 +14479,9 @@ export function isInitialConfirmationInFlightOrSent(db, reservation) {
     if (requireGuestConfirmation) {
       if (h.recipientType === "requester" || h.recipientRole === "solicitante") return false;
       const hPhoneNorm = normalizePhoneForDedup(h.guestPhone || "");
-      if (reqPhoneNorm && reqPhoneNorm !== guestPhoneNorm && hPhoneNorm === reqPhoneNorm) return false;
+      if (reqPhoneNorm && !matchClientPhone(rawReqPhone, rawGuestPhone) && hPhoneNorm && matchClientPhone(h.guestPhone, rawReqPhone)) {
+        return false;
+      }
     }
     return true;
   });
@@ -14423,7 +14494,21 @@ export function hasPdfAlreadyBeenSentOrInFlight(db, reservationCode, reservation
   const rId = reservationId ? String(reservationId) : "";
   const resKey = rCode || (rId ? `ID_${rId}` : "");
 
-  if (resKey && inFlightPdfAttachments.has(`${resKey}:${normPhone}`)) {
+  if (resKey) {
+    if (inFlightPdfAttachments.has(`${resKey}:${normPhone}`)) return true;
+    for (const key of inFlightPdfAttachments) {
+      if (key.startsWith(`${resKey}:`) && matchClientPhone(key.slice(resKey.length + 1), phone)) {
+        return true;
+      }
+    }
+  }
+
+  const resv = (db?.reservations || []).find(r =>
+    r &&
+    ((rCode && String(r.code || r.reservationCode || "").trim().toUpperCase() === rCode) ||
+      (rId && String(r.id) === rId))
+  );
+  if (resv && Array.isArray(resv.manualPdfSentPhones) && resv.manualPdfSentPhones.some(p => matchClientPhone(p, phone))) {
     return true;
   }
 
@@ -14434,7 +14519,7 @@ export function hasPdfAlreadyBeenSentOrInFlight(db, reservationCode, reservation
     const hId = h.reservationId ? String(h.reservationId) : "";
     const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
     if (!isSameRes) return false;
-    return normalizePhoneForDedup(h.guestPhone) === normPhone;
+    return matchClientPhone(h.guestPhone, phone);
   });
 }
 
@@ -15408,6 +15493,14 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
 
   const waSuccess = Boolean(waResult?.success);
   const anySuccess = waSuccess || Boolean(emailLog);
+  if (waSuccess && resv) {
+    markReservationConfirmationDispatched(db, resv, {
+      phone: item.guestPhone,
+      sentAt: item.sentAt || new Date().toISOString(),
+      eventName: item.triggerEvent,
+      sentPdf: Boolean(shouldSendDoc && item.documentUrl)
+    });
+  }
   if (anySuccess && resv && ROOM_READY_GROUP_EVENTS.has(item.triggerEvent)) {
     const { todayStr } = getBrasiliaDateParts(new Date());
     markReservationRoomReadySent(db, resv, todayStr, new Date().toISOString(), item.triggerEvent);
@@ -15597,6 +15690,15 @@ export async function dispatchTemplateToTarget(db, saveDatabase, { tpl, eventNam
       documentName: docName,
       baseUrl,
       source: "instant_trigger"
+    });
+  }
+
+  if (waResult?.success && reservation) {
+    markReservationConfirmationDispatched(db, reservation, {
+      phone: target.phone,
+      sentAt: new Date().toISOString(),
+      eventName,
+      sentPdf: Boolean(hasAttachment && docUrl)
     });
   }
 
@@ -16118,7 +16220,8 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     if (
       !reservation._skipAutoIntro &&
       !reservation._onlyRequesterTarget &&
-      (eventName === "reservation_created" || eventName === "payment_confirmed" || eventName === "sameday_reservation")
+      (eventName === "reservation_created" || eventName === "payment_confirmed" || eventName === "sameday_reservation") &&
+      (reservation._bypassSingleFireDedup || !isInitialConfirmationInFlightOrSent(db, reservation))
     ) {
       const historyBeforeIntro = Array.isArray(db.whatsappHistory) ? db.whatsappHistory.length : 0;
       await triggerImmediateWhatsApp(
@@ -16424,6 +16527,10 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     const isUpdatedEvent = eventName === "reservation_updated";
     const isReSignPreCheckin = eventName === "pre_checkin_completed" && Boolean(reservation._wasReSignature);
     const isPreResUpdate = (eventName === "pre_reservation_created" || eventName === "pre_reservation_expiring_soon" || eventName === "pre_reservation_expired") && Boolean(reservation._isPreReservationUpdate);
+    let deliveredWaCount = 0;
+    let deliveredEmailCount = 0;
+    let attemptedWaCount = 0;
+    let failedWaCount = 0;
 
     for (const tpl of templates) {
       const targetMode = tpl.recipientTarget || "guest";
@@ -16533,10 +16640,30 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
             const lockKey = (resKey && normTargetPhone)
               ? (eventName === "pre_checkin_completed" ? `${resKey}:${eventGroup}:${target.type || "guest"}:${normTargetPhone}` : `${resKey}:${eventGroup}:${normTargetPhone}`)
               : "";
-            const isInFlight = Boolean(lockKey && inFlightDispatches.has(lockKey));
+            const inFlightPhoneMatch = Boolean(
+              resKey &&
+              target.phone &&
+              eventName !== "pre_checkin_completed" &&
+              [...inFlightDispatches].some(k =>
+                k.startsWith(`${resKey}:${eventGroup}:`) &&
+                matchClientPhone(k.slice(`${resKey}:${eventGroup}:`.length), target.phone)
+              )
+            );
+            const isInFlight = Boolean((lockKey && inFlightDispatches.has(lockKey)) || inFlightPhoneMatch);
 
             const isRoomReadyEvent = ROOM_READY_GROUP_EVENTS.has(eventName);
+            const isConfirmEvtNow = MUTUALLY_EXCLUSIVE_CONFIRMATION_EVENTS.has(eventName);
+            const alreadyStampedInitialConfirm = Boolean(
+              isConfirmEvtNow &&
+              (
+                (Array.isArray(reservation.confirmationSentPhones) &&
+                  reservation.confirmationSentPhones.some(p => matchClientPhone(p, target.phone))) ||
+                (Boolean(reservation.confirmationWhatsappSentAt) &&
+                  (!Array.isArray(reservation.confirmationSentPhones) || reservation.confirmationSentPhones.length === 0))
+              )
+            );
             const alreadySentWa = (isPreResUpdate || reservation._bypassSingleFireDedup) ? false : (
+              alreadyStampedInitialConfirm ||
               (db.whatsappHistory || []).some(h => {
                 if (!isWhatsappHistorySuccessStatus(h.status)) return false;
                 const hCode = String(h.reservationCode || "").trim().toUpperCase();
@@ -16555,7 +16682,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
                   if (!sameGroupOrSamedayReady) return false;
                 }
                 if (eventName === "pre_checkin_completed" && (h.recipientType || "guest") !== (target.type || "guest")) return false;
-                if (normalizePhoneForDedup(h.guestPhone) !== normTargetPhone) return false;
+                if (!matchClientPhone(h.guestPhone, target.phone)) return false;
                 if (isUpdatedEvent && reservation._isExtensionPaymentConfirmed) {
                   const isPrevExtConfirm = /Confirmamos o recebimento do seu pagamento|Confirmamos a \*extens[aã]o da sua estadia\*/i.test(String(h.message || ""));
                   if (!isPrevExtConfirm) return false;
@@ -16572,7 +16699,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
                 return true;
               }) ||
               (isRoomReadyEvent && (db.whatsappConversations || []).some(c => {
-                if (!c || normalizePhoneForDedup(c.phone) !== normTargetPhone) return false;
+                if (!c || !matchClientPhone(c.phone, target.phone)) return false;
                 return (c.messages || []).some(m => {
                   if (!m || !m.fromMe || m.status === "failed") return false;
                   const mTs = String(m.timestamp || m.createdAt || "");
@@ -16639,6 +16766,12 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
         }
 
         const dispatchRes = await dispatchTemplateToTarget(db, saveDatabase, { tpl, eventName, reservation, target, baseUrl });
+        if (target.phone) {
+          attemptedWaCount++;
+          if (dispatchRes?.waResult?.success) deliveredWaCount++;
+          else failedWaCount++;
+        }
+        if (dispatchRes?.emailLog) deliveredEmailCount++;
 
         if (isPaymentConfirmReq && (dispatchRes?.waResult?.success || Boolean(dispatchRes?.emailLog))) {
           const pkgReceiptTs = new Date().toISOString();
@@ -16659,8 +16792,17 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
         saveDatabase();
       }
     }
+
+    return {
+      ok: deliveredWaCount > 0 || deliveredEmailCount > 0,
+      deliveredWaCount,
+      deliveredEmailCount,
+      attemptedWaCount,
+      failedWaCount
+    };
   } catch (err) {
     console.error(`[Z-API Instant Trigger Error]:`, err.message);
+    return { ok: false, deliveredWaCount: 0, deliveredEmailCount: 0, attemptedWaCount: 0, failedWaCount: 0, error: err.message };
   }
 }
 
@@ -17522,8 +17664,24 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
     const isAtOrAfterCheckin = brHour > checkHour || (brHour === checkHour && brMinute >= checkMin);
 
     for (const resv of arrivingToday) {
+      const rrLockKey = `${resv.code || resv.id || flatNumber}:${todayStr}`;
+      if (inFlightRoomReadyLocks.has(rrLockKey)) {
+        continue;
+      }
+
       if (hasReservationEnteredOrCompletedCheckin(db, resv, todayStr)) {
         continue;
+      }
+
+      const failTracker = resv._roomReadyFailToday;
+      if (failTracker && failTracker.date === todayStr) {
+        if ((failTracker.count || 0) >= 3) {
+          continue;
+        }
+        const elapsedSinceLastFail = failTracker.lastAttemptAt ? (now.getTime() - new Date(failTracker.lastAttemptAt).getTime()) : Infinity;
+        if (elapsedSinceLastFail >= 0 && elapsedSinceLastFail < 2 * 60 * 1000) {
+          continue;
+        }
       }
 
       // Trava combinada: limpeza concluída + (antes das 14:00, conferência de frigobar feita hoje)
@@ -17635,11 +17793,25 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
       }
 
       console.log(`[Room Ready] Disparando '${eventName}' para ${resv.guestName} (Flat ${flatNumber} / Canal: ${resvChannel} / Horário: ${brHour}:${String(brMinute).padStart(2, '0')})...`);
-      markReservationRoomReadySent(db, resv, todayStr, now.toISOString(), eventName);
-      if (typeof saveDatabase === "function") saveDatabase();
-
-      const resvForImmediate = nowOverride ? { ...resv, _nowOverride: now } : resv;
-      await triggerImmediateWhatsApp(db, saveDatabase, eventName, resvForImmediate, baseUrl);
+      inFlightRoomReadyLocks.add(rrLockKey);
+      try {
+        const resvForImmediate = nowOverride ? { ...resv, _nowOverride: now } : resv;
+        const immRes = await triggerImmediateWhatsApp(db, saveDatabase, eventName, resvForImmediate, baseUrl);
+        if (immRes?.ok) {
+          delete resv._roomReadyFailToday;
+          markReservationRoomReadySent(db, resv, todayStr, now.toISOString(), eventName);
+        } else if (immRes && immRes.attemptedWaCount > 0 && immRes.deliveredWaCount === 0 && immRes.deliveredEmailCount === 0) {
+          const prevCount = (resv._roomReadyFailToday?.date === todayStr) ? (Number(resv._roomReadyFailToday.count) || 0) : 0;
+          resv._roomReadyFailToday = {
+            date: todayStr,
+            count: prevCount + 1,
+            lastAttemptAt: now.toISOString()
+          };
+        }
+        if (typeof saveDatabase === "function") saveDatabase();
+      } finally {
+        inFlightRoomReadyLocks.delete(rrLockKey);
+      }
     }
   } catch (err) {
     console.error("[Room Ready WhatsApp Error]:", err.message);
@@ -18652,16 +18824,18 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
           if (isAtOrAfterCheckin && !isOtaOrB2b) {
             roomReadyEvent = "room_ready_regular";
           }
-          markReservationRoomReadySent(db, reservation, todayStr, now.toISOString(), roomReadyEvent);
-          await triggerImmediateWhatsApp(
+          const catchupRoomRes = await triggerImmediateWhatsApp(
             db,
             saveDatabase,
             roomReadyEvent,
-            { ...guestOnlyRes, _skipAutoIntro: true },
+            { ...guestOnlyRes, _skipAutoIntro: true, _nowOverride: now },
             baseUrl
           );
-          markQueuedStageCancelledForGuest(["room_ready", "room_ready_ota", "room_ready_regular"], "Enviado via recuperação imediata (Catch-Up)");
-          dispatchedStages.push(roomReadyEvent);
+          if (catchupRoomRes?.ok || hasRoomReadyBeenSentOrScheduled(db, reservation, todayStr, { includeScheduled: false })) {
+            markReservationRoomReadySent(db, reservation, todayStr, now.toISOString(), roomReadyEvent);
+            markQueuedStageCancelledForGuest(["room_ready", "room_ready_ota", "room_ready_regular"], "Enviado via recuperação imediata (Catch-Up)");
+            dispatchedStages.push(roomReadyEvent);
+          }
           await pauseBetweenStages();
         } else if (isFlatReadyForRelease && brHour < earliestReleaseHour) {
           await triggerRoomReadyWhatsApp(db, saveDatabase, reservation.flatId, reservation.flatNumber, baseUrl, now);
@@ -19169,7 +19343,7 @@ export function isFlatStillBeingCleanedOnCheckinDay(db, resv, todayStr) {
     (
       c.requestDate === todayStr ||
       c.effectiveDate === todayStr ||
-      (c.completedAt && String(c.completedAt).startsWith(todayStr))
+      (c.completedAt && (getBrasiliaDateStrFromIso(c.completedAt) === todayStr || String(c.completedAt).startsWith(todayStr)))
     )
   );
   if (cleanedToday) return false;
@@ -19177,7 +19351,7 @@ export function isFlatStillBeingCleanedOnCheckinDay(db, resv, todayStr) {
   const auditCleanToday = (db.auditLogs || []).some(l =>
     (l?.action === "CLEANING_STATUS_CLEAN" || l?.action === "CLEANING_COMPLETED_BY_ADMIN_FOR_MAID") &&
     String(l?.details?.flatNumber || "").replace(/\D/g, "") === flatNumClean &&
-    String(l?.timestamp || "").startsWith(todayStr)
+    (getBrasiliaDateStrFromIso(l?.timestamp) === todayStr || String(l?.timestamp || "").startsWith(todayStr))
   );
   if (auditCleanToday) return false;
 
@@ -19200,29 +19374,42 @@ export function isFlatStillBeingCleanedOnCheckinDay(db, resv, todayStr) {
       }
       const rFlatClean = String(r.flatNumber || "").replace(/\D/g, "");
       const sameFlat = (flatId && Number(r.flatId) === flatId) || (flatNumClean && rFlatClean === flatNumClean);
-      return sameFlat && r.checkoutDate === todayStr;
+      if (!sameFlat) return false;
+      const earlyOut = r.earlyCheckoutDate ? String(r.earlyCheckoutDate).slice(0, 10) : "";
+      const actualOutBr = r.actualCheckoutAt ? getBrasiliaDateStrFromIso(r.actualCheckoutAt) : "";
+      if (earlyOut && earlyOut < todayStr) return false;
+      if (actualOutBr && actualOutBr < todayStr) return false;
+      return r.checkoutDate === todayStr || earlyOut === todayStr || actualOutBr === todayStr;
     });
     if (hasCheckoutToday) return true;
   }
 
   // 4. Verifica se há pendência ou limpeza de dia anterior (< todayStr) que ainda não tenha sido resolvida
-  // IMPORTANTE: Ignora cards futuros (> todayStr) e SEMPRE verifica se o flat já foi limpo em data igual ou posterior,
+  // IMPORTANTE: Ignora cards futuros (> todayStr), stayover/service_order e SEMPRE verifica se o flat já foi limpo em data igual ou posterior,
   // mesmo que um registro antigo tenha ficado com status 'cleaning_now' / 'in_progress' / 'will_clean' no passado.
   const hasUnresolvedPreviousCleaning = flatActiveCleanings.some(c => {
     const st = String(c.status || "").toLowerCase();
     if (!pendingStatuses.has(st)) return false;
+    const typeLower = String(c.type || "").toLowerCase().trim();
+    if (typeLower === "stayover" || typeLower === "arrumacao" || typeLower === "service_order" || c.isStayover === true) {
+      return false;
+    }
     if (!c.requestDate || c.requestDate >= todayStr || c.requestDate < "2026-09-01") return false;
     // Verifica se já houve limpeza efetivamente concluída em data igual ou posterior a esta solicitação antiga
     const resolvedOnOrAfter = flatAllCleanings.some(other => {
-      const otherDate = other.effectiveDate || (other.completedAt ? String(other.completedAt).substring(0, 10) : other.requestDate) || "";
+      const completedDateBr = other.completedAt
+        ? (getBrasiliaDateStrFromIso(other.completedAt) || String(other.completedAt).substring(0, 10))
+        : "";
+      const otherDate = other.effectiveDate || completedDateBr || other.requestDate || "";
       if (otherDate < c.requestDate) return false;
       if (other.status === "clean" || other.status === "completed") return true;
       return false;
-    }) || (db.auditLogs || []).some(l =>
-      (l?.action === "CLEANING_STATUS_CLEAN" || l?.action === "CLEANING_COMPLETED_BY_ADMIN_FOR_MAID") &&
-      String(l?.details?.flatNumber || "").replace(/\D/g, "") === flatNumClean &&
-      String(l?.timestamp || "").substring(0, 10) >= c.requestDate
-    );
+    }) || (db.auditLogs || []).some(l => {
+      if (l?.action !== "CLEANING_STATUS_CLEAN" && l?.action !== "CLEANING_COMPLETED_BY_ADMIN_FOR_MAID") return false;
+      if (String(l?.details?.flatNumber || "").replace(/\D/g, "") !== flatNumClean) return false;
+      const logDateBr = getBrasiliaDateStrFromIso(l?.timestamp) || String(l?.timestamp || "").substring(0, 10);
+      return logDateBr >= c.requestDate;
+    });
     return !resolvedOnOrAfter;
   });
 
@@ -19235,10 +19422,9 @@ export function isFlatStillBeingCleanedOnCheckinDay(db, resv, todayStr) {
 /**
  * Verifica se a conferência real de frigobar (Anserve) foi concluída HOJE (`todayStr`) para o flat da reserva.
  * Regra operacional oficial:
- * - TODOS os flats com entrada hoje (inclusive flats já vagos/limpos desde a véspera) exigem conferência real hoje;
- * - Marcações de dispensa (`nq` / `np` / `isSkipMark`) e ajustes técnicos apenas de cortesia (`isCourtesyCorrectionOnly`) NÃO contam;
- * - Em caso de dobradinha (outro hóspede com check-out hoje no mesmo flat), a conferência só conta após a saída real do hóspede anterior
- *   (conferência final pós-checkout / `finalMinibarInspectionAt` / inspeção pós-saída hoje) — lançamentos diários anteriores à saída NÃO contam.
+ * - Em caso de dobradinha (outro hóspede com check-out hoje no mesmo flat), exige conferência real pós-saída/pós-limpeza hoje antes das 14:00;
+ * - Quando NÃO há check-out hoje no flat (flat já vago/limpo desde a véspera ou antes), libera imediatamente sem exigir nova conferência de frigobar;
+ * - Marcações de dispensa (`nq` / `np` / `isSkipMark`) e ajustes técnicos apenas de cortesia (`isCourtesyCorrectionOnly`) NÃO contam.
  */
 export function isFlatMinibarInspectedTodayOnCheckinDay(db, resv, todayStr) {
   if (!db || !resv || !todayStr) return true;
@@ -19301,11 +19487,30 @@ export function isFlatMinibarInspectedTodayOnCheckinDay(db, resv, todayStr) {
     }
     const sameFlat = (flatId && Number(other.flatId) === flatId) || matchesFlatNum(other.flatNumber);
     if (!sameFlat) return false;
+    const earlyOut = other.earlyCheckoutDate ? String(other.earlyCheckoutDate).slice(0, 10) : "";
     const actualOutDateBr = other.actualCheckoutAt ? getBrasiliaDateStrFromIso(other.actualCheckoutAt) : "";
-    return other.checkoutDate === todayStr || other.earlyCheckoutDate === todayStr || actualOutDateBr === todayStr;
+    if (earlyOut && earlyOut < todayStr) return false;
+    if (actualOutDateBr && actualOutDateBr < todayStr) return false;
+    return other.checkoutDate === todayStr || earlyOut === todayStr || actualOutDateBr === todayStr;
   });
 
   if (departingTodayList.length > 0) {
+    const todayCleaningDoneIso = (Array.isArray(db.cleaningRequests) ? db.cleaningRequests : [])
+      .filter(c =>
+        c &&
+        !c.isDeleted &&
+        c.status !== "deleted" &&
+        (c.status === "clean" || c.status === "completed") &&
+        ((flatId && Number(c.flatId) === flatId) || matchesFlatNum(c.flatNumber)) &&
+        (c.requestDate === todayStr ||
+          c.effectiveDate === todayStr ||
+          (c.completedAt && getBrasiliaDateStrFromIso(c.completedAt) === todayStr))
+      )
+      .map(c => String(c.completedAt || c.startedAt || ""))
+      .filter(Boolean)
+      .sort()
+      .pop() || "";
+
     for (const dep of departingTodayList) {
       const depSt = String(dep.status || "").toLowerCase().trim();
       const isDepOut =
@@ -19350,9 +19555,15 @@ export function isFlatMinibarInspectedTodayOnCheckinDay(db, resv, todayStr) {
           (dep.id !== undefined && dep.id !== null && i.reservationId !== undefined && i.reservationId !== null && String(i.reservationId) === String(dep.id));
 
         if (i.isFinalCheckoutInspection === true) {
-          return matchesDep || !iCodeUpper;
+          return matchesDep || !iCodeUpper || !actualOutIso || !i.inspectedAt || String(i.inspectedAt) >= actualOutIso;
         }
-        if (actualOutIso && i.inspectedAt && String(i.inspectedAt) >= actualOutIso && i.isDailyLaunch !== true) {
+        if (actualOutIso && i.inspectedAt && String(i.inspectedAt) >= actualOutIso) {
+          return true;
+        }
+        if (todayCleaningDoneIso && i.inspectedAt && String(i.inspectedAt) >= todayCleaningDoneIso) {
+          return true;
+        }
+        if (!actualOutIso) {
           return true;
         }
         if (
@@ -19362,7 +19573,7 @@ export function isFlatMinibarInspectedTodayOnCheckinDay(db, resv, todayStr) {
         ) {
           return !actualOutIso || !i.inspectedAt || String(i.inspectedAt) >= actualOutIso;
         }
-        if (dep.isRoomMoveHistoricalSegment && i.isDailyLaunch !== true) {
+        if (dep.isRoomMoveHistoricalSegment) {
           return matchesDep || !iCodeUpper;
         }
         return false;
@@ -19373,8 +19584,8 @@ export function isFlatMinibarInspectedTodayOnCheckinDay(db, resv, todayStr) {
     return true;
   }
 
-  // Sem check-out hoje (flat já vago / entrada_hoje): exige qualquer conferência real feita hoje
-  return todayFlatInspections.length > 0;
+  // Sem check-out hoje (flat já vago / entrada_hoje): não exige conferência de frigobar antes das 14:00
+  return true;
 }
 
 /**
@@ -21305,8 +21516,9 @@ export async function processInboundNpsAndSentiment({
     sentEntry.summary = `Mensagem via WhatsApp: "${cleanText.substring(0, 110)}"`;
   }
 
-  if (typeof analyzeSentimentFn === "function") {
-    analyzeSentimentFn(cleanText, "WhatsApp Inbound Hóspede")
+  // Chamada Gemini sob demanda apenas para comentários textuais reais de NPS (evita disparar LLM em cada mensagem comum recebida)
+  if (typeof analyzeSentimentFn === "function" && npsFlowResult?.npsHandled && cleanText.length >= 25 && !/^[1-5]$/.test(cleanText)) {
+    analyzeSentimentFn(cleanText, "Feedback NPS WhatsApp Hóspede")
       .then(aiRes => {
         if (aiRes?.usingAI) {
           sentEntry.overallScore = aiRes.score;

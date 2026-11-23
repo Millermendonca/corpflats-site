@@ -933,7 +933,7 @@ export default function WhatsappAutomation() {
   const [aiConfig, setAiConfig] = useState<any>({
     enabled: true,
     testMode: true,
-    preferredModel: "gemini-4-argon",
+    preferredModel: "gemini-3.8-flash",
     mode: "autonomous",
     agentName: "Sofia",
     agentRole: "Concierge Virtual CorpFlats",
@@ -944,7 +944,7 @@ export default function WhatsappAutomation() {
     systemPrompt: "",
     knowledgeBase: {}
   })
-  const [geminiStatus, setGeminiStatus] = useState<{ configured: boolean; model: string }>({ configured: false, model: "gemini-4-argon" })
+  const [geminiStatus, setGeminiStatus] = useState<{ configured: boolean; model: string }>({ configured: false, model: "gemini-3.8-flash" })
   const [rawAutomationNumInputs, setRawAutomationNumInputs] = useState<Record<string, string>>({})
   const [aiTestModeOnly, setAiTestModeOnly] = useState(true)
   const [aiTestAllowedPhones, setAiTestAllowedPhones] = useState("22998505276")
@@ -1390,7 +1390,7 @@ export default function WhatsappAutomation() {
           setAiConfig((prev: any) => ({
             ...prev,
             ...data.aiConfig,
-            preferredModel: data.aiConfig.preferredModel || data.geminiModel || "gemini-4-argon"
+            preferredModel: data.aiConfig.preferredModel || data.geminiModel || "gemini-3.8-flash"
           }))
           if (Array.isArray(data.aiConfig.developerGuidelines)) {
             setDeveloperGuidelines(data.aiConfig.developerGuidelines)
@@ -1407,7 +1407,7 @@ export default function WhatsappAutomation() {
         }
         setGeminiStatus({
           configured: Boolean(data.geminiConfigured),
-          model: data.aiConfig?.preferredModel || data.geminiModel || "gemini-4-argon"
+          model: data.aiConfig?.preferredModel || data.geminiModel || "gemini-3.8-flash"
         })
         const aiCh = data.aiChannel
         if (aiCh) {
@@ -1615,7 +1615,7 @@ export default function WhatsappAutomation() {
       if (res.ok) {
         toast({
           title: "Configurações da IA Salvas! 🤖✨",
-          description: `Modelo ${aiConfig.preferredModel || "gemini-4-argon"} e canal da IA atualizados com sucesso.`
+          description: `Modelo ${aiConfig.preferredModel || "gemini-3.8-flash"} e canal da IA atualizados com sucesso.`
         })
         fetchAiConfig()
         fetchZapiChannels()
@@ -3517,10 +3517,10 @@ export default function WhatsappAutomation() {
                 </CardHeader>
                 <CardContent className="p-4 pt-1">
                   <p className="text-sm font-black text-slate-900 dark:text-slate-100">
-                    {aiConfig.preferredModel || geminiStatus.model || "gemini-4-argon"}
+                    {aiConfig.preferredModel || geminiStatus.model || "gemini-3.8-flash"}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    Raciocínio avançado + Fallback automático
+                    Roteamento econômico + Cache implícito ativo
                   </p>
                 </CardContent>
               </Card>
@@ -4299,25 +4299,25 @@ export default function WhatsappAutomation() {
                           Motor de Inteligência Artificial (Modelo Principal Gemini)
                         </Label>
                         <Badge variant="outline" className="text-[10px] font-bold border-emerald-500 text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40">
-                          🔒 Trava Anti-Lite Ativa (Downgrade Bloqueado)
+                          ⚡ Roteamento Econômico + Cache Implícito
                         </Badge>
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         {[
                           {
-                            id: "gemini-4-argon",
-                            title: "Gemini 4 Argon",
-                            badge: "Recomendado • Máxima Precisão",
-                            desc: "Flagship Gemini 4 (Interactions API) com 1M de contexto unificado, Tool Calling semântico rigoroso e zero alucinação."
-                          },
-                          {
                             id: "gemini-3.8-flash",
                             title: "Gemini 3.8 Flash",
-                            badge: "Rápido • Alta Capacidade",
-                            desc: "Respostas ágeis e econômicas via Interactions API com suporte completo às 18 ferramentas do PMS CorpFlats."
+                            badge: "Recomendado • Econômico + Cache",
+                            desc: "Rápido, econômico e com Cache Implícito para todas as 18 ferramentas do PMS CorpFlats. Tarefas leves usam 3.5 Flash-Lite."
+                          },
+                          {
+                            id: "gemini-4-argon",
+                            title: "Gemini 4 Argon",
+                            badge: "Opcional • Raciocínio Pesado (Pago)",
+                            desc: "Flagship Gemini 4 (maior custo por token, sem free tier). Use apenas se quiser raciocínio máximo na Sofia."
                           }
                         ].map(m => {
-                          const currentModel = aiConfig.preferredModel === "gemini-3.8-flash" ? "gemini-3.8-flash" : "gemini-4-argon"
+                          const currentModel = aiConfig.preferredModel === "gemini-4-argon" ? "gemini-4-argon" : "gemini-3.8-flash"
                           const selected = currentModel === m.id
                           return (
                             <div

@@ -616,8 +616,8 @@ export default function WhatsappChat() {
   }
 
   // Fetch Sofia Real-Time Assistance for Active Conversation
-  const fetchSofiaAssistance = useCallback(async (phone: string, options?: { draftText?: string; resCode?: string | null; skipLlm?: boolean; silent?: boolean }) => {
-    if (!phone) return
+  const fetchSofiaAssistance = useCallback(async (phone: string, options?: { draftText?: string; resCode?: string | null; skipLlm?: boolean; silent?: boolean }): Promise<SofiaRealtimeAssistance | null> => {
+    if (!phone) return null
     if (!options?.silent) setLoadingSofiaAssist(true)
     try {
       const res = await fetch(`/api/whatsapp/chat/${phone}/sofia-assist`, {
@@ -632,8 +632,12 @@ export default function WhatsappChat() {
       if (res.ok) {
         const data: SofiaRealtimeAssistance = await res.json()
         setSofiaAssist(data)
+        return data
       }
-    } catch {} finally {
+      return null
+    } catch {
+      return null
+    } finally {
       if (!options?.silent) setLoadingSofiaAssist(false)
     }
   }, [selectedResCode])
@@ -749,12 +753,12 @@ export default function WhatsappChat() {
           const msgs: ChatMessage[] = data.conversation.messages || []
           setMessages(msgs)
 
-          // Check if the latest guest message changed -> refresh Sofia Real-Time Assistant!
+          // Check if the latest guest message changed -> refresh Sofia Real-Time Assistant (deterministic only, zero LLM cost on view)!
           const lastGuestMsg = [...msgs].reverse().find(m => !m.fromMe)
           const guestKey = `${phone}_${lastGuestMsg?.id || lastGuestMsg?.timestamp || 'empty'}_${activeCode || ''}`
           if (lastSofiaGuestMsgKeyRef.current !== guestKey) {
             lastSofiaGuestMsgKeyRef.current = guestKey
-            fetchSofiaAssistance(phone, { resCode: activeCode, silent: silent })
+            fetchSofiaAssistance(phone, { resCode: activeCode, silent: silent, skipLlm: true })
           }
         }
       }
@@ -820,13 +824,27 @@ export default function WhatsappChat() {
     }
   })
 
-  // Copiloto: Sugerir Resposta com IA (ou refinar rascunho atual)
+  // Copiloto: Sugerir Resposta com IA (chamada única sob demanda)
   const handleSuggestWithAi = async () => {
     if (!activePhone) return
     try {
       setLoadingAiSuggestion(true)
-      await fetchSofiaAssistance(activePhone, { draftText: inputMessage, resCode: selectedResCode })
       setSofiaPanelExpanded(true)
+      const assistData = await fetchSofiaAssistance(activePhone, {
+        draftText: inputMessage,
+        resCode: selectedResCode,
+        skipLlm: false
+      })
+      const primarySuggestion = assistData?.suggestedReplies?.[0]?.text || ''
+      if (primarySuggestion) {
+        setInputMessage(primarySuggestion)
+        toast({
+          title: 'Sugestão da Sofia Carregada! ✨',
+          description: 'Revise ou pressione Enter para enviar.'
+        })
+        if (textareaRef.current) textareaRef.current.focus()
+        return
+      }
       const res = await fetch(`/api/whatsapp/chat/${activePhone}/ai-suggest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2082,10 +2100,10 @@ export default function WhatsappChat() {
                   variant="ghost"
                   size="icon"
                   className={`h-8 w-8 rounded-lg shrink-0 ${isStandaloneApp ? 'text-white hover:bg-white/15' : 'text-slate-600 dark:text-slate-300 hover:text-emerald-600'}`}
-                  title="Atualizar conversa e sugestões da Sofia"
+                  title="Atualizar conversa e contexto da Sofia"
                   onClick={() => {
                     fetchActiveMessages(activeConversation.phone)
-                    fetchSofiaAssistance(activeConversation.phone, { resCode: selectedResCode })
+                    fetchSofiaAssistance(activeConversation.phone, { resCode: selectedResCode, skipLlm: true })
                   }}
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${(loadingMessages || loadingSofiaAssist) ? 'animate-spin' : ''}`} />
@@ -2319,12 +2337,12 @@ export default function WhatsappChat() {
                 <div className="flex items-center gap-1 shrink-0">
                   <button
                     type="button"
-                    onClick={() => activePhone && fetchSofiaAssistance(activePhone, { draftText: inputMessageRef.current, resCode: selectedResCode })}
+                    onClick={() => activePhone && fetchSofiaAssistance(activePhone, { draftText: inputMessageRef.current, resCode: selectedResCode, skipLlm: false })}
                     className="px-2 py-0.5 rounded-md text-[10.5px] font-bold text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-950/60 flex items-center gap-1 transition-colors"
-                    title="Gerar novas sugestões com a Sofia"
+                    title="Gerar sugestão inteligente com Gemini (sob demanda)"
                   >
                     <RefreshCw className={`w-3 h-3 ${loadingSofiaAssist ? 'animate-spin' : ''}`} />
-                    <span className="hidden sm:inline">Atualizar</span>
+                    <span className="hidden sm:inline">Gerar IA</span>
                   </button>
                   <button
                     type="button"

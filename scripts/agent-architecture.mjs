@@ -4615,9 +4615,15 @@ export const alterarDatasReservaTool = {
             priorExtAlt?.oldCleaningFee !== undefined ? Number(priorExtAlt.oldCleaningFee) || 0 : Number(targetRes.cleaningFee) || 0;
           const origTotalAlt =
             priorExtAlt?.oldTotalAmount !== undefined ? Number(priorExtAlt.oldTotalAmount) || 0 : Number(targetRes.totalAmount) || 0;
-          const origPaidAlt =
+          const origPaidAltRaw =
             priorExtAlt?.oldPaidAmount !== undefined ? Number(priorExtAlt.oldPaidAmount) || 0 : Number(targetRes.paidAmount) || 0;
           const origPaymentStatusAlt = priorExtAlt?.oldPaymentStatus || targetRes.paymentStatus || 'pago_total';
+          const origChannelAlt = priorExtAlt?.oldChannel || targetRes.channel || '';
+          const isPaidOrOtaAlt =
+            origPaidAltRaw > 0 ||
+            ['pago_total', 'pago', 'paid'].includes(String(origPaymentStatusAlt).toLowerCase()) ||
+            ['booking', 'airbnb', 'expedia', 'decolar', 'vrbo', 'ota'].includes(String(origChannelAlt).toLowerCase());
+          const origPaidAlt = origPaidAltRaw > 0 ? origPaidAltRaw : (isPaidOrOtaAlt ? origTotalAlt : 0);
 
           targetRes.checkinDate = novaEntrada;
           targetRes.checkoutDate = novaSaida;
@@ -4715,6 +4721,8 @@ export const alterarDatasReservaTool = {
               oldTotalAmount: origTotalAlt,
               oldPaidAmount: origPaidAlt,
               oldPaymentStatus: origPaymentStatusAlt,
+              oldChannel: origChannelAlt,
+              alreadyAppliedToReservation: true,
               requiresDeferredReSignature: hadSignedFnrhAlt,
               extraNights: Math.max(1, addedDatesAlt.length || diferencaDiarias),
               newTotalNights: novasDiarias,
@@ -5132,9 +5140,15 @@ export const estenderEstadiaTool = {
           priorExt?.oldCleaningFee !== undefined ? Number(priorExt.oldCleaningFee) || 0 : Number(targetRes.cleaningFee) || 0;
         const origTotalExt =
           priorExt?.oldTotalAmount !== undefined ? Number(priorExt.oldTotalAmount) || 0 : Number(targetRes.totalAmount) || 0;
-        const origPaidExt =
+        const origPaidExtRaw =
           priorExt?.oldPaidAmount !== undefined ? Number(priorExt.oldPaidAmount) || 0 : Number(targetRes.paidAmount) || 0;
         const origPaymentStatusExt = priorExt?.oldPaymentStatus || targetRes.paymentStatus || 'pago_total';
+        const origChannelExt = priorExt?.oldChannel || targetRes.channel || '';
+        const isPaidOrOtaExt =
+          origPaidExtRaw > 0 ||
+          ['pago_total', 'pago', 'paid'].includes(String(origPaymentStatusExt).toLowerCase()) ||
+          ['booking', 'airbnb', 'expedia', 'decolar', 'vrbo', 'ota'].includes(String(origChannelExt).toLowerCase());
+        const origPaidExt = origPaidExtRaw > 0 ? origPaidExtRaw : (isPaidOrOtaExt ? origTotalExt : 0);
 
         const addedDatesExt = [];
         const startExtMs = new Date(`${origCheckoutExt}T12:00:00Z`).getTime();
@@ -5192,6 +5206,8 @@ export const estenderEstadiaTool = {
           oldTotalAmount: origTotalExt,
           oldPaidAmount: origPaidExt,
           oldPaymentStatus: origPaymentStatusExt,
+          oldChannel: origChannelExt,
+          alreadyAppliedToReservation: true,
           requiresDeferredReSignature: hadSignedFnrhExt,
           extraNights: addedDatesExt.length || diariasExtras,
           newTotalNights: novasDiariasTotais,
@@ -7740,6 +7756,10 @@ export function ensureInstructionalToolResponse(actionName, rawResult) {
 export function buildStateRoutedPrompt(context, manualImovel = '') {
   const jsonContext = buildContextoSessaoJson(context);
   const isoNow = context?.data_hora_atual || new Date().toISOString();
+  const minuteIso = String(isoNow).replace(
+    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}):\d{2}(?:\.\d+)?/,
+    '$1'
+  );
   const todayIso = String(isoNow).slice(0, 10);
   const tomorrowIso = addDaysIso(todayIso, 1);
   const estado = context?.estado_atual || 'COMERCIAL_VENDAS';
@@ -7753,15 +7773,6 @@ export function buildStateRoutedPrompt(context, manualImovel = '') {
       : 'MODO_COMERCIAL_LEAD / COMERCIAL_VENDAS (Lead sem Reserva: foco em Cotação, Fotos Padrão e Fechamento de Pré-Reserva)';
 
   return [
-    `# ARQUITETURA AUTÔNOMA DE ATENDIMENTO [ESTADO DA SESSÃO: ${modoLabel}]`,
-    `# DATA E HORA ATUAL DO SISTEMA (REFERÊNCIA ABSOLUTA PARA DATAS RELATIVAS)`,
-    `- Timestamp ISO atual: ${isoNow}`,
-    `- Hoje: ${todayIso} | Amanhã: ${tomorrowIso} | Depois de amanhã: ${addDaysIso(todayIso, 2)}`,
-    ``,
-    `# CONTEXTO ATUAL DO HÓSPEDE (INJETADO PELO SISTEMA - ZERO-ASK)`,
-    `Não peça ao hóspede informações que já constam abaixo (nome, flat, datas, plano com/sem café, status de pagamento, FNRH ou veículo):`,
-    jsonContext,
-    ``,
     `# DIRETRIZES OBRIGATÓRIAS DE EXECUÇÃO E USO DE FERRAMENTAS (TOOL CALLING)`,
     `1. **Intenção -> Ferramenta:** Sempre que o hóspede pedir algo que envolva datas (\`alterar_datas_reserva\`, \`estender_estadia\`), horários (\`solicitar_early_checkin\`, \`solicitar_late_checkout\`), disponibilidade (\`consultar_disponibilidade\`), valores/descontos (\`calcular_orcamento\`), fotos (\`enviar_midia_unidade\`), reserva (\`gerar_link_reserva\`), veículo/cadastro/correção de e-mail ou telefone (\`atualizar_dados_hospede\`), cartão NFC/acesso (\`resolver_problema_cartao_nfc\`), visitas (\`autorizar_visita_temporaria\`), cancelamento (\`processar_cancelamento\`), governança (\`solicitar_limpeza_extra\`), manutenção (\`abrir_chamado_manutencao\`), achados e perdidos (\`consultar_achados_e_perdidos\`) ou nota fiscal/recibo (\`gerenciar_nota_fiscal_nfse\`), chame a ferramenta adequada antes de responder.`,
     `2. **Continuidade Multi-Turn (Respostas Curtas do Hóspede ou Solicitante):** Quando o hóspede ou solicitante responder a uma pergunta anterior sua na conversa (ex: você perguntou "até que data gostaria de ficar?" e ele respondeu "até amanhã só", ou o sistema avisou sobre \`alerta_email_incorreto\` e o hóspede enviou um novo e-mail / confirmou \`email_sugerido\` / afirmou que o e-mail já cadastrado está correto, ou houver \`alertas_telefone_hospede_invalido\` ativo e o Solicitante enviar o novo número WhatsApp do hóspede), mantenha 100% do contexto e acione IMEDIATAMENTE a ferramenta correspondente (\`estender_estadia\` ou \`atualizar_dados_hospede\` passando \`email\`, \`confirmar_email_atual: true\`, ou \`telefone_hospede\` com \`codigo_reserva_alvo\`/\`nome_hospede_alvo\`/\`indice_hospede_alvo\` quando aplicável).`,
@@ -7772,6 +7783,15 @@ export function buildStateRoutedPrompt(context, manualImovel = '') {
     `7. **Escalonamento Inteligente (\`notificar_administrador\`):** Se uma ação for bloqueada pelo sistema e o hóspede insistir, pedir uma exceção, relatar um defeito físico no imóvel ou demonstrar frustração, chame IMEDIATAMENTE a ferramenta \`notificar_administrador\` para avisar o gestor no WhatsApp dele.`,
     `8. **Privacidade Financeira Estrita (\`ocultar_financeiro: true\`) e Pacotes Multi-Flat (\`pacote_multi_flat\`):** Quando \`ocultar_financeiro: true\` constar na reserva injetada (hóspede de reserva corporativa/terceiro ou acompanhante), NUNCA mencione valores de diárias, totais, links de pagamento/recibo ou dados de Nota Fiscal (pertencem exclusivamente ao Solicitante). Quando \`pacote_multi_flat\` estiver presente para o Solicitante, utilize a visão consolidada do pacote (\`PKG-...\`) com PIX único e Nota Fiscal única.`,
     manualImovel ? `\n# MANUAL DO IMÓVEL ATUAL\n${manualImovel}` : '',
+    ``,
+    `# ARQUITETURA AUTÔNOMA DE ATENDIMENTO [ESTADO DA SESSÃO: ${modoLabel}]`,
+    `# DATA E HORA ATUAL DO SISTEMA (REFERÊNCIA ABSOLUTA PARA DATAS RELATIVAS)`,
+    `- Referência ISO (minuto): ${minuteIso}`,
+    `- Hoje: ${todayIso} | Amanhã: ${tomorrowIso} | Depois de amanhã: ${addDaysIso(todayIso, 2)}`,
+    ``,
+    `# CONTEXTO ATUAL DO HÓSPEDE (INJETADO PELO SISTEMA - ZERO-ASK)`,
+    `Não peça ao hóspede informações que já constam abaixo (nome, flat, datas, plano com/sem café, status de pagamento, FNRH ou veículo):`,
+    jsonContext,
   ]
     .filter(Boolean)
     .join('\n');

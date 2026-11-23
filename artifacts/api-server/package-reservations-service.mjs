@@ -2209,6 +2209,17 @@ export async function dispatchIndividualFlatGuestInstructions(db, reservationsLi
 
           if (gSent) {
             r[sentKey] = sentIso;
+            r.confirmationWhatsappSentAt = r.confirmationWhatsappSentAt || sentIso;
+            const normPkgPhone = String(cleanTargetPhone || "").replace(/\D/g, "").replace(/^55/, "");
+            if (normPkgPhone) {
+              if (!Array.isArray(r.confirmationSentPhones)) r.confirmationSentPhones = [];
+              if (!r.confirmationSentPhones.includes(normPkgPhone)) r.confirmationSentPhones.push(normPkgPhone);
+              if (attachedPdfNow) {
+                r.manualPdfSentAt = r.manualPdfSentAt || sentIso;
+                if (!Array.isArray(r.manualPdfSentPhones)) r.manualPdfSentPhones = [];
+                if (!r.manualPdfSentPhones.includes(normPkgPhone)) r.manualPdfSentPhones.push(normPkgPhone);
+              }
+            }
           }
 
           if (!Array.isArray(db.whatsappHistory)) db.whatsappHistory = [];

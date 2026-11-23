@@ -34,7 +34,7 @@ import {
   dispatchRetroactiveTodayReceptionEmailsToWhatsApp
 } from "./mail-service.mjs";
 import { extractTextFromPdfBuffer } from "./pdf-extract-service.mjs";
-import { createGeminiInteraction, GEMINI_FLASH_MODEL } from "./gemini-interactions-client.mjs";
+import { createGeminiInteraction, GEMINI_FLASH_MODEL, GEMINI_LITE_MODEL } from "./gemini-interactions-client.mjs";
 import {
   detectB2bEmailIntent,
   matchReservationForCancellation,
@@ -1267,6 +1267,9 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
         receivedTimeMs: Number(zm.receivedTime || 0) || undefined,
         b2bCancelProcessed: Boolean(existingMsg?.b2bCancelProcessed || existingMsg?.b2bCancelled),
         b2bCancelled: Boolean(existingMsg?.b2bCancelled),
+        b2bParseAttempts: Number(existingMsg?.b2bParseAttempts || 0),
+        b2bLastParseAt: existingMsg?.b2bLastParseAt || null,
+        b2bAiAttempted: Boolean(existingMsg?.b2bAiAttempted),
         created_at: isoDate,
         source: "zoho_api"
       };
@@ -1480,13 +1483,20 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
             )
         );
 
+      const prevParseAttempts = Number(existingMsg?.b2bParseAttempts || 0);
+      const prevParseAtMs = existingMsg?.b2bLastParseAt ? new Date(existingMsg.b2bLastParseAt).getTime() : 0;
+      const withinParseCooldown = prevParseAtMs > 0 && (Date.now() - prevParseAtMs) < 6 * 60 * 60 * 1000;
+      const canRetryIncompleteB2b = Boolean(subjResNum && !hasCompleteB2bReservation && prevParseAttempts < 2 && !withinParseCooldown);
+
       const needsB2bParse =
         !mapped.b2bCancelled &&
         !isKnownCancelledB2b &&
         isB2bConfirmationEmail &&
-        (!existingMsg?.b2bParsed || (subjResNum && !hasCompleteB2bReservation));
+        (!existingMsg?.b2bParsed || canRetryIncompleteB2b);
 
       if (needsB2bParse) {
+        mapped.b2bParseAttempts = prevParseAttempts + 1;
+        mapped.b2bLastParseAt = new Date().toISOString();
         try {
           let fetchedHtml = mapped.bodyHtml || "";
           let contentFetchFailed = false;
@@ -1594,8 +1604,10 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
               cc: mapped.cc || "",
               replyTo: mapped.replyTo || "",
               pdfBuffers: attachmentPdfBuffers,
+              skipAi: Boolean(existingMsg?.b2bAiAttempted),
               db
             });
+            mapped.b2bAiAttempted = true;
             if (parsedB2b.b2bReservationNumber && parsedB2b.guestName && parsedB2b.checkinDate) {
               const ingestRes = ingestB2bVoucherIntoDb(db, parsedB2b, {
                 saveDatabase,
@@ -5036,20 +5048,26 @@ export async function extractB2bVoucherWithGeminiAI({
       (textContext || "Analise o documento/imagem anexado.")
   });
 
+  const hasImages = Array.isArray(images) && images.length > 0;
+  const hasUnreadablePdf = Array.isArray(pdfBuffers) && pdfBuffers.length > 0 && String(rawText || "").trim().length < 80;
+  const targetModel = (hasImages || hasUnreadablePdf) ? GEMINI_FLASH_MODEL : GEMINI_LITE_MODEL;
+  const targetThinking = (hasImages || hasUnreadablePdf) ? "low" : "minimal";
+
   try {
     const aiRes = await createGeminiInteraction({
       apiKey,
-      model: GEMINI_FLASH_MODEL,
+      model: targetModel,
       input: inputParts,
       store: false,
-      thinkingLevel: "low",
-      maxOutputTokens: 4096,
+      thinkingLevel: targetThinking,
+      maxOutputTokens: 2048,
       responseFormat: {
         type: "text",
         mime_type: "application/json",
         schema: B2B_VOUCHER_EXTRACTION_SCHEMA
       },
-      timeoutMs: 25000
+      timeoutMs: 25000,
+      telemetryModule: "b2b_vouchers"
     });
     if (!aiRes.ok || !aiRes.text) return null;
     try {
@@ -5293,7 +5311,7 @@ export async function fetchAndParseB2bVoucher(input = {}, htmlArg = "", subjectA
     }
   }
 
-  // Motor Multimodal Gemini AI (acionado quando há chave configurada para imagens, PDFs ou validação completa de documentos)
+  // Motor Multimodal Gemini AI (acionado apenas quando o parser determinístico deixou lacunas ou há mídia sem texto legível)
   const resolvedGeminiKey = String(
     baseOpts.geminiApiKey ||
       baseOpts.db?.whatsappAiSettings?.geminiApiKey ||
@@ -5306,7 +5324,22 @@ export async function fetchAndParseB2bVoucher(input = {}, htmlArg = "", subjectA
     baseOpts.skipAi !== true &&
     (process.env.NODE_ENV !== "test" || baseOpts.forceAiInTest === true);
 
-  if (allowAiCall && (collectedImages.length > 0 || collectedPdfBuffers.length > 0 || baseOpts.rawText || baseOpts.htmlText)) {
+  const hasCoreDetFields = Boolean(
+    parsed.b2bReservationNumber &&
+    parsed.guestName &&
+    parsed.checkinDate &&
+    parsed.agencyName &&
+    (parsed.agencyAgentEmail || parsed.agencyAgentPhone) &&
+    parsed.companyName &&
+    parsed.companyCnpj &&
+    Number(parsed.dailyRate) > 0
+  );
+  const hasUnreadableMedia =
+    collectedImages.length > 0 ||
+    (collectedPdfBuffers.length > 0 && String(baseOpts.rawText || baseOpts.text || "").trim().length < 80);
+  const needsAiExtraction = Boolean(baseOpts.forceAi === true) || hasUnreadableMedia || !hasCoreDetFields;
+
+  if (allowAiCall && needsAiExtraction && (collectedImages.length > 0 || collectedPdfBuffers.length > 0 || baseOpts.rawText || baseOpts.htmlText)) {
     const aiExtracted = await extractB2bVoucherWithGeminiAI({
       rawText: baseOpts.rawText || baseOpts.text || "",
       htmlText: baseOpts.htmlText || baseOpts.html || "",
@@ -7944,8 +7977,10 @@ export async function ensurePendingB2bAgencyCredentialDispatches(
 export async function repairIncompleteB2bReservations(db, saveDatabase) {
   if (!db || !Array.isArray(db.reservations)) return { repairedCount: 0, repairedCodes: [] };
   const repairedCodes = [];
+  let metadataMutated = false;
   const oauthConfigured = Boolean(getZohoOAuthConfig(db).isConfigured);
   let resolvedInboxFolderId = "";
+  const cutoffIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
   const extractAttListLocal = resObj => {
     if (!resObj?.ok || !resObj.data) return [];
@@ -7971,6 +8006,15 @@ export async function repairIncompleteB2bReservations(db, saveDatabase) {
       (!r.agencyAgentEmail && !r.agencyAgentPhone);
     if (!missingCoreAgencyData) continue;
 
+    if (r.checkoutDate && String(r.checkoutDate).slice(0, 10) < cutoffIso) continue;
+    if (Number(r.b2bRepairAttempts || 0) >= 2) continue;
+    if (r.b2bRepairLastAttemptAt && (Date.now() - new Date(r.b2bRepairLastAttemptAt).getTime()) < 30 * 60 * 1000) continue;
+
+    r.b2bRepairAttempts = Number(r.b2bRepairAttempts || 0) + 1;
+    r.b2bRepairLastAttemptAt = new Date().toISOString();
+    metadataMutated = true;
+    const skipAiOnRepair = Boolean(r.b2bRepairAiAttempted);
+
     const beforeSig = JSON.stringify([
       r.agencyId || "",
       r.agencyName || "",
@@ -7982,14 +8026,14 @@ export async function repairIncompleteB2bReservations(db, saveDatabase) {
 
     const resNum = String(r.b2bReservationNumber || r.externalReservationNumber || "").trim();
 
-    // 1. Procura mensagem original correspondente em db.zohoMessagesCache
+    // 1. Procura mensagem original correspondente em db.zohoMessagesCache (máx 1 mensagem mais relevante)
     if (resNum && Array.isArray(db.zohoMessagesCache)) {
       const candidateMsgs = db.zohoMessagesCache.filter(m => {
         if (!m || m.direction === "outbound" || m.folder === "sent" || m.b2bCancelled) return false;
         const hay = `${m.subject || ""} ${m.snippet || ""} ${m.bodyHtml || ""}`;
         if (!hay.includes(resNum)) return false;
         return !/cancelamento|cancelada|cancelled/i.test(String(m.subject || ""));
-      });
+      }).slice(0, 1);
 
       for (const msg of candidateMsgs) {
         let htmlText = msg.bodyHtml || "";
@@ -8056,8 +8100,10 @@ export async function repairIncompleteB2bReservations(db, saveDatabase) {
             replyTo: msg.replyTo || msg.replyToAddress || "",
             voucherUrl: r.voucherUrl || r.b2bVoucherUrl || "",
             pdfBuffers,
+            skipAi: skipAiOnRepair,
             db
           });
+          r.b2bRepairAiAttempted = true;
           if (parsed.b2bReservationNumber || resNum) {
             if (!parsed.b2bReservationNumber) parsed.b2bReservationNumber = resNum;
             if (!parsed.guestName) parsed.guestName = r.guestName;
@@ -8080,8 +8126,10 @@ export async function repairIncompleteB2bReservations(db, saveDatabase) {
           rawText: "",
           voucherUrl: savedVoucherUrl,
           forceFetch: true,
+          skipAi: skipAiOnRepair || Boolean(r.b2bRepairAiAttempted),
           db
         });
+        r.b2bRepairAiAttempted = true;
         if (parsedFromUrl.agencyName && !r.agencyName) {
           r.agencyName = parsedFromUrl.agencyName;
           r.agencyTradeName = parsedFromUrl.agencyName;
@@ -8167,7 +8215,7 @@ export async function repairIncompleteB2bReservations(db, saveDatabase) {
     }
   }
 
-  if (repairedCodes.length > 0 && typeof saveDatabase === "function") {
+  if ((repairedCodes.length > 0 || metadataMutated) && typeof saveDatabase === "function") {
     saveDatabase("b2b_incomplete_reservations_repaired");
   }
 

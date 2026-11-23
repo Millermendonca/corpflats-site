@@ -41,7 +41,7 @@ interface KeySourceInfo {
 }
 
 interface EngineProbe {
-  id: "gemini_38_flash" | "gemini_4_argon" | "gemini_38_b2b"
+  id: "gemini_38_flash" | "gemini_35_flash_lite" | "gemini_4_argon" | "gemini_38_b2b"
   label: string
   model: string
   protocol: string
@@ -52,6 +52,7 @@ interface EngineProbe {
   latencyMs: number
   code:
     | "operational"
+    | "standby"
     | "billing_depleted"
     | "quota_exceeded"
     | "auth_error"
@@ -73,12 +74,28 @@ interface AiModuleStatus {
   configuredModel: string
   protocol: string
   keySourceLabel: string
-  status: "operational" | "fallback_active" | "disabled" | "degraded" | "error"
+  status: "operational" | "standby" | "fallback_active" | "disabled" | "degraded" | "error"
   statusLabel: string
   fallbackStrategy: string
   liveSummary: string
   latencyMs: number | null
   lastError: string | null
+}
+
+interface TokenUsageInfo {
+  inputTokens: number
+  cachedTokens: number
+  outputTokens: number
+  thoughtTokens: number
+  totalTokens: number
+}
+
+interface TelemetryBucket extends TokenUsageInfo {
+  calls: number
+  ok: number
+  errors: number
+  rateLimited429: number
+  skippedByCooldown: number
 }
 
 interface RuntimeCallLog {
@@ -91,15 +108,20 @@ interface RuntimeCallLog {
   latencyMs: number
   error: string | null
   keySource: string | null
+  skippedByCooldown?: boolean
+  aborted?: boolean
+  usage?: TokenUsageInfo | null
 }
 
 interface AiStatusOverviewResponse {
   checkedAt: string
+  passive?: boolean
   cached: boolean
   cacheAgeSeconds: number
   cacheTtlSeconds: number
   overallStatus:
     | "operational"
+    | "standby"
     | "degraded"
     | "billing_depleted"
     | "quota_exceeded"
@@ -138,6 +160,10 @@ interface AiStatusOverviewResponse {
   probes: EngineProbe[]
   modules: AiModuleStatus[]
   recentRuntimeCalls: RuntimeCallLog[]
+  telemetrySummary?: {
+    totals: TelemetryBucket
+    totalsByModule: Record<string, TelemetryBucket>
+  }
 }
 
 interface ShoppingLabResult {
@@ -174,10 +200,23 @@ interface PromptLabResult {
 
 const MODULE_LABELS: Record<string, string> = {
   gemini_core: "Motor Principal Gemini",
+  sofia_whatsapp: "Sofia WhatsApp",
+  sofia_assist: "Sofia Assistente Chat",
   admin_copilot: "Copiloto Admin",
+  b2b_vouchers: "Vouchers B2B (Zoho)",
+  sentiment_ai: "Sentimento IA",
+  precheckin_ocr: "OCR & Biometria Pré-Check-in",
+  maid_triage: "Triagem Camareiras",
+  fiscal_nlu: "Conferência Fiscal NFS-e",
+  reviews_highlights: "Destaques de Avaliações",
+  nps_improvements: "Resumo Melhorias NPS",
   shopping_list: "Lista de Compras",
+  dev_coaching: "Treinamento Dev",
+  faq_suggestions: "Sugestões FAQ",
   settings_test: "Teste /configuracoes",
+  ai_status_probe: "Sonda /ia-status",
   ai_status_lab: "Laboratório /ia-status",
+  gemini_untagged: "Chamada Gemini",
 }
 
 function formatTime(iso?: string | null) {
@@ -203,6 +242,12 @@ function getProbeTone(probe: EngineProbe) {
     return {
       badgeClass: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
       label: `HTTP ${probe.status ?? 200} • Online`,
+    }
+  }
+  if (probe.code === "standby") {
+    return {
+      badgeClass: "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30",
+      label: "Em Espera (Econômico)",
     }
   }
   if (probe.code === "billing_depleted") {
@@ -239,6 +284,8 @@ function getModuleBadge(status: AiModuleStatus["status"]) {
   switch (status) {
     case "operational":
       return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+    case "standby":
+      return "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30"
     case "degraded":
       return "bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/30"
     case "fallback_active":
@@ -263,7 +310,7 @@ export default function AiStatusPage() {
   const [shoppingError, setShoppingError] = useState<string | null>(null)
 
   // Laboratório — Aba 2: Prompt Direto
-  const [promptEngine, setPromptEngine] = useState<"gemini_38_flash" | "gemini_4_argon" | "gemini_38_b2b">("gemini_38_flash")
+  const [promptEngine, setPromptEngine] = useState<"gemini_38_flash" | "gemini_35_flash_lite" | "gemini_4_argon" | "gemini_38_b2b">("gemini_38_flash")
   const [promptKeySource, setPromptKeySource] = useState<"active" | "db_settings">("active")
   const [promptInput, setPromptInput] = useState("Responda em 1 frase curta: a conexão com o CorpFlats está ativa?")
   const [promptTesting, setPromptTesting] = useState(false)
@@ -299,7 +346,7 @@ export default function AiStatusPage() {
       }
       setData(json)
       setStatusAnnouncement(
-        `Diagnóstico concluído: ${json.overallTitle}. ${json.summary.enginesOnline} de ${json.summary.enginesTotal} motores online.`
+        `Diagnóstico atualizado: ${json.overallTitle}. ${json.summary.enginesOnline} de ${json.summary.enginesTotal} motores sondados.`
       )
     } catch (err: any) {
       const msg = err?.message || "Erro ao consultar /api/admin/ai-status."
@@ -312,11 +359,6 @@ export default function AiStatusPage() {
 
   useEffect(() => {
     loadOverview(false)
-  }, [loadOverview])
-
-  useEffect(() => {
-    const iv = setInterval(() => loadOverview(false), 5 * 60 * 1000)
-    return () => clearInterval(iv)
   }, [loadOverview])
 
   const handleTestShopping = async (e: React.FormEvent) => {
@@ -385,16 +427,19 @@ export default function AiStatusPage() {
   }
 
   const overall = data?.overallStatus
-  const isCriticalOverall =
-    overall === "billing_depleted" || overall === "auth_error" || overall === "offline" || overall === "unconfigured"
+  const isStandbyOverall = overall === "standby"
   const isDegradedOverall = overall === "degraded" || overall === "quota_exceeded"
   const isHealthyOverall = overall === "operational"
+  const isCriticalOverall =
+    overall === "billing_depleted" || overall === "auth_error" || overall === "offline" || overall === "unconfigured"
 
   const heroStyles = isHealthyOverall
     ? "border-emerald-300 bg-emerald-50/60 dark:bg-emerald-950/20 dark:border-emerald-800"
-    : isDegradedOverall
-      ? "border-amber-300 bg-amber-50/70 dark:bg-amber-950/20 dark:border-amber-800"
-      : "border-red-300 bg-red-50/70 dark:bg-red-950/20 dark:border-red-800"
+    : isStandbyOverall
+      ? "border-blue-300 bg-blue-50/60 dark:bg-blue-950/20 dark:border-blue-800"
+      : isDegradedOverall
+        ? "border-amber-300 bg-amber-50/70 dark:bg-amber-950/20 dark:border-amber-800"
+        : "border-red-300 bg-red-50/70 dark:bg-red-950/20 dark:border-red-800"
 
   const canTestSecondaryDbKey = Boolean(data?.keys?.hasOverrideConflict)
 
@@ -543,6 +588,8 @@ export default function AiStatusPage() {
                 <div className="flex items-start gap-3.5">
                   {isHealthyOverall ? (
                     <CheckCircle2 className="w-8 h-8 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" aria-hidden="true" />
+                  ) : isStandbyOverall ? (
+                    <Activity className="w-8 h-8 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" aria-hidden="true" />
                   ) : isDegradedOverall ? (
                     <AlertTriangle className="w-8 h-8 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" aria-hidden="true" />
                   ) : (
@@ -553,7 +600,7 @@ export default function AiStatusPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="text-base sm:text-lg font-bold leading-snug">{data.overallTitle}</h2>
                       <Badge variant="outline" className="text-[11px] font-mono">
-                        {data.cached ? `Cache (${data.cacheAgeSeconds}s / ${data.cacheTtlSeconds}s)` : "Sonda Ao Vivo"}
+                        {data.passive ? "Modo Econômico (Sem Sonda)" : data.cached ? `Cache (${data.cacheAgeSeconds}s)` : "Sonda Ao Vivo"}
                       </Badge>
                     </div>
                     <p className="text-xs sm:text-sm text-foreground/85 leading-relaxed">{data.overallSummary}</p>
@@ -593,7 +640,7 @@ export default function AiStatusPage() {
                     <Clock className="w-3.5 h-3.5" aria-hidden="true" />
                     Verificado às {formatTime(data.checkedAt)}
                   </span>
-                  <span className="text-[11px]">Auto-refresh a cada 5 min (cache)</span>
+                  <span className="text-[11px]">Modo econômico: sondas apenas ao clicar em Verificar Agora</span>
                 </div>
               </div>
             </div>
@@ -989,8 +1036,9 @@ export default function AiStatusPage() {
                         onChange={(e) => setPromptEngine(e.target.value as any)}
                         className="w-full min-h-10 rounded-xl border border-input bg-background px-3 py-2 text-xs sm:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                       >
-                        <option value="gemini_38_flash">Gemini 3.8 Flash — Interactions API (OCR, Avaliações, Compras)</option>
-                        <option value="gemini_4_argon">Gemini 4 Argon — Interactions API (Sofia WhatsApp, Copiloto)</option>
+                        <option value="gemini_38_flash">Gemini 3.8 Flash — Interactions API (Sofia, Copiloto, OCR)</option>
+                        <option value="gemini_35_flash_lite">Gemini 3.5 Flash-Lite — Interactions API (Leve: Sentimento, Compras, Triagem, Fiscal)</option>
+                        <option value="gemini_4_argon">Gemini 4 Argon — Interactions API (Opcional / Raciocínio Pesado)</option>
                         <option value="gemini_38_b2b">Gemini 3.8 Flash B2B — Interactions API + JSON Schema (Vouchers Zoho)</option>
                       </select>
                     </div>
@@ -1184,13 +1232,82 @@ export default function AiStatusPage() {
             <CardHeader className="pb-3">
               <h2 className="font-semibold leading-none tracking-tight text-base flex items-center gap-2">
                 <Activity className="w-4 h-4 text-primary" aria-hidden="true" />
-                Últimas Chamadas Reais do Servidor
+                Consumo de Tokens &amp; Últimas Chamadas do Servidor
               </h2>
               <CardDescription className="text-xs">
-                Registro leve em memória das chamadas Gemini feitas desde a última inicialização do servidor (máx. 15 recentes).
+                Telemetria unificada de todos os módulos Gemini (Sofia, B2B, OCR, Sentimento, Camareiras, Compras e Fiscal) desde o último restart.
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
+              {data.telemetrySummary && (
+                <div className="space-y-2.5">
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
+                    <div className="p-2.5 rounded-xl border bg-muted/20">
+                      <p className="text-[11px] text-muted-foreground">Chamadas Totais</p>
+                      <p className="text-base font-bold font-mono mt-0.5">
+                        {data.telemetrySummary.totals.calls}
+                        <span className="text-[11px] font-normal text-muted-foreground ml-1">
+                          ({data.telemetrySummary.totals.ok} ok)
+                        </span>
+                      </p>
+                    </div>
+                    <div className="p-2.5 rounded-xl border bg-muted/20">
+                      <p className="text-[11px] text-muted-foreground">Tokens Entrada</p>
+                      <p className="text-base font-bold font-mono mt-0.5">
+                        {data.telemetrySummary.totals.inputTokens.toLocaleString("pt-BR")}
+                      </p>
+                    </div>
+                    <div className="p-2.5 rounded-xl border bg-emerald-500/5 border-emerald-500/20">
+                      <p className="text-[11px] text-muted-foreground">Cache Hit (90% desc.)</p>
+                      <p className="text-base font-bold font-mono text-emerald-700 dark:text-emerald-300 mt-0.5">
+                        {data.telemetrySummary.totals.cachedTokens.toLocaleString("pt-BR")}
+                        <span className="text-[11px] font-normal ml-1">
+                          ({data.telemetrySummary.totals.inputTokens > 0
+                            ? Math.round((data.telemetrySummary.totals.cachedTokens / data.telemetrySummary.totals.inputTokens) * 100)
+                            : 0}%)
+                        </span>
+                      </p>
+                    </div>
+                    <div className="p-2.5 rounded-xl border bg-muted/20">
+                      <p className="text-[11px] text-muted-foreground">Saída + Thinking</p>
+                      <p className="text-base font-bold font-mono mt-0.5">
+                        {data.telemetrySummary.totals.outputTokens.toLocaleString("pt-BR")}
+                        <span className="text-[11px] font-normal text-muted-foreground ml-1">
+                          ({data.telemetrySummary.totals.thoughtTokens.toLocaleString("pt-BR")} thk)
+                        </span>
+                      </p>
+                    </div>
+                    <div className="p-2.5 rounded-xl border bg-muted/20">
+                      <p className="text-[11px] text-muted-foreground">429 / Circuit Breaker</p>
+                      <p className="text-base font-bold font-mono mt-0.5">
+                        {data.telemetrySummary.totals.rateLimited429}
+                        <span className="text-[11px] font-normal text-muted-foreground ml-1">
+                          / {data.telemetrySummary.totals.skippedByCooldown} puladas
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+
+                  {Object.keys(data.telemetrySummary.totalsByModule || {}).length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {Object.entries(data.telemetrySummary.totalsByModule)
+                        .sort(([, a], [, b]) => b.calls - a.calls)
+                        .map(([modKey, bucket]) => (
+                          <span
+                            key={modKey}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border bg-card text-[11px]"
+                          >
+                            <strong className="font-semibold">{MODULE_LABELS[modKey] || modKey}</strong>
+                            <span className="font-mono text-muted-foreground">
+                              {bucket.calls}x • {bucket.totalTokens.toLocaleString("pt-BR")} tok
+                            </span>
+                          </span>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {data.recentRuntimeCalls.length === 0 ? (
                 <div className="p-4 rounded-xl bg-muted/30 border border-border/50 text-xs text-muted-foreground flex items-center gap-2">
                   <Info className="w-4 h-4 shrink-0" aria-hidden="true" />
@@ -1206,10 +1323,16 @@ export default function AiStatusPage() {
                           className={
                             call.ok
                               ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
-                              : "bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/30"
+                              : call.skippedByCooldown
+                                ? "bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/30"
+                                : "bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/30"
                           }
                         >
-                          {call.ok ? `OK (${call.status ?? 200})` : `ERRO (${call.status ?? "—"})`}
+                          {call.ok
+                            ? `OK (${call.status ?? 200})`
+                            : call.skippedByCooldown
+                              ? `PAUSA 429`
+                              : `ERRO (${call.status ?? "—"})`}
                         </Badge>
                         <span className="font-semibold">{MODULE_LABELS[call.module] || call.module}</span>
                         <span className="font-mono text-[11px] text-muted-foreground">{call.model}</span>
@@ -1217,7 +1340,13 @@ export default function AiStatusPage() {
                           <span className="text-[11px] text-muted-foreground">• {call.keySource}</span>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 shrink-0 font-mono text-[11px] text-muted-foreground">
+                      <div className="flex flex-wrap items-center gap-3 shrink-0 font-mono text-[11px] text-muted-foreground">
+                        {call.usage && (
+                          <span title="Tokens: Entrada / Cache / Saída (Thinking)">
+                            In {call.usage.inputTokens} • Cache {call.usage.cachedTokens} • Out {call.usage.outputTokens}
+                            {call.usage.thoughtTokens > 0 ? ` (${call.usage.thoughtTokens} thk)` : ""}
+                          </span>
+                        )}
                         <span className="font-semibold text-foreground">{formatLatency(call.latencyMs)}</span>
                         <span>{formatTime(call.at)}</span>
                       </div>

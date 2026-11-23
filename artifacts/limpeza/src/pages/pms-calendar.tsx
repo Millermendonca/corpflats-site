@@ -10833,12 +10833,10 @@ export default function PmsCalendar(props?: {
 
   const stableSelectChannel = useStableCallback((val: string) => {
     setFormChannel(val)
-    let nextFlats = formFlats.map((fl) => {
-      const allSame = fl.dailyRates.length <= 1 || fl.dailyRates.every(d => (d.channel || "whatsapp") === formChannel)
-      return allSame
-        ? { ...fl, dailyRates: fl.dailyRates.map(d => ({ ...d, channel: val })) }
-        : fl
-    })
+    let nextFlats = formFlats.map((fl) => ({
+      ...fl,
+      dailyRates: fl.dailyRates.map(d => ({ ...d, channel: val })),
+    }))
 
     if (val === "b2b") {
       setFormRequesterType("agency_b2b")
