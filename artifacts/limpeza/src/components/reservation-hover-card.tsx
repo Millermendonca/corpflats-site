@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import { 
-  MessageCircle, MessageSquare, Phone, ExternalLink, Copy, Check, Coffee, DoorOpen, FileText,
+  MessageCircle, MessageSquare, Phone, ExternalLink, Copy, CopyPlus, Check, Coffee, DoorOpen, FileText,
   Users, Calendar, Eye, Building2, X, Zap, SlidersHorizontal, RefreshCw, RotateCcw, CreditCard, ArrowLeftRight
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
@@ -19,6 +19,7 @@ interface ReservationHoverCardProps {
   flat: any
   isBeingDragged?: boolean
   onOpenDetails: (resItem: any) => void
+  onDuplicate?: (resItem: any) => void
   onUndoEarlyCheckout?: (resItem: any) => void | Promise<void>
   onOpenRoomMoveSwap?: (resItem: any) => void
   channelCfg?: { label: string; bg: string; text: string; border: string }
@@ -76,6 +77,7 @@ export function ReservationHoverCard({
   flat,
   isBeingDragged = false,
   onOpenDetails,
+  onDuplicate,
   onUndoEarlyCheckout,
   onOpenRoomMoveSwap,
   channelCfg,
@@ -1280,6 +1282,22 @@ export function ReservationHoverCard({
               <DoorOpen className="w-3 h-3 text-emerald-600" />
               <span>Saída</span>
             </a>
+
+            {onDuplicate && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleClose()
+                  onDuplicate(resItem)
+                }}
+                className="h-7 px-2.5 rounded-xl border border-indigo-300 dark:border-indigo-700 bg-indigo-50/90 hover:bg-indigo-100 dark:bg-indigo-950/50 text-indigo-800 dark:text-indigo-200 font-bold text-[11px] inline-flex items-center gap-1 transition-colors shrink-0 shadow-2xs cursor-pointer"
+                title="Duplicar esta reserva para outra data mantendo hóspede, flat e diária"
+              >
+                <CopyPlus className="w-3 h-3 text-indigo-600 dark:text-indigo-400" aria-hidden="true" />
+                <span>Duplicar</span>
+              </button>
+            )}
 
             {onOpenRoomMoveSwap &&
               !["cancelada", "cancelled", "expirada", "no_show"].includes(String(resItem.status || "").toLowerCase()) && (

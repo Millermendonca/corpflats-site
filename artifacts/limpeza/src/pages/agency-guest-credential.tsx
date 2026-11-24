@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRoute, useLocation } from "wouter";
 import {
   ShieldCheck,
@@ -29,6 +29,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo";
 import { formatSmartPhone, formatPassport, formatPhoneForWhatsAppCheck } from "@/lib/phone-mask";
+import {
+  doStayDatesOverlap,
+  inspectSlotDuplicates,
+  type GuestSlotCandidate,
+  type SlotDuplicateInspection,
+} from "@/lib/duplicate-guest-guard";
 
 export function isValidBrazilianCpf(rawCpf: string): boolean {
   const cpf = String(rawCpf || "").replace(/\D/g, "");
@@ -195,6 +201,131 @@ export default function AgencyGuestCredential() {
   const cpfIsValid = cpfIsComplete && isValidBrazilianCpf(cleanDocDigits);
   const cleanPassportAlnum = guestDocument.replace(/[^A-Za-z0-9]/g, "");
   const passportIsComplete = docType === "passport" && cleanPassportAlnum.length >= 5;
+
+  const batchDuplicateMap = useMemo(() => {
+    const emptyInsp: SlotDuplicateInspection = {
+      hasConflict: false,
+      firstConflict: null,
+      byField: {},
+    };
+    const result = new Map<
+      number,
+      { g1: SlotDuplicateInspection; g2: SlotDuplicateInspection; g3: SlotDuplicateInspection }
+    >();
+    const priorSlots: GuestSlotCandidate[] = [];
+
+    batchItems.forEach((item, idx) => {
+      const r = item.reservation || {};
+      const flatLabel = r.flatNumber ? `Flat ${r.flatNumber}` : `Flat #${idx + 1}`;
+      const rIn = r.checkinDate || "";
+      const rOut = r.checkoutDate || "";
+
+      const g1Slot: GuestSlotCandidate = {
+        flatIndex: idx,
+        flatLabel,
+        guestIndex: 1,
+        name: item.guestName,
+        document: item.guestDocument,
+        phone: item.guestPhone,
+        checkinDate: rIn,
+        checkoutDate: rOut,
+      };
+      const g1Insp = idx >= 1 ? inspectSlotDuplicates(g1Slot, priorSlots) : emptyInsp;
+      priorSlots.push(g1Slot);
+
+      let g2Insp = emptyInsp;
+      if (item.guestCount >= 2 && !item.guest2InformLater) {
+        const g2Slot: GuestSlotCandidate = {
+          flatIndex: idx,
+          flatLabel,
+          guestIndex: 2,
+          name: item.guest2Name,
+          document: item.guest2Document,
+          phone: item.guest2Phone,
+          checkinDate: rIn,
+          checkoutDate: rOut,
+        };
+        g2Insp = inspectSlotDuplicates(g2Slot, priorSlots);
+        priorSlots.push(g2Slot);
+      }
+
+      let g3Insp = emptyInsp;
+      if (item.guestCount >= 3 && !item.guest3InformLater) {
+        const g3Slot: GuestSlotCandidate = {
+          flatIndex: idx,
+          flatLabel,
+          guestIndex: 3,
+          name: item.guest3Name,
+          document: item.guest3Document,
+          phone: item.guest3Phone,
+          checkinDate: rIn,
+          checkoutDate: rOut,
+        };
+        g3Insp = inspectSlotDuplicates(g3Slot, priorSlots);
+        priorSlots.push(g3Slot);
+      }
+
+      result.set(idx, { g1: g1Insp, g2: g2Insp, g3: g3Insp });
+    });
+
+    return result;
+  }, [batchItems]);
+
+  const singleDuplicateCheck = useMemo(() => {
+    const emptyInsp: SlotDuplicateInspection = {
+      hasConflict: false,
+      firstConflict: null,
+      byField: {},
+    };
+    const g1Slot: GuestSlotCandidate = {
+      flatIndex: 0,
+      guestIndex: 1,
+      name: guestName,
+      document: guestDocument,
+      phone: guestPhone,
+    };
+    const prior: GuestSlotCandidate[] = [g1Slot];
+
+    let g2Insp = emptyInsp;
+    if (guestCountSingle >= 2 && !guest2InformLater) {
+      const g2Slot: GuestSlotCandidate = {
+        flatIndex: 0,
+        guestIndex: 2,
+        name: guest2Name,
+        document: guest2Document,
+        phone: guest2Phone,
+      };
+      g2Insp = inspectSlotDuplicates(g2Slot, prior);
+      prior.push(g2Slot);
+    }
+
+    let g3Insp = emptyInsp;
+    if (guestCountSingle >= 3 && !guest3InformLater) {
+      const g3Slot: GuestSlotCandidate = {
+        flatIndex: 0,
+        guestIndex: 3,
+        name: guest3Name,
+        document: guest3Document,
+        phone: guest3Phone,
+      };
+      g3Insp = inspectSlotDuplicates(g3Slot, prior);
+    }
+
+    return { g2: g2Insp, g3: g3Insp };
+  }, [
+    guestName,
+    guestDocument,
+    guestPhone,
+    guestCountSingle,
+    guest2InformLater,
+    guest2Name,
+    guest2Document,
+    guest2Phone,
+    guest3InformLater,
+    guest3Name,
+    guest3Document,
+    guest3Phone,
+  ]);
 
   const extractGuestDocFromRequester = (rawReqDoc?: string): { docType: "cpf" | "passport"; formatted: string } | null => {
     const raw = String(rawReqDoc || "").trim();
@@ -759,29 +890,118 @@ export default function AgencyGuestCredential() {
       }
     }
 
-    const conflictingOtherBatchCard = batchItems.find((otherItem, otherIdx) => {
-      if (otherIdx === idx || !otherItem) return false;
-      const otherPhones = [
-        otherItem.guestPhone,
-        !otherItem.guest2InformLater ? otherItem.guest2Phone : "",
-        !otherItem.guest3InformLater ? otherItem.guest3Phone : ""
-      ].filter((p) => String(p || "").replace(/\D/g, "").length >= 8);
-      return (
-        otherPhones.some((op) => phonesMatchBr(finalPhonePayload, op)) ||
-        (finalGuest2PhonePayload && otherPhones.some((op) => phonesMatchBr(finalGuest2PhonePayload, op))) ||
-        (finalGuest3PhonePayload && otherPhones.some((op) => phonesMatchBr(finalGuest3PhonePayload, op)))
-      );
+    const curRIn = item.reservation?.checkinDate || "";
+    const curROut = item.reservation?.checkoutDate || "";
+    const curFlatLabel = item.reservation?.flatNumber ? `Flat ${item.reservation.flatNumber}` : `Flat #${idx + 1}`;
+    const otherOverlappingSlots: GuestSlotCandidate[] = [];
+    batchItems.forEach((otherItem, otherIdx) => {
+      if (otherIdx === idx || !otherItem) return;
+      const oIn = otherItem.reservation?.checkinDate || "";
+      const oOut = otherItem.reservation?.checkoutDate || "";
+      if (!doStayDatesOverlap(curRIn, curROut, oIn, oOut)) return;
+      const oLabel = otherItem.reservation?.flatNumber
+        ? `Flat ${otherItem.reservation.flatNumber}`
+        : `Flat #${otherIdx + 1}`;
+      otherOverlappingSlots.push({
+        flatIndex: otherIdx,
+        flatLabel: oLabel,
+        guestIndex: 1,
+        name: otherItem.guestName,
+        document: otherItem.guestDocument,
+        phone: otherItem.guestPhone,
+        checkinDate: oIn,
+        checkoutDate: oOut,
+      });
+      if (otherItem.guestCount >= 2 && !otherItem.guest2InformLater) {
+        otherOverlappingSlots.push({
+          flatIndex: otherIdx,
+          flatLabel: oLabel,
+          guestIndex: 2,
+          name: otherItem.guest2Name,
+          document: otherItem.guest2Document,
+          phone: otherItem.guest2Phone,
+          checkinDate: oIn,
+          checkoutDate: oOut,
+        });
+      }
+      if (otherItem.guestCount >= 3 && !otherItem.guest3InformLater) {
+        otherOverlappingSlots.push({
+          flatIndex: otherIdx,
+          flatLabel: oLabel,
+          guestIndex: 3,
+          name: otherItem.guest3Name,
+          document: otherItem.guest3Document,
+          phone: otherItem.guest3Phone,
+          checkinDate: oIn,
+          checkoutDate: oOut,
+        });
+      }
     });
-    if (conflictingOtherBatchCard) {
-      const otherRef = conflictingOtherBatchCard.reservation?.b2bReservationNumber
-        ? `#${conflictingOtherBatchCard.reservation.b2bReservationNumber}`
-        : (conflictingOtherBatchCard.reservation?.code || `outro flat`);
+
+    const curG1Slot: GuestSlotCandidate = {
+      flatIndex: idx,
+      flatLabel: curFlatLabel,
+      guestIndex: 1,
+      name: item.guestName,
+      document: item.guestDocument,
+      phone: finalPhonePayload,
+      checkinDate: curRIn,
+      checkoutDate: curROut,
+    };
+    const g1CrossCheck = inspectSlotDuplicates(curG1Slot, otherOverlappingSlots);
+    if (g1CrossCheck.firstConflict) {
       toast({
-        title: `WhatsApp já usado em outro flat (${refLabel})`,
-        description: `Este número já foi informado no flat ${otherRef}. Cada hóspede deve ter seu próprio WhatsApp individual para receber check-in e café da manhã corretamente.`,
+        title: `${g1CrossCheck.firstConflict.title} (${refLabel})`,
+        description: g1CrossCheck.firstConflict.message,
         variant: "destructive"
       });
       return false;
+    }
+
+    const activeLocalAndCrossSlots: GuestSlotCandidate[] = [curG1Slot, ...otherOverlappingSlots];
+    if (item.guestCount >= 2 && !item.guest2InformLater) {
+      const curG2Slot: GuestSlotCandidate = {
+        flatIndex: idx,
+        flatLabel: curFlatLabel,
+        guestIndex: 2,
+        name: item.guest2Name,
+        document: item.guest2Document,
+        phone: finalGuest2PhonePayload,
+        checkinDate: curRIn,
+        checkoutDate: curROut,
+      };
+      const g2DupCheck = inspectSlotDuplicates(curG2Slot, activeLocalAndCrossSlots);
+      if (g2DupCheck.firstConflict) {
+        toast({
+          title: `${g2DupCheck.firstConflict.title} (${refLabel})`,
+          description: g2DupCheck.firstConflict.message,
+          variant: "destructive"
+        });
+        return false;
+      }
+      activeLocalAndCrossSlots.push(curG2Slot);
+    }
+
+    if (item.guestCount >= 3 && !item.guest3InformLater) {
+      const curG3Slot: GuestSlotCandidate = {
+        flatIndex: idx,
+        flatLabel: curFlatLabel,
+        guestIndex: 3,
+        name: item.guest3Name,
+        document: item.guest3Document,
+        phone: finalGuest3PhonePayload,
+        checkinDate: curRIn,
+        checkoutDate: curROut,
+      };
+      const g3DupCheck = inspectSlotDuplicates(curG3Slot, activeLocalAndCrossSlots);
+      if (g3DupCheck.firstConflict) {
+        toast({
+          title: `${g3DupCheck.firstConflict.title} (${refLabel})`,
+          description: g3DupCheck.firstConflict.message,
+          variant: "destructive"
+        });
+        return false;
+      }
     }
 
     updateBatchItem(idx, { saving: true });
@@ -1134,6 +1354,23 @@ export default function AgencyGuestCredential() {
       return;
     }
 
+    if (singleDuplicateCheck.g2.firstConflict) {
+      toast({
+        title: singleDuplicateCheck.g2.firstConflict.title,
+        description: singleDuplicateCheck.g2.firstConflict.message,
+        variant: "destructive"
+      });
+      return;
+    }
+    if (singleDuplicateCheck.g3.firstConflict) {
+      toast({
+        title: singleDuplicateCheck.g3.firstConflict.title,
+        description: singleDuplicateCheck.g3.firstConflict.message,
+        variant: "destructive"
+      });
+      return;
+    }
+
     if (finalSingleG2PhonePayload) {
       if (phonesMatchBr(finalSingleG2PhonePayload, finalPhonePayload)) {
         toast({
@@ -1438,6 +1675,10 @@ export default function AgencyGuestCredential() {
               const missingG2 = item.guestCount >= 2 && item.guest2InformLater;
               const missingG3 = item.guestCount >= 3 && item.guest3InformLater;
               const hasPendingComp = missingG2 || missingG3;
+              const cardDup = batchDuplicateMap.get(idx);
+              const g1CardDup = cardDup?.g1;
+              const g2CardDup = cardDup?.g2;
+              const g3CardDup = cardDup?.g3;
 
               return (
                 <div
@@ -1622,6 +1863,13 @@ export default function AgencyGuestCredential() {
                     </div>
                   </div>
 
+                  {g1CardDup?.firstConflict && (
+                    <div role="alert" className="rounded-xl bg-rose-500/15 border border-rose-500/45 p-3 text-xs text-rose-200 flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                      <span>{g1CardDup.firstConflict.message}</span>
+                    </div>
+                  )}
+
                   {/* Ocupação do Flat (conforme contratado na reserva) + Hóspede 2 e 3 */}
                   <fieldset className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5 space-y-3">
                     <legend className="px-2 text-[11px] font-bold uppercase tracking-wider text-teal-400">
@@ -1705,156 +1953,251 @@ export default function AgencyGuestCredential() {
                     </div>
 
                     {item.guestCount >= 2 && !item.guest2InformLater && (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                        <div className="space-y-1">
-                          <Label className="text-xs text-slate-300">Nome Completo do Hóspede 2 *</Label>
-                          <Input
-                            value={item.guest2Name}
-                            onChange={(e) => updateBatchItem(idx, { guest2Name: e.target.value, saved: false })}
-                            placeholder="Nome e sobrenome do 2º hóspede"
-                            className="bg-slate-950 border-slate-700 text-white"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between gap-1">
-                            <Label className="text-xs text-slate-300">WhatsApp do Hóspede 2 *</Label>
-                            {item.guest2WhatsappStatus === "checking" && (
-                              <span className="text-[10px] text-sky-400 flex items-center gap-1">
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                              </span>
-                            )}
-                            {item.guest2WhatsappStatus === "valid" && (
-                              <span className="text-[10px] font-bold text-emerald-400">✓ Ativo</span>
-                            )}
-                            {item.guest2WhatsappStatus === "invalid" && (
-                              <span className="text-[10px] font-bold text-rose-400">❌ Sem Whats</span>
-                            )}
+                      <div className="space-y-2.5 pt-1">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <Label className="text-xs text-slate-300">Nome Completo do Hóspede 2 *</Label>
+                            <Input
+                              value={item.guest2Name}
+                              aria-invalid={g2CardDup?.byField.name ? "true" : undefined}
+                              onChange={(e) => updateBatchItem(idx, { guest2Name: e.target.value, saved: false })}
+                              placeholder="Nome e sobrenome do 2º hóspede"
+                              className={`bg-slate-950 text-white ${
+                                g2CardDup?.byField.name ? "border-rose-500 ring-1 ring-rose-500/40" : "border-slate-700"
+                              }`}
+                            />
                           </div>
-                          <Input
-                            type="tel"
-                            inputMode="tel"
-                            value={item.guest2Phone}
-                            onChange={(e) =>
-                              updateBatchItem(idx, {
-                                guest2Phone: formatPhoneMask(e.target.value),
-                                guest2WhatsappStatus: "idle",
-                                saved: false
-                              })
-                            }
-                            onBlur={() => {
-                              if (item.guest2Phone.replace(/\D/g, "").length >= 8) {
-                                checkBatchGuest2WhatsApp(idx, item.guest2Phone);
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between gap-1">
+                              <Label className="text-xs text-slate-300">WhatsApp do Hóspede 2 *</Label>
+                              {item.guest2WhatsappStatus === "checking" && (
+                                <span className="text-[10px] text-sky-400 flex items-center gap-1">
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                </span>
+                              )}
+                              {item.guest2WhatsappStatus === "valid" && (
+                                <span className="text-[10px] font-bold text-emerald-400">✓ Ativo</span>
+                              )}
+                              {item.guest2WhatsappStatus === "invalid" && (
+                                <span className="text-[10px] font-bold text-rose-400">❌ Sem Whats</span>
+                              )}
+                            </div>
+                            <Input
+                              type="tel"
+                              inputMode="tel"
+                              value={item.guest2Phone}
+                              aria-invalid={g2CardDup?.byField.phone ? "true" : undefined}
+                              onChange={(e) =>
+                                updateBatchItem(idx, {
+                                  guest2Phone: formatPhoneMask(e.target.value),
+                                  guest2WhatsappStatus: "idle",
+                                  saved: false
+                                })
                               }
-                            }}
-                            placeholder="(22) 99999-9999"
-                            className={`bg-slate-950 text-white ${
-                              item.guest2WhatsappStatus === "valid"
-                                ? "border-emerald-500/60"
-                                : item.guest2WhatsappStatus === "invalid"
-                                  ? "border-rose-500/70"
-                                  : "border-slate-700"
-                            }`}
-                          />
+                              onBlur={() => {
+                                if (item.guest2Phone.replace(/\D/g, "").length >= 8) {
+                                  checkBatchGuest2WhatsApp(idx, item.guest2Phone);
+                                }
+                              }}
+                              placeholder="(22) 99999-9999"
+                              className={`bg-slate-950 text-white ${
+                                g2CardDup?.byField.phone
+                                  ? "border-rose-500 ring-1 ring-rose-500/40"
+                                  : item.guest2WhatsappStatus === "valid"
+                                    ? "border-emerald-500/60"
+                                    : item.guest2WhatsappStatus === "invalid"
+                                      ? "border-rose-500/70"
+                                      : "border-slate-700"
+                              }`}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs text-slate-400">CPF do Hóspede 2 (Opcional)</Label>
+                            <Input
+                              value={item.guest2Document}
+                              aria-invalid={g2CardDup?.byField.document ? "true" : undefined}
+                              onChange={(e) => updateBatchItem(idx, { guest2Document: formatCpfMask(e.target.value), saved: false })}
+                              placeholder="000.000.000-00"
+                              autoCorrect="off"
+                              autoCapitalize="none"
+                              spellCheck={false}
+                              className={`bg-slate-950 text-white font-mono ${
+                                g2CardDup?.byField.document ? "border-rose-500 ring-1 ring-rose-500/40" : "border-slate-700"
+                              }`}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs text-slate-400">E-mail do Hóspede 2 (Opcional)</Label>
+                            <Input
+                              type="email"
+                              value={item.guest2Email}
+                              onChange={(e) => updateBatchItem(idx, { guest2Email: e.target.value, saved: false })}
+                              placeholder="hospede2@empresa.com.br"
+                              className="bg-slate-950 border-slate-700 text-white"
+                            />
+                          </div>
                         </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs text-slate-400">CPF do Hóspede 2 (Opcional)</Label>
-                          <Input
-                            value={item.guest2Document}
-                            onChange={(e) => updateBatchItem(idx, { guest2Document: formatCpfMask(e.target.value), saved: false })}
-                            placeholder="000.000.000-00"
-                            autoCorrect="off"
-                            autoCapitalize="none"
-                            spellCheck={false}
-                            className="bg-slate-950 border-slate-700 text-white font-mono"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs text-slate-400">E-mail do Hóspede 2 (Opcional)</Label>
-                          <Input
-                            type="email"
-                            value={item.guest2Email}
-                            onChange={(e) => updateBatchItem(idx, { guest2Email: e.target.value, saved: false })}
-                            placeholder="hospede2@empresa.com.br"
-                            className="bg-slate-950 border-slate-700 text-white"
-                          />
-                        </div>
+
+                        {g2CardDup?.firstConflict && (
+                          <div role="alert" className="rounded-xl bg-rose-500/15 border border-rose-500/45 p-3 text-xs text-rose-200 space-y-2">
+                            <div className="flex items-start gap-2 font-semibold">
+                              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                              <span>{g2CardDup.firstConflict.message}</span>
+                            </div>
+                            <div className="flex flex-wrap gap-2 pl-6">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateBatchItem(idx, {
+                                    guest2InformLater: true,
+                                    guest2Name: "",
+                                    guest2Document: "",
+                                    guest2Phone: "",
+                                    guest2Email: "",
+                                    saved: false,
+                                  })
+                                }
+                                className="px-2.5 py-1 rounded-lg bg-slate-900 border border-rose-400/50 text-rose-200 hover:bg-slate-800 font-bold text-[11px] transition-colors"
+                              >
+                                ⏳ Informar Hóspede 2 depois
+                              </button>
+                              {!(r.packageCode || r.isPackageReservation) && item.guestCount === 2 && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateBatchItem(idx, {
+                                      guestCount: 1,
+                                      guest2InformLater: false,
+                                      guest2Name: "",
+                                      guest2Document: "",
+                                      guest2Phone: "",
+                                      guest2Email: "",
+                                      saved: false,
+                                    })
+                                  }
+                                  className="px-2.5 py-1 rounded-lg bg-teal-600 hover:bg-teal-500 text-white font-bold text-[11px] transition-colors"
+                                >
+                                  👤 Alterar para 1 Hóspede
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
 
                     {item.guestCount >= 3 && !item.guest3InformLater && (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-slate-800/80">
-                        <div className="space-y-1">
-                          <Label className="text-xs text-slate-300">Nome Completo do Hóspede 3 *</Label>
-                          <Input
-                            value={item.guest3Name}
-                            onChange={(e) => updateBatchItem(idx, { guest3Name: e.target.value, saved: false })}
-                            placeholder="Nome e sobrenome do 3º hóspede"
-                            className="bg-slate-950 border-slate-700 text-white"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between gap-1">
-                            <Label className="text-xs text-slate-300">WhatsApp do Hóspede 3 *</Label>
-                            {item.guest3WhatsappStatus === "checking" && (
-                              <span className="text-[10px] text-sky-400 flex items-center gap-1">
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                              </span>
-                            )}
-                            {item.guest3WhatsappStatus === "valid" && (
-                              <span className="text-[10px] font-bold text-emerald-400">✓ Ativo</span>
-                            )}
-                            {item.guest3WhatsappStatus === "invalid" && (
-                              <span className="text-[10px] font-bold text-rose-400">❌ Sem Whats</span>
-                            )}
+                      <div className="space-y-2.5 pt-3 border-t border-slate-800/80">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <Label className="text-xs text-slate-300">Nome Completo do Hóspede 3 *</Label>
+                            <Input
+                              value={item.guest3Name}
+                              aria-invalid={g3CardDup?.byField.name ? "true" : undefined}
+                              onChange={(e) => updateBatchItem(idx, { guest3Name: e.target.value, saved: false })}
+                              placeholder="Nome e sobrenome do 3º hóspede"
+                              className={`bg-slate-950 text-white ${
+                                g3CardDup?.byField.name ? "border-rose-500 ring-1 ring-rose-500/40" : "border-slate-700"
+                              }`}
+                            />
                           </div>
-                          <Input
-                            type="tel"
-                            inputMode="tel"
-                            value={item.guest3Phone}
-                            onChange={(e) =>
-                              updateBatchItem(idx, {
-                                guest3Phone: formatPhoneMask(e.target.value),
-                                guest3WhatsappStatus: "idle",
-                                saved: false
-                              })
-                            }
-                            onBlur={() => {
-                              if (item.guest3Phone.replace(/\D/g, "").length >= 8) {
-                                checkBatchGuest3WhatsApp(idx, item.guest3Phone);
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between gap-1">
+                              <Label className="text-xs text-slate-300">WhatsApp do Hóspede 3 *</Label>
+                              {item.guest3WhatsappStatus === "checking" && (
+                                <span className="text-[10px] text-sky-400 flex items-center gap-1">
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                </span>
+                              )}
+                              {item.guest3WhatsappStatus === "valid" && (
+                                <span className="text-[10px] font-bold text-emerald-400">✓ Ativo</span>
+                              )}
+                              {item.guest3WhatsappStatus === "invalid" && (
+                                <span className="text-[10px] font-bold text-rose-400">❌ Sem Whats</span>
+                              )}
+                            </div>
+                            <Input
+                              type="tel"
+                              inputMode="tel"
+                              value={item.guest3Phone}
+                              aria-invalid={g3CardDup?.byField.phone ? "true" : undefined}
+                              onChange={(e) =>
+                                updateBatchItem(idx, {
+                                  guest3Phone: formatPhoneMask(e.target.value),
+                                  guest3WhatsappStatus: "idle",
+                                  saved: false
+                                })
                               }
-                            }}
-                            placeholder="(22) 99999-9999"
-                            className={`bg-slate-950 text-white ${
-                              item.guest3WhatsappStatus === "valid"
-                                ? "border-emerald-500/60"
-                                : item.guest3WhatsappStatus === "invalid"
-                                  ? "border-rose-500/70"
-                                  : "border-slate-700"
-                            }`}
-                          />
+                              onBlur={() => {
+                                if (item.guest3Phone.replace(/\D/g, "").length >= 8) {
+                                  checkBatchGuest3WhatsApp(idx, item.guest3Phone);
+                                }
+                              }}
+                              placeholder="(22) 99999-9999"
+                              className={`bg-slate-950 text-white ${
+                                g3CardDup?.byField.phone
+                                  ? "border-rose-500 ring-1 ring-rose-500/40"
+                                  : item.guest3WhatsappStatus === "valid"
+                                    ? "border-emerald-500/60"
+                                    : item.guest3WhatsappStatus === "invalid"
+                                      ? "border-rose-500/70"
+                                      : "border-slate-700"
+                              }`}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs text-slate-400">CPF do Hóspede 3 (Opcional)</Label>
+                            <Input
+                              value={item.guest3Document}
+                              aria-invalid={g3CardDup?.byField.document ? "true" : undefined}
+                              onChange={(e) => updateBatchItem(idx, { guest3Document: formatCpfMask(e.target.value), saved: false })}
+                              placeholder="000.000.000-00"
+                              autoCorrect="off"
+                              autoCapitalize="none"
+                              spellCheck={false}
+                              className={`bg-slate-950 text-white font-mono ${
+                                g3CardDup?.byField.document ? "border-rose-500 ring-1 ring-rose-500/40" : "border-slate-700"
+                              }`}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs text-slate-400">E-mail do Hóspede 3 (Opcional)</Label>
+                            <Input
+                              type="email"
+                              value={item.guest3Email}
+                              onChange={(e) => updateBatchItem(idx, { guest3Email: e.target.value, saved: false })}
+                              placeholder="hospede3@empresa.com.br"
+                              className="bg-slate-950 border-slate-700 text-white"
+                            />
+                          </div>
                         </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs text-slate-400">CPF do Hóspede 3 (Opcional)</Label>
-                          <Input
-                            value={item.guest3Document}
-                            onChange={(e) => updateBatchItem(idx, { guest3Document: formatCpfMask(e.target.value), saved: false })}
-                            placeholder="000.000.000-00"
-                            autoCorrect="off"
-                            autoCapitalize="none"
-                            spellCheck={false}
-                            className="bg-slate-950 border-slate-700 text-white font-mono"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs text-slate-400">E-mail do Hóspede 3 (Opcional)</Label>
-                          <Input
-                            type="email"
-                            value={item.guest3Email}
-                            onChange={(e) => updateBatchItem(idx, { guest3Email: e.target.value, saved: false })}
-                            placeholder="hospede3@empresa.com.br"
-                            className="bg-slate-950 border-slate-700 text-white"
-                          />
-                        </div>
+
+                        {g3CardDup?.firstConflict && (
+                          <div role="alert" className="rounded-xl bg-rose-500/15 border border-rose-500/45 p-3 text-xs text-rose-200 space-y-2">
+                            <div className="flex items-start gap-2 font-semibold">
+                              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                              <span>{g3CardDup.firstConflict.message}</span>
+                            </div>
+                            <div className="flex flex-wrap gap-2 pl-6">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateBatchItem(idx, {
+                                    guest3InformLater: true,
+                                    guest3Name: "",
+                                    guest3Document: "",
+                                    guest3Phone: "",
+                                    guest3Email: "",
+                                    saved: false,
+                                  })
+                                }
+                                className="px-2.5 py-1 rounded-lg bg-slate-900 border border-rose-400/50 text-rose-200 hover:bg-slate-800 font-bold text-[11px] transition-colors"
+                              >
+                                ⏳ Informar Hóspede 3 depois
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </fieldset>
@@ -2310,149 +2653,235 @@ export default function AgencyGuestCredential() {
                     </div>
                   </div>
                   {guestCountSingle >= 2 && !guest2InformLater && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                      <div className="space-y-1">
-                        <Label className="text-xs text-slate-300">Nome Completo do Hóspede 2 *</Label>
-                        <Input
-                          value={guest2Name}
-                          onChange={(e) => setGuest2Name(e.target.value)}
-                          placeholder="Nome e sobrenome"
-                          className="bg-slate-950 border-slate-700 text-white"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between gap-1">
-                          <Label className="text-xs text-slate-300">WhatsApp do Hóspede 2 *</Label>
-                          {guest2WhatsappStatus === "checking" && (
-                            <span className="text-[10px] text-sky-400 flex items-center gap-1">
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                            </span>
-                          )}
-                          {guest2WhatsappStatus === "valid" && (
-                            <span className="text-[10px] font-bold text-emerald-400">✓ Ativo</span>
-                          )}
-                          {guest2WhatsappStatus === "invalid" && (
-                            <span className="text-[10px] font-bold text-rose-400">❌ Sem Whats</span>
-                          )}
+                    <div className="space-y-2.5 pt-1">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <Label className="text-xs text-slate-300">Nome Completo do Hóspede 2 *</Label>
+                          <Input
+                            value={guest2Name}
+                            aria-invalid={singleDuplicateCheck.g2.byField.name ? "true" : undefined}
+                            onChange={(e) => setGuest2Name(e.target.value)}
+                            placeholder="Nome e sobrenome"
+                            className={`bg-slate-950 text-white ${
+                              singleDuplicateCheck.g2.byField.name ? "border-rose-500 ring-1 ring-rose-500/40" : "border-slate-700"
+                            }`}
+                          />
                         </div>
-                        <Input
-                          type="tel"
-                          inputMode="tel"
-                          value={guest2Phone}
-                          onChange={(e) => {
-                            setGuest2Phone(formatPhoneMask(e.target.value));
-                            if (guest2WhatsappStatus !== "idle") setGuest2WhatsappStatus("idle");
-                          }}
-                          onBlur={() => {
-                            if (guest2Phone.replace(/\D/g, "").length >= 8) {
-                              verifyGuest2WhatsAppNumber(guest2Phone);
-                            }
-                          }}
-                          placeholder="(22) 99999-9999"
-                          className={`bg-slate-950 text-white ${
-                            guest2WhatsappStatus === "valid"
-                              ? "border-emerald-500/60"
-                              : guest2WhatsappStatus === "invalid"
-                                ? "border-rose-500/70"
-                                : "border-slate-700"
-                          }`}
-                        />
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between gap-1">
+                            <Label className="text-xs text-slate-300">WhatsApp do Hóspede 2 *</Label>
+                            {guest2WhatsappStatus === "checking" && (
+                              <span className="text-[10px] text-sky-400 flex items-center gap-1">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              </span>
+                            )}
+                            {guest2WhatsappStatus === "valid" && (
+                              <span className="text-[10px] font-bold text-emerald-400">✓ Ativo</span>
+                            )}
+                            {guest2WhatsappStatus === "invalid" && (
+                              <span className="text-[10px] font-bold text-rose-400">❌ Sem Whats</span>
+                            )}
+                          </div>
+                          <Input
+                            type="tel"
+                            inputMode="tel"
+                            value={guest2Phone}
+                            aria-invalid={singleDuplicateCheck.g2.byField.phone ? "true" : undefined}
+                            onChange={(e) => {
+                              setGuest2Phone(formatPhoneMask(e.target.value));
+                              if (guest2WhatsappStatus !== "idle") setGuest2WhatsappStatus("idle");
+                            }}
+                            onBlur={() => {
+                              if (guest2Phone.replace(/\D/g, "").length >= 8) {
+                                verifyGuest2WhatsAppNumber(guest2Phone);
+                              }
+                            }}
+                            placeholder="(22) 99999-9999"
+                            className={`bg-slate-950 text-white ${
+                              singleDuplicateCheck.g2.byField.phone
+                                ? "border-rose-500 ring-1 ring-rose-500/40"
+                                : guest2WhatsappStatus === "valid"
+                                  ? "border-emerald-500/60"
+                                  : guest2WhatsappStatus === "invalid"
+                                    ? "border-rose-500/70"
+                                    : "border-slate-700"
+                            }`}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs text-slate-400">CPF do Hóspede 2 (Opcional)</Label>
+                          <Input
+                            value={guest2Document}
+                            aria-invalid={singleDuplicateCheck.g2.byField.document ? "true" : undefined}
+                            onChange={(e) => setGuest2Document(formatCpfMask(e.target.value))}
+                            placeholder="000.000.000-00"
+                            autoCorrect="off"
+                            autoCapitalize="none"
+                            spellCheck={false}
+                            className={`bg-slate-950 text-white font-mono ${
+                              singleDuplicateCheck.g2.byField.document ? "border-rose-500 ring-1 ring-rose-500/40" : "border-slate-700"
+                            }`}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs text-slate-400">E-mail do Hóspede 2 (Opcional)</Label>
+                          <Input
+                            type="email"
+                            value={guest2Email}
+                            onChange={(e) => setGuest2Email(e.target.value)}
+                            placeholder="hospede2@empresa.com.br"
+                            className="bg-slate-950 border-slate-700 text-white"
+                          />
+                        </div>
                       </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs text-slate-400">CPF do Hóspede 2 (Opcional)</Label>
-                        <Input
-                          value={guest2Document}
-                          onChange={(e) => setGuest2Document(formatCpfMask(e.target.value))}
-                          placeholder="000.000.000-00"
-                          autoCorrect="off"
-                          autoCapitalize="none"
-                          spellCheck={false}
-                          className="bg-slate-950 border-slate-700 text-white font-mono"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs text-slate-400">E-mail do Hóspede 2 (Opcional)</Label>
-                        <Input
-                          type="email"
-                          value={guest2Email}
-                          onChange={(e) => setGuest2Email(e.target.value)}
-                          placeholder="hospede2@empresa.com.br"
-                          className="bg-slate-950 border-slate-700 text-white"
-                        />
-                      </div>
+
+                      {singleDuplicateCheck.g2.firstConflict && (
+                        <div role="alert" className="rounded-xl bg-rose-500/15 border border-rose-500/45 p-3 text-xs text-rose-200 space-y-2">
+                          <div className="flex items-start gap-2 font-semibold">
+                            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                            <span>{singleDuplicateCheck.g2.firstConflict.message}</span>
+                          </div>
+                          <div className="flex flex-wrap gap-2 pl-6">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setGuest2InformLater(true);
+                                setGuest2Name("");
+                                setGuest2Document("");
+                                setGuest2Phone("");
+                                setGuest2Email("");
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-slate-900 border border-rose-400/50 text-rose-200 hover:bg-slate-800 font-bold text-[11px] transition-colors"
+                            >
+                              ⏳ Informar Hóspede 2 depois
+                            </button>
+                            {!(reservation.packageCode || reservation.isPackageReservation) && guestCountSingle === 2 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setGuestCountSingle(1);
+                                  setGuest2InformLater(false);
+                                  setGuest2Name("");
+                                  setGuest2Document("");
+                                  setGuest2Phone("");
+                                  setGuest2Email("");
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-teal-600 hover:bg-teal-500 text-white font-bold text-[11px] transition-colors"
+                              >
+                                👤 Alterar para 1 Hóspede
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                   {guestCountSingle >= 3 && !guest3InformLater && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-slate-800/80">
-                      <div className="space-y-1">
-                        <Label className="text-xs text-slate-300">Nome Completo do Hóspede 3 *</Label>
-                        <Input
-                          value={guest3Name}
-                          onChange={(e) => setGuest3Name(e.target.value)}
-                          placeholder="Nome e sobrenome"
-                          className="bg-slate-950 border-slate-700 text-white"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between gap-1">
-                          <Label className="text-xs text-slate-300">WhatsApp do Hóspede 3 *</Label>
-                          {guest3WhatsappStatus === "checking" && (
-                            <span className="text-[10px] text-sky-400 flex items-center gap-1">
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                            </span>
-                          )}
-                          {guest3WhatsappStatus === "valid" && (
-                            <span className="text-[10px] font-bold text-emerald-400">✓ Ativo</span>
-                          )}
-                          {guest3WhatsappStatus === "invalid" && (
-                            <span className="text-[10px] font-bold text-rose-400">❌ Sem Whats</span>
-                          )}
+                    <div className="space-y-2.5 pt-3 border-t border-slate-800/80">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <Label className="text-xs text-slate-300">Nome Completo do Hóspede 3 *</Label>
+                          <Input
+                            value={guest3Name}
+                            aria-invalid={singleDuplicateCheck.g3.byField.name ? "true" : undefined}
+                            onChange={(e) => setGuest3Name(e.target.value)}
+                            placeholder="Nome e sobrenome"
+                            className={`bg-slate-950 text-white ${
+                              singleDuplicateCheck.g3.byField.name ? "border-rose-500 ring-1 ring-rose-500/40" : "border-slate-700"
+                            }`}
+                          />
                         </div>
-                        <Input
-                          type="tel"
-                          inputMode="tel"
-                          value={guest3Phone}
-                          onChange={(e) => {
-                            setGuest3Phone(formatPhoneMask(e.target.value));
-                            if (guest3WhatsappStatus !== "idle") setGuest3WhatsappStatus("idle");
-                          }}
-                          onBlur={() => {
-                            if (guest3Phone.replace(/\D/g, "").length >= 8) {
-                              verifyGuest3WhatsAppNumber(guest3Phone);
-                            }
-                          }}
-                          placeholder="(22) 99999-9999"
-                          className={`bg-slate-950 text-white ${
-                            guest3WhatsappStatus === "valid"
-                              ? "border-emerald-500/60"
-                              : guest3WhatsappStatus === "invalid"
-                                ? "border-rose-500/70"
-                                : "border-slate-700"
-                          }`}
-                        />
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between gap-1">
+                            <Label className="text-xs text-slate-300">WhatsApp do Hóspede 3 *</Label>
+                            {guest3WhatsappStatus === "checking" && (
+                              <span className="text-[10px] text-sky-400 flex items-center gap-1">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              </span>
+                            )}
+                            {guest3WhatsappStatus === "valid" && (
+                              <span className="text-[10px] font-bold text-emerald-400">✓ Ativo</span>
+                            )}
+                            {guest3WhatsappStatus === "invalid" && (
+                              <span className="text-[10px] font-bold text-rose-400">❌ Sem Whats</span>
+                            )}
+                          </div>
+                          <Input
+                            type="tel"
+                            inputMode="tel"
+                            value={guest3Phone}
+                            aria-invalid={singleDuplicateCheck.g3.byField.phone ? "true" : undefined}
+                            onChange={(e) => {
+                              setGuest3Phone(formatPhoneMask(e.target.value));
+                              if (guest3WhatsappStatus !== "idle") setGuest3WhatsappStatus("idle");
+                            }}
+                            onBlur={() => {
+                              if (guest3Phone.replace(/\D/g, "").length >= 8) {
+                                verifyGuest3WhatsAppNumber(guest3Phone);
+                              }
+                            }}
+                            placeholder="(22) 99999-9999"
+                            className={`bg-slate-950 text-white ${
+                              singleDuplicateCheck.g3.byField.phone
+                                ? "border-rose-500 ring-1 ring-rose-500/40"
+                                : guest3WhatsappStatus === "valid"
+                                  ? "border-emerald-500/60"
+                                  : guest3WhatsappStatus === "invalid"
+                                    ? "border-rose-500/70"
+                                    : "border-slate-700"
+                            }`}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs text-slate-400">CPF do Hóspede 3 (Opcional)</Label>
+                          <Input
+                            value={guest3Document}
+                            aria-invalid={singleDuplicateCheck.g3.byField.document ? "true" : undefined}
+                            onChange={(e) => setGuest3Document(formatCpfMask(e.target.value))}
+                            placeholder="000.000.000-00"
+                            autoCorrect="off"
+                            autoCapitalize="none"
+                            spellCheck={false}
+                            className={`bg-slate-950 text-white font-mono ${
+                              singleDuplicateCheck.g3.byField.document ? "border-rose-500 ring-1 ring-rose-500/40" : "border-slate-700"
+                            }`}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs text-slate-400">E-mail do Hóspede 3 (Opcional)</Label>
+                          <Input
+                            type="email"
+                            value={guest3Email}
+                            onChange={(e) => setGuest3Email(e.target.value)}
+                            placeholder="hospede3@empresa.com.br"
+                            className="bg-slate-950 border-slate-700 text-white"
+                          />
+                        </div>
                       </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs text-slate-400">CPF do Hóspede 3 (Opcional)</Label>
-                        <Input
-                          value={guest3Document}
-                          onChange={(e) => setGuest3Document(formatCpfMask(e.target.value))}
-                          placeholder="000.000.000-00"
-                          autoCorrect="off"
-                          autoCapitalize="none"
-                          spellCheck={false}
-                          className="bg-slate-950 border-slate-700 text-white font-mono"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs text-slate-400">E-mail do Hóspede 3 (Opcional)</Label>
-                        <Input
-                          type="email"
-                          value={guest3Email}
-                          onChange={(e) => setGuest3Email(e.target.value)}
-                          placeholder="hospede3@empresa.com.br"
-                          className="bg-slate-950 border-slate-700 text-white"
-                        />
-                      </div>
+
+                      {singleDuplicateCheck.g3.firstConflict && (
+                        <div role="alert" className="rounded-xl bg-rose-500/15 border border-rose-500/45 p-3 text-xs text-rose-200 space-y-2">
+                          <div className="flex items-start gap-2 font-semibold">
+                            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                            <span>{singleDuplicateCheck.g3.firstConflict.message}</span>
+                          </div>
+                          <div className="flex flex-wrap gap-2 pl-6">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setGuest3InformLater(true);
+                                setGuest3Name("");
+                                setGuest3Document("");
+                                setGuest3Phone("");
+                                setGuest3Email("");
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-slate-900 border border-rose-400/50 text-rose-200 hover:bg-slate-800 font-bold text-[11px] transition-colors"
+                            >
+                              ⏳ Informar Hóspede 3 depois
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </fieldset>

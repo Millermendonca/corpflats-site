@@ -59,6 +59,8 @@ import { ReservationsFilterBar } from "@/components/reservations-list/Reservatio
 import { ReservationsDataTable } from "@/components/reservations-list/ReservationsDataTable";
 import { ReservationQuickDrawer } from "@/components/reservations-list/ReservationQuickDrawer";
 import { ChannexSyncSheet } from "@/components/reservations-list/ChannexSyncSheet";
+import { DuplicateReservationModal } from "@/components/duplicate-reservation-modal";
+import type { DuplicateHandoffDraft } from "@/lib/duplicate-reservation";
 
 const PmsCalendarLazy = lazy(() => import("@/pages/pms-calendar"));
 
@@ -190,6 +192,8 @@ export default function ReservationsListPage() {
   const [editingResCode, setEditingResCode] = useState<string | null>(null);
   const [reactivatingResCode, setReactivatingResCode] = useState<string | null>(null);
   const [creatingNewRes, setCreatingNewRes] = useState<boolean>(false);
+  const [duplicateTarget, setDuplicateTarget] = useState<any | null>(null);
+  const [duplicateFullDraft, setDuplicateFullDraft] = useState<DuplicateHandoffDraft | null>(null);
 
   const fetchCentralData = useCallback(
     async (showInitialSpinner = false) => {
@@ -1012,6 +1016,7 @@ export default function ReservationsListPage() {
     setEditingResCode(null);
     setReactivatingResCode(null);
     setCreatingNewRes(false);
+    setDuplicateFullDraft(null);
     fetchCentralData(false);
   }, [fetchCentralData]);
 
@@ -1207,7 +1212,12 @@ export default function ReservationsListPage() {
               closeQuickDrawer();
               setReactivatingResCode(null);
               setCreatingNewRes(false);
+              setDuplicateFullDraft(null);
               setEditingResCode(row.code || String(row.id));
+            }}
+            onDuplicate={(row) => {
+              closeQuickDrawer();
+              setDuplicateTarget(row.rawReservation || row);
             }}
             onReactivateExpired={(row) => {
               closeQuickDrawer();
@@ -1299,7 +1309,12 @@ export default function ReservationsListPage() {
           closeQuickDrawer();
           setReactivatingResCode(null);
           setCreatingNewRes(false);
+          setDuplicateFullDraft(null);
           setEditingResCode(row.code || String(row.id));
+        }}
+        onDuplicate={(row) => {
+          closeQuickDrawer();
+          setDuplicateTarget(row.rawReservation || row);
         }}
         onReactivateExpired={(row) => {
           closeQuickDrawer();
@@ -1408,14 +1423,41 @@ export default function ReservationsListPage() {
         />
       )}
 
+      {/* Mini-Modal Ultrarrápido de Duplicação de Reserva */}
+      <DuplicateReservationModal
+        open={Boolean(duplicateTarget)}
+        onOpenChange={(open) => {
+          if (!open) setDuplicateTarget(null);
+        }}
+        sourceReservation={duplicateTarget}
+        onDuplicated={() => {
+          fetchCentralData(false);
+        }}
+        onOpenFullEditor={(draft) => {
+          setDuplicateTarget(null);
+          setEditingResCode(null);
+          setReactivatingResCode(null);
+          setCreatingNewRes(false);
+          setDuplicateFullDraft(draft);
+        }}
+        onOpenEditCreated={(createdRes) => {
+          setDuplicateTarget(null);
+          setReactivatingResCode(null);
+          setCreatingNewRes(false);
+          setDuplicateFullDraft(null);
+          setEditingResCode(createdRes.code || String(createdRes.id));
+        }}
+      />
+
       {/* Modal Completo do PMS em modo Overlay (sem desmontar nem perder os filtros da lista!) */}
-      {(creatingNewRes || editingResCode || reactivatingResCode) && (
+      {(creatingNewRes || editingResCode || reactivatingResCode || duplicateFullDraft) && (
         <Suspense fallback={null}>
           <PmsCalendarLazy
             modalOnly
             autoOpenNewRes={creatingNewRes}
             editReservationCode={editingResCode}
             reactivateReservationCode={reactivatingResCode}
+            duplicateDraft={duplicateFullDraft}
             onModalClosed={handleFullModalClosed}
           />
         </Suspense>

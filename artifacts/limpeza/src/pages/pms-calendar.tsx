@@ -19,7 +19,7 @@ import { Popover, PopoverTrigger, PopoverContent, PopoverAnchor } from "@/compon
 import { 
   CalendarDays, Plus, Wand2, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Search, 
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
-  Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy,
+  Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy, CopyPlus,
   LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight, ArrowLeftRight, CreditCard, ExternalLink, QrCode, Link2, DoorOpen, Car,
   Download, Upload, FileSpreadsheet, Wrench, Camera, Refrigerator, Bell, Gift, ListOrdered
 } from "lucide-react"
@@ -57,10 +57,23 @@ import { PdfViewerDialog } from "@/components/pdf-preview"
 import { FLAT_AMENITIES_CATALOG, AMENITY_CATEGORIES, renderAmenityIcon, getFlatActiveAmenities, FlatAmenityDefinition } from "@/lib/flat-amenities"
 import { ReservationHoverCard } from "@/components/reservation-hover-card"
 import { RoomMoveSwapDialog } from "@/components/room-move-swap-dialog"
+import { DuplicateReservationModal } from "@/components/duplicate-reservation-modal"
+import {
+  type DuplicateHandoffDraft,
+  addDaysIso,
+  isValidIsoDate,
+  extractOriginalNights,
+  getTodayIsoLocal,
+} from "@/lib/duplicate-reservation"
 import { QuickMessageConfirmDialog } from "@/components/quick-message-confirm-dialog"
 import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients, sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildQuickMessageWaWebUrl, buildDirectWaWebUrl, cleanWhatsAppPhone, formatReservationChannelLabel, resolveReservationGuestCount } from "@/hooks/use-quick-messages"
 import { PaymentMethodsModal, PaymentMethod } from "@/components/payment-methods-modal"
 import { formatSmartPhone, formatPhoneForWhatsAppCheck } from "@/lib/phone-mask"
+import {
+  inspectSlotDuplicates,
+  type GuestSlotCandidate,
+  type SlotDuplicateInspection,
+} from "@/lib/duplicate-guest-guard"
 import { validateEmailList, formatEmailList, parseEmailList, getPrimaryEmail } from "@/lib/email-utils"
 import { SimplifiedReservationForm } from "@/components/simplified-reservation-form"
 import {
@@ -191,6 +204,8 @@ const CrmGuestFieldsBlock = memo(function CrmGuestFieldsBlock({
   onVerifyPhone,
   phoneVerificationMap,
   onSaveToCrm,
+  duplicateInspection,
+  quickActionsSlot,
 }: {
   guestIndex: 1 | 2 | 3
   label: string
@@ -208,6 +223,8 @@ const CrmGuestFieldsBlock = memo(function CrmGuestFieldsBlock({
   onVerifyPhone?: (phone: string) => void
   phoneVerificationMap?: Record<string, PhoneVerificationEntry>
   onSaveToCrm?: () => void
+  duplicateInspection?: SlotDuplicateInspection
+  quickActionsSlot?: React.ReactNode
 }) {
   const [showSuggestions, setShowSuggestions] = useState(false)
   const matches = useMemo(
@@ -286,6 +303,7 @@ const CrmGuestFieldsBlock = memo(function CrmGuestFieldsBlock({
         <div className="relative">
           <Input
             value={name}
+            aria-invalid={duplicateInspection?.byField.name ? "true" : undefined}
             onChange={(e) => {
               onChangeField("name", e.target.value)
               setShowSuggestions(true)
@@ -297,7 +315,10 @@ const CrmGuestFieldsBlock = memo(function CrmGuestFieldsBlock({
               setTimeout(() => setShowSuggestions(false), 120)
             }}
             placeholder={optional ? `Nome do ${guestIndex}º Hóspede (Opcional)` : `Nome Completo (${guestIndex}º Hóspede)`}
-            className="text-xs h-8"
+            className={cn(
+              "text-xs h-8",
+              duplicateInspection?.byField.name && "border-rose-500 ring-1 ring-rose-500/40 bg-rose-50/40 dark:bg-rose-950/20"
+            )}
           />
 
           {showSuggestions && name.trim().length > 0 && (
@@ -361,9 +382,13 @@ const CrmGuestFieldsBlock = memo(function CrmGuestFieldsBlock({
 
         <Input
           value={cpf}
+          aria-invalid={duplicateInspection?.byField.document ? "true" : undefined}
           onChange={(e) => onChangeField("cpf", e.target.value)}
           placeholder={`CPF / Documento (${guestIndex}º Hóspede)`}
-          className="text-xs h-8"
+          className={cn(
+            "text-xs h-8",
+            duplicateInspection?.byField.document && "border-rose-500 ring-1 ring-rose-500/40 bg-rose-50/40 dark:bg-rose-950/20"
+          )}
         />
       </div>
 
@@ -374,12 +399,15 @@ const CrmGuestFieldsBlock = memo(function CrmGuestFieldsBlock({
               type="tel"
               inputMode="tel"
               value={phone}
+              aria-invalid={duplicateInspection?.byField.phone ? "true" : undefined}
               onChange={(e) => onChangeField("phone", formatBrazilPhone(e.target.value))}
               onBlur={() => triggerVerifyIfComplete(phone)}
               placeholder={`WhatsApp (${guestIndex}º Hóspede)`}
               className={cn(
                 "text-xs h-8 pr-7",
-                phoneVer?.checked && phoneVer.exists === false
+                duplicateInspection?.byField.phone
+                  ? "border-rose-500 ring-1 ring-rose-500/40 bg-rose-50/40 dark:bg-rose-950/20"
+                  : phoneVer?.checked && phoneVer.exists === false
                   ? "border-amber-500 bg-amber-500/5 focus-visible:ring-amber-500"
                   : phoneVer?.checked && phoneVer.exists === true
                   ? "border-emerald-500/80 bg-emerald-500/5"
@@ -416,6 +444,16 @@ const CrmGuestFieldsBlock = memo(function CrmGuestFieldsBlock({
           className="text-xs h-8"
         />
       </div>
+
+      {duplicateInspection?.firstConflict && (
+        <div role="alert" className="p-2.5 rounded-xl border border-rose-400/80 bg-rose-50/90 dark:bg-rose-950/35 text-rose-900 dark:text-rose-200 text-[11px] space-y-2 animate-in fade-in">
+          <div className="flex items-start gap-2 font-semibold">
+            <AlertCircle className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+            <span>{duplicateInspection.firstConflict.message}</span>
+          </div>
+          {quickActionsSlot && <div className="flex flex-wrap gap-1.5 pl-5">{quickActionsSlot}</div>}
+        </div>
+      )}
     </div>
   )
 })
@@ -1001,6 +1039,7 @@ interface FlatReservationCardProps {
   reservationsList: any[];
   blocksList: any[];
   otherFlatsInPackage: { uid: string; flatId: string; checkinDate: string; checkoutDate: string }[];
+  priorPackageGuestSlots?: GuestSlotCandidate[];
   crmGuests: any[];
   searchIndexedCrm: (query: string, includeCompany: boolean, limit?: number) => any[];
   fairShareResult: any;
@@ -1051,6 +1090,7 @@ const FlatReservationCard = memo(function FlatReservationCard({
   reservationsList,
   blocksList,
   otherFlatsInPackage,
+  priorPackageGuestSlots,
   crmGuests,
   searchIndexedCrm,
   fairShareResult,
@@ -1802,7 +1842,58 @@ const FlatReservationCard = memo(function FlatReservationCard({
           </div>
         </div>
 
-        {!flat.informGuestsLater && (
+        {!flat.informGuestsLater && (() => {
+          const emptyInsp: SlotDuplicateInspection = { hasConflict: false, firstConflict: null, byField: {} };
+          const priorSlots: GuestSlotCandidate[] = [...(priorPackageGuestSlots || [])];
+          const curFlatLabel = selectedFlatObj?.number ? `Flat ${selectedFlatObj.number}` : `Flat #${flatOrdinal}`;
+          const g1Slot: GuestSlotCandidate = {
+            flatIndex: index,
+            flatLabel: curFlatLabel,
+            guestIndex: 1,
+            name: flat.guest1.name,
+            document: flat.guest1.cpf,
+            phone: flat.guest1.phone,
+            checkinDate: effectiveCin,
+            checkoutDate: effectiveCout,
+          };
+          const g1Dup = index >= 1 ? inspectSlotDuplicates(g1Slot, priorSlots) : emptyInsp;
+          priorSlots.push(g1Slot);
+
+          const occNum = Number(flat.guestCount) || 1;
+          let g2Dup = emptyInsp;
+          if (occNum >= 2 && !flat.guest2InformLater) {
+            const g2Slot: GuestSlotCandidate = {
+              flatIndex: index,
+              flatLabel: curFlatLabel,
+              guestIndex: 2,
+              name: flat.guest2.name,
+              document: flat.guest2.cpf,
+              phone: flat.guest2.phone,
+              isMinor: Boolean(flat.hasMinor),
+              checkinDate: effectiveCin,
+              checkoutDate: effectiveCout,
+            };
+            g2Dup = inspectSlotDuplicates(g2Slot, priorSlots);
+            priorSlots.push(g2Slot);
+          }
+
+          let g3Dup = emptyInsp;
+          if (occNum >= 3 && !flat.guest3InformLater) {
+            const g3Slot: GuestSlotCandidate = {
+              flatIndex: index,
+              flatLabel: curFlatLabel,
+              guestIndex: 3,
+              name: flat.guest3.name,
+              document: flat.guest3.cpf,
+              phone: flat.guest3.phone,
+              isMinor: Boolean(flat.hasMinor),
+              checkinDate: effectiveCin,
+              checkoutDate: effectiveCout,
+            };
+            g3Dup = inspectSlotDuplicates(g3Slot, priorSlots);
+          }
+
+          return (
           <div className="space-y-2.5 pt-1">
             {/* Hóspede 1 */}
             <CrmGuestFieldsBlock
@@ -1819,6 +1910,23 @@ const FlatReservationCard = memo(function FlatReservationCard({
               phoneVerificationMap={phoneVerificationMap}
               onVerifyPhone={onVerifyPhone}
               onSaveToCrm={() => onSaveGuestToCrmForFlat(flat.uid, 1)}
+              duplicateInspection={g1Dup}
+              quickActionsSlot={
+                g1Dup.firstConflict ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onPatchFlat(flat.uid, {
+                        informGuestsLater: true,
+                        guest1: { guestId: "manual", name: "", cpf: "", phone: "", email: "" },
+                      })
+                    }
+                    className="px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-700 text-rose-800 dark:text-rose-200 hover:bg-rose-100/70 font-bold text-[10px] transition-colors cursor-pointer"
+                  >
+                    ⏳ Informar hóspedes deste flat depois
+                  </button>
+                ) : undefined
+              }
               onChangeField={(field, val) => {
                 onPatchFlat(flat.uid, {
                   requesterIsGuest1: false,
@@ -1912,6 +2020,40 @@ const FlatReservationCard = memo(function FlatReservationCard({
                     phoneVerificationMap={phoneVerificationMap}
                     onVerifyPhone={onVerifyPhone}
                     onSaveToCrm={() => onSaveGuestToCrmForFlat(flat.uid, 2)}
+                    duplicateInspection={g2Dup}
+                    quickActionsSlot={
+                      g2Dup.firstConflict ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onPatchFlat(flat.uid, {
+                                guest2InformLater: true,
+                                guest2: { guestId: "manual", name: "", cpf: "", phone: "", email: "" },
+                              })
+                            }
+                            className="px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-700 text-rose-800 dark:text-rose-200 hover:bg-rose-100/70 font-bold text-[10px] transition-colors cursor-pointer"
+                          >
+                            ⏳ Informar depois
+                          </button>
+                          {Number(flat.guestCount) === 2 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onPatchFlat(flat.uid, {
+                                  guestCount: "1",
+                                  guest2InformLater: false,
+                                  guest2: { guestId: "manual", name: "", cpf: "", phone: "", email: "" },
+                                })
+                              }
+                              className="px-2 py-0.5 rounded-md bg-slate-900 text-white hover:bg-slate-800 font-bold text-[10px] transition-colors cursor-pointer"
+                            >
+                              👤 Alterar para 1 Hóspede
+                            </button>
+                          )}
+                        </>
+                      ) : undefined
+                    }
                     onChangeField={(field, val) => {
                       onPatchFlat(flat.uid, { guest2: { ...flat.guest2, [field]: val } });
                     }}
@@ -1971,6 +2113,23 @@ const FlatReservationCard = memo(function FlatReservationCard({
                     phoneVerificationMap={phoneVerificationMap}
                     onVerifyPhone={onVerifyPhone}
                     onSaveToCrm={() => onSaveGuestToCrmForFlat(flat.uid, 3)}
+                    duplicateInspection={g3Dup}
+                    quickActionsSlot={
+                      g3Dup.firstConflict ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onPatchFlat(flat.uid, {
+                              guest3InformLater: true,
+                              guest3: { guestId: "manual", name: "", cpf: "", phone: "", email: "" },
+                            })
+                          }
+                          className="px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-700 text-rose-800 dark:text-rose-200 hover:bg-rose-100/70 font-bold text-[10px] transition-colors cursor-pointer"
+                        >
+                          ⏳ Informar depois
+                        </button>
+                      ) : undefined
+                    }
                     onChangeField={(field, val) => {
                       onPatchFlat(flat.uid, { guest3: { ...flat.guest3, [field]: val } });
                     }}
@@ -2108,7 +2267,8 @@ const FlatReservationCard = memo(function FlatReservationCard({
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
       </div>
 
       {/* 3D: Café da Manhã + Camas & Governança + Notas Independentes */}
@@ -2629,6 +2789,7 @@ export default function PmsCalendar(props?: {
   autoOpenNewRes?: boolean;
   editReservationCode?: string | null;
   reactivateReservationCode?: string | null;
+  duplicateDraft?: DuplicateHandoffDraft | null;
   onModalClosed?: () => void;
   [key: string]: any;
 }) {
@@ -2636,8 +2797,11 @@ export default function PmsCalendar(props?: {
   const autoOpenNewRes = Boolean(props?.autoOpenNewRes)
   const editReservationCode = props?.editReservationCode || null
   const reactivateReservationCode = props?.reactivateReservationCode || null
+  const duplicateDraftProp = props?.duplicateDraft || null
   const onModalClosedRef = useRef(props?.onModalClosed)
   onModalClosedRef.current = props?.onModalClosed
+  const [duplicateTarget, setDuplicateTarget] = useState<any | null>(null)
+  const [duplicatedFromMeta, setDuplicatedFromMeta] = useState<{ id: number | string | null; code: string } | null>(null)
   const [highlightedFlatNumber, setHighlightedFlatNumber] = useState<string | null>(null)
   const [, setLocation] = useLocation()
   const { toast } = useToast()
@@ -3872,7 +4036,7 @@ export default function PmsCalendar(props?: {
   const [formBoletoTermDays, setFormBoletoTermDays] = useState<number>(15)
   const [rawBoletoInputs, setRawBoletoInputs] = useState<Record<string, string>>({})
   const [formBoletoCustomDueDate, setFormBoletoCustomDueDate] = useState("")
-  const [formBoletoConsumptionMode, setFormBoletoConsumptionMode] = useState<"single_boleto" | "separate_boletos">("single_boleto")
+  const [formBoletoConsumptionMode, setFormBoletoConsumptionMode] = useState<"not_billed" | "single_boleto" | "separate_boletos">("not_billed")
   const [formBoletoPayerType, setFormBoletoPayerType] = useState<"company" | "agency" | "requester" | "financial_responsible" | "guest">("company")
   const [formConsumptionSamePayerAndDue, setFormConsumptionSamePayerAndDue] = useState(true)
   const [formConsumptionPayerType, setFormConsumptionPayerType] = useState<"guest" | "company" | "agency" | "requester" | "financial_responsible">("guest")
@@ -3914,7 +4078,7 @@ export default function PmsCalendar(props?: {
   const [newCompAllowsDirectReservations, setNewCompAllowsDirectReservations] = useState(true)
   const [newCompBillingEnabled, setNewCompBillingEnabled] = useState(false)
   const [newCompBoletoTermDays, setNewCompBoletoTermDays] = useState("28")
-  const [newCompBoletoConsumptionMode, setNewCompBoletoConsumptionMode] = useState<"single" | "separate">("single")
+  const [newCompBoletoConsumptionMode, setNewCompBoletoConsumptionMode] = useState<"not_billed" | "single" | "separate">("not_billed")
   const [newCompConsumptionSamePayer, setNewCompConsumptionSamePayer] = useState(true)
   const [newCompConsumptionPayerType, setNewCompConsumptionPayerType] = useState<"company" | "guest">("guest")
   const [newCompConsumptionTermDays, setNewCompConsumptionTermDays] = useState("15")
@@ -5590,7 +5754,10 @@ export default function PmsCalendar(props?: {
 
   useEffect(() => {
     if (modalOnly) {
-      if (autoOpenNewRes) {
+      if (duplicateDraftProp) {
+        handleOpenFromDuplicateDraftRef.current(duplicateDraftProp);
+        fetchData(false);
+      } else if (autoOpenNewRes) {
         handleOpenNewResRef.current();
         fetchData(false);
       } else if (editReservationCode || reactivateReservationCode) {
@@ -5601,7 +5768,7 @@ export default function PmsCalendar(props?: {
       return;
     }
     fetchData(true);
-  }, [modalOnly, autoOpenNewRes, editReservationCode, reactivateReservationCode]);
+  }, [modalOnly, autoOpenNewRes, editReservationCode, reactivateReservationCode, duplicateDraftProp]);
 
   useEffect(() => {
     if (modalOnly || loading) return;
@@ -6175,7 +6342,7 @@ export default function PmsCalendar(props?: {
     setFormIsFaturadoBoleto(false)
     setFormBoletoTermDays(15)
     setFormBoletoCustomDueDate("")
-    setFormBoletoConsumptionMode("single_boleto")
+    setFormBoletoConsumptionMode("not_billed")
     setFormBoletoPayerType("company")
     setFormConsumptionSamePayerAndDue(true)
     setFormConsumptionPayerType("guest")
@@ -6385,6 +6552,7 @@ export default function PmsCalendar(props?: {
     const openInSimple = !initialChannel || initialChannel === "booking" || initialChannel === "airbnb"
     setMobileRangeStart(null)
     setSelectedRes(null)
+    setDuplicatedFromMeta(null)
     setResCreateMode(openInSimple ? "simple" : "advanced")
     setSimplePriceManuallyEdited(false)
     simplePriceManuallyEditedRef.current = false
@@ -6506,13 +6674,14 @@ export default function PmsCalendar(props?: {
   }, [modalOnly])
 
   const wasResModalOpenRef = useRef(false)
+  const isResOrDuplicateOpen = resModalOpen || Boolean(duplicateTarget)
   useEffect(() => {
-    window.dispatchEvent(new CustomEvent("gfm-res-modal-state", { detail: { open: resModalOpen } }))
-    if (wasResModalOpenRef.current && !resModalOpen) {
+    window.dispatchEvent(new CustomEvent("gfm-res-modal-state", { detail: { open: isResOrDuplicateOpen } }))
+    if (wasResModalOpenRef.current && !isResOrDuplicateOpen) {
       onModalClosedRef.current?.()
     }
-    wasResModalOpenRef.current = resModalOpen
-  }, [resModalOpen])
+    wasResModalOpenRef.current = isResOrDuplicateOpen
+  }, [isResOrDuplicateOpen])
 
   useEffect(() => {
     if (
@@ -6551,8 +6720,9 @@ export default function PmsCalendar(props?: {
     }
   }, [resModalOpen, selectedRes, formFlatId, loadingFairShare, data.flats, data.reservations, data.blocks, fairShareResult, formCheckin, formCheckout])
 
-  const handleOpenEditRes = (resItem: any) => {
+  const handleOpenEditRes = (resItem: any, options?: { skipRemoteSideEffects?: boolean }) => {
     setSelectedRes(resItem)
+    setDuplicatedFromMeta(null)
     setPkgEditNfseOpen(false)
     setPkgEditCancelOpen(false)
     const fallbackSolName =
@@ -7005,10 +7175,15 @@ export default function PmsCalendar(props?: {
     setFormBoletoTermDays(Number(resItem.boletoTermDays || crmEntity.defaultBoletoTermDays || 15))
     setFormBoletoCustomDueDate(resItem.boletoCustomDueDate || "")
     setFormBoletoConsumptionMode(
-      resItem.boletoConsumptionMode === "separate_boletos" ||
-      resItem.boletoConsumptionMode === "separate" ||
-      crmEntity.defaultBoletoConsumptionMode === "separate_boletos" ||
-      crmEntity.defaultBoletoConsumptionMode === "separate"
+      resItem.isConsumptionFaturado === false ||
+      resItem.boletoConsumptionMode === "not_billed" ||
+      (!resItem.boletoConsumptionMode && crmEntity.defaultBoletoConsumptionMode === "not_billed")
+        ? "not_billed"
+        : resItem.boletoConsumptionMode === "separate_boletos" ||
+          resItem.boletoConsumptionMode === "separate" ||
+          (!resItem.boletoConsumptionMode &&
+            (crmEntity.defaultBoletoConsumptionMode === "separate_boletos" ||
+              crmEntity.defaultBoletoConsumptionMode === "separate"))
         ? "separate_boletos"
         : "single_boleto"
     )
@@ -7038,8 +7213,10 @@ export default function PmsCalendar(props?: {
     setFormRecSendWhatsapp(billRec.sendWhatsapp !== false)
     setResModalTab("reservation")
     setAuditLogs(Array.isArray(resItem.auditLogs) ? resItem.auditLogs : [])
-    fetchAuditLogs(resItem.code || resItem.id)
-    fetchCommunications(resItem.code || resItem.id)
+    if (!options?.skipRemoteSideEffects) {
+      fetchAuditLogs(resItem.code || resItem.id)
+      fetchCommunications(resItem.code || resItem.id)
+    }
     const flatItem = data.flats.find(f => f.id === resItem.flatId || String(f.number) === String(resItem.flatNumber))
     const pEmail = flatItem?.receptionEmail || "soho@promenade.com.br"
     setPortariaEmail(pEmail)
@@ -7060,6 +7237,146 @@ export default function PmsCalendar(props?: {
     setPickerMonth(safeParseDate(resItem.checkinDate) || new Date())
     setResModalOpen(true)
   }
+
+  const handleOpenFromDuplicateDraft = (draft: DuplicateHandoffDraft) => {
+    const src = draft.sourceRes || {}
+    // Hidrata todos os campos de hóspede, acompanhantes, empresa, agência, faturamento e preferências
+    handleOpenEditRes(src, { skipRemoteSideEffects: true })
+
+    // Converte imediatamente para NOVA reserva (limpando selectedRes e códigos externos antigos)
+    setSelectedRes(null)
+    setIsReactivatingRes(false)
+    setIsReactivatingExt(false)
+    setReactivationFlatSwitchedInfo(null)
+    setAuditLogs([])
+    setDuplicatedFromMeta({
+      id: draft.duplicatedFromId ?? src.id ?? null,
+      code: draft.duplicatedFromCode || String(src.code || src.reservationCode || src.id || ""),
+    })
+
+    // Limpa códigos externos / VCN / voucher da reserva original
+    setFormB2bReservationNumber("")
+    setFormB2bLocatorRloc("")
+    setFormB2bCardMasked("")
+    setFormB2bVcnToken("")
+    setFormVoucherUrl("")
+
+    const origNights = extractOriginalNights(src)
+    const fallbackCin = addDaysIso(getTodayIsoLocal(), 1)
+    const cin = isValidIsoDate(draft.checkinDate) ? draft.checkinDate : fallbackCin
+    const cout =
+      isValidIsoDate(draft.checkoutDate) && draft.checkoutDate > cin
+        ? draft.checkoutDate
+        : addDaysIso(cin, origNights)
+
+    const chan = draft.channel || "whatsapp"
+    const isB2b = chan === "b2b"
+    const isOta = chan === "booking" || chan === "airbnb"
+    const isFaturado = draft.paymentMode === "faturado"
+
+    setFormChannel(chan)
+    setFormIsFaturadoBoleto(isFaturado)
+    if (!isB2b) {
+      setFormAgencyId("")
+      setFormAgencyName("")
+      setFormAgencyCnpj("")
+      if (src.requesterType === "agency_b2b" || src.requesterType === "agency") {
+        setFormRequesterType(src.companyId || src.companyName ? "company" : "guest")
+      }
+    } else {
+      setFormRequesterType("agency_b2b")
+      setFormB2bPaymentType(isFaturado ? "FATURADO" : (src.b2bPaymentType === "FATURADO" ? "FATURADO" : "VIRTUAL_CARD"))
+    }
+
+    const safeRate = Math.max(0, Number(draft.dailyRate) || 0)
+    const rebuiltRates = buildReservationDailyRates(cin, cout, safeRate, chan, [])
+    const rebuiltCharges: ReservationChargeItem[] = (draft.charges || []).map((c, idx) => ({
+      id: `charge_dup_${Date.now()}_${idx}`,
+      type: (c.type as any) || "other",
+      title: c.title || "Taxa / Adicional",
+      amount: Number(c.amount) || 0,
+      notes: c.notes || "",
+    }))
+    const nightsTotal = rebuiltRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
+    const chargesTotal = rebuiltCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+    const computedTotal = Math.max(0, Math.round((nightsTotal + chargesTotal) * 100) / 100)
+
+    const resolvedFlatId = draft.flatId ? String(draft.flatId) : (src.flatId ? String(src.flatId) : "")
+    isFlatManuallyChangedRef.current = Boolean(resolvedFlatId)
+    setIsFlatManualSelection(Boolean(resolvedFlatId))
+
+    setFormFlats((prev) =>
+      prev.map((fl, idx) =>
+        idx === 0
+          ? {
+              ...fl,
+              uid: "flat_primary",
+              flatId: resolvedFlatId || fl.flatId,
+              checkinDate: cin,
+              checkoutDate: cout,
+              includeBreakfast: Boolean(draft.includeBreakfast),
+              earlyCheckinAuthorized: false,
+              notes: draft.notes || "",
+              receptionNotes: draft.receptionNotes || "",
+              specialRequests: draft.specialRequests || "",
+              dailyRate: String(safeRate),
+              dailyRates: rebuiltRates,
+              charges: rebuiltCharges,
+              rateioTargetInput: String(computedTotal),
+            }
+          : fl
+      )
+    )
+
+    setFormTotalAmount(String(computedTotal))
+    const resolvedMethod = isFaturado
+      ? (isB2b ? "faturado_b2b" : "boleto_faturado")
+      : (draft.paymentMethod || (isOta ? chan : isB2b ? "vcn_b2b" : "pix"))
+    setFormPaymentMethod(resolvedMethod)
+
+    if (draft.paymentMode === "confirmed_paid") {
+      setFormStatus("confirmada")
+      setFormPaymentStatus("pago_total")
+      setFormPaidAmount(String(computedTotal))
+      setFormPayments(
+        computedTotal > 0
+          ? [
+              {
+                id: `pay_dup_${Date.now()}`,
+                amount: computedTotal,
+                method: resolvedMethod,
+                category: "quitacao",
+                date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+                notes: `Pagamento integral (duplicada de #${draft.duplicatedFromCode || src.code || src.id})`,
+              },
+            ]
+          : []
+      )
+    } else if (draft.paymentMode === "pre_reserva" && !isOta && !isB2b) {
+      setFormStatus("pre_reserva")
+      setFormPaymentStatus("pendente")
+      setFormPaidAmount("0")
+      setFormPayments([])
+      setFormHoldPreset(draft.holdPreset || getDefaultHoldPresetForCheckin(cin))
+      setFormHoldManuallyChosen(true)
+      setFormSendExpirationReminder(true)
+    } else {
+      setFormStatus("confirmada")
+      setFormPaymentStatus("pendente")
+      setFormPaidAmount("0")
+      setFormPayments([])
+    }
+
+    setSimplePriceManuallyEdited(true)
+    simplePriceManuallyEditedRef.current = true
+    setResCreateMode("advanced")
+    setPickerMonth(safeParseDate(cin) || new Date())
+    setResModalTab("reservation")
+    setResModalOpen(true)
+  }
+
+  const handleOpenFromDuplicateDraftRef = useRef(handleOpenFromDuplicateDraft)
+  handleOpenFromDuplicateDraftRef.current = handleOpenFromDuplicateDraft
 
   const handleCancelPendingExtension = async () => {
     if (!selectedRes?.id || cancellingPendingExt) return
@@ -7364,7 +7681,7 @@ export default function PmsCalendar(props?: {
       setFormCompanyCnpj("")
       setFormInvoiceRecipientType("guest")
       setFormBoletoTermDays(15)
-      setFormBoletoConsumptionMode("single_boleto")
+      setFormBoletoConsumptionMode("not_billed")
       setFormFinRespName("")
       setFormFinRespEmail("")
       setFormFinRespPhone("")
@@ -7480,10 +7797,14 @@ export default function PmsCalendar(props?: {
       } else if (!isSameGuest && formRequesterType !== "company") {
         setFormBoletoTermDays(15)
       }
-      if (g.defaultBoletoConsumptionMode === "separate_boletos" || g.defaultBoletoConsumptionMode === "separate") {
+      if (g.defaultBoletoConsumptionMode === "not_billed") {
+        setFormBoletoConsumptionMode("not_billed")
+      } else if (g.defaultBoletoConsumptionMode === "separate_boletos" || g.defaultBoletoConsumptionMode === "separate") {
         setFormBoletoConsumptionMode("separate_boletos")
-      } else if (!isSameGuest && formRequesterType !== "company") {
+      } else if (g.defaultBoletoConsumptionMode === "single_boleto" || g.defaultBoletoConsumptionMode === "single") {
         setFormBoletoConsumptionMode("single_boleto")
+      } else if (!isSameGuest && formRequesterType !== "company") {
+        setFormBoletoConsumptionMode("not_billed")
       }
       if (g.financialResponsible?.name && (!formFinRespName || (!isSameGuest && formRequesterType !== "company"))) {
         setFormFinRespName(g.financialResponsible.name || "")
@@ -7830,18 +8151,24 @@ export default function PmsCalendar(props?: {
         setFormBoletoTermDays(parsedDays)
       }
       if (c.defaultBoletoConsumptionMode) {
-        const isSep = c.defaultBoletoConsumptionMode === "separate_boletos" || c.defaultBoletoConsumptionMode === "separate"
-        setFormBoletoConsumptionMode(isSep ? "separate_boletos" : "single_boleto")
-        if (isSep) {
-          const samePayer = c.defaultConsumptionSamePayerAndDue !== undefined ? Boolean(c.defaultConsumptionSamePayerAndDue) : true
-          setFormConsumptionSamePayerAndDue(samePayer)
-          if (!samePayer && c.defaultConsumptionPayerType) {
-            setFormConsumptionPayerType(c.defaultConsumptionPayerType)
-          }
-          if (c.defaultConsumptionTermDays) {
-            setFormConsumptionTermDays(Number(c.defaultConsumptionTermDays) || 15)
+        if (c.defaultBoletoConsumptionMode === "not_billed") {
+          setFormBoletoConsumptionMode("not_billed")
+        } else {
+          const isSep = c.defaultBoletoConsumptionMode === "separate_boletos" || c.defaultBoletoConsumptionMode === "separate"
+          setFormBoletoConsumptionMode(isSep ? "separate_boletos" : "single_boleto")
+          if (isSep) {
+            const samePayer = c.defaultConsumptionSamePayerAndDue !== undefined ? Boolean(c.defaultConsumptionSamePayerAndDue) : true
+            setFormConsumptionSamePayerAndDue(samePayer)
+            if (!samePayer && c.defaultConsumptionPayerType) {
+              setFormConsumptionPayerType(c.defaultConsumptionPayerType)
+            }
+            if (c.defaultConsumptionTermDays) {
+              setFormConsumptionTermDays(Number(c.defaultConsumptionTermDays) || 15)
+            }
           }
         }
+      } else {
+        setFormBoletoConsumptionMode("single_boleto")
       }
       if (c.financialResponsible?.name) {
         setFormFinRespName(c.financialResponsible.name || "")
@@ -7876,7 +8203,7 @@ export default function PmsCalendar(props?: {
     setNewCompAllowsDirectReservations(!isInvoiceOnlyCtx)
     setNewCompBillingEnabled(isRequesterCtx)
     setNewCompBoletoTermDays("28")
-    setNewCompBoletoConsumptionMode("single")
+    setNewCompBoletoConsumptionMode("not_billed")
     setNewCompConsumptionSamePayer(true)
     setNewCompConsumptionPayerType("guest")
     setNewCompConsumptionTermDays("15")
@@ -10130,6 +10457,91 @@ export default function PmsCalendar(props?: {
       }
     }
 
+    // Trava contra hóspede duplicado dentro do mesmo flat (Hóspede 1 vs 2 vs 3) ou em flats com datas sobrepostas
+    if (!isSimpleCreateSubmit) {
+      const priorAdminSlots: GuestSlotCandidate[] = []
+      for (let i = 0; i < formFlats.length; i++) {
+        const fl = formFlats[i]
+        if (fl.informGuestsLater) continue
+        const flCin = i > 0 && fl.sameDatesAsPrimary ? pFlat.checkinDate : fl.checkinDate
+        const flCout = i > 0 && fl.sameDatesAsPrimary ? pFlat.checkoutDate : fl.checkoutDate
+        const matchedFlatNum = data.flats.find(f => String(f.id) === String(fl.flatId))?.number
+        const flLabel = matchedFlatNum ? `Flat ${matchedFlatNum}` : `Flat #${i + 1}`
+
+        const g1Slot: GuestSlotCandidate = {
+          flatIndex: i,
+          flatLabel: flLabel,
+          guestIndex: 1,
+          name: fl.guest1.name,
+          document: fl.guest1.cpf,
+          phone: fl.guest1.phone,
+          checkinDate: flCin,
+          checkoutDate: flCout,
+        }
+        if (i >= 1) {
+          const g1Check = inspectSlotDuplicates(g1Slot, priorAdminSlots)
+          if (g1Check.firstConflict) {
+            toast({
+              title: `${g1Check.firstConflict.title} (${flLabel})`,
+              description: g1Check.firstConflict.message,
+              variant: "destructive"
+            })
+            return
+          }
+        }
+        priorAdminSlots.push(g1Slot)
+
+        const occ = Number(fl.guestCount) || 1
+        if (occ >= 2 && !fl.guest2InformLater) {
+          const g2Slot: GuestSlotCandidate = {
+            flatIndex: i,
+            flatLabel: flLabel,
+            guestIndex: 2,
+            name: fl.guest2.name,
+            document: fl.guest2.cpf,
+            phone: fl.guest2.phone,
+            isMinor: Boolean(fl.hasMinor),
+            checkinDate: flCin,
+            checkoutDate: flCout,
+          }
+          const g2Check = inspectSlotDuplicates(g2Slot, priorAdminSlots)
+          if (g2Check.firstConflict) {
+            toast({
+              title: `${g2Check.firstConflict.title}${isMultiFlatSubmit ? ` (${flLabel})` : ""}`,
+              description: g2Check.firstConflict.message,
+              variant: "destructive"
+            })
+            return
+          }
+          priorAdminSlots.push(g2Slot)
+        }
+
+        if (occ >= 3 && !fl.guest3InformLater) {
+          const g3Slot: GuestSlotCandidate = {
+            flatIndex: i,
+            flatLabel: flLabel,
+            guestIndex: 3,
+            name: fl.guest3.name,
+            document: fl.guest3.cpf,
+            phone: fl.guest3.phone,
+            isMinor: Boolean(fl.hasMinor),
+            checkinDate: flCin,
+            checkoutDate: flCout,
+          }
+          const g3Check = inspectSlotDuplicates(g3Slot, priorAdminSlots)
+          if (g3Check.firstConflict) {
+            toast({
+              title: `${g3Check.firstConflict.title}${isMultiFlatSubmit ? ` (${flLabel})` : ""}`,
+              description: g3Check.firstConflict.message,
+              variant: "destructive"
+            })
+            return
+          }
+          priorAdminSlots.push(g3Slot)
+        }
+      }
+    }
+
     // Validação unificada de WhatsApp em Solicitante + Hóspedes 1..3 de TODOS os flats 1..N
     const phonesToValidate: Array<{ label: string; phone: string }> = []
     if ((formRequesterType === "other_person" || formRequesterType === "company") && formRequesterPhone.trim().replace(/\D/g, "").length >= 10) {
@@ -10615,8 +11027,9 @@ export default function PmsCalendar(props?: {
         ...(isReactivatingExt ? { reactivateExpiredExtension: true } : {}),
         ...(isReactivatingNow ? { reactivatePreReservation: true } : {}),
         channel: isB2b ? "b2b" : (formChannel || (primaryPayloadFlat.dailyRates.length > 0 && primaryPayloadFlat.dailyRates[0].channel) || "whatsapp"),
-        paymentMethod: formIsFaturadoBoleto ? "boleto_faturado" : resolvedMethod,
+        paymentMethod: formIsFaturadoBoleto ? (isB2b ? "faturado_b2b" : "boleto_faturado") : resolvedMethod,
         isFaturadoBoleto: Boolean(formIsFaturadoBoleto),
+        isConsumptionFaturado: Boolean(formIsFaturadoBoleto && formBoletoConsumptionMode !== "not_billed"),
         boletoTermDays: Number(formBoletoTermDays) || 15,
         boletoCustomDueDate: formBoletoCustomDueDate || undefined,
         boletoConsumptionMode: formBoletoConsumptionMode,
@@ -10662,7 +11075,13 @@ export default function PmsCalendar(props?: {
           : ((isB2b || resolvedReqType === "company" || formIsFaturadoBoleto || selectedRes?.clientType === "corporativo") ? "corporativo" : "avulso"),
         source: selectedRes
           ? "PMS Calendário (Edição Manual)"
-          : (isMultiFlatSubmit ? "PMS Calendário (Pacote Multi-Flat)" : "PMS Calendário (Nova Reserva)"),
+          : (duplicatedFromMeta
+              ? `PMS Duplicação (de #${duplicatedFromMeta.code})`
+              : (isMultiFlatSubmit ? "PMS Calendário (Pacote Multi-Flat)" : "PMS Calendário (Nova Reserva)")),
+        ...(!selectedRes && duplicatedFromMeta ? {
+          duplicatedFromId: duplicatedFromMeta.id,
+          duplicatedFromCode: duplicatedFromMeta.code,
+        } : {}),
       }
 
       const pkgPricingNumVal = Math.max(0, Number(String(packagePricingInput || "").replace(",", ".")) || 0)
@@ -12779,6 +13198,7 @@ export default function PmsCalendar(props?: {
                                 flat={flat}
                                 isBeingDragged={Boolean(resDragState && (resDragState.hasMoved || resDragState.isLongPressReady))}
                                 onOpenDetails={handleOpenEditRes}
+                                onDuplicate={(r) => setDuplicateTarget(r)}
                                 onUndoEarlyCheckout={(r) => handleUndoEarlyCheckout(r, { closeModal: false })}
                                 onOpenRoomMoveSwap={(r) => openRoomMoveDialog(r)}
                                 channelCfg={channelCfg}
@@ -13584,9 +14004,32 @@ export default function PmsCalendar(props?: {
               <div className="flex items-center justify-between gap-2 pr-6 sm:pr-0">
                 <DialogTitle className="flex items-center gap-2 text-base sm:text-lg min-w-0">
                   <CalendarDays className="w-5 h-5 text-primary shrink-0" />
-                  <span className="truncate">{selectedRes ? `Editar Reserva: ${selectedRes.code}` : "Nova Reserva"}</span>
+                  <span className="truncate">
+                    {selectedRes
+                      ? `Editar Reserva: ${selectedRes.code}`
+                      : duplicatedFromMeta
+                        ? `Nova Reserva (Cópia de #${duplicatedFromMeta.code})`
+                        : "Nova Reserva"}
+                  </span>
                 </DialogTitle>
-                <div className="flex items-center gap-1.5 shrink-0">
+                <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                  {selectedRes && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        const targetToDup = selectedRes
+                        setResModalOpen(false)
+                        setDuplicateTarget(targetToDup)
+                      }}
+                      title="Duplicar esta reserva para outra data mantendo hóspede, flat e diária"
+                      className="h-7 px-2.5 text-[11px] font-bold rounded-lg border-indigo-300 dark:border-indigo-700 bg-indigo-50/80 hover:bg-indigo-100 dark:bg-indigo-950/50 text-indigo-800 dark:text-indigo-200 gap-1 cursor-pointer shrink-0"
+                    >
+                      <CopyPlus className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" aria-hidden="true" />
+                      <span>Duplicar</span>
+                    </Button>
+                  )}
                   {selectedRes && (
                     <Badge variant="outline" className="text-xs font-mono font-bold text-amber-700 dark:text-amber-300 border-amber-300 shrink-0">
                       Flat {selectedRes.flatNumber}
@@ -15083,6 +15526,11 @@ export default function PmsCalendar(props?: {
                               onValueChange={(v: "VIRTUAL_CARD" | "FATURADO") => {
                                 setFormB2bPaymentType(v)
                                 setFormPaymentMethod(v === "FATURADO" ? "faturado_b2b" : "vcn_b2b")
+                                if (v === "FATURADO") {
+                                  setFormIsFaturadoBoleto(true)
+                                } else if (formPaymentMethod === "faturado_b2b") {
+                                  setFormIsFaturadoBoleto(false)
+                                }
                               }}
                             >
                               <SelectTrigger className="h-8 text-xs">
@@ -15859,6 +16307,56 @@ export default function PmsCalendar(props?: {
                               checkinDate: !isFlPrimary && fl.sameDatesAsPrimary ? primaryFlat.checkinDate : fl.checkinDate,
                               checkoutDate: !isFlPrimary && fl.sameDatesAsPrimary ? primaryFlat.checkoutDate : fl.checkoutDate,
                             };
+                          })}
+                        priorPackageGuestSlots={formFlats
+                          .slice(0, idx)
+                          .flatMap((fl, priorIdx) => {
+                            if (fl.informGuestsLater) return [];
+                            const isFlPrimary = fl.uid === primaryFlat.uid;
+                            const pCin = !isFlPrimary && fl.sameDatesAsPrimary ? primaryFlat.checkinDate : fl.checkinDate;
+                            const pCout = !isFlPrimary && fl.sameDatesAsPrimary ? primaryFlat.checkoutDate : fl.checkoutDate;
+                            const matchedNum = (data.flats || []).find((f: any) => String(f.id) === String(fl.flatId))?.number;
+                            const pLabel = matchedNum ? `Flat ${matchedNum}` : `Flat #${priorIdx + 1}`;
+                            const slots: GuestSlotCandidate[] = [
+                              {
+                                flatIndex: priorIdx,
+                                flatLabel: pLabel,
+                                guestIndex: 1,
+                                name: fl.guest1.name,
+                                document: fl.guest1.cpf,
+                                phone: fl.guest1.phone,
+                                checkinDate: pCin,
+                                checkoutDate: pCout,
+                              },
+                            ];
+                            const pOcc = Number(fl.guestCount) || 1;
+                            if (pOcc >= 2 && !fl.guest2InformLater) {
+                              slots.push({
+                                flatIndex: priorIdx,
+                                flatLabel: pLabel,
+                                guestIndex: 2,
+                                name: fl.guest2.name,
+                                document: fl.guest2.cpf,
+                                phone: fl.guest2.phone,
+                                isMinor: Boolean(fl.hasMinor),
+                                checkinDate: pCin,
+                                checkoutDate: pCout,
+                              });
+                            }
+                            if (pOcc >= 3 && !fl.guest3InformLater) {
+                              slots.push({
+                                flatIndex: priorIdx,
+                                flatLabel: pLabel,
+                                guestIndex: 3,
+                                name: fl.guest3.name,
+                                document: fl.guest3.cpf,
+                                phone: fl.guest3.phone,
+                                isMinor: Boolean(fl.hasMinor),
+                                checkinDate: pCin,
+                                checkoutDate: pCout,
+                              });
+                            }
+                            return slots;
                           })}
                         crmGuests={crmGuests}
                         searchIndexedCrm={searchIndexedCrm}
@@ -17623,22 +18121,74 @@ export default function PmsCalendar(props?: {
                             </div>
                           </label>
                         )}
+                        {/* Linha 0: Escolha Explícita — Consumo Faturado (Sim vs Não) */}
+                        <div className="p-2.5 rounded-xl bg-background/95 border border-amber-300/80 dark:border-amber-800 space-y-2">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <div>
+                              <span className="font-black text-foreground text-xs block">
+                                🥤 O Consumo (Frigobar / Extras) também é faturado?
+                              </span>
+                              <span className="text-[10.5px] text-muted-foreground block">
+                                {formBoletoConsumptionMode === "not_billed"
+                                  ? "Marcado como NÃO: boleto fatura apenas Hospedagem (no check-out) e o hóspede recebe link PIX/Cartão após conferência pós-check-out."
+                                  : "Marcado como SIM: consumo entra no faturamento corporativo (emissão automática aguarda conferência pós-check-out do frigobar)."}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setFormBoletoConsumptionMode("not_billed")}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-black border transition-all cursor-pointer ${
+                                  formBoletoConsumptionMode === "not_billed"
+                                    ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                                    : "bg-background text-muted-foreground border-border hover:border-emerald-500"
+                                }`}
+                              >
+                                ✕ Não (Cobrar do Hóspede)
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (formBoletoConsumptionMode === "not_billed") {
+                                    setFormBoletoConsumptionMode("single_boleto");
+                                  }
+                                }}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-black border transition-all cursor-pointer ${
+                                  formBoletoConsumptionMode !== "not_billed"
+                                    ? "bg-amber-600 text-white border-amber-600 shadow-xs"
+                                    : "bg-background text-muted-foreground border-border hover:border-amber-500"
+                                }`}
+                              >
+                                ✓ Sim (Faturar Consumo)
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
                         {/* Linha 1: Composição (1 Boleto vs 2 Boletos), Pagador Principal e Prazo */}
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                           <div className="space-y-1">
                             <Label className="text-[11px] font-bold text-foreground">
                               Composição do Boleto (Hospedagem vs Consumo)
                             </Label>
-                            <select
-                              value={formBoletoConsumptionMode}
-                              onChange={e => setFormBoletoConsumptionMode(e.target.value as any)}
-                              className="w-full h-8 rounded-xl border border-border bg-background px-2.5 text-xs font-bold"
-                            >
-                              <option value="single_boleto">1 Boleto Unificado (Hospedagem + Consumo)</option>
-                              <option value="separate_boletos">2 Boletos Separados (1 Hospedagem + 1 Consumo)</option>
-                            </select>
+                            {formBoletoConsumptionMode === "not_billed" ? (
+                              <div className="h-8 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-2.5 flex items-center text-[11px] font-bold text-emerald-700 dark:text-emerald-300">
+                                🏨 Só Hospedagem (Consumo p/ Hóspede)
+                              </div>
+                            ) : (
+                              <select
+                                value={formBoletoConsumptionMode}
+                                onChange={e => setFormBoletoConsumptionMode(e.target.value as any)}
+                                className="w-full h-8 rounded-xl border border-border bg-background px-2.5 text-xs font-bold"
+                              >
+                                <option value="single_boleto">1 Boleto Unificado (Hospedagem + Consumo)</option>
+                                <option value="separate_boletos">2 Boletos Separados (1 Hospedagem + 1 Consumo)</option>
+                              </select>
+                            )}
                             <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold block">
-                              📌 Na NFS-e entra sempre apenas Hospedagem (Consumo é emitido pela Anserve)
+                              {formBoletoConsumptionMode === "not_billed"
+                                ? "📌 Hóspede recebe link PIX/Cartão pós-conferência"
+                                : "📌 Na NFS-e entra sempre apenas Hospedagem (Consumo é emitido pela Anserve)"}
                             </span>
                           </div>
 
@@ -20751,14 +21301,23 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                     </div>
 
                     <div className="space-y-1">
-                      <Label className="text-[11px] font-bold">Regra de Boletos (Hospedagem vs Consumo/Frigobar)</Label>
+                      <Label className="text-[11px] font-bold">Consumo (Frigobar) também é faturado?</Label>
                       <select
                         value={newCompBoletoConsumptionMode}
-                        onChange={e => setNewCompBoletoConsumptionMode(e.target.value === "separate" ? "separate" : "single")}
+                        onChange={e =>
+                          setNewCompBoletoConsumptionMode(
+                            e.target.value === "separate"
+                              ? "separate"
+                              : e.target.value === "single"
+                              ? "single"
+                              : "not_billed"
+                          )
+                        }
                         className="w-full h-8 px-2.5 text-xs rounded-xl border border-border bg-background font-semibold"
                       >
-                        <option value="single">1 Boleto Unificado (Hospedagem + Consumo juntos)</option>
-                        <option value="separate">2 Boletos Separados (1 Hospedagem + 1 Consumo)</option>
+                        <option value="not_billed">Não — Hóspede paga consumo via PIX/Cartão pós-check-out</option>
+                        <option value="single">Sim — 1 Boleto Unificado (Hospedagem + Consumo juntos)</option>
+                        <option value="separate">Sim — 2 Boletos Separados (1 Hospedagem + 1 Consumo)</option>
                       </select>
                     </div>
 
@@ -21636,6 +22195,54 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
             notifyCalendarUpdated()
             if (resModalOpen) {
               setResModalOpen(false)
+            }
+          }}
+        />
+        <DuplicateReservationModal
+          open={Boolean(duplicateTarget)}
+          onOpenChange={(open) => {
+            if (!open) setDuplicateTarget(null)
+          }}
+          sourceReservation={duplicateTarget}
+          flats={data.flats || []}
+          reservations={data.reservations || []}
+          blocks={data.blocks || []}
+          onDuplicated={async () => {
+            await fetchData(false)
+            notifyCalendarUpdated()
+          }}
+          onOpenFullEditor={(draft) => {
+            setDuplicateTarget(null)
+            handleOpenFromDuplicateDraft(draft)
+          }}
+          onOpenEditCreated={(createdRes) => {
+            setDuplicateTarget(null)
+            handleOpenEditRes(createdRes)
+          }}
+          onFocusInMap={(checkinDate, flatNumber) => {
+            setDuplicateTarget(null)
+            if (modalOnly) {
+              setLocation(`/reservas?focusDate=${encodeURIComponent(checkinDate)}&focusFlat=${encodeURIComponent(flatNumber)}`)
+              return
+            }
+            const parsed = safeParseDate(checkinDate)
+            if (parsed) {
+              setCurrentDate(parsed)
+              setPickerYear(parsed.getFullYear())
+              setTimeout(() => scrollToDate(subDays(parsed, 1), "smooth"), 120)
+            }
+            if (flatNumber) {
+              setHighlightedFlatNumber(String(flatNumber))
+              setTimeout(() => {
+                const matchedFlat = (data.flats || []).find(
+                  (f: any) => String(f.number) === String(flatNumber) || String(f.id) === String(flatNumber)
+                )
+                if (matchedFlat) {
+                  const rowEl = document.querySelector(`[data-flat-row-id="${matchedFlat.id}"]`)
+                  rowEl?.scrollIntoView({ behavior: "smooth", block: "center" })
+                }
+              }, 220)
+              setTimeout(() => setHighlightedFlatNumber(null), 4200)
             }
           }}
         />

@@ -18,6 +18,12 @@ import { compressImage } from "@/lib/image-compression"
 import { isValidBrazilianCpf } from "./agency-guest-credential"
 import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo"
 import { formatSmartPhone, formatCpfOrPassport, formatPhoneForWhatsAppCheck, isPlausibleCpfOrPassport } from "@/lib/phone-mask"
+import {
+  inspectSlotDuplicates,
+  normalizeGuestDocumentForDuplicateCheck,
+  normalizeGuestFullNameForDuplicateCheck,
+  type GuestSlotCandidate,
+} from "@/lib/duplicate-guest-guard"
 import { useStableCallback } from "@/lib/render-freeze"
 
 const toDisplayDate = (val?: string | null): string => {
@@ -350,6 +356,8 @@ export default function GuestPreCheckin() {
     identityMatches?: boolean
     canonicalGuestName?: string
     nameAutoCorrected?: boolean
+    duplicateReservationGuest?: boolean
+    duplicateGuestReason?: string | null
     mismatchReasons?: string[]
     summary?: string
   } | null>(null)
@@ -620,6 +628,101 @@ export default function GuestPreCheckin() {
   }, [birthDate])
 
   const isMinorGuest = calculatedAge !== null && calculatedAge < 18
+
+  const preCheckinOtherSlots = useMemo<GuestSlotCandidate[]>(() => {
+    const slotsByIdx = new Map<number, GuestSlotCandidate>()
+    const calcAgeIso = (val?: string | null): number | null => {
+      if (!val) return null
+      const iso = toIsoDate(val)
+      const parts = iso.split("-")
+      if (parts.length < 3) return null
+      const y = parseInt(parts[0], 10)
+      const m = parseInt(parts[1], 10) - 1
+      const d = parseInt(parts[2], 10)
+      if (isNaN(y) || isNaN(m) || isNaN(d)) return null
+      const dt = new Date(y, m, d)
+      const now = new Date()
+      let age = now.getFullYear() - dt.getFullYear()
+      const md = now.getMonth() - dt.getMonth()
+      if (md < 0 || (md === 0 && now.getDate() < dt.getDate())) age--
+      return age >= 0 ? age : null
+    }
+
+    if (Array.isArray(guestList)) {
+      for (const g of guestList) {
+        const idx = Number(g?.index) || 0
+        if (!idx || idx === Number(selectedGuestIndex)) continue
+        const gAge = calcAgeIso(g?.birthDate)
+        slotsByIdx.set(idx, {
+          flatIndex: 0,
+          guestIndex: idx,
+          name: g?.name || (idx === 1 ? reservation?.guestName : ""),
+          document: g?.cpf || g?.document || (idx === 1 ? reservation?.guestDocument : ""),
+          phone: g?.phone || (idx === 1 ? reservation?.guestPhone : ""),
+          isMinor: Boolean(g?.isMinor || (gAge !== null && gAge < 18)),
+          informLater: Boolean(g?.informLater && !g?.name && !g?.cpf && !g?.document && !g?.phone),
+        })
+      }
+    }
+
+    if (Number(selectedGuestIndex) > 1 && !slotsByIdx.has(1) && reservation) {
+      const titAge = calcAgeIso(reservation.birthDate)
+      slotsByIdx.set(1, {
+        flatIndex: 0,
+        guestIndex: 1,
+        name: reservation.guestName || "",
+        document: reservation.guestDocument || "",
+        phone: reservation.guestPhone || "",
+        isMinor: Boolean(titAge !== null && titAge < 18),
+        informLater: Boolean(reservation.guestPending || reservation.informGuestsLater),
+      })
+    }
+
+    return Array.from(slotsByIdx.values())
+  }, [guestList, selectedGuestIndex, reservation])
+
+  const preCheckinDuplicateCheck = useMemo(() => {
+    return inspectSlotDuplicates(
+      {
+        flatIndex: 0,
+        guestIndex: Number(selectedGuestIndex) || 1,
+        name: fullName,
+        document,
+        phone,
+        isMinor: isMinorGuest,
+      },
+      preCheckinOtherSlots
+    )
+  }, [selectedGuestIndex, fullName, document, phone, isMinorGuest, preCheckinOtherSlots])
+
+  const preCheckinDocAiDuplicateConflict = useMemo<string | null>(() => {
+    if (!aiDocResult) return null
+    if (aiDocResult.duplicateReservationGuest && aiDocResult.duplicateGuestReason) {
+      return aiDocResult.duplicateGuestReason
+    }
+    const extDoc = normalizeGuestDocumentForDuplicateCheck(aiDocResult.extractedCpf)
+    const extName = normalizeGuestFullNameForDuplicateCheck(
+      aiDocResult.canonicalGuestName || aiDocResult.extractedName
+    )
+    if (!extDoc && !extName) return null
+
+    for (const other of preCheckinOtherSlots) {
+      if (other.informLater) continue
+      const otherDoc = normalizeGuestDocumentForDuplicateCheck(other.document)
+      const otherName = normalizeGuestFullNameForDuplicateCheck(other.name)
+      const matchedByDoc = Boolean(extDoc && otherDoc && extDoc === otherDoc)
+      const matchedByName = Boolean(extName && otherName && extName === otherName)
+      if (matchedByDoc || matchedByName) {
+        const otherRole =
+          other.guestIndex === 1
+            ? "Hóspede Principal (Hóspede 1)"
+            : `Acompanhante (Hóspede ${other.guestIndex})`
+        const whoStr = other.name && !/^h[oó]spede/i.test(other.name) ? `${other.name} (${otherRole})` : otherRole
+        return `Este documento pertence a ${whoStr}, que já está informado nesta reserva. Por favor, anexe o documento pessoal deste hóspede.`
+      }
+    }
+    return null
+  }, [aiDocResult, preCheckinOtherSlots])
 
   const handleBirthDateInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value.replace(/\D/g, "").slice(0, 8)
@@ -1717,6 +1820,7 @@ export default function GuestPreCheckin() {
       !isEditing ||
       isReadOnlyDocument ||
       preCheckinBlockedByServer ||
+      preCheckinDuplicateCheck.hasConflict ||
       isPreReservationRecordBlocked(reservation) ||
       typeof window === "undefined"
     ) {
@@ -1821,6 +1925,7 @@ export default function GuestPreCheckin() {
     travelReason, transportMethod, estimatedArrivalTime, originCity, originState,
     destinationCity, destinationState, vehiclePlate, vehicleModel, vehicleBrand, vehicleColor,
     minorKinship, optInMarketing, acceptedHouseRules, acceptedContract, legalDeclarationAccepted, aiDocResult,
+    preCheckinDuplicateCheck.hasConflict,
     buildCurrentDraftPayload, flushPendingTextDraft, sendAutosaveToServer
   ])
 
@@ -2159,7 +2264,21 @@ export default function GuestPreCheckin() {
           setCity(data.extractedCity)
         }
         const officialDocName = (data.canonicalGuestName || data.extractedName || "").trim()
-        if (officialDocName && data.identityMatches !== false && data.nameMatches !== false && data.reservationNameMatches !== false) {
+        const extDocNorm = normalizeGuestDocumentForDuplicateCheck(data.extractedCpf)
+        const extNameNorm = normalizeGuestFullNameForDuplicateCheck(officialDocName)
+        const matchesOtherReservationSlot = Boolean(
+          data.duplicateReservationGuest ||
+          preCheckinOtherSlots.some((other) => {
+            if (other.informLater) return false
+            const oDoc = normalizeGuestDocumentForDuplicateCheck(other.document)
+            const oName = normalizeGuestFullNameForDuplicateCheck(other.name)
+            return Boolean(
+              (extDocNorm && oDoc && extDocNorm === oDoc) ||
+              (extNameNorm && oName && extNameNorm === oName)
+            )
+          })
+        )
+        if (!matchesOtherReservationSlot && officialDocName && data.identityMatches !== false && data.nameMatches !== false && data.reservationNameMatches !== false) {
           const shouldAutoUpdateName = Boolean(
             data.nameAutoCorrected ||
             !fullName ||
@@ -2175,10 +2294,10 @@ export default function GuestPreCheckin() {
             }
           }
         }
-        if (data.extractedCpf && (!document || document.trim() === "")) {
+        if (!matchesOtherReservationSlot && data.extractedCpf && (!document || document.trim() === "")) {
           setDocument(formatCpfOrPassport(data.extractedCpf))
         }
-        if (data.extractedBirthDate && (!birthDate || birthDate.trim() === "")) {
+        if (!matchesOtherReservationSlot && data.extractedBirthDate && (!birthDate || birthDate.trim() === "")) {
           setBirthDate(toIsoDate(data.extractedBirthDate))
           setBirthDateInput(toDisplayDate(data.extractedBirthDate))
         }
@@ -2313,6 +2432,16 @@ export default function GuestPreCheckin() {
   }
 
   const handleSubmit = async () => {
+    if (preCheckinDuplicateCheck.firstConflict) {
+      alert(preCheckinDuplicateCheck.firstConflict.message)
+      setStep(1)
+      return
+    }
+    if (preCheckinDocAiDuplicateConflict) {
+      alert(preCheckinDocAiDuplicateConflict)
+      setStep(2)
+      return
+    }
     if (!isGovTriagemMode && whatsappOtpInput.trim().length !== 6) {
       alert("Por favor, clique em 'Enviar Código no WhatsApp' e informe o código de 6 dígitos recebido para confirmar a assinatura.")
       return
@@ -2595,6 +2724,16 @@ export default function GuestPreCheckin() {
     )
   }
 
+  const isPreReservationBlocked = useMemo(() => {
+    if (!reservation) return false
+    const chan = String(reservation.channel || "").toLowerCase()
+    const isOtaChan = chan.includes("booking") || chan.includes("airbnb") || chan.includes("b2b") || Boolean(reservation.agencyId || reservation.b2bReservationNumber)
+    if (isOtaChan) return false
+    const st = String(reservation.status || "").toLowerCase()
+    if (st === "pre_reserva" || st === "pendente") return true
+    return false
+  }, [reservation])
+
   // ══════════════════════════════════════════════════════════════════════════════
   // MODO 0: BUSCA DE RESERVA SE NÃO HOUVER CÓDIGO
   // ══════════════════════════════════════════════════════════════════════════════
@@ -2736,16 +2875,6 @@ export default function GuestPreCheckin() {
   // ══════════════════════════════════════════════════════════════════════════════
   // MODO 0.5: PRÉ-RESERVA AGUARDANDO PAGAMENTO (CHECK-IN DIGITAL BLOQUEADO)
   // ══════════════════════════════════════════════════════════════════════════════
-  const isPreReservationBlocked = useMemo(() => {
-    if (!reservation) return false
-    const chan = String(reservation.channel || "").toLowerCase()
-    const isOtaChan = chan.includes("booking") || chan.includes("airbnb") || chan.includes("b2b") || Boolean(reservation.agencyId || reservation.b2bReservationNumber)
-    if (isOtaChan) return false
-    const st = String(reservation.status || "").toLowerCase()
-    if (st === "pre_reserva" || st === "pendente") return true
-    return false
-  }, [reservation])
-
   if (reservation && isPreReservationBlocked) {
     const portalPath = `/minha-reserva/${encodeURIComponent(reservation.code || code)}`
     return (
@@ -3961,15 +4090,71 @@ export default function GuestPreCheckin() {
               )}
 
               <div className="space-y-3 sm:space-y-4">
+                {preCheckinDuplicateCheck.firstConflict && (
+                  <div role="alert" className="p-3.5 sm:p-4 rounded-2xl bg-rose-50 border-2 border-rose-300 text-rose-950 space-y-2.5 shadow-2xs animate-in fade-in">
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <span className="font-bold text-xs sm:text-sm text-rose-900 block">
+                          {preCheckinDuplicateCheck.firstConflict.title}
+                        </span>
+                        <p className="text-xs text-rose-800 leading-relaxed">
+                          {preCheckinDuplicateCheck.firstConflict.message}
+                          {preCheckinDuplicateCheck.firstConflict.matchedField === "phone" && !birthDate && selectedGuestIndex > 1
+                            ? " (Se o acompanhante for menor de 18 anos sem celular próprio, informe primeiro a data de nascimento dele abaixo)."
+                            : ""}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2 pl-7">
+                      {selectedGuestIndex > 1 && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleSwitchGuest(1)}
+                          className="h-8 px-3 text-xs font-bold border-rose-300 bg-white text-rose-900 hover:bg-rose-100 rounded-xl"
+                        >
+                          ← Voltar para a ficha do Hóspede Principal
+                        </Button>
+                      )}
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setFullName("")
+                          setDocument("")
+                          setPhone("")
+                          setEmail("")
+                        }}
+                        className="h-8 px-3 text-xs font-bold border-slate-300 bg-white text-slate-800 hover:bg-slate-100 rounded-xl"
+                      >
+                        Limpar campos para preencher outro hóspede
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
                 <div className="space-y-1.5">
                   <Label className="text-xs font-bold text-slate-700">Nome Completo *</Label>
                   <Input 
                     value={fullName} 
                     onChange={e => setFullName(e.target.value)} 
+                    aria-invalid={preCheckinDuplicateCheck.byField.name ? "true" : undefined}
                     required 
                     placeholder="Seu nome completo como no documento" 
-                    className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-medium rounded-xl h-11 focus-visible:ring-sky-500" 
+                    className={`bg-white text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-medium rounded-xl h-11 ${
+                      preCheckinDuplicateCheck.byField.name
+                        ? "border-rose-500 ring-2 ring-rose-500/25 focus-visible:ring-rose-500"
+                        : "border-slate-200 focus-visible:ring-sky-500"
+                    }`} 
                   />
+                  {preCheckinDuplicateCheck.byField.name && (
+                    <p className="text-[11px] font-semibold text-rose-600">
+                      {preCheckinDuplicateCheck.byField.name.message}
+                    </p>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -3978,10 +4163,20 @@ export default function GuestPreCheckin() {
                     <Input 
                       value={document} 
                       onChange={e => setDocument(formatCpfOrPassport(e.target.value))} 
+                      aria-invalid={preCheckinDuplicateCheck.byField.document ? "true" : undefined}
                       required 
                       placeholder="000.000.000-00 ou Passaporte" 
-                      className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-mono font-medium rounded-xl h-11 focus-visible:ring-sky-500" 
+                      className={`bg-white text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-mono font-medium rounded-xl h-11 ${
+                        preCheckinDuplicateCheck.byField.document
+                          ? "border-rose-500 ring-2 ring-rose-500/25 focus-visible:ring-rose-500"
+                          : "border-slate-200 focus-visible:ring-sky-500"
+                      }`} 
                     />
+                    {preCheckinDuplicateCheck.byField.document && (
+                      <p className="text-[11px] font-semibold text-rose-600">
+                        {preCheckinDuplicateCheck.byField.document.message}
+                      </p>
+                    )}
                   </div>
                   <div className="space-y-1.5">
                     <div className="flex flex-wrap items-center justify-between gap-1">
@@ -4137,9 +4332,19 @@ export default function GuestPreCheckin() {
                       inputMode="tel"
                       value={phone} 
                       onChange={e => setPhone(formatSmartPhone(e.target.value))} 
+                      aria-invalid={preCheckinDuplicateCheck.byField.phone ? "true" : undefined}
                       placeholder="(22) 99999-9999" 
-                      className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-medium rounded-xl h-11 focus-visible:ring-sky-500" 
+                      className={`bg-white text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-medium rounded-xl h-11 ${
+                        preCheckinDuplicateCheck.byField.phone
+                          ? "border-rose-500 ring-2 ring-rose-500/25 focus-visible:ring-rose-500"
+                          : "border-slate-200 focus-visible:ring-sky-500"
+                      }`} 
                     />
+                    {preCheckinDuplicateCheck.byField.phone && (
+                      <p className="text-[11px] font-semibold text-rose-600">
+                        {preCheckinDuplicateCheck.byField.phone.message}
+                      </p>
+                    )}
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-xs font-bold text-slate-700">Gênero</Label>
@@ -4472,6 +4677,10 @@ export default function GuestPreCheckin() {
 
                 <Button 
                   onClick={async () => {
+                    if (preCheckinDuplicateCheck.firstConflict) {
+                      alert(preCheckinDuplicateCheck.firstConflict.message)
+                      return
+                    }
                     if (!fullName.trim() || !document.trim() || !phone.trim() || !email.trim()) {
                       alert("Por favor, preencha todos os campos obrigatórios: Nome Completo, CPF ou Passaporte, Telefone e E-mail.")
                       return
@@ -4707,6 +4916,31 @@ export default function GuestPreCheckin() {
                               </div>
                             )}
 
+                            {preCheckinDocAiDuplicateConflict && (
+                              <div role="alert" className="p-3.5 bg-rose-50 border-2 border-rose-400 rounded-xl space-y-2 text-xs text-rose-950 shadow-2xs">
+                                <div className="font-bold flex items-center gap-1.5 text-rose-800">
+                                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                                  <span>🚫 Documento de Outro Hóspede da Reserva</span>
+                                </div>
+                                <p className="text-[11px] text-rose-900 font-medium leading-relaxed">
+                                  {preCheckinDocAiDuplicateConflict}
+                                </p>
+                                {selectedGuestIndex > 1 && (
+                                  <div className="pt-1">
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => handleSwitchGuest(1)}
+                                      className="h-7 px-2.5 text-[11px] font-bold border-rose-300 bg-white text-rose-900 hover:bg-rose-100 rounded-lg"
+                                    >
+                                      ← Voltar para a ficha do Hóspede Principal
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
                             {(aiDocResult.identityMatches === false ||
                               aiDocResult.nameMatches === false ||
                               aiDocResult.reservationNameMatches === false ||
@@ -4923,6 +5157,10 @@ export default function GuestPreCheckin() {
                     }
                     if (aiInspectingDoc) {
                       alert("Aguarde alguns instantes enquanto o robô pericial conclui a conferência do seu documento.")
+                      return
+                    }
+                    if (preCheckinDocAiDuplicateConflict) {
+                      alert(`⚠️ Documento Duplicado:\n\n${preCheckinDocAiDuplicateConflict}`)
                       return
                     }
                     if (aiDocResult?.isOfficialDocument === false) {

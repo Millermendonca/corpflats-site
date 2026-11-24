@@ -6137,6 +6137,22 @@ export function ingestB2bVoucherIntoDb(
       b2bNetRate,
       b2bNetAmount,
       b2bPaymentType: parsed.b2bPaymentType || "VIRTUAL_CARD",
+      isFaturadoBoleto: parsed.b2bPaymentType === "FATURADO",
+      ...(() => {
+        const expTxt = `${parsed.b2bAuthorizedExpenses || ""} ${parsed.invoicingInstructions || ""}`;
+        const negatesExtras = /\b(?:somente\s+di[aá]rias|apenas\s+di[aá]rias|n[aã]o\s+inclui\s+(?:extras?|consumo|frigobar)|extras?\s+por\s+conta\s+do\s+h[oó]spede|sem\s+(?:extras?|consumo|frigobar))\b/i.test(expTxt);
+        const authorizesExtras = !negatesExtras && /\b(?:di[aá]rias?\s*(?:\+|e|com)\s*(?:extras?|consumo|frigobar|despesas)|inclui(?:r|ndo)?\s*(?:extras?|consumo|frigobar)|todas?\s+as\s+despesas|extras?\s+faturad[oa]s?|consumo\s+faturad[oa])\b/i.test(expTxt);
+        const crmDefault = company?.defaultBoletoConsumptionMode || agency?.defaultBoletoConsumptionMode || "not_billed";
+        const resolvedConsMode = parsed.b2bPaymentType !== "FATURADO"
+          ? "not_billed"
+          : authorizesExtras
+          ? (crmDefault === "separate" || crmDefault === "separate_boletos" ? "separate" : "single")
+          : (crmDefault === "separate" || crmDefault === "separate_boletos" ? "separate" : (crmDefault === "single" || crmDefault === "single_boleto" ? "single" : "not_billed"));
+        return {
+          boletoConsumptionMode: resolvedConsMode,
+          isConsumptionFaturado: Boolean(parsed.b2bPaymentType === "FATURADO" && resolvedConsMode !== "not_billed")
+        };
+      })(),
       b2bCardBrand: parsed.b2bCardBrand || "",
       b2bCardMasked: parsed.b2bCardMasked || "",
       b2bVcnToken: parsed.b2bVcnToken || "",
@@ -6311,6 +6327,20 @@ export function ingestB2bVoucherIntoDb(
         : !reservation.paymentMethod || reservation.paymentMethod === "pix"
           ? "vcn_b2b"
           : reservation.paymentMethod;
+    if (reservation.b2bPaymentType === "FATURADO") {
+      reservation.isFaturadoBoleto = true;
+      if (!reservation._manualEditProtected && !reservation.boletoConsumptionMode) {
+        const expTxt = `${parsed.b2bAuthorizedExpenses || reservation.b2bAuthorizedExpenses || ""} ${parsed.invoicingInstructions || reservation.invoicingInstructions || ""}`;
+        const negatesExtras = /\b(?:somente\s+di[aá]rias|apenas\s+di[aá]rias|n[aã]o\s+inclui\s+(?:extras?|consumo|frigobar)|extras?\s+por\s+conta\s+do\s+h[oó]spede|sem\s+(?:extras?|consumo|frigobar))\b/i.test(expTxt);
+        const authorizesExtras = !negatesExtras && /\b(?:di[aá]rias?\s*(?:\+|e|com)\s*(?:extras?|consumo|frigobar|despesas)|inclui(?:r|ndo)?\s*(?:extras?|consumo|frigobar)|todas?\s+as\s+despesas|extras?\s+faturad[oa]s?|consumo\s+faturad[oa])\b/i.test(expTxt);
+        const crmDefault = company?.defaultBoletoConsumptionMode || agency?.defaultBoletoConsumptionMode || "not_billed";
+        const resolvedConsMode = authorizesExtras
+          ? (crmDefault === "separate" || crmDefault === "separate_boletos" ? "separate" : "single")
+          : (crmDefault === "separate" || crmDefault === "separate_boletos" ? "separate" : (crmDefault === "single" || crmDefault === "single_boleto" ? "single" : "not_billed"));
+        reservation.boletoConsumptionMode = resolvedConsMode;
+        reservation.isConsumptionFaturado = resolvedConsMode !== "not_billed";
+      }
+    }
 
     if (parsed.b2bCardMasked) {
       reservation.b2bCardMasked = parsed.b2bCardMasked;

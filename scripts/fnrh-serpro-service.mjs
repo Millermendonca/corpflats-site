@@ -589,13 +589,21 @@ export function getSerproConfig(settings = null) {
   return fnrhSerproService.resolveConfig(settings);
 }
 
+function normalizeSerproFallbackHostBase(rawBase) {
+  const s = String(rawBase || process.env.SERVER_BASE_URL || "https://corpflats.com.br")
+    .trim()
+    .replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br")
+    .replace(/\/+$/, "");
+  return s.replace(/^http:\/\/(?!localhost(?::\d+|\/|$)|127\.0\.0\.1(?::\d+|\/|$)|0\.0\.0\.0(?::\d+|\/|$)|\[::1\])/i, "https://");
+}
+
 /**
  * Resolução de URL de check-in em nível de serviço independente
  */
 export async function getCheckinUrl(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
   const activeSettings = dbInstance?.settings || dbInstance || {};
   const currentProvider = activeSettings.checkinProvider || "proprio";
-  const hostBase = (baseUrl || process.env.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/$/, "");
+  const hostBase = normalizeSerproFallbackHostBase(baseUrl);
   const safeGuestIndex = Number(guestIndex) || 1;
   const resCode = reservation?.code || reservation?.id || "";
   const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}?guest=${safeGuestIndex}`;
@@ -630,7 +638,7 @@ export async function getCheckinUrl(reservation, guestIndex = 1, baseUrl = "", d
 export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
   const activeSettings = dbInstance?.settings || dbInstance || {};
   const currentProvider = activeSettings.checkinProvider || "proprio";
-  const hostBase = (baseUrl || process.env.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/$/, "");
+  const hostBase = normalizeSerproFallbackHostBase(baseUrl);
   const safeGuestIndex = Number(guestIndex) || 1;
   const resCode = reservation?.code || reservation?.id || "";
   const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}?guest=${safeGuestIndex}`;

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react"
+import { useState, useEffect, useRef, useMemo, Suspense, lazy } from "react"
 import { useLocation } from "wouter"
 import { useGetMe } from "@workspace/api-client-react"
 import { compressImage } from "@/lib/image-compression"
@@ -20,16 +20,20 @@ import {
   FileText, Building2, Building, ExternalLink, Download, Send, MapPin, 
   CheckCircle2, UserCheck, Eye, Sparkles, RefreshCw, Trash2, Heart, Award, 
   Car, Coffee, Filter, ZoomIn, Camera, PenTool, Maximize2, AlertTriangle,
-  BarChart3, TrendingUp, Target, Lock, Globe
+  BarChart3, TrendingUp, Target, Lock, Globe, CopyPlus
 } from "lucide-react"
 
 import { AccessDenied } from "@/components/access-denied"
 import { PdfViewerDialog } from "@/components/pdf-preview"
+import { DuplicateReservationModal } from "@/components/duplicate-reservation-modal"
+import type { DuplicateHandoffDraft } from "@/lib/duplicate-reservation"
 import { useToast } from "@/hooks/use-toast"
 import { useBackLayer, useBackTabState } from "@/lib/back-navigation"
 import { sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildDirectWaWebUrl } from "@/hooks/use-quick-messages"
 import { formatSmartPhone } from "@/lib/phone-mask"
 import { parseEmailList, validateEmailList, formatEmailList } from "@/lib/email-utils"
+
+const PmsCalendarLazy = lazy(() => import("@/pages/pms-calendar"))
 
 export default function CrmGuests() {
   const [, setLocation] = useLocation()
@@ -68,6 +72,8 @@ export default function CrmGuests() {
   const [detailModalOpen, setDetailModalOpen] = useState(false)
   const [activeGuest, setActiveGuest] = useState<any | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
+  const [duplicateTarget, setDuplicateTarget] = useState<any | null>(null)
+  const [duplicateFullDraft, setDuplicateFullDraft] = useState<DuplicateHandoffDraft | null>(null)
 
   // Modal Create / Edit Guest
   const [guestModalOpen, setGuestModalOpen] = useState(false)
@@ -257,7 +263,7 @@ export default function CrmGuests() {
 
   // ── Faturamento a Prazo (Boleto Inter), Responsável Financeiro & Destinatários Padrão ──
   const [formBoletoTermDays, setFormBoletoTermDays] = useState("15")
-  const [formBoletoConsumptionMode, setFormBoletoConsumptionMode] = useState<"single" | "separate">("single")
+  const [formBoletoConsumptionMode, setFormBoletoConsumptionMode] = useState<"not_billed" | "single" | "separate">("not_billed")
   const [formFinRespName, setFormFinRespName] = useState("")
   const [formFinRespEmail, setFormFinRespEmail] = useState("")
   const [formFinRespPhone, setFormFinRespPhone] = useState("")
@@ -267,7 +273,7 @@ export default function CrmGuests() {
   const [formRecFinResp, setFormRecFinResp] = useState(true)
 
   const [compBoletoTermDays, setCompBoletoTermDays] = useState("28")
-  const [compBoletoConsumptionMode, setCompBoletoConsumptionMode] = useState<"single" | "separate">("single")
+  const [compBoletoConsumptionMode, setCompBoletoConsumptionMode] = useState<"not_billed" | "single" | "separate">("not_billed")
   const [compFinRespName, setCompFinRespName] = useState("")
   const [compFinRespEmail, setCompFinRespEmail] = useState("")
   const [compFinRespPhone, setCompFinRespPhone] = useState("")
@@ -277,7 +283,7 @@ export default function CrmGuests() {
   const [compRecFinResp, setCompRecFinResp] = useState(true)
 
   const [agencyBoletoTermDays, setAgencyBoletoTermDays] = useState("15")
-  const [agencyBoletoConsumptionMode, setAgencyBoletoConsumptionMode] = useState<"single" | "separate">("single")
+  const [agencyBoletoConsumptionMode, setAgencyBoletoConsumptionMode] = useState<"not_billed" | "single" | "separate">("not_billed")
   const [agencyFinRespName, setAgencyFinRespName] = useState("")
   const [agencyFinRespEmail, setAgencyFinRespEmail] = useState("")
   const [agencyFinRespPhone, setAgencyFinRespPhone] = useState("")
@@ -701,7 +707,7 @@ export default function CrmGuests() {
       breakfastNotes: ""
     })
     setFormBoletoTermDays("15")
-    setFormBoletoConsumptionMode("single")
+    setFormBoletoConsumptionMode("not_billed")
     setFormFinRespName("")
     setFormFinRespEmail("")
     setFormFinRespPhone("")
@@ -756,7 +762,13 @@ export default function CrmGuests() {
       breakfastNotes: g.preferences?.breakfastNotes || ""
     })
     setFormBoletoTermDays(String(g.defaultBoletoTermDays ?? 15))
-    setFormBoletoConsumptionMode(g.defaultBoletoConsumptionMode === "separate" ? "separate" : "single")
+    setFormBoletoConsumptionMode(
+      g.defaultBoletoConsumptionMode === "not_billed"
+        ? "not_billed"
+        : g.defaultBoletoConsumptionMode === "separate" || g.defaultBoletoConsumptionMode === "separate_boletos"
+        ? "separate"
+        : "single"
+    )
     const fr = g.financialResponsible || {}
     setFormFinRespName(fr.name || "")
     const rawFrEmail = fr.email || g.financialResponsibleEmail || ""
@@ -892,7 +904,7 @@ export default function CrmGuests() {
     setCompState("RJ")
     setCompIbgeCode("3301009")
     setCompBoletoTermDays("28")
-    setCompBoletoConsumptionMode("single")
+    setCompBoletoConsumptionMode("not_billed")
     setCompConsumptionSamePayer(true)
     setCompConsumptionPayerType("guest")
     setCompConsumptionTermDays("15")
@@ -932,7 +944,13 @@ export default function CrmGuests() {
     setCompState(c.state || c.uf || c.estado || "RJ")
     setCompIbgeCode(c.ibgeCode || c.codigoMunicipio || c.codigoIbge || "3301009")
     setCompBoletoTermDays(String(c.defaultBoletoTermDays ?? 28))
-    setCompBoletoConsumptionMode(c.defaultBoletoConsumptionMode === "separate" ? "separate" : "single")
+    setCompBoletoConsumptionMode(
+      c.defaultBoletoConsumptionMode === "not_billed"
+        ? "not_billed"
+        : c.defaultBoletoConsumptionMode === "separate" || c.defaultBoletoConsumptionMode === "separate_boletos"
+        ? "separate"
+        : "single"
+    )
     setCompConsumptionSamePayer(c.defaultConsumptionSamePayerAndDue !== false)
     setCompConsumptionPayerType(c.defaultConsumptionPayerType === "company" ? "company" : "guest")
     setCompConsumptionTermDays(String(c.defaultConsumptionTermDays ?? 15))
@@ -1150,7 +1168,7 @@ export default function CrmGuests() {
     setAgencyPosUnits([{ name: "Corporativo Nacional", email: "", phone: "" }])
     setAgencyAgents([])
     setAgencyBoletoTermDays("15")
-    setAgencyBoletoConsumptionMode("single")
+    setAgencyBoletoConsumptionMode("not_billed")
     setAgencyFinRespName("")
     setAgencyFinRespEmail("")
     setAgencyFinRespPhone("")
@@ -1188,7 +1206,13 @@ export default function CrmGuests() {
     setAgencyPosUnits(Array.isArray(ag.posUnits) ? ag.posUnits.map((u: any) => ({ name: u.name || "", email: u.email || "", phone: u.phone || "" })) : [])
     setAgencyAgents(Array.isArray(ag.agents) ? ag.agents.map((a: any) => ({ name: a.name || "", email: a.email || "", phone: a.phone || "", posUnit: a.posUnit || "" })) : [])
     setAgencyBoletoTermDays(String(ag.defaultBoletoTermDays ?? 15))
-    setAgencyBoletoConsumptionMode(ag.defaultBoletoConsumptionMode === "separate" ? "separate" : "single")
+    setAgencyBoletoConsumptionMode(
+      ag.defaultBoletoConsumptionMode === "not_billed"
+        ? "not_billed"
+        : ag.defaultBoletoConsumptionMode === "separate" || ag.defaultBoletoConsumptionMode === "separate_boletos"
+        ? "separate"
+        : "single"
+    )
     const fr = ag.financialResponsible || {}
     setAgencyFinRespName(fr.name || "")
     const rawAgFrEmail = fr.email || ag.financialResponsibleEmail || ""
@@ -2090,7 +2114,11 @@ export default function CrmGuests() {
                               {hasBill ? (
                                 <Badge className="text-[10px] font-bold bg-indigo-600 text-white">
                                   🏦 Faturado • {c.defaultBoletoTermDays ? `${c.defaultBoletoTermDays} dias` : (c.billingTerms || "28 dias")}
-                                  {c.defaultBoletoConsumptionMode === "separate" ? " (2 Boletos)" : ""}
+                                  {c.defaultBoletoConsumptionMode === "not_billed"
+                                    ? " (Só Hosp.)"
+                                    : c.defaultBoletoConsumptionMode === "separate"
+                                    ? " (2 Boletos)"
+                                    : ""}
                                 </Badge>
                               ) : (
                                 <Badge variant="secondary" className="text-[10px] font-semibold text-muted-foreground">
@@ -3074,7 +3102,28 @@ export default function CrmGuests() {
                               <Badge className="text-[9px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">FNHR OK</Badge>
                             )}
                           </div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setDuplicateTarget({
+                                  ...r,
+                                  guestId: r.guestId ?? activeGuest?.id,
+                                  guestName: r.guestName || activeGuest?.fullName || activeGuest?.name,
+                                  guestPhone: r.guestPhone || activeGuest?.phone,
+                                  guestEmail: r.guestEmail || activeGuest?.email,
+                                  guestDocument: r.guestDocument || activeGuest?.documentNumber || activeGuest?.document,
+                                })
+                              }}
+                              aria-label={`Duplicar reserva ${r.code || r.id}`}
+                              title="Duplicar esta reserva para outra data"
+                              className="h-6 px-2 text-[10px] font-bold rounded-lg border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 gap-1 cursor-pointer"
+                            >
+                              <CopyPlus className="w-3 h-3" aria-hidden="true" />
+                              <span>Duplicar</span>
+                            </Button>
                             {r.status === "expirada" && (r.code || r.id) && (
                               <Button
                                 type="button"
@@ -3494,14 +3543,23 @@ export default function CrmGuests() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-[11px] font-semibold">Padrão de Boletos no Check-out</Label>
+                    <Label className="text-[11px] font-semibold">Consumo (Frigobar) em Reserva Faturada</Label>
                     <select
                       value={formBoletoConsumptionMode}
-                      onChange={e => setFormBoletoConsumptionMode(e.target.value === "separate" ? "separate" : "single")}
+                      onChange={e =>
+                        setFormBoletoConsumptionMode(
+                          e.target.value === "separate"
+                            ? "separate"
+                            : e.target.value === "single"
+                            ? "single"
+                            : "not_billed"
+                        )
+                      }
                       className="w-full h-8 px-2 text-xs rounded-xl border border-border bg-background font-semibold"
                     >
-                      <option value="single">1 Boleto Unificado (Hosp + Consumo)</option>
-                      <option value="separate">2 Boletos Separados (1 Hosp + 1 Consumo)</option>
+                      <option value="not_billed">Não faturar (Hóspede paga via PIX/Cartão)</option>
+                      <option value="single">Sim — 1 Boleto Unificado (Hosp + Consumo)</option>
+                      <option value="separate">Sim — 2 Boletos Separados (1 Hosp + 1 Consumo)</option>
                     </select>
                   </div>
                 </div>
@@ -3865,14 +3923,23 @@ export default function CrmGuests() {
                     </div>
 
                     <div className="space-y-1">
-                      <Label className="text-[11px] font-semibold">Padrão de Boletos no Check-out (Hospedagem vs Consumo)</Label>
+                      <Label className="text-[11px] font-semibold">Consumo (Frigobar) também é faturado?</Label>
                       <select
                         value={compBoletoConsumptionMode}
-                        onChange={e => setCompBoletoConsumptionMode(e.target.value === "separate" ? "separate" : "single")}
+                        onChange={e =>
+                          setCompBoletoConsumptionMode(
+                            e.target.value === "separate"
+                              ? "separate"
+                              : e.target.value === "single"
+                              ? "single"
+                              : "not_billed"
+                          )
+                        }
                         className="w-full h-8 px-2 text-xs rounded-xl border border-border bg-background font-semibold"
                       >
-                        <option value="single">1 Boleto Unificado (Hospedagem + Consumo juntos)</option>
-                        <option value="separate">2 Boletos Separados (1 Hospedagem + 1 Consumo)</option>
+                        <option value="not_billed">Não — Hóspede paga consumo via PIX/Cartão pós-check-out</option>
+                        <option value="single">Sim — 1 Boleto Unificado (Hospedagem + Consumo juntos)</option>
+                        <option value="separate">Sim — 2 Boletos Separados (1 Hospedagem + 1 Consumo)</option>
                       </select>
                     </div>
 
@@ -4070,14 +4137,23 @@ export default function CrmGuests() {
                     <Input type="number" value={agencyBoletoTermDays} onChange={e => setAgencyBoletoTermDays(e.target.value)} className="h-8 text-xs rounded-xl font-mono" />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-[11px] font-semibold">Padrão de Boletos no Check-out</Label>
+                    <Label className="text-[11px] font-semibold">Consumo (Frigobar) também é faturado?</Label>
                     <select
                       value={agencyBoletoConsumptionMode}
-                      onChange={e => setAgencyBoletoConsumptionMode(e.target.value === "separate" ? "separate" : "single")}
+                      onChange={e =>
+                        setAgencyBoletoConsumptionMode(
+                          e.target.value === "separate"
+                            ? "separate"
+                            : e.target.value === "single"
+                            ? "single"
+                            : "not_billed"
+                        )
+                      }
                       className="w-full h-8 px-2 text-xs rounded-xl border border-border bg-background font-semibold"
                     >
-                      <option value="single">1 Boleto Unificado (Hosp + Consumo)</option>
-                      <option value="separate">2 Boletos Separados (1 Hosp + 1 Consumo)</option>
+                      <option value="not_billed">Não faturar (Hóspede paga via PIX/Cartão)</option>
+                      <option value="single">Sim — 1 Boleto Unificado (Hosp + Consumo)</option>
+                      <option value="separate">Sim — 2 Boletos Separados (1 Hosp + 1 Consumo)</option>
                     </select>
                   </div>
                 </div>
@@ -5465,6 +5541,63 @@ export default function CrmGuests() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <DuplicateReservationModal
+          open={Boolean(duplicateTarget)}
+          onOpenChange={(open) => {
+            if (!open) setDuplicateTarget(null)
+          }}
+          sourceReservation={duplicateTarget}
+          onDuplicated={async () => {
+            fetchGuests()
+            if (activeGuest?.id) {
+              try {
+                const res = await fetch(`/api/pms/guests/${activeGuest.id}`, { credentials: "include" })
+                if (res.ok) {
+                  const updated = await res.json()
+                  setActiveGuest(updated)
+                }
+              } catch {}
+            }
+          }}
+          onOpenFullEditor={(draft) => {
+            setDuplicateTarget(null)
+            setDetailModalOpen(false)
+            setDuplicateFullDraft(draft)
+          }}
+          onOpenEditCreated={(createdRes) => {
+            setDuplicateTarget(null)
+            setDetailModalOpen(false)
+            setLocation(`/reservas?editCode=${encodeURIComponent(createdRes.code || createdRes.id)}`)
+          }}
+          onFocusInMap={(checkinDate, flatNumber) => {
+            setDuplicateTarget(null)
+            setDetailModalOpen(false)
+            setLocation(`/reservas?focusDate=${encodeURIComponent(checkinDate)}&focusFlat=${encodeURIComponent(flatNumber)}`)
+          }}
+        />
+
+        {duplicateFullDraft && (
+          <Suspense fallback={null}>
+            <PmsCalendarLazy
+              modalOnly
+              duplicateDraft={duplicateFullDraft}
+              onModalClosed={async () => {
+                setDuplicateFullDraft(null)
+                fetchGuests()
+                if (activeGuest?.id) {
+                  try {
+                    const res = await fetch(`/api/pms/guests/${activeGuest.id}`, { credentials: "include" })
+                    if (res.ok) {
+                      const updated = await res.json()
+                      setActiveGuest(updated)
+                    }
+                  } catch {}
+                }
+              }}
+            />
+          </Suspense>
+        )}
       </div>
     </Shell>
   )

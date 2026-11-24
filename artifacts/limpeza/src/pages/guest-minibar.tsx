@@ -221,6 +221,7 @@ export default function GuestMinibar() {
   // Novo Modo Operacional: Extrato Diário Lançado pela Repositora + Trava de Pagamento Pré-Checkout
   const [isCheckedOut, setIsCheckedOut] = useState<boolean>(false);
   const [hasFinalCheckoutInspection, setHasFinalCheckoutInspection] = useState<boolean>(false);
+  const [isConsumptionFaturado, setIsConsumptionFaturado] = useState<boolean>(false);
   const [, setCheckoutTime] = useState<string>("");
   const [dailyLaunches, setDailyLaunches] = useState<DailyLaunchGroup[]>([]);
   const [consumedCourtesyItems, setConsumedCourtesyItems] = useState<any[]>([]);
@@ -366,10 +367,12 @@ export default function GuestMinibar() {
   const applyStatementData = (data: any) => {
     const checkedOutFlag = Boolean(data.isCheckedOut);
     const finalInspFlag = Boolean(data.hasFinalCheckoutInspection);
+    const consFaturadoFlag = Boolean(data.isConsumptionFaturado ?? data.statement?.isConsumptionFaturado);
     setIsCheckedOut(checkedOutFlag);
     setHasFinalCheckoutInspection(finalInspFlag);
+    setIsConsumptionFaturado(consFaturadoFlag);
     setCheckoutTime(data.checkoutTime || "");
-    if (!(checkedOutFlag && finalInspFlag)) {
+    if (!(checkedOutFlag && finalInspFlag) || consFaturadoFlag) {
       setStep((prev) => (prev === "checkout" ? "catalog" : prev));
     }
     const launches: DailyLaunchGroup[] = Array.isArray(data.dailyLaunches) ? data.dailyLaunches : [];
@@ -1053,7 +1056,7 @@ export default function GuestMinibar() {
 
   // Iniciar pagamento direto da parte de um hóspede específico no card de divisão
   const handleStartPayGuestShare = (guestIndex: number) => {
-    if (!isCheckedOut || !hasFinalCheckoutInspection) return;
+    if (isConsumptionFaturado || !isCheckedOut || !hasFinalCheckoutInspection) return;
     const slot = reservationGuests.find((g) => g.index === guestIndex);
     if (slot) {
       handleSelectConsumerGuest(slot);
@@ -1068,6 +1071,10 @@ export default function GuestMinibar() {
 
   // Submissão do Pagamento no Checkout
   const handleCheckoutSubmit = async () => {
+    if (isConsumptionFaturado) {
+      setOrderError("O consumo desta estadia está configurado como faturado junto à reserva/empresa.");
+      return;
+    }
     if (!isCheckedOut || !hasFinalCheckoutInspection) {
       setOrderError("O pagamento fica disponível somente após o check-out e a conferência de consumo pós check-out.");
       return;
@@ -1291,7 +1298,7 @@ export default function GuestMinibar() {
   // 4. TELA PRINCIPAL: EXTRATO DE CONSUMO POR DIA + PAGAMENTO APÓS CONFERÊNCIA PÓS CHECK-OUT
   // ─────────────────────────────────────────────────────────────────────────────
   if (step === "catalog") {
-    const isPaymentReleased = Boolean(isCheckedOut && hasFinalCheckoutInspection);
+    const isPaymentReleased = Boolean(!isConsumptionFaturado && isCheckedOut && hasFinalCheckoutInspection);
     const canPayNow = isPaymentReleased && pendingBalance > 0 && paymentSelectionSummary.amountToPay > 0;
     const sharesList: any[] = Array.isArray(splitBreakdown?.shares) ? splitBreakdown.shares : [];
 
@@ -1310,12 +1317,16 @@ export default function GuestMinibar() {
                   <Badge
                     variant="outline"
                     className={
-                      isPaymentReleased
+                      isConsumptionFaturado
+                        ? "bg-indigo-950/70 text-indigo-300 border-indigo-600/80 text-[10px] font-bold"
+                        : isPaymentReleased
                         ? "bg-emerald-950/70 text-emerald-300 border-emerald-700/80 text-[10px] font-bold"
                         : "bg-cyan-950/60 text-cyan-300 border-cyan-800/80 text-[10px] font-bold"
                     }
                   >
-                    {isPaymentReleased
+                    {isConsumptionFaturado
+                      ? "🏢 Consumo Faturado"
+                      : isPaymentReleased
                       ? "✓ Conferência Finalizada"
                       : `Reserva ${reservation?.reservationCode || ""}`}
                   </Badge>
@@ -1466,7 +1477,14 @@ export default function GuestMinibar() {
                 {formatBRL(totalLaunchedAmount)}
               </strong>
               <span className="text-[11px] text-slate-400 flex items-center gap-1.5 pt-0.5">
-                {isPaymentReleased ? (
+                {isConsumptionFaturado ? (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                    <span className="text-indigo-300 font-semibold">
+                      Consumo faturado junto à reserva/empresa (sem cobrança individual no PIX/Cartão)
+                    </span>
+                  </>
+                ) : isPaymentReleased ? (
                   <>
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                     <span className="text-emerald-300 font-semibold">
@@ -2392,18 +2410,29 @@ export default function GuestMinibar() {
           <div className="max-w-xl mx-auto flex items-center justify-between gap-3">
             <div>
               <span className="text-[11px] text-slate-400 block font-medium">
-                {!isPaymentReleased
+                {isConsumptionFaturado
+                  ? "🏢 Modalidade Faturada na Reserva"
+                  : !isPaymentReleased
                   ? "🔒 Pagamento após conferência pós check-out"
                   : pendingBalance <= 0
                   ? "Tudo quitado nesta estadia"
                   : `Total a pagar (${activeConsumerGuest.firstName})`}
               </span>
               <div className="text-lg sm:text-xl font-black text-cyan-400">
-                {formatBRL(pendingBalance > 0 ? paymentSelectionSummary.amountToPay : 0)}
+                {formatBRL(isConsumptionFaturado ? totalLaunchedAmount : (pendingBalance > 0 ? paymentSelectionSummary.amountToPay : 0))}
               </div>
             </div>
 
-            {!isPaymentReleased ? (
+            {isConsumptionFaturado ? (
+              <Button
+                type="button"
+                disabled
+                className="h-12 px-4 sm:px-5 rounded-2xl font-bold text-xs bg-indigo-950/70 text-indigo-300 border border-indigo-500/40 cursor-not-allowed flex items-center gap-2 opacity-95"
+              >
+                <CheckCircle2 className="w-4 h-4 text-indigo-400 shrink-0" />
+                <span>Consumo Faturado</span>
+              </Button>
+            ) : !isPaymentReleased ? (
               <Button
                 type="button"
                 disabled

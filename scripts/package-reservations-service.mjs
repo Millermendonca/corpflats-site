@@ -50,6 +50,137 @@ function phonesEndMatch(phoneA, phoneB) {
   return a.endsWith(b.slice(-8)) || b.endsWith(a.slice(-8));
 }
 
+function normalizePhoneForStrictGuestDup(rawPhone) {
+  let d = normalizePhoneDigitsSimple(rawPhone);
+  if (!d) return "";
+  while (d.startsWith("0")) d = d.slice(1);
+  if (d.startsWith("55") && (d.length === 12 || d.length === 13)) {
+    d = d.slice(2);
+  }
+  return d;
+}
+
+function guestPhonesMatchStrictDup(phoneA, phoneB) {
+  const a = normalizePhoneForStrictGuestDup(phoneA);
+  const b = normalizePhoneForStrictGuestDup(phoneB);
+  if (!a || !b || a.length < 8 || b.length < 8) return false;
+  if (a === b) return true;
+  if ((a.length === 10 || a.length === 11) && (b.length === 10 || b.length === 11)) {
+    return a.slice(0, 2) === b.slice(0, 2) && a.slice(-8) === b.slice(-8);
+  }
+  return false;
+}
+
+function isMinorGuestSlotPkg(guestObj, reservationObj, guestIndex) {
+  if (guestObj?.isMinor === true) return true;
+  if (guestIndex >= 2 && reservationObj?.hasMinor === true && guestObj?.isMinor !== false && !guestObj?.birthDate) {
+    return true;
+  }
+  const bd = String(guestObj?.birthDate || "").slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(bd)) {
+    const refStr = String(reservationObj?.checkinDate || "").slice(0, 10);
+    const refDate = /^\d{4}-\d{2}-\d{2}$/.test(refStr) ? new Date(`${refStr}T12:00:00Z`) : new Date();
+    const birth = new Date(`${bd}T12:00:00Z`);
+    if (Number.isFinite(birth.getTime()) && Number.isFinite(refDate.getTime())) {
+      let age = refDate.getUTCFullYear() - birth.getUTCFullYear();
+      const mDiff = refDate.getUTCMonth() - birth.getUTCMonth();
+      if (mDiff < 0 || (mDiff === 0 && refDate.getUTCDate() < birth.getUTCDate())) {
+        age -= 1;
+      }
+      if (age >= 0 && age < 18) return true;
+    }
+  }
+  return false;
+}
+
+function doStayWindowsOverlapPkg(inA, outA, inB, outB) {
+  const aStart = String(inA || "").slice(0, 10);
+  const aEnd = String(outA || "").slice(0, 10);
+  const bStart = String(inB || "").slice(0, 10);
+  const bEnd = String(outB || "").slice(0, 10);
+  if (!aStart || !aEnd || !bStart || !bEnd) return true;
+  return aStart < bEnd && aEnd > bStart;
+}
+
+function extractActiveAdultGuestSlotsForDupCheck(resObj) {
+  if (!resObj) return [];
+  const gArr = Array.isArray(resObj.guests) ? resObj.guests : [];
+  const maxCount = Math.max(1, Math.min(3, Math.max(Number(resObj.guestCount || resObj.adults) || 1, gArr.length)));
+  const slots = [];
+  for (let idx = 1; idx <= maxCount; idx++) {
+    const gObj = gArr[idx - 1] || null;
+    if (idx === 1) {
+      if (resObj.guestPending || resObj.informGuestsLater || gObj?.informLater) continue;
+      if (isMinorGuestSlotPkg(gObj, resObj, 1)) continue;
+      const phoneVal = String(gObj?.phone || gObj?.whatsapp || resObj.guestPhone || resObj.whatsappPhone || "").trim();
+      if (!phoneVal) continue;
+      const nameVal = String(gObj?.name || resObj.guestName || "Hóspede 1").trim();
+      slots.push({ idx: 1, name: nameVal, phone: phoneVal });
+    } else {
+      if ((idx === 2 && resObj.guest2InformLater) || (idx === 3 && resObj.guest3InformLater) || gObj?.informLater) continue;
+      if (!gObj) continue;
+      if (isMinorGuestSlotPkg(gObj, resObj, idx)) continue;
+      const phoneVal = String(gObj.phone || gObj.whatsapp || "").trim();
+      if (!phoneVal) continue;
+      const nameVal = String(gObj.name || `Hóspede ${idx}`).trim();
+      slots.push({ idx, name: nameVal, phone: phoneVal });
+    }
+  }
+  return slots;
+}
+
+function findDuplicateGuestPhoneConflictInPackageOrFlat(db, targetReservation, targetGuestIndex, candidatePhone, rawDisplayPhone) {
+  const gIdx = Math.max(1, Math.min(3, Number(targetGuestIndex) || 1));
+  const tGuests = Array.isArray(targetReservation?.guests) ? targetReservation.guests : [];
+  const targetSlotObj = tGuests[gIdx - 1] || {};
+  if (isMinorGuestSlotPkg(targetSlotObj, targetReservation, gIdx)) {
+    return null;
+  }
+
+  const sameFlatSlots = extractActiveAdultGuestSlotsForDupCheck(targetReservation);
+  for (const other of sameFlatSlots) {
+    if (other.idx === gIdx) continue;
+    if (guestPhonesMatchStrictDup(candidatePhone, other.phone)) {
+      const roleLabel = other.idx === 1 ? `Hóspede Principal (${other.name || "Hóspede 1"})` : `Hóspede ${other.idx}${other.name ? ` (${other.name})` : ""}`;
+      return {
+        sameFlat: true,
+        flatNumber: String(targetReservation.flatNumber || ""),
+        reservationCode: String(targetReservation.code || targetReservation.reservationCode || ""),
+        otherGuestIndex: other.idx,
+        otherGuestName: other.name,
+        message:
+          other.idx === 1
+            ? `Este WhatsApp (${rawDisplayPhone}) já foi informado como Hóspede Principal (${other.name || "Hóspede 1"}) neste Flat ${targetReservation.flatNumber || ""}. Cada hóspede adulto deve ter seu próprio WhatsApp individual.`
+            : `Este WhatsApp (${rawDisplayPhone}) já está cadastrado para o ${roleLabel} neste Flat ${targetReservation.flatNumber || ""}. Cada hóspede adulto deve ter seu próprio WhatsApp individual.`
+      };
+    }
+  }
+
+  const siblings = getPackageReservations(db, targetReservation);
+  for (const sib of siblings) {
+    if (!sib || String(sib.id) === String(targetReservation.id) || !isPackageItemActive(sib)) continue;
+    if (!doStayWindowsOverlapPkg(targetReservation.checkinDate, targetReservation.checkoutDate, sib.checkinDate, sib.checkoutDate)) {
+      continue;
+    }
+    const sibSlots = extractActiveAdultGuestSlotsForDupCheck(sib);
+    for (const other of sibSlots) {
+      if (guestPhonesMatchStrictDup(candidatePhone, other.phone)) {
+        const otherRole = other.idx === 1 ? `Hóspede Principal (${other.name || "Hóspede 1"})` : `Hóspede ${other.idx}${other.name ? ` (${other.name})` : ""}`;
+        return {
+          sameFlat: false,
+          flatNumber: String(sib.flatNumber || ""),
+          reservationCode: String(sib.code || sib.reservationCode || ""),
+          otherGuestIndex: other.idx,
+          otherGuestName: other.name,
+          message: `Este WhatsApp (${rawDisplayPhone}) já está cadastrado para o ${otherRole} no Flat ${sib.flatNumber || ""} neste mesmo período do pacote. Informe o WhatsApp individual do hóspede deste apartamento.`
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
 function areGuestNamesRoughlyCompatible(nameA, nameB) {
   const norm = (s) =>
     String(s || "")
@@ -1351,6 +1482,36 @@ export async function updateGuestPhoneAndResendInstructions(db, params = {}, dep
     };
   }
 
+  let guestIndex = Number(params.guestIndex) || 0;
+  if (!guestIndex && params.guestName && Array.isArray(r.guests)) {
+    const idxMatched = r.guests.findIndex((g, idx) => g && areGuestNamesRoughlyCompatible(params.guestName, g.name || (idx === 0 ? r.guestName : "")));
+    if (idxMatched >= 0) guestIndex = Number(r.guests[idxMatched]?.index) || idxMatched + 1;
+  }
+  if (!guestIndex && Array.isArray(r.guestPhoneCorrectionRequests)) {
+    const activePending = r.guestPhoneCorrectionRequests.filter((req) => req && req.status === "awaiting_reply");
+    if (activePending.length === 1) {
+      guestIndex = Number(activePending[0].guestIndex) || 1;
+    }
+  }
+  guestIndex = Math.max(1, Math.min(3, guestIndex || 1));
+
+  const preDupConflict = findDuplicateGuestPhoneConflictInPackageOrFlat(
+    db,
+    r,
+    guestIndex,
+    cleanDigits,
+    rawNewPhone
+  );
+  if (preDupConflict) {
+    return {
+      ok: false,
+      duplicateGuestPhone: true,
+      code: "TELEFONE_HOSPEDE_DUPLICADO",
+      conflictingSlot: preDupConflict,
+      error: preDupConflict.message
+    };
+  }
+
   let normalizedPhone = cleanDigits;
   if (params.skipWhatsAppValidation !== true) {
     const waCheck = await verifyWhatsAppPhoneActive(rawNewPhone, db?.zapiConfig, db, deps);
@@ -1364,20 +1525,25 @@ export async function updateGuestPhoneAndResendInstructions(db, params = {}, dep
       };
     }
     normalizedPhone = waCheck.phone || cleanDigits;
-  }
-
-  let guestIndex = Number(params.guestIndex) || 0;
-  if (!guestIndex && params.guestName && Array.isArray(r.guests)) {
-    const idxMatched = r.guests.findIndex((g, idx) => g && areGuestNamesRoughlyCompatible(params.guestName, g.name || (idx === 0 ? r.guestName : "")));
-    if (idxMatched >= 0) guestIndex = Number(r.guests[idxMatched]?.index) || idxMatched + 1;
-  }
-  if (!guestIndex && Array.isArray(r.guestPhoneCorrectionRequests)) {
-    const activePending = r.guestPhoneCorrectionRequests.filter((req) => req && req.status === "awaiting_reply");
-    if (activePending.length === 1) {
-      guestIndex = Number(activePending[0].guestIndex) || 1;
+    if (normalizedPhone !== cleanDigits) {
+      const postDupConflict = findDuplicateGuestPhoneConflictInPackageOrFlat(
+        db,
+        r,
+        guestIndex,
+        normalizedPhone,
+        rawNewPhone
+      );
+      if (postDupConflict) {
+        return {
+          ok: false,
+          duplicateGuestPhone: true,
+          code: "TELEFONE_HOSPEDE_DUPLICADO",
+          conflictingSlot: postDupConflict,
+          error: postDupConflict.message
+        };
+      }
     }
   }
-  guestIndex = Math.max(1, Math.min(3, guestIndex || 1));
 
   if (!Array.isArray(r.guests)) r.guests = [];
   const prevGuestObj = r.guests[guestIndex - 1] || {};
@@ -1562,9 +1728,69 @@ export async function updateGuestPhoneAndResendInstructions(db, params = {}, dep
   };
 }
 
+function formatPackageChannelLabel(rawChannel) {
+  const c = String(rawChannel || "").toLowerCase().trim();
+  if (!c || c === "site") return "Site Oficial";
+  if (c.includes("whats") || c.includes("wpp")) return "WhatsApp";
+  if (c.includes("booking")) return "Booking.com";
+  if (c.includes("airbnb")) return "Airbnb";
+  if (c.includes("b2b") || c.includes("agencia") || c.includes("agência")) return "B2B / Agência";
+  if (c.includes("diret")) return "Direto / Recepção";
+  return "Balcão / Outros";
+}
+
+function formatPackagePreReservationValidity(expiresAtIso, holdLabelRaw = "", nowOverride = null) {
+  const cleanHold = String(holdLabelRaw || "").trim();
+  if (expiresAtIso) {
+    const expDate = new Date(expiresAtIso);
+    if (!Number.isNaN(expDate.getTime())) {
+      const refNow = nowOverride instanceof Date ? nowOverride : (nowOverride ? new Date(nowOverride) : new Date());
+      const nowBrStr = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Sao_Paulo",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }).format(refNow);
+      const expBrDateStr = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Sao_Paulo",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }).format(expDate);
+      const expDayMonth = new Intl.DateTimeFormat("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        day: "2-digit",
+        month: "2-digit"
+      }).format(expDate);
+      const expFullDate = new Intl.DateTimeFormat("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric"
+      }).format(expDate);
+      const expTime = new Intl.DateTimeFormat("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false
+      }).format(expDate);
+      const datePart = expBrDateStr === nowBrStr ? `hoje (${expDayMonth}) às ${expTime}` : `${expFullDate} às ${expTime}`;
+      const holdSuffix =
+        cleanHold && !cleanHold.toLowerCase().includes("23:59") && !cleanHold.toLowerCase().includes(expTime)
+          ? ` (${cleanHold})`
+          : "";
+      return `\n\n⏰ *Validade da Pré-Reserva:* Esta pré-reserva é válida até *${datePart}${holdSuffix}*. Após esse horário sem confirmação de pagamento, a pré-reserva expira e as acomodações são liberadas automaticamente no calendário.`;
+    }
+  }
+  if (cleanHold) {
+    return `\n\n⏰ *Validade da Pré-Reserva:* Válida por *${cleanHold}*. Após esse prazo sem confirmação de pagamento, a pré-reserva expira e as acomodações são liberadas automaticamente no calendário.`;
+  }
+  return "";
+}
+
 /**
  * Envia 1 única mensagem consolidada de Pré-Reserva ou Confirmação (WhatsApp + E-mail) para o Solicitante do pacote,
- * sem disparar N mensagens separadas e sem expor URLs cruas quando há botões.
+ * seguindo o mesmo padrão completo da pré-reserva de 1 flat e respeitando o limite oficial do WhatsApp (máx. 2 botões URL + 1 CALL).
  */
 export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, baseUrl, deps = {}) {
   const summary = computePackageSummary(db, packageIdOrRes, {
@@ -1583,6 +1809,7 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
   const paidAmt = round2(Number(summary.paidAmount) || 0);
   const pendingAmt = round2(Number(summary.pendingAmount) || 0);
   const hasPartialPayment = !isPaid && !isFaturado && paidAmt > 0.01 && pendingAmt > 0.01;
+  const isUnpaidPreReservaPkg = !allConfirmed && !isPaid && !isFaturado;
 
   const statusLabel = allConfirmed ? "Confirmada" : "Pré-Reserva";
   const paymentStatusLabel = isPaid
@@ -1609,51 +1836,101 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
   }
 
   const reqNameFirst = String(summary.requesterName || "Cliente").trim().split(/\s+/)[0] || "Cliente";
-  const flatsLines = summary.items
-    .filter((it) => it.isActive)
-    .map((it) => {
-      const occLabel = `${it.guestCount} hóspede${it.guestCount > 1 ? "s" : ""}`;
-      const bfLabel = it.includeBreakfast ? "Com café" : "Sem café";
-      const bedLabel = it.twinBeds ? "2 camas solteiro" : "Cama casal";
-      const gLabel = it.informGuestsLater ? "A informar" : (it.guestName || "A definir");
-      return (
-        `• *Flat ${it.flatNumber}* • ${formatDateBrShort(it.checkinDate)} a ${formatDateBrShort(it.checkoutDate)} (${it.nights} diária${it.nights > 1 ? "s" : ""})\n` +
-        `  ${occLabel} • ${bfLabel} • ${bedLabel}\n` +
-        `  Hóspede: ${gLabel} — R$ ${formatMoneyBr(it.totalAmount)}`
-      );
-    })
-    .join("\n\n");
+  const hotelName = db?.siteConfig?.branding?.brandName || db?.settings?.hotelName || "CorpFlats";
+  const hotelPhone = db?.settings?.adminWhatsApp || db?.zapiConfig?.adminWhatsApp || "5522997124021";
+  const channelLabel = formatPackageChannelLabel(activeItems[0]?.channel || activeItems[0]?.source || "site");
+  const computeCardItemFn =
+    typeof deps.computeCardAmountFromPix === "function"
+      ? deps.computeCardAmountFromPix
+      : (v) => round2((Number(v) || 0) / 0.95);
 
-  const headerLine = isPaid
-    ? `Olá, *${reqNameFirst}*! Seu pacote com *${summary.activeFlatsCount} flats* no *CorpFlats* (*${summary.packageCode}*) está confirmado!`
-    : allConfirmed
-      ? `Olá, *${reqNameFirst}*! Sua reserva com *${summary.activeFlatsCount} flats* no *CorpFlats* (*${summary.packageCode}*) está registrada.`
-      : `Olá, *${reqNameFirst}*! Sua pré-reserva com *${summary.activeFlatsCount} flats* no *CorpFlats* (*${summary.packageCode}*) foi gerada.`;
+  const activeSummaryItems = summary.items.filter((it) => it.isActive);
+  const totalGuestsPkg = activeSummaryItems.reduce((acc, it) => acc + Math.max(1, Number(it.guestCount) || 1), 0);
 
-  const financialLines = isPaid
-    ? `💰 *Total do pacote:* R$ ${formatMoneyBr(summary.totalAmount)}`
-    : isFaturado
-      ? `💰 *Total faturado:* R$ ${formatMoneyBr(summary.totalAmount)}`
-      : hasPartialPayment
-        ? `💰 *Total do pacote:* R$ ${formatMoneyBr(summary.totalAmount)}\n` +
-          `💎 *Saldo no PIX:* R$ ${formatMoneyBr(pendingAmt)} • *Cartão:* R$ ${formatMoneyBr(summary.cardPendingAmount)}`
-        : `💎 *Total no PIX:* R$ ${formatMoneyBr(pendingAmt)} • *Cartão:* R$ ${formatMoneyBr(summary.cardPendingAmount)}`;
+  let msgText = "";
+  if (isUnpaidPreReservaPkg) {
+    const avisoValidade = formatPackagePreReservationValidity(summary.expiresAt, holdLabel, db?._nowOverride || null);
+    const detailedFlatsLines = activeSummaryItems
+      .map((it) => {
+        const occLabel = `${it.guestCount} hóspede${it.guestCount > 1 ? "s" : ""}`;
+        const bfLabel = it.includeBreakfast ? "Incluso ☕" : "Não incluso";
+        const bedLabel = it.twinBeds ? "2 Camas de Solteiro" : "Cama de Casal";
+        const gLabel = it.informGuestsLater ? "A informar" : (it.guestName || "A definir");
+        const itCardTotal = computeCardItemFn(it.totalAmount);
+        return (
+          `• *Flat ${it.flatNumber}* (${it.code})\n` +
+          `  Entrada: *${formatDateBrShort(it.checkinDate)} a partir das ${it.checkinTime || "14:00"}*\n` +
+          `  Saída: *${formatDateBrShort(it.checkoutDate)} até às ${it.checkoutTime || "12:00"}* (${it.nights} noite${it.nights > 1 ? "s" : ""})\n` +
+          `  ${occLabel} • ${bedLabel} • Café: ${bfLabel}\n` +
+          `  Hóspede: *${gLabel}* — PIX: *R$ ${formatMoneyBr(it.totalAmount)}* (Cartão: R$ ${formatMoneyBr(itCardTotal)})`
+        );
+      })
+      .join("\n\n");
 
-  const holdLine = !allConfirmed && !isPaid && !isFaturado ? `\n⏳ *Validade:* ${holdLabel}` : "";
+    const finBlock = hasPartialPayment
+      ? `• Valor Total do Pacote: *R$ ${formatMoneyBr(summary.totalAmount)}*\n` +
+        `• Valor Já Pago: *R$ ${formatMoneyBr(paidAmt)}*\n` +
+        `• Saldo no Cartão de Crédito: *R$ ${formatMoneyBr(summary.cardPendingAmount)}*\n` +
+        `• Saldo com Desconto no PIX (-5%): *R$ ${formatMoneyBr(pendingAmt)}*`
+      : `• Valor no Cartão de Crédito: *R$ ${formatMoneyBr(summary.cardPendingAmount)}*\n` +
+        `• Valor com Desconto no PIX (-5%): *R$ ${formatMoneyBr(pendingAmt)}*`;
 
-  const footerGuidance = summary.needsGuestCredentials
-    ? `👥 Use os botões abaixo para gerenciar o pacote e cadastrar os hóspedes de cada flat.`
-    : allConfirmed
-      ? `✨ Os hóspedes identificados recebem apenas as instruções do seu flat (sem valores financeiros).`
-      : `Use os botões abaixo para acompanhar o pacote e concluir o pagamento.`;
+    const credNote = summary.needsGuestCredentials
+      ? `\n\n👥 _Pelo mesmo link acima você também pode cadastrar ou revisar os dados dos hóspedes de cada flat._`
+      : "";
 
-  const msgText =
-    `${headerLine}\n\n` +
-    `🏢 *Flats do Pacote:*\n${flatsLines}\n\n` +
-    `📌 *Status:* ${statusLabel}\n` +
-    `💳 *Status do pagamento:* ${paymentStatusLabel}${holdLine}\n` +
-    `${financialLines}\n\n` +
-    `${footerGuidance}`;
+    msgText =
+      `Olá, *${reqNameFirst}*! ⏳\n` +
+      `Recebemos o pedido de *Pré-Reserva* do seu pacote com *${summary.activeFlatsCount} flats* (*${summary.packageCode}*) no *${hotelName}*!\n\n` +
+      `⚠️ *Importante:* Esta reserva está *Aguardando Pagamento* para confirmação definitiva das suas acomodações.${avisoValidade}\n\n` +
+      `📋 *Resumo da Estadia (${summary.packageCode}):*\n` +
+      `${detailedFlatsLines}\n\n` +
+      `• Total de Hóspedes no Pacote: *${totalGuestsPkg}*\n` +
+      `• Canal da Reserva: *${channelLabel}*\n\n` +
+      `💰 *Situação Financeira:*\n` +
+      `${finBlock}\n\n` +
+      `Para garantir e confirmar definitivamente os *${summary.activeFlatsCount} flats*, efetue o pagamento único via PIX com 5% de desconto (*R$ ${formatMoneyBr(pendingAmt)}*) ou no Cartão de Crédito (*R$ ${formatMoneyBr(summary.cardPendingAmount)}*) pelo Portal do Pacote:\n` +
+      `👉 ${summary.packagePortalUrl}${credNote}`;
+  } else {
+    const flatsLines = activeSummaryItems
+      .map((it) => {
+        const occLabel = `${it.guestCount} hóspede${it.guestCount > 1 ? "s" : ""}`;
+        const bfLabel = it.includeBreakfast ? "Com café" : "Sem café";
+        const bedLabel = it.twinBeds ? "2 camas solteiro" : "Cama casal";
+        const gLabel = it.informGuestsLater ? "A informar" : (it.guestName || "A definir");
+        return (
+          `• *Flat ${it.flatNumber}* • ${formatDateBrShort(it.checkinDate)} a ${formatDateBrShort(it.checkoutDate)} (${it.nights} diária${it.nights > 1 ? "s" : ""})\n` +
+          `  ${occLabel} • ${bfLabel} • ${bedLabel}\n` +
+          `  Hóspede: ${gLabel} — R$ ${formatMoneyBr(it.totalAmount)}`
+        );
+      })
+      .join("\n\n");
+
+    const headerLine = isPaid
+      ? `Olá, *${reqNameFirst}*! Seu pacote com *${summary.activeFlatsCount} flats* no *${hotelName}* (*${summary.packageCode}*) está confirmado!`
+      : `Olá, *${reqNameFirst}*! Sua reserva com *${summary.activeFlatsCount} flats* no *${hotelName}* (*${summary.packageCode}*) está registrada.`;
+
+    const financialLines = isPaid
+      ? `💰 *Total do pacote:* R$ ${formatMoneyBr(summary.totalAmount)}`
+      : isFaturado
+        ? `💰 *Total faturado:* R$ ${formatMoneyBr(summary.totalAmount)}`
+        : hasPartialPayment
+          ? `💰 *Total do pacote:* R$ ${formatMoneyBr(summary.totalAmount)}\n` +
+            `💎 *Saldo no PIX:* R$ ${formatMoneyBr(pendingAmt)} • *Cartão:* R$ ${formatMoneyBr(summary.cardPendingAmount)}`
+          : `💎 *Total no PIX:* R$ ${formatMoneyBr(pendingAmt)} • *Cartão:* R$ ${formatMoneyBr(summary.cardPendingAmount)}`;
+
+    const footerGuidance = summary.needsGuestCredentials
+      ? `👥 Use os botões abaixo para gerenciar o pacote e cadastrar os hóspedes de cada flat:\n👉 ${summary.packagePortalUrl}`
+      : `✨ Os hóspedes identificados recebem apenas as instruções do seu flat (sem valores financeiros).\n👉 ${summary.packagePortalUrl}`;
+
+    msgText =
+      `${headerLine}\n\n` +
+      `🏢 *Flats do Pacote:*\n${flatsLines}\n\n` +
+      `📌 *Status:* ${statusLabel}\n` +
+      `💳 *Status do pagamento:* ${paymentStatusLabel}\n` +
+      `${financialLines}\n\n` +
+      `${footerGuidance}`;
+  }
 
   let sentWhatsapp = false;
   let sentEmail = false;
@@ -1669,20 +1946,26 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
       const buttons = [];
       if (!isPaid && !isFaturado) {
         buttons.push({
-          id: `pkg_portal_${summary.packageCode}`,
+          id: "btn_portal",
           type: "URL",
           url: summary.packagePortalUrl,
-          label: "💳 Ver Pacote e Pagar"
+          label: "💳 Ver Pacote & Pagar"
         });
         if (summary.pixCopiaECola) {
           buttons.push({
-            id: `pkg_pix_${summary.packageCode}`,
+            id: "btn_pix",
             type: "COPY",
             copyCode: summary.pixCopiaECola,
             url: summary.packageCopyPixUrl,
             label: "📋 Copiar Código PIX"
           });
         }
+        buttons.push({
+          id: "btn_admin",
+          type: "CALL",
+          phone: hotelPhone,
+          label: "📞 Falar com Atendimento"
+        });
       } else {
         buttons.push({
           id: `pkg_portal_${summary.packageCode}`,
@@ -1690,19 +1973,26 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
           url: summary.packagePortalUrl,
           label: "🏨 Abrir Pacote"
         });
-      }
-      if (summary.needsGuestCredentials && buttons.length < 3) {
+        if (summary.needsGuestCredentials) {
+          buttons.push({
+            id: `pkg_guests_${summary.packageCode}`,
+            type: "URL",
+            url: `${summary.packagePortalUrl}#hospedes`,
+            label: "👥 Cadastrar Hóspedes"
+          });
+        }
         buttons.push({
-          id: `pkg_guests_${summary.packageCode}`,
-          type: "URL",
-          url: `${summary.packagePortalUrl}#hospedes`,
-          label: "👥 Cadastrar Hóspedes"
+          id: "btn_admin",
+          type: "CALL",
+          phone: hotelPhone,
+          label: "📞 Falar com Atendimento"
         });
       }
 
       const zRes = await deps.sendZapiMessage(db?.zapiConfig, {
         phone: cleanPhone,
         message: msgText,
+        footer: "CorpFlats • Hospedagem Contemporânea",
         buttons: buttons.slice(0, 3),
         channelId: "guest_schedule",
         recipientRole: "solicitante",
@@ -1859,11 +2149,16 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
     }
   }
 
-  // Dispara instruções individuais imediatamente na criação para todos os flats ativos com status === "confirmada" (independente de paidAmount === 0 ou faturado)
+  // Dispara instruções individuais imediatamente na criação para todos os flats ativos com status === "confirmada" (independente de paidAmount === 0 ou faturado),
+  // incluindo o próprio Solicitante quando ele também vai se hospedar no Flat 1 (apresentação + Check-in Online + Manual PDF).
   const confirmedActiveItems = activeItems.filter((r) => String(r.status || "").toLowerCase().trim() === "confirmada");
   if (confirmedActiveItems.length > 0) {
+    if (sentWhatsapp && Boolean(db?.zapiConfig?.instanceId?.trim() && db?.zapiConfig?.token?.trim()) && !deps.fastDelay) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
     await dispatchIndividualFlatGuestInstructions(db, confirmedActiveItems, baseUrl, {
       ...deps,
+      forceSendToRequesterGuest: deps.forceSendToRequesterGuest !== false,
       triggerEvent: isPaid ? "payment_confirmed" : "reservation_created"
     });
   }
@@ -2675,9 +2970,13 @@ export async function settlePackagePaymentAtomically(db, triggerResOrPkgId, paym
     }
   }
 
-  // Envia instruções individuais sem valores para Hóspede 1 e Hóspede 2 já preenchidos
+  // Envia instruções individuais sem valores para Hóspedes 1, 2 e 3 já preenchidos (incluindo o Solicitante quando também for Hóspede 1 do Flat 1, com apresentação + Check-in Online + Manual PDF)
+  if (sentReceiptWhatsapp && Boolean(db?.zapiConfig?.instanceId?.trim() && db?.zapiConfig?.token?.trim()) && !deps.fastDelay) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
   const guestDispatches = await dispatchIndividualFlatGuestInstructions(db, activeItems, baseUrl, {
     ...deps,
+    forceSendToRequesterGuest: deps.forceSendToRequesterGuest !== false,
     suppressExternalSend: suppressSend
   });
 

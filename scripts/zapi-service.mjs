@@ -118,20 +118,40 @@ import {
 } from "./fnrh-serpro-service.mjs";
 
 /**
+ * Garante que URLs públicas da CorpFlats (e qualquer domínio não-local) sempre utilizem https://,
+ * evitando bloqueios de segurança de navegador ("O site não pode fazer uma conexão segura") no celular.
+ */
+export function ensureHttpsPublicUrl(rawUrl, fallback = "") {
+  const candidate = String(rawUrl || fallback || "").trim();
+  if (!candidate) return "";
+  return candidate
+    .replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br")
+    .replace(/^http:\/\/(?!localhost(?::\d+|\/|$)|127\.0\.0\.1(?::\d+|\/|$)|0\.0\.0\.0(?::\d+|\/|$)|\[::1\])/i, "https://");
+}
+
+export function upgradePublicHttpLinksInText(rawText) {
+  if (typeof rawText !== "string" || !rawText) return rawText;
+  return rawText
+    .replace(/https?:\/\/corpflats\.onrender\.com\b/gi, "https://corpflats.com.br")
+    .replace(/\bhttp:\/\/((?:[a-z0-9-]+\.)?corpflats\.com\.br\b)/gi, "https://$1");
+}
+
+/**
  * Resolução dinâmica e unificada de URL de check-in conforme o provedor ativo (proprio ou gov_fnrh).
  */
 export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
+  const safeBaseUrl = baseUrl ? ensureHttpsPublicUrl(baseUrl) : baseUrl;
   if (typeof globalThis.getCheckinUrlSync === "function") {
-    return globalThis.getCheckinUrlSync(reservation, guestIndex, baseUrl, dbInstance);
+    return ensureHttpsPublicUrl(globalThis.getCheckinUrlSync(reservation, guestIndex, safeBaseUrl, dbInstance));
   }
   if (typeof getSerproCheckinUrlSync === "function") {
-    return getSerproCheckinUrlSync(reservation, guestIndex, baseUrl, dbInstance);
+    return ensureHttpsPublicUrl(getSerproCheckinUrlSync(reservation, guestIndex, safeBaseUrl, dbInstance));
   }
   const activeDb = dbInstance || (typeof globalThis.db !== "undefined" ? globalThis.db : null);
   const activeSettings = activeDb?.settings || activeDb || {};
   const currentProvider = activeSettings.checkinProvider || "proprio";
-  const rawBase = typeof baseUrl === "string" && baseUrl ? baseUrl : ((typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br");
-  const hostBase = String(rawBase).replace(/\/$/, "");
+  const rawBase = typeof safeBaseUrl === "string" && safeBaseUrl ? safeBaseUrl : ((typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br");
+  const hostBase = ensureHttpsPublicUrl(rawBase, "https://corpflats.com.br").replace(/\/$/, "");
   const safeGuestIndex = Number(guestIndex) || 1;
   const resCode = reservation?.code || reservation?.id || "";
   const stLower = String(reservation?.status || "").toLowerCase();
@@ -156,20 +176,21 @@ export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbI
   const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}${resignParam}`;
 
   if (currentProvider === "gov_fnrh" && !isResign && (reservation?.serproPrecheckinUrl || reservation?.link_precheckin)) {
-    return reservation.serproPrecheckinUrl || reservation.link_precheckin;
+    return ensureHttpsPublicUrl(reservation.serproPrecheckinUrl || reservation.link_precheckin);
   }
 
   return internalCheckinUrl;
 }
 
 export async function getCheckinUrl(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
+  const safeBaseUrl = baseUrl ? ensureHttpsPublicUrl(baseUrl) : baseUrl;
   if (typeof globalThis.getCheckinUrl === "function") {
-    return globalThis.getCheckinUrl(reservation, guestIndex, baseUrl, dbInstance);
+    return ensureHttpsPublicUrl(await globalThis.getCheckinUrl(reservation, guestIndex, safeBaseUrl, dbInstance));
   }
   if (typeof getSerproCheckinUrl === "function") {
-    return getSerproCheckinUrl(reservation, guestIndex, baseUrl, dbInstance);
+    return ensureHttpsPublicUrl(await getSerproCheckinUrl(reservation, guestIndex, safeBaseUrl, dbInstance));
   }
-  return getCheckinUrlSync(reservation, guestIndex, baseUrl, dbInstance);
+  return getCheckinUrlSync(reservation, guestIndex, safeBaseUrl, dbInstance);
 }
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1293,7 +1314,7 @@ Para garantir sua acomodação antes que as datas sejam liberadas, efetue o paga
     buttons: [
       { id: "btn_pagar", type: "URL", label: "💳 Ver Reserva & Pagar", url: "{{link_portal_hospede}}" },
       { id: "btn_pix", type: "COPY", label: "📋 Copiar Código PIX", copyCode: "{{pix_copia_e_cola}}", url: "{{link_copiar_pix}}" },
-      { id: "btn_chk", type: "URL", label: "🏨 Ver Minha Reserva", url: "{{link_portal_hospede}}" }
+      { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
     ]
   },
   {
@@ -4418,8 +4439,8 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     formaPagamento = "PIX";
   }
 
-  // URL Base pública do sistema (prioriza domínio de produção ou host)
-  const appOrigin = String(baseUrl || "https://corpflats.com.br").replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
+  // URL Base pública do sistema (prioriza domínio de produção sempre com https://)
+  const appOrigin = ensureHttpsPublicUrl(baseUrl || "https://corpflats.com.br", "https://corpflats.com.br").replace(/\/+$/, "");
 
   const resStatus = String(reservation.status || "").toLowerCase().trim();
   const isCancelled = resStatus === "cancelada" || resStatus === "cancelled" || resStatus === "cancelado";
@@ -4440,16 +4461,49 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const isBreakfastExplicitTemplate = templateId === "qm_breakfast" || templateId === "tpl_breakfast_reminder" || triggerEvent === "breakfast_reminder";
   const hasBreakfast = Boolean(reservation.includeBreakfast || reservation.hasBreakfast || reservation.ratePlan === "with_breakfast" || isBreakfastExplicitTemplate);
 
-  // Links inteligentes com autenticação por código de reserva
+  // Links inteligentes com autenticação por código de reserva (ou Portal do Pacote para solicitantes/pré-reservas multi-flat)
+  const pkgCodeForLinks = String(
+    reservation.packageCode ||
+    reservation.packageId ||
+    (/^PKG-[A-Z0-9]{4,12}$/i.test(String(resCode || "").trim()) ? resCode : "")
+  ).trim().toUpperCase();
+  const usePackageSolicitantePortal = Boolean(
+    pkgCodeForLinks &&
+    (recipientIsRequester || isUnpaidPreReservaTag || /^PKG-[A-Z0-9]{4,12}$/i.test(String(resCode || "").trim()))
+  );
+  const pkgPortalTokenForLinks = usePackageSolicitantePortal
+    ? (
+        String(reservation.requesterPortalToken || "").trim() ||
+        (Array.isArray(db?.reservations)
+          ? String(
+              db.reservations.find(
+                (x) =>
+                  x &&
+                  String(x.packageCode || x.packageId || "").trim().toUpperCase() === pkgCodeForLinks &&
+                  typeof x.requesterPortalToken === "string" &&
+                  x.requesterPortalToken.trim()
+              )?.requesterPortalToken || ""
+            ).trim()
+          : "")
+      )
+    : "";
+  const pkgSolicitantePortalUrl = usePackageSolicitantePortal
+    ? `${appOrigin}/solicitante/${encodeURIComponent(pkgCodeForLinks)}${pkgPortalTokenForLinks ? `?t=${encodeURIComponent(pkgPortalTokenForLinks)}` : ""}`
+    : "";
+
   const linkCheckinDigital = suppressStayOpsForRequester ? "" : getCheckinUrlSync(reservation, recipientGuestIndex, appOrigin, db);
-  const linkPortalHospede = (recipientIsRequester && requester.isDifferentFromGuest)
-    ? `${appOrigin}/minha-reserva/${resCode}?requester=1`
-    : (recipientGuestIndex && Number(recipientGuestIndex) > 1 
-        ? `${appOrigin}/minha-reserva/${resCode}?guest=${recipientGuestIndex}` 
+  const linkPortalHospede = usePackageSolicitantePortal
+    ? pkgSolicitantePortalUrl
+    : ((recipientIsRequester && requester.isDifferentFromGuest)
+        ? `${appOrigin}/minha-reserva/${resCode}?requester=1`
+        : (recipientGuestIndex && Number(recipientGuestIndex) > 1 
+            ? `${appOrigin}/minha-reserva/${resCode}?guest=${recipientGuestIndex}` 
+            : `${appOrigin}/minha-reserva/${resCode}`));
+  const linkPagamento = usePackageSolicitantePortal
+    ? pkgSolicitantePortalUrl
+    : ((recipientIsRequester && requester.isDifferentFromGuest)
+        ? `${appOrigin}/minha-reserva/${resCode}?requester=1`
         : `${appOrigin}/minha-reserva/${resCode}`);
-  const linkPagamento = (recipientIsRequester && requester.isDifferentFromGuest)
-    ? `${appOrigin}/minha-reserva/${resCode}?requester=1`
-    : `${appOrigin}/minha-reserva/${resCode}`;
   const linkCafeManha = (!suppressStayOpsForRequester && (hasBreakfast || isBreakfastExplicitTemplate) && !isCancelled && !isUnpaidPreReservaTag) ? `${appOrigin}/cafe/${resCode}` : "";
   const linkCheckout = suppressStayOpsForRequester ? "" : `${appOrigin}/checkout/${resCode}`;
 
@@ -4622,8 +4676,9 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
       }
     }
   }
+  const copyPixCodeTarget = pkgCodeForLinks || resCode;
   const linkCopiarPix = (!isFaturadoBoletoRes && !isPaidStatusOnly && !isPaid && pendingAmount > 0.01 && (!isPackageRes || Boolean(pixCopiaECola)))
-    ? `${appOrigin}/copiar-pix/${resCode}`
+    ? `${appOrigin}/copiar-pix/${encodeURIComponent(copyPixCodeTarget)}`
     : "";
 
   const statusConfirmacao = reservation.status === "confirmada" ? "Confirmada" : "Pré-Reserva";
@@ -5169,15 +5224,15 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
       .replace(/📍\s*Ao chegar,\s*(?:basta se identificar na portaria 24h com seu nome|vá à portaria 24h e informe seu nome)[^\n]*/gi, blocoProcedimentoCheckinOnlineObrigatorio);
   }
 
-  // Remove excesso de quebras de linha decorrentes de tags opcionais vazias
-  rendered = rendered.replace(/\n{3,}/g, "\n\n").trim();
+  // Remove excesso de quebras de linha decorrentes de tags opcionais vazias e garante https:// em links públicos
+  rendered = upgradePublicHttpLinksInText(rendered.replace(/\n{3,}/g, "\n\n").trim());
 
   return rendered;
 }
 
 // ── Formatador de Mensagem com Links Clicáveis (100% compatível com qualquer WhatsApp) ──
 export function formatMessageWithLinks(message, footer = "", buttons = []) {
-  let text = (message || "").trim();
+  let text = upgradePublicHttpLinksInText((message || "").trim());
   const validButtons = (buttons || []).filter(b => b && b.label && (b.url || b.phone || b.copyCode || b.type === "REPLY" || b.type === "COPY"));
 
   if (validButtons.length > 0) {
@@ -5199,13 +5254,13 @@ export function formatMessageWithLinks(message, footer = "", buttons = []) {
               : `📋 *${b.label}:* \`${code}\``;
           }
         }
-        const urlStr = String(b.url || "").trim();
+        const urlStr = ensureHttpsPublicUrl(String(b.url || "").trim());
         if (urlStr.includes("whatsapp.com/otp")) return null;
         const normUrl = urlStr.replace(/\/+$/, "");
         if (urlStr && (text.includes(urlStr) || (normUrl && text.includes(normUrl)))) {
           return null;
         }
-        return `👉 *${b.label}:*\n${b.url}`;
+        return `👉 *${b.label}:*\n${urlStr}`;
       })
       .filter(Boolean);
 
@@ -5291,7 +5346,7 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     triggerEvent === "additional_daily_pending";
 
   const hasBreakfast = Boolean(reservation?.includeBreakfast || reservation?.ratePlan === "with_breakfast");
-  const appOrigin = baseUrl || "https://corpflats.com.br";
+  const appOrigin = ensureHttpsPublicUrl(baseUrl || "https://corpflats.com.br", "https://corpflats.com.br").replace(/\/+$/, "");
   const resCode = reservation?.code || reservation?.reservationCode || `RES-${reservation?.flatNumber || "000"}-${reservation?.id || "0000"}`;
   const linkCafeManha = `${appOrigin}/cafe/${resCode}`;
 
@@ -5834,7 +5889,7 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     }
     return {
       ...b,
-      url: finalUrl,
+      url: finalUrl ? ensureHttpsPublicUrl(finalUrl) : finalUrl,
       phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined,
       copyCode: resolvedCopyCode
     };
@@ -6146,6 +6201,40 @@ function lookupOutboundPreviewReservation(rawParam, db = null, isFlatParam = fal
   }
 
   const upper = cleanParam.toUpperCase();
+  if (/^PKG-[A-Z0-9]{4,12}$/i.test(upper)) {
+    const pkgItems = (db?.reservations || []).filter(
+      (r) => r && String(r.packageCode || r.packageId || "").trim().toUpperCase() === upper
+    );
+    const activePkgItems = pkgItems.filter((r) => {
+      const st = String(r.status || "").toLowerCase().trim();
+      return st !== "cancelada" && st !== "cancelado" && st !== "cancelled";
+    });
+    const listForLabel = activePkgItems.length > 0 ? activePkgItems : pkgItems;
+    const flatNums = listForLabel.map((r) => String(r.flatNumber || "").trim()).filter(Boolean);
+    const flatLabel =
+      flatNums.length > 1
+        ? `Flats ${flatNums.join(" e ")}`
+        : flatNums.length === 1
+          ? `Flat ${flatNums[0]}`
+          : upper;
+    const primaryPkg = listForLabel[0] || null;
+    const rawReqName = String(
+      primaryPkg?.requesterInfo?.name ||
+      primaryPkg?.requesterName ||
+      primaryPkg?.guestName ||
+      ""
+    ).trim();
+    let guestFirst = "";
+    if (
+      rawReqName &&
+      !/^(h[oó]spede(\s|$)|guest|titular|a\s*definir|n[aã]o\s*informad|pendente|bloqueio|ag[eê]ncia|empresa|corporat|booking|airbnb|expedia|b2b|solicitante)/i.test(rawReqName)
+    ) {
+      guestFirst = rawReqName.split(/\s+/)[0].replace(/[^A-Za-zÀ-ÿ'-]/g, "");
+    }
+    const isPreReserva = listForLabel.some((r) => String(r.status || "").toLowerCase() === "pre_reserva");
+    return { flatLabel, guestFirst, isPreReserva };
+  }
+
   const resv = (db?.reservations || []).find(r =>
     r && (
       (r.code && String(r.code).toUpperCase() === upper) ||
@@ -6178,7 +6267,7 @@ function lookupOutboundPreviewReservation(rawParam, db = null, isFlatParam = fal
 }
 
 export function classifyOutboundPreviewUrl(rawUrl, config = null, db = null) {
-  const cleaned = String(rawUrl || "").trim().replace(/[),.;!?>\]*_]+$/, "");
+  const cleaned = ensureHttpsPublicUrl(String(rawUrl || "").trim().replace(/[),.;!?>\]*_]+$/, ""));
   if (!/^https?:\/\//i.test(cleaned)) return null;
 
   let parsed = null;
@@ -6362,7 +6451,7 @@ export function classifyOutboundPreviewUrl(rawUrl, config = null, db = null) {
     };
   }
 
-  if (/^\/(minha-reserva|portal-hospede|guest-portal|portal|minha-conta)(\/|$)/i.test(pathname)) {
+  if (/^\/(minha-reserva|portal-hospede|guest-portal|portal|minha-conta|solicitante)(\/|$)/i.test(pathname)) {
     if (isPreReserva || isPaymentPendingParam) {
       return {
         slot: "preReserva",
@@ -6604,8 +6693,8 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
   }
 
   let targetPhone = cleanPhone;
-  let finalMessage = message;
-  let finalDocumentCaption = documentCaption;
+  let finalMessage = upgradePublicHttpLinksInText(message);
+  let finalDocumentCaption = upgradePublicHttpLinksInText(documentCaption);
   let finalTitle = title;
 
   if (policy.redirected) {
@@ -6858,7 +6947,27 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
       filteredButtons = validButtons.filter(b => b.type !== "REPLY");
     }
 
-    const formattedActions = filteredButtons.slice(0, 3).map((b, idx) => {
+    // Trava estrita do protocolo oficial do WhatsApp: máximo de 2 botões URL + 1 botão CALL (total máx. 3).
+    // Impede que 3 botões URL sejam aceitos pela Z-API com HTTP 200 mas descartados silenciosamente pelo WhatsApp no celular do cliente.
+    let urlActionCount = 0;
+    let callActionCount = 0;
+    const protocolSafeButtons = [];
+    for (const btnCandidate of filteredButtons) {
+      if (btnCandidate.type === "REPLY") {
+        protocolSafeButtons.push(btnCandidate);
+      } else if (btnCandidate.type === "CALL" || Boolean(btnCandidate.phone)) {
+        if (callActionCount >= 1) continue;
+        callActionCount++;
+        protocolSafeButtons.push(btnCandidate);
+      } else {
+        if (urlActionCount >= 2) continue;
+        urlActionCount++;
+        protocolSafeButtons.push(btnCandidate);
+      }
+      if (protocolSafeButtons.length >= 3) break;
+    }
+
+    const formattedActions = protocolSafeButtons.map((b, idx) => {
       const isCall = b.type === "CALL" || Boolean(b.phone);
       const type = isCall ? "CALL" : "URL";
       const action = {
@@ -6902,7 +7011,7 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
         } else if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
           rawUrl = "https://" + rawUrl;
         }
-        action.url = rawUrl;
+        action.url = ensureHttpsPublicUrl(rawUrl);
       } else if (type === "CALL") {
         action.phone = cleanWhatsAppPhone(b.phone || config.adminWhatsApp || "5522997124021");
       }
@@ -6931,22 +7040,41 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
 
     try {
       console.log(`[Z-API] Enviando mensagem com botões${buttonPreview?.slot ? ` + foto (${buttonPreview.slot})` : ""} para ${targetPhone}...`);
-      let res = await fetch(buttonActionsUrl, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(buttonActionsPayload),
-        signal: AbortSignal.timeout(25000)
-      });
-      let data = await res.json().catch(() => ({}));
+      let res = null;
+      let data = {};
       let imageFallbackUsed = false;
 
-      // Caso a imagem de cabeçalho tenha sido recusada temporariamente, retenta os botões sem imagem antes de cair para texto
+      if (buttonActionsPayload.image) {
+        try {
+          res = await fetch(buttonActionsUrl, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(buttonActionsPayload),
+            signal: AbortSignal.timeout(25000)
+          });
+          data = await res.json().catch(() => ({}));
+        } catch (imgFetchErr) {
+          console.warn(`[Z-API] /send-button-actions com imagem falhou (${imgFetchErr.message}), retentando botões sem imagem...`);
+          res = null;
+        }
+      } else {
+        res = await fetch(buttonActionsUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(buttonActionsPayload),
+          signal: AbortSignal.timeout(25000)
+        });
+        data = await res.json().catch(() => ({}));
+      }
+
+      // Caso a imagem de cabeçalho tenha sido recusada ou sofrido timeout, retenta os botões sem imagem antes de cair para texto
       if (
-        !(res.ok && !data.error && (data.zaapId || data.id || data.messageId || data.value)) &&
         buttonActionsPayload.image &&
-        !isZapiNoWhatsAppAccountError(res.status, data)
+        (!res || (!(res.ok && !data.error && (data.zaapId || data.id || data.messageId || data.value)) && !isZapiNoWhatsAppAccountError(res.status, data)))
       ) {
-        console.warn(`[Z-API] /send-button-actions com imagem retornou HTTP ${res.status}, retentando botões sem imagem...`, data);
+        if (res) {
+          console.warn(`[Z-API] /send-button-actions com imagem retornou HTTP ${res.status}, retentando botões sem imagem...`, data);
+        }
         const { image: _droppedImage, ...payloadWithoutImage } = buttonActionsPayload;
         res = await fetch(buttonActionsUrl, {
           method: "POST",
@@ -7296,7 +7424,8 @@ export async function sendZapiOtpButton(config, {
       label: cleanLabel,
       url: `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(cleanCode)}`
     };
-    const actionsVariants = confirmUrl
+    const safeConfirmUrl = confirmUrl ? ensureHttpsPublicUrl(confirmUrl) : null;
+    const actionsVariants = safeConfirmUrl
       ? [
           [
             copyAction,
@@ -7304,7 +7433,7 @@ export async function sendZapiOtpButton(config, {
               id: "btn_otp_confirm",
               type: "URL",
               label: String(confirmLabel || "✅ Preencher na Tela").trim().substring(0, 25),
-              url: confirmUrl
+              url: safeConfirmUrl
             }
           ],
           [copyAction]
@@ -9950,6 +10079,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         ) {
           tpl.channels.push("b2b");
         }
+        if (tpl.id === "tpl_corpflats_intro" || tpl.triggerEvent === "corpflats_intro") {
+          tpl.recipientTarget = "guest";
+          tpl.triggerTiming = "immediate";
+          tpl.channels = ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"];
+        }
         if (tpl.id === "tpl_b2b_agency_credential") {
           tpl.recipientTarget = "requester";
           tpl.channels = ["site", "whatsapp", "b2b", "booking", "airbnb", "outros"];
@@ -11261,9 +11395,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       : (req.protocol || "https");
     const rawHost = String(req.get("host") || "");
     const isLocalHost = /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(rawHost);
-    const baseUrl = isLocalHost
-      ? String(process.env?.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/+$/, "")
-      : `${reqProto}://${rawHost}`;
+    const baseUrl = ensureHttpsPublicUrl(
+      isLocalHost
+        ? String(process.env?.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/+$/, "")
+        : `${reqProto}://${rawHost}`,
+      "https://corpflats.com.br"
+    );
 
     // Se vinculou uma reserva para o teste, resolve as tags reais; senão preenche com dados simulados realistas
     const lookupKey = (reservationId && reservationId !== "none") ? reservationId : (req.body?.reservationCode || null);
@@ -11482,15 +11619,19 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       if (pkgSibs.length > 0) {
         const pkgTotal = Math.round(pkgSibs.reduce((acc, s) => acc + (Number(s.totalAmount) || 0), 0) * 100) / 100;
         const pkgPaid = Math.round(pkgSibs.reduce((acc, s) => acc + (Number(s.paidAmount) || 0), 0) * 100) / 100;
-        const pkgFlats = pkgSibs.map((s) => s.flatNumber).filter(Boolean).join(", ");
+        const pkgFlats = pkgSibs.map((s) => s.flatNumber).filter(Boolean).join(" e ");
         const pkgGuestsSum = pkgSibs.reduce((acc, s) => acc + Math.max(1, Number(s.guestCount || s.adults) || 1), 0);
+        const pkgTok = pkgSibs.find((s) => s.requesterPortalToken)?.requesterPortalToken || reservation.requesterPortalToken || "";
         reservation = {
           ...reservation,
           code: pkgKeyForDispatch.toUpperCase(),
+          packageCode: pkgKeyForDispatch.toUpperCase(),
+          requesterPortalToken: pkgTok,
           flatNumber: pkgFlats || reservation.flatNumber,
           totalAmount: pkgTotal,
           paidAmount: pkgPaid,
           guestCount: pkgGuestsSum || reservation.guestCount,
+          adults: pkgGuestsSum || reservation.adults,
           pixCopiaECola: reservation.packagePixCopiaECola || reservation.pixCopiaECola || ""
         };
       }
@@ -11501,9 +11642,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       : (req.protocol || "https");
     const rawHost = String(req.get("host") || "");
     const isLocalHost = /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(rawHost);
-    const baseUrl = isLocalHost
-      ? String(process.env?.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/+$/, "")
-      : `${reqProto}://${rawHost}`;
+    const baseUrl = ensureHttpsPublicUrl(
+      isLocalHost
+        ? String(process.env?.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/+$/, "")
+        : `${reqProto}://${rawHost}`,
+      "https://corpflats.com.br"
+    );
     const recipients = getReservationRecipients(reservation, db);
     const isPureBilling = isPureBillingTemplateOrEvent(template);
     let targetMode = req.body.recipientTarget || template.recipientTarget || "guest"; // "guest" | "requester" | "both" | "all_guests" | "all" | "guest_2" | "guest_3" | "custom"
@@ -12426,8 +12570,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     const db = getDb();
     ensureDbDefaults();
     const host = req.get("host") || "corpflats.com.br";
-    const protocol = req.protocol || "https";
-    const appBaseUrl = req.body?.baseUrl || (host.includes("localhost") ? "https://corpflats.com.br" : `${protocol}://${host}`);
+    const protocol = req.headers["x-forwarded-proto"]
+      ? String(req.headers["x-forwarded-proto"]).split(",")[0].trim()
+      : (req.protocol || "https");
+    const appBaseUrl = ensureHttpsPublicUrl(req.body?.baseUrl || (host.includes("localhost") ? "https://corpflats.com.br" : `${protocol}://${host}`), "https://corpflats.com.br");
 
     const result = await syncZapiWebhooks(db.zapiConfig, appBaseUrl);
     if (result.success) {
@@ -12699,9 +12845,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       : (req.protocol || "https");
     const rawHost = String(req.get("host") || "");
     const isLocalHost = /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(rawHost);
-    const baseUrl = isLocalHost
-      ? String(process.env?.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/+$/, "")
-      : `${reqProto}://${rawHost}`;
+    const baseUrl = ensureHttpsPublicUrl(
+      isLocalHost
+        ? String(process.env?.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/+$/, "")
+        : `${reqProto}://${rawHost}`,
+      "https://corpflats.com.br"
+    );
     let finalMessage = message || text;
     if (targetRes && finalMessage) {
       finalMessage = resolveWhatsAppTags(finalMessage, targetRes, db, baseUrl);
@@ -13447,9 +13596,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       : (req.protocol || "https");
     const rawHost = String(req.get("host") || "");
     const isLocalHost = /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(rawHost);
-    const baseUrl = isLocalHost
-      ? String(process.env?.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/+$/, "")
-      : `${reqProto}://${rawHost}`;
+    const baseUrl = ensureHttpsPublicUrl(
+      isLocalHost
+        ? String(process.env?.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/+$/, "")
+        : `${reqProto}://${rawHost}`,
+      "https://corpflats.com.br"
+    );
         const resolvedReply = targetRes ? resolveWhatsAppTags(replyToSend, targetRes, db, baseUrl) : replyToSend;
         sentReplyResult = await sendZapiMessage(db.zapiConfig, {
           phone: cleanPhone,
@@ -14636,15 +14788,74 @@ export function isFrequentOrReturningGuestRecipient(db, reservation, target = nu
   const hasValidEmail = Boolean(cleanEmail && cleanEmail.includes("@"));
 
   const rawName = target?.name || (isCompanion ? guestObj?.name : (reservation.guestName || guestObj?.name)) || "";
-  const firstNameNorm = String(rawName).trim().toLowerCase().split(/\s+/)[0] || "";
+  const normNameTokens = String(rawName)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(w => w.length >= 2 && !["de", "da", "do", "das", "dos"].includes(w));
+  const firstNameNorm = normNameTokens[0] || "";
+  const hasCompoundName = normNameTokens.length >= 2;
 
   const targetGuestId = isCompanion
     ? (guestObj?.guestId ? String(guestObj.guestId) : "")
     : (reservation.guestId ? String(reservation.guestId) : (guestObj?.guestId ? String(guestObj.guestId) : ""));
 
+  const { todayStr } = getBrasiliaDateParts(new Date());
+  const curPkgKey = String(reservation.packageId || reservation.packageCode || "").trim().toUpperCase();
+
+  const NON_STAY_HISTORY_EVENTS = new Set([
+    "pre_reservation_created",
+    "pre_reservation_expiring_soon",
+    "pre_reservation_expired",
+    "payment_pending",
+    "reservation_cancelled",
+    "b2b_agency_credential_request",
+    "additional_daily_pending",
+    "additional_daily_expiring_soon",
+    "additional_daily_expired"
+  ]);
+
+  const isInactiveOrUnstartedPriorRes = (prev) => {
+    if (!prev) return true;
+    const prevPkgKey = String(prev.packageId || prev.packageCode || "").trim().toUpperCase();
+    if (curPkgKey && prevPkgKey && curPkgKey === prevPkgKey) return true;
+    const prevStatus = String(prev.status || "").toLowerCase().trim();
+    if (
+      prevStatus === "cancelada" ||
+      prevStatus === "cancelado" ||
+      prevStatus === "cancelled" ||
+      prevStatus === "expirada" ||
+      prevStatus === "expired" ||
+      prevStatus === "pre_reserva" ||
+      prevStatus === "pendente" ||
+      prevStatus === "pending_payment" ||
+      prevStatus === "no_show" ||
+      prevStatus === "noshow"
+    ) {
+      return true;
+    }
+    const hasStartedOrCompletedStay = Boolean(
+      (prev.checkinDate && prev.checkinDate <= todayStr) ||
+      prev.checkoutDone ||
+      prev.checkoutCompleted ||
+      prev.actualCheckinAt ||
+      prev.guestSelfCheckin ||
+      prevStatus === "concluida" ||
+      prevStatus === "checked_out" ||
+      prevStatus === "in_house" ||
+      prevStatus === "hospedado" ||
+      prevStatus === "checkin" ||
+      prevStatus === "checked_in"
+    );
+    return !hasStartedOrCompletedStay;
+  };
+
   // 1. Verifica no histórico de envios do WhatsApp (db.whatsappHistory):
   //    - Se este telefone já recebeu 'corpflats_intro' anteriormente (em qualquer reserva); ou
-  //    - Se já recebeu mensagens da régua de estadia em outra reserva anterior.
+  //    - Se já recebeu mensagens reais de estadia em outra reserva anterior iniciada/concluída.
   if (hasValidPhone && Array.isArray(db.whatsappHistory)) {
     const receivedBeforeInHistory = db.whatsappHistory.some(h => {
       if (!h || !isWhatsappHistorySuccessStatus(h.status)) return false;
@@ -14654,10 +14865,25 @@ export function isFrequentOrReturningGuestRecipient(db, reservation, target = nu
         return true;
       }
 
+      if (NON_STAY_HISTORY_EVENTS.has(String(h.triggerEvent || "").trim())) {
+        return false;
+      }
+
       const hCode = String(h.reservationCode || "").trim().toUpperCase();
       const hId = h.reservationId ? String(h.reservationId) : "";
       const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
       if (!isSameRes && (hCode || hId) && (h.recipientType || "guest") !== "requester") {
+        if (Array.isArray(db.reservations) && db.reservations.length > 0) {
+          const histRes = db.reservations.find(pr => {
+            if (!pr) return false;
+            const prCode = String(pr.code || pr.reservationCode || "").trim().toUpperCase();
+            const prId = pr.id ? String(pr.id) : "";
+            return (hCode && prCode === hCode) || (hId && (prId === hId || prCode === hId));
+          });
+          if (histRes && isInactiveOrUnstartedPriorRes(histRes)) {
+            return false;
+          }
+        }
         return true;
       }
       return false;
@@ -14665,8 +14891,7 @@ export function isFrequentOrReturningGuestRecipient(db, reservation, target = nu
     if (receivedBeforeInHistory) return true;
   }
 
-  // 2. Verifica se já possui pelo menos 1 outra estadia confirmada/concluída (não cancelada/expirada/pré-reserva e fora do mesmo pacote atual) em db.reservations
-  const curPkgKey = String(reservation.packageId || reservation.packageCode || "").trim().toUpperCase();
+  // 2. Verifica se já possui pelo menos 1 estadia anterior iniciada/concluída em db.reservations da MESMA pessoa
   if (Array.isArray(db.reservations)) {
     const hasPriorReservation = db.reservations.some(prev => {
       if (!prev) return false;
@@ -14674,34 +14899,38 @@ export function isFrequentOrReturningGuestRecipient(db, reservation, target = nu
       const prevId = prev.id ? String(prev.id) : "";
       const isSameRes = (rCode && prevCode === rCode) || (rId && (prevId === rId || prevCode === rId));
       if (isSameRes) return false;
-      const prevPkgKey = String(prev.packageId || prev.packageCode || "").trim().toUpperCase();
-      if (curPkgKey && prevPkgKey && curPkgKey === prevPkgKey) return false;
-
-      const prevStatus = String(prev.status || "").toLowerCase().trim();
-      if (
-        prevStatus === "cancelada" ||
-        prevStatus === "cancelado" ||
-        prevStatus === "cancelled" ||
-        prevStatus === "expirada" ||
-        prevStatus === "expired" ||
-        prevStatus === "pre_reserva" ||
-        prevStatus === "pendente"
-      ) {
-        return false;
-      }
-
-      if (targetGuestId && prev.guestId && String(prev.guestId) === targetGuestId) {
-        return true;
-      }
+      if (isInactiveOrUnstartedPriorRes(prev)) return false;
 
       const prevDoc = String(prev.guestDocument || prev.document || "").replace(/\D/g, "");
-      if (hasValidDoc && prevDoc === cleanDoc) return true;
+      if (hasValidDoc && prevDoc && prevDoc === cleanDoc) return true;
+      if (hasValidDoc && prevDoc && prevDoc !== cleanDoc) return false;
 
       if (hasValidPhone && prev.guestPhone && matchClientPhone(rawPhone, prev.guestPhone)) {
         return true;
       }
 
-      if (hasValidEmail && prev.guestEmail && normalizeEmailAddress(prev.guestEmail) === cleanEmail) {
+      const prevHasDifferentPhone = Boolean(
+        hasValidPhone &&
+        prev.guestPhone &&
+        cleanWhatsAppPhone(prev.guestPhone).length >= 8 &&
+        !matchClientPhone(rawPhone, prev.guestPhone)
+      );
+
+      if (targetGuestId && prev.guestId && String(prev.guestId) === targetGuestId) {
+        const namesCompat = !rawName || !prev.guestName || areGuestNamesCompatibleInline(rawName, prev.guestName);
+        if (namesCompat && hasCompoundName && !prevHasDifferentPhone) {
+          return true;
+        }
+      }
+
+      if (
+        hasValidEmail &&
+        !cleanEmail.endsWith("@guest.booking.com") &&
+        prev.guestEmail &&
+        normalizeEmailAddress(prev.guestEmail) === cleanEmail &&
+        hasCompoundName &&
+        !prevHasDifferentPhone
+      ) {
         const prevFirst = String(prev.guestName || "").trim().toLowerCase().split(/\s+/)[0] || "";
         if (!firstNameNorm || !prevFirst || firstNameNorm === prevFirst) {
           return true;
@@ -14711,12 +14940,23 @@ export function isFrequentOrReturningGuestRecipient(db, reservation, target = nu
       if (Array.isArray(prev.guests)) {
         const matchedInPrevGuests = prev.guests.some(pg => {
           if (!pg) return false;
-          if (targetGuestId && pg.guestId && String(pg.guestId) === targetGuestId) return true;
           const pgDoc = String(pg.cpf || pg.document || pg.documentNumber || "").replace(/\D/g, "");
-          if (hasValidDoc && pgDoc === cleanDoc) return true;
+          if (hasValidDoc && pgDoc && pgDoc === cleanDoc) return true;
+          if (hasValidDoc && pgDoc && pgDoc !== cleanDoc) return false;
           const pgPhone = pg.phone || pg.whatsapp || "";
           if (hasValidPhone && pgPhone && matchClientPhone(rawPhone, pgPhone)) return true;
-          if (hasValidEmail && pg.email && normalizeEmailAddress(pg.email) === cleanEmail) {
+          const pgHasDiffPhone = Boolean(hasValidPhone && pgPhone && cleanWhatsAppPhone(pgPhone).length >= 8 && !matchClientPhone(rawPhone, pgPhone));
+          if (targetGuestId && pg.guestId && String(pg.guestId) === targetGuestId && hasCompoundName && !pgHasDiffPhone) {
+            return !rawName || !pg.name || areGuestNamesCompatibleInline(rawName, pg.name);
+          }
+          if (
+            hasValidEmail &&
+            !cleanEmail.endsWith("@guest.booking.com") &&
+            pg.email &&
+            normalizeEmailAddress(pg.email) === cleanEmail &&
+            hasCompoundName &&
+            !pgHasDiffPhone
+          ) {
             const pgFirst = String(pg.name || "").trim().toLowerCase().split(/\s+/)[0] || "";
             if (!firstNameNorm || !pgFirst || firstNameNorm === pgFirst) return true;
           }
@@ -14730,16 +14970,25 @@ export function isFrequentOrReturningGuestRecipient(db, reservation, target = nu
     if (hasPriorReservation) return true;
   }
 
-  // 3. Verifica no cadastro de hóspedes / CRM (db.guests) se já consta com >= 2 estadias ou tag Recorrente/VIP
+  // 3. Verifica no cadastro de hóspedes / CRM (db.guests) se já consta com >= 2 estadias ou tag Recorrente/VIP (sem colisão de homônimo de 1 nome)
   if (Array.isArray(db.guests)) {
     const matchedCrmGuest = db.guests.find(g => {
       if (!g) return false;
-      if (targetGuestId && g.id && String(g.id) === targetGuestId) return true;
       const gDoc = String(g.documentNumber || g.document || g.cpf || "").replace(/\D/g, "");
-      if (hasValidDoc && gDoc === cleanDoc) return true;
+      if (hasValidDoc && gDoc && gDoc === cleanDoc) return true;
+      if (hasValidDoc && gDoc && gDoc !== cleanDoc) return false;
       const gPhone = g.phone || g.whatsapp || "";
       if (hasValidPhone && gPhone && matchClientPhone(rawPhone, gPhone)) return true;
-      if (hasValidEmail && g.email && normalizeEmailAddress(g.email) === cleanEmail) {
+      const gHasDiffPhone = Boolean(hasValidPhone && gPhone && cleanWhatsAppPhone(gPhone).length >= 8 && !matchClientPhone(rawPhone, gPhone));
+      if (targetGuestId && g.id && String(g.id) === targetGuestId && hasCompoundName && !gHasDiffPhone) return true;
+      if (
+        hasValidEmail &&
+        !cleanEmail.endsWith("@guest.booking.com") &&
+        g.email &&
+        normalizeEmailAddress(g.email) === cleanEmail &&
+        hasCompoundName &&
+        !gHasDiffPhone
+      ) {
         const gFirst = String(g.fullName || g.name || "").trim().toLowerCase().split(/\s+/)[0] || "";
         if (!firstNameNorm || !gFirst || firstNameNorm === gFirst) return true;
       }
@@ -16021,10 +16270,20 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
           if (activePkgSibs.length > 1) {
             const pkgTotal = Math.round(activePkgSibs.reduce((acc, s) => acc + (Number(s.totalAmount) || 0), 0) * 100) / 100;
             const pkgPaid = Math.round(activePkgSibs.reduce((acc, s) => acc + (Number(s.paidAmount) || 0), 0) * 100) / 100;
+            const pkgGuests = activePkgSibs.reduce((acc, s) => acc + Math.max(1, Number(s.guestCount || s.adults) || 1), 0);
+            const pkgTok = activePkgSibs.find((s) => s.requesterPortalToken)?.requesterPortalToken || resv.requesterPortalToken || "";
+            const minIn = activePkgSibs.map((s) => s.checkinDate).filter(Boolean).sort()[0] || resv.checkinDate;
+            const maxOut = activePkgSibs.map((s) => s.checkoutDate).filter(Boolean).sort().slice(-1)[0] || resv.checkoutDate;
             resvForTpl = {
               ...resv,
               code: pkgKeyPre.toUpperCase(),
-              flatNumber: activePkgSibs.map((s) => s.flatNumber).filter(Boolean).join(", "),
+              packageCode: pkgKeyPre.toUpperCase(),
+              requesterPortalToken: pkgTok,
+              flatNumber: activePkgSibs.map((s) => s.flatNumber).filter(Boolean).join(" e "),
+              guestCount: pkgGuests,
+              adults: pkgGuests,
+              checkinDate: minIn,
+              checkoutDate: maxOut,
               totalAmount: pkgTotal,
               paidAmount: pkgPaid,
               pixCopiaECola: resv.packagePixCopiaECola || resv.pixCopiaECola || ""
@@ -16430,6 +16689,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
 
     const allowScheduledAsImmediate = Boolean(
       reservation._allowScheduledTemplateImmediate ||
+      eventName === "corpflats_intro" ||
       eventName === "checkin_cleaning_delay" ||
       eventName === "checkin_day_instructions" ||
       eventName === "pre_checkin_reminder" ||
@@ -16441,7 +16701,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       t.enabled && 
       t.triggerEvent === eventName && 
       (t.triggerTiming === "immediate" || allowScheduledAsImmediate) &&
-      isTemplateAllowedForChannel(t, resvChannel)
+      (eventName === "corpflats_intro" || isTemplateAllowedForChannel(t, resvChannel))
     );
 
     // REGRA ANTI-DUPLICAÇÃO: Se houver template especializado (direct ou ota) para reservation_created,
@@ -16457,12 +16717,11 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
 
     if (templates.length === 0 && eventName === "corpflats_intro") {
       const hasExplicitlyDisabled = (db.whatsappTemplates || []).some(
-        t => (t.id === "tpl_corpflats_intro" || t.triggerEvent === "corpflats_intro") &&
-             (t.enabled === false || !isTemplateAllowedForChannel(t, resvChannel))
+        t => (t.id === "tpl_corpflats_intro" || t.triggerEvent === "corpflats_intro") && t.enabled === false
       );
       if (!hasExplicitlyDisabled) {
         const defIntro = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_corpflats_intro");
-        if (defIntro && isTemplateAllowedForChannel(defIntro, resvChannel)) templates = [defIntro];
+        if (defIntro) templates = [defIntro];
       }
     } else if (templates.length === 0 && eventName === "b2b_agency_credential_request") {
       const defCred = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_b2b_agency_credential");

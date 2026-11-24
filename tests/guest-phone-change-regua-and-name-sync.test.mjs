@@ -302,7 +302,78 @@ async function run() {
     assert.ok(!phonesUpdated.some(p => p.includes("22988776655")), "Hóspede 1 com telefone recém-trocado NÃO deve receber a 4ª mensagem reservation_updated");
   }
 
-  console.log("✅ Todos os cenários de troca de telefone da régua (509-1006 / 1304-0999), pacotes multi-flat e edição mista passaram 100%!");
+  // ── CENÁRIO 5 (RES-905-1012 — Ricardo 1ª vez):
+  // Mesmo havendo outro "Ricardo" antigo recorrente no CRM/reservas passadas, pré-reserva expirada anterior
+  // e channels restritos em tpl_corpflats_intro, o novo Ricardo DEVE receber "Somos a CorpFlats..." + Confirmação + PDF!
+  {
+    const db = baseDb();
+    // Simula template antigo no banco com lista de canais desatualizada (sem "booking")
+    const introInDb = db.whatsappTemplates.find(t => t.id === "tpl_corpflats_intro");
+    if (introInDb) introInDb.channels = ["site", "whatsapp"];
+
+    // Outro "Ricardo" antigo já recorrente no sistema com telefone diferente
+    db.guests.push({
+      id: 44,
+      name: "Ricardo",
+      fullName: "Ricardo",
+      phone: "22999110099",
+      totalStays: 4,
+      tags: ["Recorrente"]
+    });
+    db.reservations.push({
+      id: 400,
+      code: "RES-509-0400",
+      flatId: 10,
+      flatNumber: "509",
+      status: "concluida",
+      checkinDate: "2026-09-10",
+      checkoutDate: "2026-09-12",
+      guestId: 44,
+      guestName: "Ricardo",
+      guestPhone: "22999110099"
+    });
+    // Pré-reserva expirada anterior no telefone do novo Ricardo (que não enviou corpflats_intro)
+    db.whatsappHistory.push({
+      id: "wah_preres_exp",
+      reservationId: 1011,
+      reservationCode: "RES-905-1011",
+      recipientType: "guest",
+      guestName: "Ricardo",
+      guestPhone: "5521988771122",
+      triggerEvent: "pre_reservation_created",
+      status: "sent",
+      sentAt: "2026-11-24T12:00:00.000Z"
+    });
+
+    const res905 = {
+      id: 1012,
+      code: "RES-905-1012",
+      flatId: 17,
+      flatNumber: "905",
+      status: "confirmada",
+      paymentStatus: "pago_total",
+      channel: "booking",
+      checkinDate: "2026-12-05",
+      checkoutDate: "2026-12-08",
+      guestId: 44, // Mesmo se guestId estivesse contaminado por homônimo de 1 nome
+      guestName: "Ricardo",
+      guestPhone: "21988771122",
+      guests: [{ index: 1, isMain: true, guestId: 44, name: "Ricardo", phone: "21988771122" }],
+      _fastIntroDelay: true
+    };
+    db.reservations.push(res905);
+
+    await triggerImmediateWhatsApp(db, () => {}, "reservation_created", res905, "https://corpflats.com.br");
+
+    const ricardoHist = db.whatsappHistory.filter(h => h.reservationCode === "RES-905-1012");
+    assert.equal(ricardoHist.length, 2, `Ricardo (905-1012) deve receber Apresentação + Confirmação com PDF! Recebeu: ${JSON.stringify(ricardoHist.map(h => h.triggerEvent))}`);
+    assert.equal(ricardoHist[0].triggerEvent, "corpflats_intro");
+    assert.match(ricardoHist[0].message, /Somos a \*?CorpFlats\*?/i, "1ª mensagem deve ser 'Somos a CorpFlats, uma empresa com foco em locação...'");
+    assert.equal(ricardoHist[1].triggerEvent, "reservation_created");
+    assert.match(String(ricardoHist[1].documentName || ricardoHist[1].documentUrl || ""), /Manual_do_Hospede/i, "Deve anexar o Manual em PDF");
+  }
+
+  console.log("✅ Todos os cenários de troca de telefone da régua (509-1006 / 1304-0999), 905-1012 (Ricardo 1ª vez), pacotes multi-flat e edição mista passaram 100%!");
 }
 
 run().catch(err => {

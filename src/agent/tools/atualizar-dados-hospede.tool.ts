@@ -55,6 +55,38 @@ function normTextSimple(s?: string | null): string {
     .trim();
 }
 
+const DUP_NAME_CONNECTORS = new Set(['de', 'da', 'do', 'dos', 'das', 'e']);
+
+function normGuestFullNameDup(raw?: string | null): string {
+  const tokens = String(raw || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter((t) => Boolean(t) && !DUP_NAME_CONNECTORS.has(t));
+  if (tokens.length < 2) return '';
+  const joined = tokens.join(' ');
+  return joined.length >= 5 ? joined : '';
+}
+
+function normGuestDocDup(raw?: string | null): string {
+  const str = String(raw || '').trim();
+  if (!str) return '';
+  const digits = str.replace(/\D/g, '');
+  const hasLetters = /[a-zA-Z]/.test(str);
+  if (!hasLetters && digits.length === 11) {
+    if (/^(\d)\1{10}$/.test(digits)) return '';
+    return `CPF:${digits}`;
+  }
+  const alnum = str.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+  if (alnum.length >= 5 && (hasLetters || alnum.length >= 7)) {
+    return `DOC:${alnum}`;
+  }
+  return '';
+}
+
 export const atualizarDadosHospedeTool: AgentToolDefinition<AtualizarDadosHospedeArgs> = {
   name: 'atualizar_dados_hospede',
 
@@ -389,9 +421,15 @@ export const atualizarDadosHospedeTool: AgentToolDefinition<AtualizarDadosHosped
         );
 
         if (!phoneUpdateResult.ok) {
-          const msgPhoneErr = phoneUpdateResult.invalidWhatsApp
-            ? `Explique com cordialidade que o sistema validou o número informado (${rawNewGuestPhone}), mas ele também não possui conta ativa no WhatsApp (ou está incompleto). Por segurança, nada foi alterado — peça por favor outro número de WhatsApp válido (com DDD) para o hóspede${resolvedGuestName ? ` *${resolvedGuestName}*` : ''}.`
-            : `Explique educadamente que não foi possível atualizar o telefone agora (${phoneUpdateResult.error || 'erro de validação'}).`;
+          const isDupPhone =
+            phoneUpdateResult.duplicateGuestPhone === true ||
+            phoneUpdateResult.code === 'TELEFONE_HOSPEDE_DUPLICADO';
+          const msgPhoneErr = isDupPhone
+            ? `Explique com cordialidade que o sistema bloqueou o cadastro do número ${rawNewGuestPhone} porque ${phoneUpdateResult.error} ` +
+              `Por segurança, nada foi alterado. Peça por gentileza o número de WhatsApp individual do acompanhante/hóspede${resolvedGuestName ? ` *${resolvedGuestName}*` : ''} (observando que apenas menores de 18 anos podem compartilhar o WhatsApp do responsável).`
+            : phoneUpdateResult.invalidWhatsApp
+              ? `Explique com cordialidade que o sistema validou o número informado (${rawNewGuestPhone}), mas ele também não possui conta ativa no WhatsApp (ou está incompleto). Por segurança, nada foi alterado — peça por favor outro número de WhatsApp válido (com DDD) para o hóspede${resolvedGuestName ? ` *${resolvedGuestName}*` : ''}.`
+              : `Explique educadamente que não foi possível atualizar o telefone agora (${phoneUpdateResult.error || 'erro de validação'}).`;
           return {
             status: 'BLOQUEADO_PELA_REGRA',
             codigo_regra_bloqueio: phoneUpdateResult.code || 'TELEFONE_SEM_WHATSAPP',
@@ -459,6 +497,96 @@ export const atualizarDadosHospedeTool: AgentToolDefinition<AtualizarDadosHosped
           instrucao_para_ia: msg,
           instrucao_resposta_ia: msg,
         };
+      }
+
+      const activeResForDupGuard: any =
+        reserva && Array.isArray(db?.reservations)
+          ? db.reservations.find(
+              (r: any) => String(r?.code || r?.reservationCode || r?.id || '') === reserva.id
+            )
+          : null;
+
+      if (Array.isArray(args.nomes_acompanhantes) && args.nomes_acompanhantes.length > 0) {
+        const mainGuestNameRaw = activeResForDupGuard
+          ? String(
+              activeResForDupGuard.guestName ||
+                activeResForDupGuard.guests?.[0]?.name ||
+                context.hospede?.nome ||
+                ''
+            ).trim()
+          : String(context.hospede?.nome || '').trim();
+        const mainNorm = normGuestFullNameDup(mainGuestNameRaw);
+        const seenCompNorms = new Set<string>();
+
+        for (const rawComp of args.nomes_acompanhantes) {
+          const compClean = String(rawComp || '').trim();
+          const cNorm = normGuestFullNameDup(compClean);
+          if (!cNorm) continue;
+          if (mainNorm && cNorm === mainNorm) {
+            const msgDupMain =
+              `Explique com cordialidade ao hóspede que o nome *${compClean}* já consta como Hóspede Principal (Hóspede 1) desta reserva e não pode ser repetido como acompanhante. ` +
+              `Por segurança, a alteração não foi gravada. Peça o nome completo real do acompanhante (ou pergunte se ficará hospedado apenas 1 hóspede).`;
+            return {
+              status: 'BLOQUEADO_PELA_REGRA',
+              codigo_regra_bloqueio: 'HOSPEDE_ACOMPANHANTE_DUPLICADO',
+              dados: {
+                nome_conflitante: compClean,
+                hospede_principal: mainGuestNameRaw,
+              },
+              instrucao_para_ia: msgDupMain,
+              instrucao_resposta_ia: msgDupMain,
+            };
+          }
+          if (seenCompNorms.has(cNorm)) {
+            const msgDupComp =
+              `Explique com cordialidade ao hóspede que o acompanhante *${compClean}* foi informado em duplicidade na mesma reserva. ` +
+              `Peça o nome completo individual de cada acompanhante.`;
+            return {
+              status: 'BLOQUEADO_PELA_REGRA',
+              codigo_regra_bloqueio: 'HOSPEDE_ACOMPANHANTE_DUPLICADO',
+              dados: {
+                nome_conflitante: compClean,
+              },
+              instrucao_para_ia: msgDupComp,
+              instrucao_resposta_ia: msgDupComp,
+            };
+          }
+          seenCompNorms.add(cNorm);
+        }
+      }
+
+      if (args.cpf_cnpj && activeResForDupGuard && Array.isArray(activeResForDupGuard.guests)) {
+        const candDocNorm = normGuestDocDup(args.cpf_cnpj);
+        if (candDocNorm) {
+          for (let idx = 2; idx <= 3; idx++) {
+            const compSlot = activeResForDupGuard.guests[idx - 1];
+            if (!compSlot || compSlot.informLater) continue;
+            if (
+              (idx === 2 && activeResForDupGuard.guest2InformLater) ||
+              (idx === 3 && activeResForDupGuard.guest3InformLater)
+            ) {
+              continue;
+            }
+            const compDocNorm = normGuestDocDup(
+              compSlot.cpf || compSlot.document || compSlot.passport || ''
+            );
+            if (compDocNorm && compDocNorm === candDocNorm) {
+              const msgDupDoc =
+                `Explique com cordialidade ao hóspede que o documento informado (${args.cpf_cnpj}) já está cadastrado para o Acompanhante (Hóspede ${idx}${compSlot.name ? ` - ${compSlot.name}` : ''}) nesta reserva. ` +
+                `Cada participante deve possuir seu próprio CPF/Passaporte individual.`;
+              return {
+                status: 'BLOQUEADO_PELA_REGRA',
+                codigo_regra_bloqueio: 'DOCUMENTO_HOSPEDE_DUPLICADO',
+                dados: {
+                  documento_conflitante: args.cpf_cnpj,
+                  indice_acompanhante: idx,
+                },
+                instrucao_para_ia: msgDupDoc,
+                instrucao_resposta_ia: msgDupDoc,
+              };
+            }
+          }
+        }
       }
 
       if (args.cpf_cnpj) camposAtualizados.push(`CPF/CNPJ: ${args.cpf_cnpj}`);

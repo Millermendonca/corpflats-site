@@ -13,6 +13,7 @@ import {
   Car,
   Receipt,
   Copy,
+  CopyPlus,
   ExternalLink,
   Edit3,
   CreditCard,
@@ -84,6 +85,7 @@ interface ReservationsDataTableProps {
   onClearSelection: () => void;
   onSelectRowDrawer: (row: UnifiedReservationRow) => void;
   onOpenFullEdit: (row: UnifiedReservationRow) => void;
+  onDuplicate?: (row: UnifiedReservationRow) => void;
   onReactivateExpired: (row: UnifiedReservationRow) => void;
   onResolveQuarantine: (row: UnifiedReservationRow) => void;
   onQuickCheckin: (row: UnifiedReservationRow) => Promise<void>;
@@ -128,6 +130,7 @@ export const ReservationsDataTable: React.FC<ReservationsDataTableProps> = ({
   onClearSelection,
   onSelectRowDrawer,
   onOpenFullEdit,
+  onDuplicate,
   onReactivateExpired,
   onResolveQuarantine,
   onQuickCheckin,
@@ -1210,6 +1213,16 @@ export const ReservationsDataTable: React.FC<ReservationsDataTableProps> = ({
                               >
                                 <Edit3 className="w-3.5 h-3.5 text-indigo-600" />
                                 Edição Completa no PMS
+                              </DropdownMenuItem>
+                            )}
+
+                            {row.sourceType === "pms" && onDuplicate && (
+                              <DropdownMenuItem
+                                onClick={() => onDuplicate(row)}
+                                className="text-xs font-semibold text-indigo-700 dark:text-indigo-300 gap-2 cursor-pointer"
+                              >
+                                <CopyPlus className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" aria-hidden="true" />
+                                Duplicar Reserva
                               </DropdownMenuItem>
                             )}
 

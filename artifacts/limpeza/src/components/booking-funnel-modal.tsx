@@ -19,6 +19,11 @@ import type { RoomConfig } from "@/pages/booking-engine"
 import { loginWithGooglePopup, initGoogleOneTap, cancelGoogleOneTap, updateAccountProfile, saveSessionLocally } from "@/lib/auth-client"
 import { maskPhone, maskCpf } from "@/components/complete-profile-modal"
 import { isPlausibleCpfOrPassport } from "@/lib/phone-mask"
+import {
+  inspectSlotDuplicates,
+  type GuestSlotCandidate,
+  type SlotDuplicateInspection,
+} from "@/lib/duplicate-guest-guard"
 import { compressImage } from "@/lib/image-compression"
 import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo"
 import { useStableCallback } from "@/lib/render-freeze"
@@ -1811,6 +1816,106 @@ export function BookingFunnelModal({
     return () => window.removeEventListener("mouseleave", handleMouseLeave)
   }, [open, currentStep])
 
+  const funnelDuplicateGuestMap = useMemo(() => {
+    const map = new Map<
+      number,
+      { g1: SlotDuplicateInspection; g2: SlotDuplicateInspection }
+    >()
+    const emptyInsp: SlotDuplicateInspection = {
+      hasConflict: false,
+      firstConflict: null,
+      byField: {},
+    }
+    const priorSlots: GuestSlotCandidate[] = []
+
+    rooms.forEach((rm, idx) => {
+      const rIn = rm.customDates && rm.checkinDate ? rm.checkinDate : checkin
+      const rOut = rm.customDates && rm.checkoutDate ? rm.checkoutDate : checkout
+      const flatLabel = `Flat #${idx + 1}`
+
+      let g1Slot: GuestSlotCandidate
+      if (rooms.length >= 2) {
+        const reqHere =
+          idx === 0 &&
+          (rm.requesterIsGuest1 !== undefined
+            ? Boolean(rm.requesterIsGuest1)
+            : !isSeparateRequester)
+        const informLater = Boolean(
+          rm.informGuestsLater ?? (!reqHere && !rm.guest1?.name && !rm.guest1?.phone && !rm.guest1?.document)
+        )
+        g1Slot = {
+          flatIndex: idx,
+          flatLabel,
+          guestIndex: 1,
+          name: reqHere ? (isSeparateRequester ? requesterName : guestName) : rm.guest1?.name,
+          phone: reqHere ? (isSeparateRequester ? requesterPhone : guestPhone) : rm.guest1?.phone,
+          document: reqHere ? (isSeparateRequester ? requesterDocument : guestDocument) : rm.guest1?.document,
+          informLater: !reqHere && informLater,
+          checkinDate: rIn,
+          checkoutDate: rOut,
+        }
+      } else {
+        const singleInformLater = Boolean(
+          isSeparateRequester && !guestName.trim() && !guestPhone.trim() && !guestDocument.trim()
+        )
+        g1Slot = {
+          flatIndex: 0,
+          flatLabel,
+          guestIndex: 1,
+          name: guestName,
+          phone: guestPhone,
+          document: guestDocument,
+          informLater: singleInformLater,
+          checkinDate: rIn,
+          checkoutDate: rOut,
+        }
+      }
+
+      const g1Insp = idx >= 1 ? inspectSlotDuplicates(g1Slot, priorSlots) : emptyInsp
+      if (!g1Slot.informLater) {
+        priorSlots.push(g1Slot)
+      }
+
+      let g2Insp = emptyInsp
+      const hasAnyG2Input = Boolean(
+        rm.guest2?.name?.trim() || rm.guest2?.phone?.trim() || rm.guest2?.document?.trim()
+      )
+      const g2Later = Boolean(
+        g1Slot.informLater || (rm.guest2InformLater ?? !hasAnyG2Input)
+      )
+      if (rm.adults >= 2 && !g2Later) {
+        const g2Slot: GuestSlotCandidate = {
+          flatIndex: idx,
+          flatLabel,
+          guestIndex: 2,
+          name: rm.guest2?.name,
+          phone: rm.guest2?.phone,
+          document: rm.guest2?.document,
+          informLater: false,
+          checkinDate: rIn,
+          checkoutDate: rOut,
+        }
+        g2Insp = inspectSlotDuplicates(g2Slot, priorSlots)
+        priorSlots.push(g2Slot)
+      }
+
+      map.set(rm.id, { g1: g1Insp, g2: g2Insp })
+    })
+
+    return map
+  }, [
+    rooms,
+    checkin,
+    checkout,
+    isSeparateRequester,
+    requesterName,
+    requesterPhone,
+    requesterDocument,
+    guestName,
+    guestPhone,
+    guestDocument,
+  ])
+
   // Avançar Etapa com Validações Acessíveis (sem window.alert bloqueante)
   const handleNextStep = () => {
     if (currentStep === 1) {
@@ -1865,6 +1970,32 @@ export function BookingFunnelModal({
       setStepValidationError(null)
       setCurrentStep(2)
     } else if (currentStep === 2) {
+      for (let i = 0; i < rooms.length; i++) {
+        const rm = rooms[i]
+        const dupInfo = funnelDuplicateGuestMap.get(rm.id)
+        if (dupInfo?.g1.firstConflict) {
+          const c = dupInfo.g1.firstConflict
+          const domSuffix = c.matchedField === "document" ? "doc" : c.matchedField
+          reportValidationFailure(
+            `flatGuest1_${rm.id}_${c.matchedField}`,
+            `funnel-rm-${rm.id}-g1-${domSuffix}`,
+            c.title,
+            c.message
+          )
+          return
+        }
+        if (dupInfo?.g2.firstConflict) {
+          const c = dupInfo.g2.firstConflict
+          const domSuffix = c.matchedField === "document" ? "doc" : c.matchedField
+          reportValidationFailure(
+            `flatGuest2_${rm.id}_${c.matchedField}`,
+            `funnel-rm-${rm.id}-g2-${domSuffix}`,
+            c.title,
+            c.message
+          )
+          return
+        }
+      }
       if (rooms.length >= 2) {
         for (let i = 0; i < rooms.length; i++) {
           const rm = rooms[i]
@@ -1876,7 +2007,7 @@ export function BookingFunnelModal({
             if (g1Nm.split(/\s+/).filter(Boolean).length < 2 || g1Ph.length < 10) {
               reportValidationFailure(
                 `flatGuest1_${rm.id}`,
-                "",
+                `funnel-rm-${rm.id}-g1-name`,
                 `Dados incompletos no Flat #${i + 1}`,
                 `Preencha Nome Completo e WhatsApp com DDD do Hóspede 1 no Flat #${i + 1}, ou clique em "Informar depois" para cadastrar após o pagamento.`
               )
@@ -3116,10 +3247,15 @@ export function BookingFunnelModal({
                   {rooms.map((rm, idx) => {
                     const isFlat1 = idx === 0
                     const reqHere = isFlat1 && (rm.requesterIsGuest1 !== undefined ? Boolean(rm.requesterIsGuest1) : !isSeparateRequester)
+                    const hasAnyG1Input = Boolean(rm.guest1?.name || rm.guest1?.phone || rm.guest1?.document)
                     const informLater = rooms.length >= 2
-                      ? Boolean(rm.informGuestsLater ?? (!reqHere && !rm.guest1?.name))
+                      ? Boolean(rm.informGuestsLater ?? (!reqHere && !hasAnyG1Input))
                       : false
-                    const g2Later = Boolean(rm.guest2InformLater ?? !rm.guest2?.name)
+                    const hasAnyG2Input = Boolean(rm.guest2?.name || rm.guest2?.phone || rm.guest2?.document)
+                    const g2Later = Boolean(rm.guest2InformLater ?? !hasAnyG2Input)
+                    const roomDup = funnelDuplicateGuestMap.get(rm.id)
+                    const g1Dup = roomDup?.g1
+                    const g2Dup = roomDup?.g2
 
                     return (
                       <div key={rm.id} className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2.5">
@@ -3165,30 +3301,70 @@ export function BookingFunnelModal({
                         </div>
 
                         {rooms.length >= 2 && !reqHere && !informLater && (
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
-                            <Input
-                              value={rm.guest1?.name || ""}
-                              onChange={(e) => stableUpdateRoom(rm.id, "guest1", { ...(rm.guest1 || {}), name: e.target.value })}
-                              placeholder="Nome Completo Hóspede 1 *"
-                              className="h-9 text-xs"
-                            />
-                            <Input
-                              type="tel"
-                              inputMode="tel"
-                              value={rm.guest1?.phone || ""}
-                              onChange={(e) => stableUpdateRoom(rm.id, "guest1", { ...(rm.guest1 || {}), phone: maskPhone(e.target.value) })}
-                              placeholder="WhatsApp Hóspede 1 *"
-                              className="h-9 text-xs"
-                            />
-                            <Input
-                              value={rm.guest1?.document || ""}
-                              onChange={(e) => stableUpdateRoom(rm.id, "guest1", { ...(rm.guest1 || {}), document: maskCpf(e.target.value) })}
-                              placeholder="CPF Hóspede 1 (Opcional)"
-                              autoCorrect="off"
-                              autoCapitalize="none"
-                              spellCheck={false}
-                              className="h-9 text-xs font-mono"
-                            />
+                          <div className="space-y-2 pt-1">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                              <Input
+                                id={`funnel-rm-${rm.id}-g1-name`}
+                                value={rm.guest1?.name || ""}
+                                aria-invalid={g1Dup?.byField.name ? "true" : undefined}
+                                onChange={(e) => {
+                                  clearFieldValidation()
+                                  stableUpdateRoom(rm.id, "__patch__", { informGuestsLater: false, guest1: { ...(rm.guest1 || {}), name: e.target.value } })
+                                }}
+                                placeholder="Nome Completo Hóspede 1 *"
+                                className={`h-9 text-xs ${g1Dup?.byField.name ? "border-rose-500 ring-1 ring-rose-500/40 bg-rose-50/40 dark:bg-rose-950/20" : ""}`}
+                              />
+                              <Input
+                                id={`funnel-rm-${rm.id}-g1-phone`}
+                                type="tel"
+                                inputMode="tel"
+                                value={rm.guest1?.phone || ""}
+                                aria-invalid={g1Dup?.byField.phone ? "true" : undefined}
+                                onChange={(e) => {
+                                  clearFieldValidation()
+                                  stableUpdateRoom(rm.id, "__patch__", { informGuestsLater: false, guest1: { ...(rm.guest1 || {}), phone: maskPhone(e.target.value) } })
+                                }}
+                                placeholder="WhatsApp Hóspede 1 *"
+                                className={`h-9 text-xs ${g1Dup?.byField.phone ? "border-rose-500 ring-1 ring-rose-500/40 bg-rose-50/40 dark:bg-rose-950/20" : ""}`}
+                              />
+                              <Input
+                                id={`funnel-rm-${rm.id}-g1-doc`}
+                                value={rm.guest1?.document || ""}
+                                aria-invalid={g1Dup?.byField.document ? "true" : undefined}
+                                onChange={(e) => {
+                                  clearFieldValidation()
+                                  stableUpdateRoom(rm.id, "__patch__", { informGuestsLater: false, guest1: { ...(rm.guest1 || {}), document: maskCpf(e.target.value) } })
+                                }}
+                                placeholder="CPF Hóspede 1 (Opcional)"
+                                autoCorrect="off"
+                                autoCapitalize="none"
+                                spellCheck={false}
+                                className={`h-9 text-xs font-mono ${g1Dup?.byField.document ? "border-rose-500 ring-1 ring-rose-500/40 bg-rose-50/40 dark:bg-rose-950/20" : ""}`}
+                              />
+                            </div>
+                            {g1Dup?.firstConflict && (
+                              <div role="alert" className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200 text-[11px] space-y-2">
+                                <div className="flex items-start gap-2 font-semibold">
+                                  <AlertTriangle className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+                                  <span>{g1Dup.firstConflict.message}</span>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5 pl-5">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      clearFieldValidation()
+                                      stableUpdateRoom(rm.id, "__patch__", {
+                                        informGuestsLater: true,
+                                        guest1: { name: "", phone: "", document: "" },
+                                      })
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-700 text-rose-800 dark:text-rose-200 hover:bg-rose-100/70 font-bold text-[10px] transition-colors"
+                                  >
+                                    ⏳ Informar hóspedes deste flat depois
+                                  </button>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -3209,30 +3385,86 @@ export function BookingFunnelModal({
                               </button>
                             </div>
                             {!g2Later && (
-                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                <Input
-                                  value={rm.guest2?.name || ""}
-                                  onChange={(e) => stableUpdateRoom(rm.id, "__patch__", { guest2InformLater: false, guest2: { ...(rm.guest2 || {}), name: e.target.value } })}
-                                  placeholder="Nome Completo Hóspede 2"
-                                  className="h-9 text-xs"
-                                />
-                                <Input
-                                  type="tel"
-                                  inputMode="tel"
-                                  value={rm.guest2?.phone || ""}
-                                  onChange={(e) => stableUpdateRoom(rm.id, "__patch__", { guest2InformLater: false, guest2: { ...(rm.guest2 || {}), phone: maskPhone(e.target.value) } })}
-                                  placeholder="WhatsApp Hóspede 2"
-                                  className="h-9 text-xs"
-                                />
-                                <Input
-                                  value={rm.guest2?.document || ""}
-                                  onChange={(e) => stableUpdateRoom(rm.id, "__patch__", { guest2InformLater: false, guest2: { ...(rm.guest2 || {}), document: maskCpf(e.target.value) } })}
-                                  placeholder="CPF Hóspede 2 (Opcional)"
-                                  autoCorrect="off"
-                                  autoCapitalize="none"
-                                  spellCheck={false}
-                                  className="h-9 text-xs font-mono"
-                                />
+                              <div className="space-y-2">
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                  <Input
+                                    id={`funnel-rm-${rm.id}-g2-name`}
+                                    value={rm.guest2?.name || ""}
+                                    aria-invalid={g2Dup?.byField.name ? "true" : undefined}
+                                    onChange={(e) => {
+                                      clearFieldValidation()
+                                      stableUpdateRoom(rm.id, "__patch__", { guest2InformLater: false, guest2: { ...(rm.guest2 || {}), name: e.target.value } })
+                                    }}
+                                    placeholder="Nome Completo Hóspede 2"
+                                    className={`h-9 text-xs ${g2Dup?.byField.name ? "border-rose-500 ring-1 ring-rose-500/40 bg-rose-50/40 dark:bg-rose-950/20" : ""}`}
+                                  />
+                                  <Input
+                                    id={`funnel-rm-${rm.id}-g2-phone`}
+                                    type="tel"
+                                    inputMode="tel"
+                                    value={rm.guest2?.phone || ""}
+                                    aria-invalid={g2Dup?.byField.phone ? "true" : undefined}
+                                    onChange={(e) => {
+                                      clearFieldValidation()
+                                      stableUpdateRoom(rm.id, "__patch__", { guest2InformLater: false, guest2: { ...(rm.guest2 || {}), phone: maskPhone(e.target.value) } })
+                                    }}
+                                    placeholder="WhatsApp Hóspede 2"
+                                    className={`h-9 text-xs ${g2Dup?.byField.phone ? "border-rose-500 ring-1 ring-rose-500/40 bg-rose-50/40 dark:bg-rose-950/20" : ""}`}
+                                  />
+                                  <Input
+                                    id={`funnel-rm-${rm.id}-g2-doc`}
+                                    value={rm.guest2?.document || ""}
+                                    aria-invalid={g2Dup?.byField.document ? "true" : undefined}
+                                    onChange={(e) => {
+                                      clearFieldValidation()
+                                      stableUpdateRoom(rm.id, "__patch__", { guest2InformLater: false, guest2: { ...(rm.guest2 || {}), document: maskCpf(e.target.value) } })
+                                    }}
+                                    placeholder="CPF Hóspede 2 (Opcional)"
+                                    autoCorrect="off"
+                                    autoCapitalize="none"
+                                    spellCheck={false}
+                                    className={`h-9 text-xs font-mono ${g2Dup?.byField.document ? "border-rose-500 ring-1 ring-rose-500/40 bg-rose-50/40 dark:bg-rose-950/20" : ""}`}
+                                  />
+                                </div>
+                                {g2Dup?.firstConflict && (
+                                  <div role="alert" className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200 text-[11px] space-y-2">
+                                    <div className="flex items-start gap-2 font-semibold">
+                                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+                                      <span>{g2Dup.firstConflict.message}</span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1.5 pl-5">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          clearFieldValidation()
+                                          stableUpdateRoom(rm.id, "__patch__", {
+                                            guest2InformLater: true,
+                                            guest2: { name: "", phone: "", document: "" },
+                                          })
+                                        }}
+                                        className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-700 text-rose-800 dark:text-rose-200 hover:bg-rose-100/70 font-bold text-[10px] transition-colors"
+                                      >
+                                        ⏳ Informar acompanhante depois
+                                      </button>
+                                      {rm.adults === 2 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            clearFieldValidation()
+                                            stableUpdateRoom(rm.id, "__patch__", {
+                                              adults: 1,
+                                              guest2InformLater: false,
+                                              guest2: undefined,
+                                            })
+                                          }}
+                                          className="px-2.5 py-1 rounded-lg bg-slate-900 text-white hover:bg-slate-800 font-bold text-[10px] transition-colors"
+                                        >
+                                          👤 Alterar para 1 hóspede
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>

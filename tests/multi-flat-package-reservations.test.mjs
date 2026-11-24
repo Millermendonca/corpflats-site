@@ -448,14 +448,19 @@ describe("Pacotes Multi-Flat (Pagamento Único, Hóspedes 1 e 2 por Flat, PMS + 
     assert.equal(settled.summary.totalAmount, 1600);
     assert.equal(settled.summary.paidAmount, 1600);
 
-    // Solicitante recebeu 1 recibo único COM valores e botão para Portal do Solicitante /solicitante/PKG-778899
+    // Solicitante que também é Hóspede 1 do Flat 101 recebe:
+    // 1º) Recibo consolidado do pacote COM valores e link /solicitante/PKG-778899
+    // 2º) Apresentação (se 1ª vez) + instruções operacionais do Flat 101 (Check-in Online + Manual PDF)
     const msgSolicitante = whatsappLog.filter((m) => m.phone === "5522999110000");
-    assert.equal(msgSolicitante.length, 1, "Solicitante recebe 1 único recibo sem duplicidade por ser Hóspede 1 do Flat 101");
+    assert.ok(msgSolicitante.length >= 2, "Solicitante que é Hóspede 1 recebe recibo consolidado + instruções operacionais do seu flat");
     assert.ok(msgSolicitante[0].text.includes("1.600,00"));
     assert.ok(
       JSON.stringify(msgSolicitante[0].buttons || []).includes(`/solicitante/${pkgCode}`) ||
       msgSolicitante[0].text.includes(`/solicitante/${pkgCode}`)
     );
+    const instrSolicitante = msgSolicitante[msgSolicitante.length - 1];
+    assert.ok(instrSolicitante.text.includes("Flat 101"), "Instruções operacionais devem referenciar o Flat 101 do solicitante");
+    assert.equal(instrSolicitante.text.includes("R$"), false, "Instrução operacional do flat não mistura valores financeiros");
 
     // Acompanhante do Flat 101 (Ana) e Hóspedes 1 e 2 do Flat 102 (Marcos e Júlia) receberam apenas instruções SEM NENHUM VALOR ("R$")
     const guestPhones = ["5522999110001", "5522999330001", "5522999330002"];

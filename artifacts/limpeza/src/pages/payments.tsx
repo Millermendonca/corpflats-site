@@ -144,7 +144,7 @@ export default function Payments() {
   const [pbCustomPayerEmail, setPbCustomPayerEmail] = useState("")
   const [pbTermDays, setPbTermDays] = useState("15")
   const [pbCustomDueDate, setPbCustomDueDate] = useState("")
-  const [pbConsumptionMode, setPbConsumptionMode] = useState<"single" | "separate">("single")
+  const [pbConsumptionMode, setPbConsumptionMode] = useState<"not_billed" | "single" | "separate">("not_billed")
   const [pbConsumptionSame, setPbConsumptionSame] = useState(true)
   const [pbConsumptionPayerName, setPbConsumptionPayerName] = useState("")
   const [pbConsumptionPayerDoc, setPbConsumptionPayerDoc] = useState("")
@@ -318,7 +318,13 @@ export default function Payments() {
     setPbCustomPayerEmail(pre.payerEmail || "")
     setPbTermDays(String(pre.termDays ?? 15))
     setPbCustomDueDate(pre.customDueDate || "")
-    setPbConsumptionMode(pre.consumptionMode === "separate" ? "separate" : "single")
+    setPbConsumptionMode(
+      pre.isConsumptionFaturado === false || pre.consumptionMode === "not_billed"
+        ? "not_billed"
+        : pre.consumptionMode === "separate" || pre.consumptionMode === "separate_boletos"
+        ? "separate"
+        : "single"
+    )
     setPbConsumptionSame(pre.consumptionSamePayerAndDue !== false)
     setPbConsumptionPayerName(pre.consumptionCustomPayer?.name || pre.guestName || "")
     setPbConsumptionPayerDoc(pre.consumptionCustomPayer?.document || pre.guestDocument || "")
@@ -1525,7 +1531,9 @@ export default function Payments() {
 
                                 <td className="p-3">
                                   <Badge variant="outline" className="text-[10px] font-bold border-violet-500/40 text-violet-700 dark:text-violet-300">
-                                    {item.consumptionMode === "separate"
+                                    {item.consumptionMode === "not_billed" || item.isConsumptionFaturado === false
+                                      ? "Só Hospedagem (Cons. p/ Hóspede)"
+                                      : item.consumptionMode === "separate"
                                       ? "2 Boletos (Hosp. + Consumo)"
                                       : "1 Boleto Unificado"}
                                   </Badge>
@@ -1643,7 +1651,9 @@ export default function Payments() {
 
                               <td className="p-3">
                                 <Badge variant="outline" className="text-[10px] font-bold border-indigo-500/40 text-indigo-700 dark:text-indigo-300">
-                                  {b.boletoKind === "accommodation"
+                                  {b.consumptionMode === "not_billed"
+                                    ? "Só Hospedagem (Cons. Individual)"
+                                    : b.boletoKind === "accommodation"
                                     ? "1/2 • Só Hospedagem"
                                     : b.boletoKind === "consumption"
                                       ? "2/2 • Só Consumo"
@@ -2173,10 +2183,25 @@ export default function Payments() {
                 </div>
               </div>
 
-              {/* 1 Boleto vs 2 Boletos */}
+              {/* Consumo Faturado: Não vs Sim (1 ou 2 Boletos) */}
               <div className="space-y-2">
-                <Label className="font-bold">3. Composição dos Boletos</Label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <Label className="font-bold">3. Consumo (Frigobar) & Composição dos Boletos</Label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPbConsumptionMode("not_billed")}
+                    className={`p-3 rounded-xl border text-left transition-all ${
+                      pbConsumptionMode === "not_billed"
+                        ? "bg-emerald-600 text-white border-emerald-600 font-bold"
+                        : "bg-background border-border text-foreground"
+                    }`}
+                  >
+                    <div className="text-xs font-black">Não Faturar Consumo</div>
+                    <div className={`text-[10px] mt-0.5 ${pbConsumptionMode === "not_billed" ? "text-emerald-100" : "text-muted-foreground"}`}>
+                      Boleto só Hospedagem • Hóspede paga via PIX/Cartão
+                    </div>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => setPbConsumptionMode("single")}

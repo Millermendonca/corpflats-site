@@ -5,6 +5,7 @@ import {
   Edit3,
   MessageCircle,
   Copy,
+  CopyPlus,
   ExternalLink,
   CalendarDays,
   Building2,
@@ -59,6 +60,7 @@ interface ReservationQuickDrawerProps {
   onNavigatePrev: () => void;
   onNavigateNext: () => void;
   onOpenFullEdit: (row: UnifiedReservationRow) => void;
+  onDuplicate?: (row: UnifiedReservationRow) => void;
   onReactivateExpired: (row: UnifiedReservationRow) => void;
   onQuickCheckin: (row: UnifiedReservationRow) => Promise<void>;
   onQuickCheckout: (row: UnifiedReservationRow) => Promise<void>;
@@ -88,6 +90,7 @@ export const ReservationQuickDrawer: React.FC<ReservationQuickDrawerProps> = ({
   onNavigatePrev,
   onNavigateNext,
   onOpenFullEdit,
+  onDuplicate,
   onReactivateExpired,
   onQuickCheckin,
   onQuickCheckout,
@@ -236,14 +239,29 @@ export const ReservationQuickDrawer: React.FC<ReservationQuickDrawerProps> = ({
             </div>
 
             {row.sourceType === "pms" && (
-              <Button
-                size="sm"
-                onClick={() => onOpenFullEdit(row)}
-                className="h-8 px-3 text-xs font-bold gap-1.5 rounded-xl shadow-xs"
-              >
-                <Edit3 className="w-3.5 h-3.5" />
-                Edição Completa
-              </Button>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {onDuplicate && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onDuplicate(row)}
+                    className="h-8 px-2.5 text-xs font-bold gap-1.5 rounded-xl border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 cursor-pointer"
+                    title="Duplicar esta reserva para outra data"
+                  >
+                    <CopyPlus className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>Duplicar</span>
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  onClick={() => onOpenFullEdit(row)}
+                  className="h-8 px-3 text-xs font-bold gap-1.5 rounded-xl shadow-xs cursor-pointer"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  Edição Completa
+                </Button>
+              </div>
             )}
           </div>
 

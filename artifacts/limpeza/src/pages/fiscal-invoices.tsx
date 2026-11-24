@@ -385,7 +385,7 @@ export default function FiscalInvoicesPage() {
   const [emitBoletoTargetRes, setEmitBoletoTargetRes] = useState<any | null>(null)
   const [emittingBoletoPackage, setEmittingBoletoPackage] = useState(false)
   const [ebEmitNfseToo, setEbEmitNfseToo] = useState(true)
-  const [ebConsumptionMode, setEbConsumptionMode] = useState<"single" | "separate">("single")
+  const [ebConsumptionMode, setEbConsumptionMode] = useState<"not_billed" | "single" | "separate">("not_billed")
   const [ebTermDays, setEbTermDays] = useState("15")
   const [ebCustomDueDate, setEbCustomDueDate] = useState("")
   const [ebConsumptionDueDate, setEbConsumptionDueDate] = useState("")
@@ -409,7 +409,13 @@ export default function FiscalInvoicesPage() {
   const handleOpenEmitBoletoModal = (res: any) => {
     setEmitBoletoTargetRes(res)
     setEbEmitNfseToo(!res.invoiceIssued)
-    setEbConsumptionMode(res.boletoConsumptionMode === "separate" ? "separate" : "single")
+    setEbConsumptionMode(
+      res.isConsumptionFaturado === false || res.boletoConsumptionMode === "not_billed"
+        ? "not_billed"
+        : res.boletoConsumptionMode === "separate" || res.boletoConsumptionMode === "separate_boletos"
+        ? "separate"
+        : "single"
+    )
     const term = String(res.boletoTermDays ?? res.company?.defaultBoletoTermDays ?? res.agency?.defaultBoletoTermDays ?? res.guest?.defaultBoletoTermDays ?? 15)
     setEbTermDays(term)
     setEbCustomDueDate(res.boletoCustomDueDate || "")
@@ -7056,9 +7062,14 @@ export default function FiscalInvoicesPage() {
                     </div>
                   </div>
                   <div>
-                    <div className="text-[10px] font-bold uppercase text-muted-foreground">Total Geral (Hosp + Consumo)</div>
+                    <div className="text-[10px] font-bold uppercase text-muted-foreground">
+                      {ebConsumptionMode === "not_billed" ? "Total no Boleto (Só Hospedagem)" : "Total Geral (Hosp + Consumo)"}
+                    </div>
                     <div className="text-base font-black text-indigo-600 font-mono tabular-nums">
-                      R$ {Number((emitBoletoTargetRes.accommodationAmount || emitBoletoTargetRes.totalAmount || 0) + (emitBoletoTargetRes.consumptionAmount || 0)).toFixed(2)}
+                      R$ {Number(
+                        (emitBoletoTargetRes.accommodationAmount || emitBoletoTargetRes.totalAmount || 0) +
+                        (ebConsumptionMode === "not_billed" ? 0 : (emitBoletoTargetRes.consumptionAmount || 0))
+                      ).toFixed(2)}
                     </div>
                   </div>
                 </div>
@@ -7080,10 +7091,26 @@ export default function FiscalInvoicesPage() {
                   />
                 </label>
 
-                {/* 1 Boleto vs 2 Boletos */}
+                {/* Consumo Faturado: Não vs Sim (1 ou 2 Boletos) */}
                 <div className="space-y-1.5">
-                  <Label className="font-bold">Composição dos Boletos no Check-out</Label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <Label className="font-bold">Consumo (Frigobar) e Composição dos Boletos</Label>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEbConsumptionMode("not_billed")}
+                      aria-pressed={ebConsumptionMode === "not_billed"}
+                      className={`min-h-[48px] p-3 rounded-xl border text-left transition-all ${
+                        ebConsumptionMode === "not_billed"
+                          ? "bg-emerald-600 text-white border-emerald-600 font-bold"
+                          : "bg-background border-border text-foreground"
+                      }`}
+                    >
+                      <div className="text-xs font-black">Não Faturar Consumo</div>
+                      <div className={`text-[10px] mt-0.5 ${ebConsumptionMode === "not_billed" ? "text-emerald-100" : "text-muted-foreground"}`}>
+                        Boleto só Hospedagem • Hóspede paga via PIX/Cartão
+                      </div>
+                    </button>
+
                     <button
                       type="button"
                       onClick={() => setEbConsumptionMode("single")}
