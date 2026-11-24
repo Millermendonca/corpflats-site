@@ -65529,6 +65529,183 @@ app.get("/api/tariffs/calendar", (req, res) => {
   });
 });
 
+export function calculatePmsTariffQuote({
+  checkin,
+  checkout,
+  channel = "direct",
+  guests = 1,
+  includeBreakfast = false,
+  flatId = null
+} = {}) {
+  const cinStr = String(checkin || "").trim().slice(0, 10);
+  const coutStr = String(checkout || "").trim().slice(0, 10);
+  const isoRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!isoRegex.test(cinStr) || !isoRegex.test(coutStr)) {
+    return { error: "INVALID_DATE_FORMAT", message: "Check-in e check-out devem estar no formato YYYY-MM-DD." };
+  }
+  const start = new Date(`${cinStr}T12:00:00Z`);
+  const end = new Date(`${coutStr}T12:00:00Z`);
+  if (
+    isNaN(start.getTime()) ||
+    isNaN(end.getTime()) ||
+    start.toISOString().slice(0, 10) !== cinStr ||
+    end.toISOString().slice(0, 10) !== coutStr ||
+    start >= end
+  ) {
+    return { error: "INVALID_DATE_RANGE", message: "A data de check-out deve ser posterior à data de check-in." };
+  }
+
+  const requestedNights = [];
+  const cursor = new Date(start);
+  while (cursor < end) {
+    requestedNights.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    if (requestedNights.length > 365) {
+      return { error: "MAX_STAY_EXCEEDED", message: "O período máximo para cotação do tarifário é de 365 noites." };
+    }
+  }
+  const nights = requestedNights.length;
+
+  const rawChan = String(channel || "direct").toLowerCase().trim();
+  const normChan = ["whatsapp", "site", "direta", "direto", "balcao"].includes(rawChan) ? "direct" : rawChan;
+  const reservationChan = rawChan === "direct" ? "whatsapp" : rawChan;
+  const guestCount = Math.min(3, Math.max(1, Math.round(Number(guests) || 1)));
+  const withBreakfast =
+    includeBreakfast === true ||
+    includeBreakfast === 1 ||
+    ["true", "1", "yes", "sim"].includes(String(includeBreakfast || "").toLowerCase().trim());
+
+  const cleanFlatId =
+    flatId === null ||
+    flatId === undefined ||
+    ["", "auto", "all", "null", "undefined"].includes(String(flatId).trim().toLowerCase())
+      ? null
+      : String(flatId).trim();
+
+  const roundMoney = (v) => Math.round((Number(v) + Number.EPSILON) * 100) / 100;
+
+  const wbpState = WbpPricingManager.getPricingState(db);
+  const tarSettings = getTariffSettings();
+  const siteCfg = db.siteConfig || DEFAULT_SITE_CONFIG;
+
+  const chanMarkupPct = resolveChannelEffectiveMarkupPct(tarSettings.channelMarkups, normChan);
+  const bfSurchargeBase = Number(
+    wbpState.settings?.breakfastSurchargePerGuest ??
+    tarSettings.breakfastSurchargePerGuest ??
+    siteCfg.pricing?.breakfastSurchargePerGuest ??
+    20
+  );
+  const extraBedBase = Number(
+    wbpState.settings?.extraBedFee ??
+    tarSettings.extraBedFee ??
+    siteCfg.extraBedConfig?.feeAmount ??
+    60
+  );
+  const bfForChannel = roundMoney(bfSurchargeBase * (1 + chanMarkupPct));
+  const extraBedForChannel = roundMoney(extraBedBase * (1 + chanMarkupPct));
+
+  const stayDiscounts = tarSettings.stayDiscounts || { weeklyPct: 0.10, biweeklyPct: 0.15, monthlyPct: 0.25 };
+  let stayDiscountPct = 0;
+  if (nights >= 30) stayDiscountPct = Number(stayDiscounts.monthlyPct ?? 0.25);
+  else if (nights >= 15) stayDiscountPct = Number(stayDiscounts.biweeklyPct ?? 0.15);
+  else if (nights >= 7) stayDiscountPct = Number(stayDiscounts.weeklyPct ?? 0.10);
+
+  const dailyRates = requestedNights.map((dayStr) => {
+    const override = findEffectiveTariffOverride(cleanFlatId, dayStr, normChan);
+    const baseChannelRate = calculateDailyRate(cleanFlatId, dayStr, normChan);
+    const roomRate = stayDiscountPct > 0 && !override
+      ? roundMoney(baseChannelRate * (1 - stayDiscountPct))
+      : baseChannelRate;
+    const breakfastAddon = withBreakfast ? roundMoney(bfForChannel * guestCount) : 0;
+    const extraBedAddon = guestCount >= 3 ? extraBedForChannel : 0;
+    const rate = roundMoney(roomRate + breakfastAddon + extraBedAddon);
+    return {
+      date: dayStr,
+      rate,
+      channel: reservationChan,
+      baseRoomRate: roomRate,
+      breakfastAddon,
+      extraBedAddon,
+      hasOverride: Boolean(override)
+    };
+  });
+
+  const rawWbCfg = siteCfg.ratePlans?.with_breakfast || DEFAULT_SITE_CONFIG.ratePlans.with_breakfast;
+  const rawRoCfg = siteCfg.ratePlans?.room_only || DEFAULT_SITE_CONFIG.ratePlans.room_only;
+  const activePlanCfg = withBreakfast
+    ? {
+        cleaningFeeEnabled: Boolean(rawWbCfg.cleaningFeeEnabled),
+        cleaningFeeAmount: Math.max(0, Number(rawWbCfg.cleaningFeeAmount ?? 0)),
+        cleaningFeeType: rawWbCfg.cleaningFeeType || "per_stay"
+      }
+    : {
+        cleaningFeeEnabled: rawRoCfg.cleaningFeeEnabled !== false,
+        cleaningFeeAmount: Math.max(0, Number(rawRoCfg.cleaningFeeAmount ?? 50)),
+        cleaningFeeType: rawRoCfg.cleaningFeeType || "per_stay"
+      };
+
+  const baseCleaningUnit = activePlanCfg.cleaningFeeEnabled ? activePlanCfg.cleaningFeeAmount : 0;
+  const baseCleaningTotal = activePlanCfg.cleaningFeeType === "per_night"
+    ? roundMoney(baseCleaningUnit * nights)
+    : roundMoney(baseCleaningUnit);
+  const cleaningFee = baseCleaningTotal > 0 ? roundMoney(baseCleaningTotal * (1 + chanMarkupPct)) : 0;
+
+  const fallbackRoCleanUnit = Math.max(0, Number(rawRoCfg.cleaningFeeAmount ?? 50)) || 50;
+  const fallbackRoCleanTotal = rawRoCfg.cleaningFeeType === "per_night"
+    ? roundMoney(fallbackRoCleanUnit * nights)
+    : roundMoney(fallbackRoCleanUnit);
+  const defaultCleaningFeeForChannel = roundMoney(fallbackRoCleanTotal * (1 + chanMarkupPct));
+
+  const nightsSubtotal = roundMoney(dailyRates.reduce((acc, item) => acc + (Number(item.rate) || 0), 0));
+  const avgDailyRate = nights > 0 ? roundMoney(nightsSubtotal / nights) : 0;
+  const totalAmount = roundMoney(nightsSubtotal + cleaningFee);
+  const hasMixedNightRates = dailyRates.length > 1 && new Set(dailyRates.map((d) => d.rate)).size > 1;
+
+  return {
+    success: true,
+    checkin: cinStr,
+    checkout: coutStr,
+    nights,
+    channel: reservationChan,
+    normalizedChannel: normChan,
+    flatId: cleanFlatId,
+    guests: guestCount,
+    includeBreakfast: withBreakfast,
+    channelMarkupPct: chanMarkupPct,
+    stayDiscountPct,
+    breakfastSurchargePerGuest: bfForChannel,
+    breakfastSurchargeBase: bfSurchargeBase,
+    extraBedFee: extraBedForChannel,
+    cleaningFee,
+    cleaningFeeEnabled: Boolean(activePlanCfg.cleaningFeeEnabled && cleaningFee > 0),
+    cleaningFeeBaseAmount: baseCleaningUnit,
+    cleaningFeeType: activePlanCfg.cleaningFeeType,
+    defaultCleaningFeeForChannel,
+    nightsSubtotal,
+    avgDailyRate,
+    totalAmount,
+    hasMixedNightRates,
+    dailyRates
+  };
+}
+
+app.get("/api/pms/tariff-quote", (req, res) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+  const { checkin, checkout, channel = "booking", guests = "1", includeBreakfast = "false", flatId = null } = req.query;
+  const quote = calculatePmsTariffQuote({
+    checkin,
+    checkout,
+    channel,
+    guests,
+    includeBreakfast,
+    flatId
+  });
+  if (quote.error) {
+    return res.status(400).json(quote);
+  }
+  return res.json(quote);
+});
+
 app.post("/api/tariffs/bulk-update", (req, res) => {
   const { startDate, endDate, flatIds, channels, daysOfWeek, rate, reason } = req.body || {};
 

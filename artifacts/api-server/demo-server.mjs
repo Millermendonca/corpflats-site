@@ -65651,7 +65651,10 @@ export function calculatePmsTariffQuote({
   const cleaningFee = baseCleaningTotal > 0 ? roundMoney(baseCleaningTotal * (1 + chanMarkupPct)) : 0;
 
   const fallbackRoCleanUnit = Math.max(0, Number(rawRoCfg.cleaningFeeAmount ?? 50)) || 50;
-  const defaultCleaningFeeForChannel = roundMoney(fallbackRoCleanUnit * (1 + chanMarkupPct));
+  const fallbackRoCleanTotal = rawRoCfg.cleaningFeeType === "per_night"
+    ? roundMoney(fallbackRoCleanUnit * nights)
+    : roundMoney(fallbackRoCleanUnit);
+  const defaultCleaningFeeForChannel = roundMoney(fallbackRoCleanTotal * (1 + chanMarkupPct));
 
   const nightsSubtotal = roundMoney(dailyRates.reduce((acc, item) => acc + (Number(item.rate) || 0), 0));
   const avgDailyRate = nights > 0 ? roundMoney(nightsSubtotal / nights) : 0;

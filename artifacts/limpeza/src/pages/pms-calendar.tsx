@@ -62,6 +62,24 @@ import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservat
 import { PaymentMethodsModal, PaymentMethod } from "@/components/payment-methods-modal"
 import { formatSmartPhone, formatPhoneForWhatsAppCheck } from "@/lib/phone-mask"
 import { validateEmailList, formatEmailList, parseEmailList, getPrimaryEmail } from "@/lib/email-utils"
+import { SimplifiedReservationForm } from "@/components/simplified-reservation-form"
+import {
+  applySimpleDailyRateEdit,
+  applySimpleTotalEdit,
+  applySimpleCleaningFeeEdit,
+  applySimpleCleaningFeeRemove,
+  applyTariffQuoteToFlatState,
+  getCleaningFeeSummary,
+  type PmsTariffQuoteResponse,
+} from "@/lib/simplified-reservation-pricing"
+import {
+  evaluateSimpleFlatAvailability,
+  resolveFairShareFlatAllocation,
+  inspectSimpleCrmGuestState,
+  computeChannelTransition,
+  validateSimplifiedReservationSubmit,
+  shouldKeepPhoneOnCrmUnlink,
+} from "@/lib/simplified-reservation-helpers"
 
 const DEFAULT_CLIENT_PAYMENT_METHODS: PaymentMethod[] = [
   { id: "booking", name: "Booking.com", gatewayFeeRate: 0, commissionRate: 0, active: true, isSystem: true },
@@ -590,6 +608,7 @@ export interface ReservationChargeItem {
   amount: number;
   baseAmount?: number;
   notes?: string;
+  autoOtaCleaning?: boolean;
 }
 
 export interface ReservationPaymentItem {
@@ -1005,6 +1024,7 @@ interface FlatReservationCardProps {
   onCloseRangePicker: () => void;
   onDatesChangeForFlat: (uid: string, checkinDate: string, checkoutDate: string) => void;
   onSelectCrmGuestForFlat: (uid: string, guestIndex: 1 | 2 | 3, guest: any) => void;
+  onUnlinkCrmGuest1?: (uid: string, clearFields?: boolean) => void;
   onSaveGuestToCrmForFlat: (uid: string, guestIndex: 1 | 2 | 3) => void;
   onToggleRequesterIsGuest1: (uid: string, checked: boolean) => void;
   onVerifyPhone: (phone: string) => void;
@@ -1054,6 +1074,7 @@ const FlatReservationCard = memo(function FlatReservationCard({
   onCloseRangePicker,
   onDatesChangeForFlat,
   onSelectCrmGuestForFlat,
+  onUnlinkCrmGuest1,
   onSaveGuestToCrmForFlat,
   onToggleRequesterIsGuest1,
   onVerifyPhone,
@@ -1806,6 +1827,10 @@ const FlatReservationCard = memo(function FlatReservationCard({
               }}
               onSelectCrmGuest={(g) => onSelectCrmGuestForFlat(flat.uid, 1, g)}
               onMarkManual={(clearFields) => {
+                if (onUnlinkCrmGuest1) {
+                  onUnlinkCrmGuest1(flat.uid, clearFields);
+                  return;
+                }
                 onPatchFlat(flat.uid, {
                   requesterIsGuest1: false,
                   guest1: clearFields
@@ -2623,6 +2648,26 @@ export default function PmsCalendar(props?: {
   const [resModalOpen, setResModalOpen] = useState(false)
   const [selectedRes, setSelectedRes] = useState<any | null>(null)
   const [savingRes, setSavingRes] = useState(false)
+  const [resCreateMode, setResCreateMode] = useState<"simple" | "advanced">("simple")
+  const [isFlatManualSelection, setIsFlatManualSelection] = useState(false)
+  const [simplePriceManuallyEdited, setSimplePriceManuallyEdited] = useState(false)
+  const simplePriceManuallyEditedRef = useRef(false)
+  const [simpleTotalDraft, setSimpleTotalDraft] = useState<number | null>(null)
+  const [tariffQuote, setTariffQuote] = useState<PmsTariffQuoteResponse | null>(null)
+  const [loadingTariffQuote, setLoadingTariffQuote] = useState(false)
+  const [simpleSubmitAttempted, setSimpleSubmitAttempted] = useState(false)
+  const tariffQuoteReqIdRef = useRef(0)
+  const simpleChannelBookingRef = useRef<HTMLInputElement | null>(null)
+  const simpleCheckinRef = useRef<HTMLInputElement | null>(null)
+  const simpleFlatTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const simpleGuestNameRef = useRef<HTMLInputElement | null>(null)
+  const simpleTotalRef = useRef<HTMLInputElement | null>(null)
+  const resCreateModeRef = useRef(resCreateMode)
+  resCreateModeRef.current = resCreateMode
+  const resModalOpenRef = useRef(resModalOpen)
+  resModalOpenRef.current = resModalOpen
+  const selectedResRef = useRef(selectedRes)
+  selectedResRef.current = selectedRes
   const [mobileCardResId, setMobileCardResId] = useState<number | string | null>(null)
   useBackLayer(mobileCardResId !== null, () => setMobileCardResId(null), "pms-mobile-res-card")
   const [roomMoveModalState, setRoomMoveModalState] = useState<{
@@ -2693,6 +2738,8 @@ export default function PmsCalendar(props?: {
     }),
   ]);
   const primaryFlat = formFlats[0] || createDefaultFlatReservationItem({ uid: "flat_primary", flatId: "" });
+  const formFlatsRef = useRef(formFlats);
+  formFlatsRef.current = formFlats;
   const isFlatManuallyChangedRef = useRef(false);
   const nfHideManuallySetRef = useRef(false);
 
@@ -3569,28 +3616,38 @@ export default function PmsCalendar(props?: {
   }
 
   const fairShareReqIdRef = useRef(0)
+  const fairShareAbortRef = useRef<AbortController | null>(null)
 
   const fetchFairShare = async (cin: string, cout: string, excludeId: any = null) => {
-    if (!cin || !cout) return
+    if (!cin || !cout) return null
     let normCin = cin
     let normCout = cout
     if (normCin >= normCout) {
       const d = safeParseDate(normCin)
       if (d) normCout = format(addDays(d, 1), "yyyy-MM-dd")
     }
+    fairShareAbortRef.current?.abort()
+    const localController = new AbortController()
+    fairShareAbortRef.current = localController
     const reqId = ++fairShareReqIdRef.current
     setLoadingFairShare(true)
     try {
       const url = `/api/pms/fair-share-flat?checkin=${normCin}&checkout=${normCout}${excludeId ? `&excludeResId=${excludeId}` : ''}&_t=${Date.now()}`
-      const res = await fetch(url, { credentials: "include", cache: "no-store" })
+      const res = await fetch(url, { credentials: "include", cache: "no-store", signal: localController.signal })
       if (res.ok) {
         const json = await res.json()
-        if (reqId === fairShareReqIdRef.current) {
-          setFairShareResult({ ...json, _checkin: normCin, _checkout: normCout })
+        if (reqId !== fairShareReqIdRef.current) {
+          return null
         }
-        return json
+        const enriched = { ...json, _checkin: normCin, _checkout: normCout }
+        setFairShareResult(enriched)
+        return enriched
       }
-    } catch {} finally {
+      return null
+    } catch (err: any) {
+      if (err?.name === "AbortError") return null
+      return null
+    } finally {
       if (reqId === fairShareReqIdRef.current) {
         setLoadingFairShare(false)
       }
@@ -3615,15 +3672,51 @@ export default function PmsCalendar(props?: {
   }, [resModalOpen])
 
   useEffect(() => {
-    if (resModalOpen && formCheckin && formCheckout) {
-      fetchFairShare(formCheckin, formCheckout, selectedRes?.id).then((result) => {
-        // Auto-select Flat da Vez on new reservation (and when dates change) unless user manually picked a flat
-        if (!selectedRes && result?.bestFlatId && !isFlatManuallyChangedRef.current) {
-          setFormFlats(prev =>
-            prev.map((f, idx) => (idx === 0 ? { ...f, flatId: String(result.bestFlatId), forceOverbooking: false } : f))
-          )
-        }
+    if (!resModalOpen || !formCheckin || !formCheckout || formCheckout <= formCheckin) {
+      fairShareAbortRef.current?.abort()
+      fairShareReqIdRef.current += 1
+      setLoadingFairShare(false)
+      return
+    }
+    fetchFairShare(formCheckin, formCheckout, selectedRes?.id).then((result) => {
+      if (!result || !resModalOpenRef.current || selectedResRef.current) return
+      const latestPrimary = formFlatsRef.current[0]
+      if (!latestPrimary) return
+      const decision = resolveFairShareFlatAllocation({
+        mode: resCreateModeRef.current,
+        isEdit: Boolean(selectedResRef.current),
+        currentFlatId: latestPrimary.flatId,
+        isFlatManuallyChanged: isFlatManuallyChangedRef.current,
+        fairShareResult: result,
+        expectedCheckin: latestPrimary.checkinDate,
+        expectedCheckout: latestPrimary.checkoutDate,
       })
+      if (decision.action === "select_auto" && decision.nextFlatId) {
+        isFlatManuallyChangedRef.current = false
+        setIsFlatManualSelection(false)
+        setFormFlats(prev =>
+          prev.map((f, idx) => (idx === 0 ? { ...f, flatId: decision.nextFlatId!, forceOverbooking: false } : f))
+        )
+      } else if (decision.action === "reallocate_auto" && decision.nextFlatId) {
+        isFlatManuallyChangedRef.current = false
+        setIsFlatManualSelection(false)
+        setFormFlats(prev =>
+          prev.map((f, idx) => (idx === 0 ? { ...f, flatId: decision.nextFlatId!, forceOverbooking: false } : f))
+        )
+        if (decision.previousFlatId && decision.previousFlatId !== decision.nextFlatId) {
+          toast({
+            title: "Apartamento realocado automaticamente",
+            description: `Apt ${decision.previousFlatNumber || decision.previousFlatId} está indisponível neste período. Selecionamos o Apt ${decision.nextFlatNumber || decision.nextFlatId} (flat da vez).`,
+          })
+        }
+      } else if (decision.action === "clear_full_occupancy") {
+        setFormFlats(prev =>
+          prev.map((f, idx) => (idx === 0 ? { ...f, flatId: "", forceOverbooking: false } : f))
+        )
+      }
+    })
+    return () => {
+      fairShareAbortRef.current?.abort()
     }
   }, [resModalOpen, formCheckin, formCheckout, selectedRes?.id])
 
@@ -5987,28 +6080,18 @@ export default function PmsCalendar(props?: {
     };
   }, [modalOnly]);
 
-  const handleOpenNewResRange = (defaultFlatId: number, startDate: Date, endDate: Date, initialChannel: string = "whatsapp") => {
-    const d1 = startDate <= endDate ? startDate : endDate
-    const d2 = startDate <= endDate ? endDate : startDate
-    setSelectedRes(null)
+  const resetNewResCommonFields = (cin: string, initialChannel: string) => {
     setPkgEditNfseOpen(false)
     setPkgEditCancelOpen(false)
-    setFormCompanyCnpj("")
-    setInlineCompanyData(null)
-    setInlineCnpjExpanded(false)
     setPkgExtraCharges([])
     setPackagePricingMode("sum")
     setPackagePricingInput("")
     setPackageEmitBoletoNow(false)
     setPkgChargeTarget("package")
-    isFlatManuallyChangedRef.current = true
+    setFormCompanyCnpj("")
+    setInlineCompanyData(null)
+    setInlineCnpjExpanded(false)
     nfHideManuallySetRef.current = false
-    const cin = format(d1, "yyyy-MM-dd")
-    const cout = isSameDay(d1, d2)
-      ? format(addDays(d1, 1), "yyyy-MM-dd")
-      : format(d2, "yyyy-MM-dd")
-    const cTime = defaultCheckinTime || "14:00"
-    const oTime = defaultCheckoutTime || "12:00"
     setFormRequesterType(initialChannel === "b2b" ? "agency_b2b" : "guest")
     setFormRequesterName("")
     setFormRequesterPhone("")
@@ -6045,19 +6128,84 @@ export default function PmsCalendar(props?: {
     setFormVoucherUrl("")
     setShowVoucherParser(false)
     setVoucherTextToParse("")
+    setVoucherFilePayload(null)
     setNewAgencyInlineOpen(false)
     setGuestSearchFilter("")
     setGuest2SearchFilter("")
     setShowGuest2Suggestions(false)
     setGuest3SearchFilter("")
     setShowGuest3Suggestions(false)
+    setFormStatus("confirmada")
+    setIsReactivatingRes(false)
+    setIsReactivatingExt(false)
+    setReactivationFlatSwitchedInfo(null)
+    setFormExtensionHoldMode("pre_reserva")
+    setFormHoldManuallyChosen(false)
+    setFormSendExpirationReminder(true)
+    setFormHoldPreset(getDefaultHoldPresetForCheckin(cin))
+    setFormHoldCustomMode("duration")
+    setFormHoldCustomValue("45")
+    setFormHoldCustomUnit("minutes")
+    setFormHoldCustomDateTime(format(addDays(new Date(), 1), "yyyy-MM-dd'T'12:00"))
+    setShowGuestSuggestions(false)
+    setFormAutoInvoice(false)
+    setFormIsMonthlyGuest(false)
+    setFormIsFaturadoBoleto(false)
+    setFormBoletoTermDays(15)
+    setFormBoletoCustomDueDate("")
+    setFormBoletoConsumptionMode("single_boleto")
+    setFormBoletoPayerType("company")
+    setFormConsumptionSamePayerAndDue(true)
+    setFormConsumptionPayerType("guest")
+    setFormConsumptionTermDays(15)
+    setFormConsumptionCustomDueDate("")
+    setFormBoletoFinePct(2)
+    setFormBoletoInterestPct(1)
+    setFormAutoEmitBoletoOnCheckout(true)
+    setFormAutoReminderEnabled(true)
+    setFormFinRespName("")
+    setFormFinRespEmail("")
+    setFormFinRespPhone("")
+    setFormFinRespDoc("")
+    setFormRecGuest(false)
+    setFormRecRequester(true)
+    setFormRecCompany(true)
+    setFormRecFinResp(true)
+    setFormRecSendEmail(true)
+    setFormRecSendWhatsapp(true)
+    setRawBoletoInputs({})
+    setAuditLogs([])
+    setCommunications([])
+  }
+
+  const handleOpenNewResRange = (defaultFlatId: number, startDate: Date, endDate: Date, initialChannel: string = "") => {
+    const d1 = startDate <= endDate ? startDate : endDate
+    const d2 = startDate <= endDate ? endDate : startDate
+    const openInSimple = !initialChannel || initialChannel === "booking" || initialChannel === "airbnb"
+    setSelectedRes(null)
+    setResCreateMode(openInSimple ? "simple" : "advanced")
+    setSimplePriceManuallyEdited(false)
+    simplePriceManuallyEditedRef.current = false
+    setSimpleTotalDraft(null)
+    setTariffQuote(null)
+    setLoadingTariffQuote(false)
+    setSimpleSubmitAttempted(false)
+    setIsFlatManualSelection(true)
+    isFlatManuallyChangedRef.current = true
+    const cin = format(d1, "yyyy-MM-dd")
+    const cout = isSameDay(d1, d2)
+      ? format(addDays(d1, 1), "yyyy-MM-dd")
+      : format(d2, "yyyy-MM-dd")
+    const cTime = defaultCheckinTime || "14:00"
+    const oTime = defaultCheckoutTime || "12:00"
+    resetNewResCommonFields(cin, initialChannel)
     const isBooking = initialChannel === "booking"
     const isAirbnb = initialChannel === "airbnb"
     const isB2b = initialChannel === "b2b"
     const isOtaChannel = isBooking || isAirbnb
     setFormChannel(initialChannel)
     setFormPaymentMethod(isBooking ? "booking" : (isAirbnb ? "airbnb" : (isB2b ? "vcn_b2b" : "pix")))
-    const baseDailyRate = 250
+    const baseDailyRate = openInSimple && !initialChannel ? 0 : 250
     const initialRates = buildReservationDailyRates(cin, cout, baseDailyRate, initialChannel)
     const initialCharges: ReservationChargeItem[] = isOtaChannel
       ? [{
@@ -6065,7 +6213,8 @@ export default function PmsCalendar(props?: {
           type: "cleaning",
           title: "Taxa de Limpeza",
           amount: 50,
-          notes: ""
+          notes: "",
+          autoOtaCleaning: true,
         }]
       : []
     const subNights = initialRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
@@ -6081,6 +6230,7 @@ export default function PmsCalendar(props?: {
         checkinTime: cTime,
         checkoutTime: oTime,
         guestCount: "1",
+        includeBreakfast: false,
         dailyRate: String(baseDailyRate),
         dailyRates: initialRates,
         charges: initialCharges,
@@ -6106,19 +6256,6 @@ export default function PmsCalendar(props?: {
       ])
       setFormPaymentStatus("pago_total")
     }
-    setFormStatus("confirmada")
-    setIsReactivatingRes(false)
-    setReactivationFlatSwitchedInfo(null)
-    setFormHoldManuallyChosen(false)
-    setFormSendExpirationReminder(true)
-    setFormHoldPreset(getDefaultHoldPresetForCheckin(cin))
-    setFormHoldCustomMode("duration")
-    setFormHoldCustomValue("45")
-    setFormHoldCustomUnit("minutes")
-    setFormHoldCustomDateTime(format(addDays(new Date(), 1), "yyyy-MM-dd'T'12:00"))
-    setShowGuestSuggestions(false)
-    setFormAutoInvoice(false)
-    setFormIsMonthlyGuest(false)
     setMobileRangeStart(null)
     setRangePickerFlatUid(null)
     setPickerRangeStart(null)
@@ -6222,106 +6359,58 @@ export default function PmsCalendar(props?: {
   const [inlineCnpjExpanded, setInlineCnpjExpanded] = useState(false)
   const isMultiFlat = !selectedRes && formFlats.length > 1
 
-  const handleOpenNewRes = (defaultFlatId?: number, defaultDate?: Date, initialChannel: string = "whatsapp") => {
+  const handleOpenNewRes = (defaultFlatId?: number, defaultDate?: Date, initialChannel: string = "") => {
+    const openInSimple = !initialChannel || initialChannel === "booking" || initialChannel === "airbnb"
     setMobileRangeStart(null)
     setSelectedRes(null)
-    setPkgEditNfseOpen(false)
-    setPkgEditCancelOpen(false)
-    setPkgExtraCharges([])
-    setPackagePricingMode("sum")
-    setPackagePricingInput("")
-    setPackageEmitBoletoNow(false)
-    setPkgChargeTarget("package")
-    setFormCompanyCnpj("")
-    setInlineCompanyData(null)
-    setInlineCnpjExpanded(false)
-    nfHideManuallySetRef.current = false
+    setResCreateMode(openInSimple ? "simple" : "advanced")
+    setSimplePriceManuallyEdited(false)
+    simplePriceManuallyEditedRef.current = false
+    setSimpleTotalDraft(null)
+    setTariffQuote(null)
+    setLoadingTariffQuote(false)
+    setSimpleSubmitAttempted(false)
+    setIsFlatManualSelection(Boolean(defaultFlatId))
     const cin = defaultDate ? format(defaultDate, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd")
     const cout = defaultDate ? format(addDays(defaultDate, 1), "yyyy-MM-dd") : format(addDays(new Date(), 1), "yyyy-MM-dd")
+    resetNewResCommonFields(cin, initialChannel)
     let resolvedFlatId = ""
     if (defaultFlatId) {
       isFlatManuallyChangedRef.current = true
       resolvedFlatId = String(defaultFlatId)
     } else {
       isFlatManuallyChangedRef.current = false
-      const isResultForTargetDates = fairShareResult && fairShareResult._checkin === cin && fairShareResult._checkout === cout
-      const suggestedStat = isResultForTargetDates
-        ? fairShareResult?.allStats?.find((s: any) => Number(s.flat?.id) === Number(fairShareResult?.bestFlatId))
-        : null
-      if (suggestedStat?.isAvailable && fairShareResult?.bestFlatId) {
-        resolvedFlatId = String(fairShareResult.bestFlatId)
-      } else if (fairShareResult?.bestFlatId) {
-        resolvedFlatId = String(fairShareResult.bestFlatId)
+      const initAvail = evaluateSimpleFlatAvailability({
+        flatsList: data.flats || [],
+        reservationsList: data.reservations || [],
+        blocksList: data.blocks || [],
+        fairShareResult,
+        checkinDate: cin,
+        checkoutDate: cout,
+        flatId: "",
+      })
+      if (initAvail.isFullOccupancy) {
+        resolvedFlatId = ""
+      } else if (initAvail.matchingFairShare?.bestFlatId) {
+        const bestStat = initAvail.matchingFairShare.allStats.find(
+          (s: any) => Number(s.flat?.id) === Number(initAvail.matchingFairShare.bestFlatId) && Boolean(s.isAvailable)
+        )
+        resolvedFlatId = bestStat?.flat?.id
+          ? String(bestStat.flat.id)
+          : (initAvail.firstFreeFlat?.id || "")
       } else {
-        const availFlat = data.flats.find((fl: any) => {
-          const hasResConf = (data.reservations || []).some((r: any) => {
-            if (Number(r.flatId) !== Number(fl.id) && String(r.flatNumber) !== String(fl.number)) return false
-            const st = String(r.status || "").toLowerCase()
-            if (["cancelada", "cancelled", "no_show", "expirada"].includes(st)) return false
-            if ((r.checkoutDone || r.earlyCheckout || ["completed", "checked_out", "finalizada", "concluida", "checkout"].includes(st)) && r.checkoutDate <= cin) return false
-            return r.checkinDate < cout && r.checkoutDate > cin
-          })
-          const hasBlkConf = (data.blocks || []).some((b: any) => {
-            if (Number(b.flatId) !== Number(fl.id) && String(b.flatNumber) !== String(fl.number)) return false
-            return b.startDate < cout && b.endDate >= cin
-          })
-          return !hasResConf && !hasBlkConf
-        })
-        const fallbackFlatId = availFlat?.id || data.flats[0]?.id || ""
-        resolvedFlatId = fallbackFlatId ? String(fallbackFlatId) : ""
+        resolvedFlatId = initAvail.firstFreeFlat?.id || ""
       }
     }
     const cTime = defaultCheckinTime || "14:00"
     const oTime = defaultCheckoutTime || "12:00"
-    setFormRequesterType(initialChannel === "b2b" ? "agency_b2b" : "guest")
-    setFormRequesterName("")
-    setFormRequesterPhone("")
-    setFormRequesterEmail("")
-    setFormRequesterCpf("")
-    setFormRequesterId("")
-    setRequesterSearchFilter("")
-    setShowRequesterSuggestions(false)
-    setFormCompanyId("")
-    setFormCompanyName("")
-    setFormAgencyId("")
-    setFormAgencyName("")
-    setFormAgencyCnpj("")
-    setFormAgencyPosUnit("")
-    setFormAgencyAgentName("")
-    setFormAgencyAgentEmail("")
-    setFormAgencyAgentPhone("")
-    setFormCostCenter("")
-    setFormB2bReservationNumber("")
-    setFormB2bLocatorRloc("")
-    setFormB2bOriginType("BOOKING_WS")
-    setFormB2bRatePolicy("COMISSIONADA")
-    setFormB2bCommissionPct("12")
-    setFormB2bPaymentType("VIRTUAL_CARD")
-    setFormB2bCardBrand("MASTERCARD")
-    setFormB2bCardMasked("")
-    setFormB2bVcnToken("")
-    setFormB2bConciliationUrl("https://conciliacao.b2breservas.com.br")
-    setFormB2bAuthorizedExpenses("Apenas Diárias")
-    setFormInvoiceRecipientType(initialChannel === "b2b" ? "agency" : "guest")
-    setFormNfDeliveryEmails("")
-    setFormNfHideFromGuest(initialChannel === "b2b")
-    setFormInvoicingInstructions("")
-    setFormVoucherUrl("")
-    setShowVoucherParser(false)
-    setVoucherTextToParse("")
-    setNewAgencyInlineOpen(false)
-    setGuestSearchFilter("")
-    setGuest2SearchFilter("")
-    setShowGuest2Suggestions(false)
-    setGuest3SearchFilter("")
-    setShowGuest3Suggestions(false)
     const isBooking = initialChannel === "booking"
     const isAirbnb = initialChannel === "airbnb"
     const isB2b = initialChannel === "b2b"
     const isOtaChannel = isBooking || isAirbnb
     setFormChannel(initialChannel)
     setFormPaymentMethod(isBooking ? "booking" : (isAirbnb ? "airbnb" : (isB2b ? "vcn_b2b" : "pix")))
-    const baseDailyRate = 250
+    const baseDailyRate = openInSimple && !initialChannel ? 0 : 250
     const initialRates = buildReservationDailyRates(cin, cout, baseDailyRate, initialChannel)
     const initialCharges: ReservationChargeItem[] = isOtaChannel
       ? [{
@@ -6329,7 +6418,8 @@ export default function PmsCalendar(props?: {
           type: "cleaning",
           title: "Taxa de Limpeza",
           amount: 50,
-          notes: ""
+          notes: "",
+          autoOtaCleaning: true,
         }]
       : []
     const subNights = initialRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
@@ -6345,6 +6435,7 @@ export default function PmsCalendar(props?: {
         checkinTime: cTime,
         checkoutTime: oTime,
         guestCount: "1",
+        includeBreakfast: false,
         dailyRate: String(baseDailyRate),
         dailyRates: initialRates,
         charges: initialCharges,
@@ -6370,44 +6461,6 @@ export default function PmsCalendar(props?: {
       ])
       setFormPaymentStatus("pago_total")
     }
-    setFormStatus("confirmada")
-    setIsReactivatingRes(false)
-    setReactivationFlatSwitchedInfo(null)
-    setFormHoldManuallyChosen(false)
-    setFormSendExpirationReminder(true)
-    setFormHoldPreset(getDefaultHoldPresetForCheckin(cin))
-    setFormHoldCustomMode("duration")
-    setFormHoldCustomValue("45")
-    setFormHoldCustomUnit("minutes")
-    setFormHoldCustomDateTime(format(addDays(new Date(), 1), "yyyy-MM-dd'T'12:00"))
-    setShowGuestSuggestions(false)
-    setFormAutoInvoice(false)
-    setFormIsMonthlyGuest(false)
-    setFormIsFaturadoBoleto(false)
-    setFormBoletoTermDays(15)
-    setFormBoletoCustomDueDate("")
-    setFormBoletoConsumptionMode("single_boleto")
-    setFormBoletoPayerType("company")
-    setFormConsumptionSamePayerAndDue(true)
-    setFormConsumptionPayerType("guest")
-    setFormConsumptionTermDays(15)
-    setFormConsumptionCustomDueDate("")
-    setFormBoletoFinePct(2)
-    setFormBoletoInterestPct(1)
-    setFormAutoEmitBoletoOnCheckout(true)
-    setFormAutoReminderEnabled(true)
-    setFormFinRespName("")
-    setFormFinRespEmail("")
-    setFormFinRespPhone("")
-    setFormFinRespDoc("")
-    setFormRecGuest(false)
-    setFormRecRequester(true)
-    setFormRecCompany(true)
-    setFormRecFinResp(true)
-    setFormRecSendEmail(true)
-    setFormRecSendWhatsapp(true)
-    setAuditLogs([])
-    setCommunications([])
     setRangePickerFlatUid(null)
     setPickerRangeStart(null)
     setPickerHoverDate(null)
@@ -6440,31 +6493,41 @@ export default function PmsCalendar(props?: {
   }, [resModalOpen])
 
   useEffect(() => {
-    if (resModalOpen && !selectedRes && !formFlatId && data.flats.length > 0) {
-      const cin = formCheckin || format(new Date(), "yyyy-MM-dd")
-      const cout = formCheckout || format(addDays(new Date(), 1), "yyyy-MM-dd")
-      const availFlat = data.flats.find((fl: any) => {
-        const hasResConf = (data.reservations || []).some((r: any) => {
-          if (Number(r.flatId) !== Number(fl.id) && String(r.flatNumber) !== String(fl.number)) return false
-          const st = String(r.status || "").toLowerCase()
-          if (["cancelada", "cancelled", "no_show", "expirada"].includes(st)) return false
-          if ((r.checkoutDone || r.earlyCheckout || ["completed", "checked_out", "finalizada", "concluida", "checkout"].includes(st)) && r.checkoutDate <= cin) return false
-          return r.checkinDate < cout && r.checkoutDate > cin
-        })
-        const hasBlkConf = (data.blocks || []).some((b: any) => {
-          if (Number(b.flatId) !== Number(fl.id) && String(b.flatNumber) !== String(fl.number)) return false
-          return b.startDate < cout && b.endDate >= cin
-        })
-        return !hasResConf && !hasBlkConf
-      })
-      const fallbackFlatId = fairShareResult?.bestFlatId || availFlat?.id || data.flats[0]?.id || ""
-      if (fallbackFlatId) {
-        setFormFlats(prev =>
-          prev.map((f, idx) => (idx === 0 && !f.flatId ? { ...f, flatId: String(fallbackFlatId) } : f))
-        )
-      }
+    if (
+      !resModalOpen ||
+      selectedRes ||
+      formFlatId ||
+      loadingFairShare ||
+      isFlatManuallyChangedRef.current ||
+      data.flats.length === 0 ||
+      !formCheckin ||
+      !formCheckout ||
+      formCheckout <= formCheckin
+    ) {
+      return
     }
-  }, [resModalOpen, selectedRes, formFlatId, data.flats, data.reservations, data.blocks, fairShareResult, formCheckin, formCheckout])
+    const avail = evaluateSimpleFlatAvailability({
+      flatsList: data.flats,
+      reservationsList: data.reservations || [],
+      blocksList: data.blocks || [],
+      fairShareResult,
+      checkinDate: formCheckin,
+      checkoutDate: formCheckout,
+      flatId: "",
+    })
+    if (avail.isFullOccupancy) return
+    const bestFromMatching = avail.matchingFairShare?.bestFlatId
+      ? avail.matchingFairShare.allStats.find(
+          (s: any) => Number(s.flat?.id) === Number(avail.matchingFairShare.bestFlatId) && Boolean(s.isAvailable)
+        )?.flat?.id
+      : null
+    const fallbackFlatId = bestFromMatching ? String(bestFromMatching) : (avail.firstFreeFlat?.id || "")
+    if (fallbackFlatId) {
+      setFormFlats(prev =>
+        prev.map((f, idx) => (idx === 0 && !f.flatId ? { ...f, flatId: fallbackFlatId, forceOverbooking: false } : f))
+      )
+    }
+  }, [resModalOpen, selectedRes, formFlatId, loadingFairShare, data.flats, data.reservations, data.blocks, fairShareResult, formCheckin, formCheckout])
 
   const handleOpenEditRes = (resItem: any) => {
     setSelectedRes(resItem)
@@ -6961,6 +7024,14 @@ export default function PmsCalendar(props?: {
     setManualRecipient(resItem.guestEmail || pEmail)
     setManualSubject(`[CorpFlats] Flat ${resItem.flatNumber} - ${resItem.guestName}`)
     setManualBody("")
+    setResCreateMode("advanced")
+    setSimplePriceManuallyEdited(false)
+    simplePriceManuallyEditedRef.current = false
+    setSimpleTotalDraft(null)
+    setTariffQuote(null)
+    setLoadingTariffQuote(false)
+    setSimpleSubmitAttempted(false)
+    setIsFlatManualSelection(true)
     setRangePickerFlatUid(null)
     setPickerRangeStart(null)
     setPickerHoverDate(null)
@@ -7262,6 +7333,29 @@ export default function PmsCalendar(props?: {
     }
   }, [modalOnly, loading, data.reservations, data.expiredPreReservations])
 
+  const resetCrmInheritedReservationLinks = () => {
+    setFormIsMonthlyGuest(false)
+    setFormAutoInvoice(false)
+    if (formRequesterType === "guest" && formChannel !== "b2b") {
+      setFormCompanyId("")
+      setFormCompanyName("")
+      setFormCompanyCnpj("")
+      setFormInvoiceRecipientType("guest")
+      setFormBoletoTermDays(15)
+      setFormBoletoConsumptionMode("single_boleto")
+      setFormFinRespName("")
+      setFormFinRespEmail("")
+      setFormFinRespPhone("")
+      setFormFinRespDoc("")
+      setFormRecGuest(false)
+      setFormRecRequester(true)
+      setFormRecCompany(true)
+      setFormRecFinResp(true)
+      setFormRecSendEmail(true)
+      setFormRecSendWhatsapp(true)
+    }
+  }
+
   const handleSelectCrmGuestForFlat = (flatUid: string, guestIndex: 1 | 2 | 3, g: any) => {
     if (!g) return
     const targetIdx = formFlats.findIndex(f => f.uid === flatUid)
@@ -7295,8 +7389,16 @@ export default function PmsCalendar(props?: {
           nextF.guest1 = nextGuestObj
           nextF.informGuestsLater = false
           nextF.requesterIsGuest1 = false
-          if (g.floorPreference === "alto" || g.prefersHighFloor) nextF.prefersHighFloor = true
-          if (g.bedType === "2 Solteiro" || g.twinBeds) nextF.twinBeds = true
+          if (g.floorPreference === "alto" || g.prefersHighFloor) {
+            nextF.prefersHighFloor = true
+          } else if (!isSameGuest && !selectedRes) {
+            nextF.prefersHighFloor = false
+          }
+          if (g.bedType === "2 Solteiro" || g.twinBeds) {
+            nextF.twinBeds = true
+          } else if (!isSameGuest && !selectedRes) {
+            nextF.twinBeds = false
+          }
           if (g.docPhotoUrl && (!f.docPhotoUrl || !isSameGuest)) {
             nextF.docPhotoUrl = g.docPhotoUrl
             nextF.docFileName = "documento_crm"
@@ -7334,7 +7436,7 @@ export default function PmsCalendar(props?: {
       if (g.companyId && (!formCompanyId || !isSameGuest)) {
         setFormCompanyId(String(g.companyId))
         const comp = companies.find(c => c.id === Number(g.companyId))
-        if (comp) setFormCompanyName(comp.tradeName || comp.corporateName)
+        setFormCompanyName(comp ? (comp.tradeName || comp.corporateName) : (g.companyName || ""))
       } else if (!g.companyId && !isSameGuest && formRequesterType !== "company") {
         setFormCompanyId("")
         setFormCompanyName("")
@@ -7348,15 +7450,26 @@ export default function PmsCalendar(props?: {
           setFormInvoiceRecipientType("guest")
         }
       }
-      if (g.defaultBoletoTermDays) setFormBoletoTermDays(Number(g.defaultBoletoTermDays))
+      if (g.defaultBoletoTermDays) {
+        setFormBoletoTermDays(Number(g.defaultBoletoTermDays))
+      } else if (!isSameGuest && formRequesterType !== "company") {
+        setFormBoletoTermDays(15)
+      }
       if (g.defaultBoletoConsumptionMode === "separate_boletos" || g.defaultBoletoConsumptionMode === "separate") {
         setFormBoletoConsumptionMode("separate_boletos")
+      } else if (!isSameGuest && formRequesterType !== "company") {
+        setFormBoletoConsumptionMode("single_boleto")
       }
-      if (g.financialResponsible?.name && !formFinRespName) {
+      if (g.financialResponsible?.name && (!formFinRespName || (!isSameGuest && formRequesterType !== "company"))) {
         setFormFinRespName(g.financialResponsible.name || "")
         setFormFinRespEmail(g.financialResponsible.email || "")
         setFormFinRespPhone(g.financialResponsible.phone || g.financialResponsible.whatsapp || "")
         setFormFinRespDoc(g.financialResponsible.document || "")
+      } else if (!g.financialResponsible?.name && !isSameGuest && formRequesterType !== "company") {
+        setFormFinRespName("")
+        setFormFinRespEmail("")
+        setFormFinRespPhone("")
+        setFormFinRespDoc("")
       }
       if (g.defaultBillingRecipients) {
         setFormRecGuest(Boolean(g.defaultBillingRecipients.guest ?? true))
@@ -7365,6 +7478,13 @@ export default function PmsCalendar(props?: {
         setFormRecFinResp(Boolean(g.defaultBillingRecipients.financialResponsible ?? true))
         setFormRecSendEmail(g.defaultBillingRecipients.sendEmail !== false)
         setFormRecSendWhatsapp(g.defaultBillingRecipients.sendWhatsapp !== false)
+      } else if (!isSameGuest && formRequesterType !== "company") {
+        setFormRecGuest(false)
+        setFormRecRequester(true)
+        setFormRecCompany(true)
+        setFormRecFinResp(true)
+        setFormRecSendEmail(true)
+        setFormRecSendWhatsapp(true)
       }
     }
 
@@ -8234,8 +8354,16 @@ export default function PmsCalendar(props?: {
     targetChannel: string = formChannel,
     targetMethod?: string,
     overrideMode: "sum" | "discount_amount" | "discount_pct" | "fixed_total" = packagePricingMode,
-    overrideInput: string = packagePricingInput
+    overrideInput: string = packagePricingInput,
+    opts?: {
+      overrideStatus?: "confirmada" | "pre_reserva";
+      overridePaymentStatus?: string;
+      forceResetSyntheticPayment?: boolean;
+    }
   ) => {
+    const effectiveStatus = opts?.overrideStatus ?? formStatus;
+    const effectivePaymentStatus = opts?.overridePaymentStatus ?? formPaymentStatus;
+
     const totals = computeUnifiedReservationTotals(
       nextFlats,
       nextPkgCharges,
@@ -8243,8 +8371,8 @@ export default function PmsCalendar(props?: {
       overrideInput,
       formPayments,
       formPaidAmount,
-      formPaymentStatus,
-      formStatus
+      effectivePaymentStatus,
+      effectiveStatus
     );
     const newTot = totals.curTot;
     setFormTotalAmount(String(newTot));
@@ -8258,7 +8386,7 @@ export default function PmsCalendar(props?: {
       (isBooking ? "booking" : (targetChannel === "airbnb" ? "airbnb" : (isB2b ? (formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b") : formPaymentMethod)));
     const rmLower = String(resolvedMethod || "").toLowerCase();
     const isFaturadoSync = Boolean(
-      formIsFaturadoBoleto ||
+      (formIsFaturadoBoleto && !isOtaTarget) ||
       rmLower === "boleto_faturado" ||
       rmLower === "faturado_boleto" ||
       rmLower === "boleto" ||
@@ -8274,8 +8402,14 @@ export default function PmsCalendar(props?: {
       setFormPaymentStatus("pago_total");
     } else if (isB2b || isFaturadoSync) {
       setFormPaymentMethod(isFaturadoSync && !isB2b ? "boleto_faturado" : resolvedMethod);
+      if (!selectedRes && isB2b && opts?.forceResetSyntheticPayment) {
+        if (formPayments.length > 0) setFormPayments([]);
+        setFormPaidAmount("0");
+        setFormPaymentStatus("pendente");
+        return newTot;
+      }
       const nonSynth = formPayments.filter(
-        p => p && !(isFaturadoSync && /^(pagamento integral|pagamento inicial|complemento de quita[cç][aã]o)$/i.test(String(p.notes || "").trim()))
+        p => p && !((isFaturadoSync || (!selectedRes && isB2b)) && /^(pagamento integral|pagamento inicial|complemento de quita[cç][aã]o)(\s+(booking\.com|airbnb))?$/i.test(String(p.notes || "").trim()))
       );
       if (nonSynth.length === 0) {
         if (formPayments.length > 0) setFormPayments([]);
@@ -8285,7 +8419,7 @@ export default function PmsCalendar(props?: {
       }
     }
 
-    if (formStatus === "pre_reserva" && !isOtaTarget) {
+    if (effectiveStatus === "pre_reserva" && !isOtaTarget) {
       setFormPaidAmount("0");
       setFormPayments([]);
       setFormPaymentStatus("pendente");
@@ -8295,7 +8429,11 @@ export default function PmsCalendar(props?: {
     if (isOtaTarget && (!selectedRes || multiActive)) {
       setFormPaymentMethod(targetChannel);
       const otaLabel = isBooking ? "Booking.com" : "Airbnb";
-      if (formPayments.length <= 1 && (formPayments.length === 0 || /^(pagamento integral|pagamento inicial)/i.test(String(formPayments[0]?.notes || "").trim()))) {
+      const canResetOtaPay =
+        Boolean(opts?.forceResetSyntheticPayment) ||
+        (formPayments.length <= 1 &&
+          (formPayments.length === 0 || /^(pagamento integral|pagamento inicial)/i.test(String(formPayments[0]?.notes || "").trim())));
+      if (canResetOtaPay) {
         setFormPayments([{
           id: formPayments[0]?.id || `pay_${Date.now()}`,
           amount: newTot,
@@ -8311,14 +8449,30 @@ export default function PmsCalendar(props?: {
     }
 
     if (!selectedRes) {
-      if (formPayments.length <= 1 && (formPayments.length === 0 || /^(pagamento integral|pagamento inicial)/i.test(String(formPayments[0]?.notes || "").trim())) && formPaymentStatus === "pago_total") {
+      const firstPayMethodLower = String(formPayments[0]?.method || "").toLowerCase();
+      const firstPayWasOtaOrB2b = ["booking", "airbnb", "vcn_b2b", "faturado_b2b", ""].includes(firstPayMethodLower);
+      const isSingleSyntheticPayment =
+        formPayments.length <= 1 &&
+        (formPayments.length === 0 ||
+          /^(pagamento integral|pagamento inicial)/i.test(String(formPayments[0]?.notes || "").trim()) ||
+          (Boolean(opts?.forceResetSyntheticPayment) && firstPayWasOtaOrB2b));
+      if (isSingleSyntheticPayment && (effectivePaymentStatus === "pago_total" || opts?.forceResetSyntheticPayment)) {
+        const cleanMethod = ["booking", "airbnb", "vcn_b2b", "faturado_b2b", ""].includes(String(resolvedMethod || "").toLowerCase())
+          ? "pix"
+          : resolvedMethod;
+        const prevNote = String(formPayments[0]?.notes || "").trim();
+        const isOtaNote = /^pagamento integral\s+(booking\.com|airbnb)$/i.test(prevNote);
+        const cleanNote = (!prevNote || isOtaNote || opts?.forceResetSyntheticPayment)
+          ? "Pagamento integral"
+          : prevNote;
+        setFormPaymentMethod(cleanMethod);
         setFormPayments([{
           id: formPayments[0]?.id || `pay_${Date.now()}`,
           amount: newTot,
-          method: resolvedMethod || "pix",
+          method: cleanMethod,
           category: "quitacao",
           date: formPayments[0]?.date || format(new Date(), "yyyy-MM-dd'T'HH:mm"),
-          notes: formPayments[0]?.notes || "Pagamento integral"
+          notes: cleanNote
         }]);
         setFormPaidAmount(String(newTot));
         setFormPaymentStatus("pago_total");
@@ -8479,7 +8633,7 @@ export default function PmsCalendar(props?: {
     const isOtaCh = formChannel === "booking" || formChannel === "airbnb";
     const builtRates = buildReservationDailyRates(cin, cout, baseRate, formChannel || "whatsapp");
     const initCharges: ReservationChargeItem[] = isOtaCh
-      ? [{ id: `charge_${Date.now()}_${Math.random().toString(36).slice(2, 5)}_clean`, type: "cleaning", title: "Taxa de Limpeza", amount: 50, notes: "" }]
+      ? [{ id: `charge_${Date.now()}_${Math.random().toString(36).slice(2, 5)}_clean`, type: "cleaning", title: "Taxa de Limpeza", amount: 50, notes: "", autoOtaCleaning: true }]
       : [];
     const initSub = round2(builtRates.reduce((s, d) => s + Number(d.rate || 0), 0) + initCharges.reduce((s, c) => s + Number(c.amount || 0), 0));
     return createDefaultFlatReservationItem({
@@ -8622,6 +8776,7 @@ export default function PmsCalendar(props?: {
   ) => {
     if (opts?.manualFlatSelect) {
       isFlatManuallyChangedRef.current = true;
+      setIsFlatManualSelection(true);
     }
     let ratesOrChargesChanged = Boolean(patch.dailyRates || patch.charges || opts?.syncPrimaryDates);
     const nextFlats = formFlats.map(fl => {
@@ -8655,7 +8810,11 @@ export default function PmsCalendar(props?: {
 
     let nextFlats = formFlats.map((fl, idx) => {
       if (fl.uid === uid) {
-        const rNum = Math.max(0, Number(String(fl.dailyRate || "250").replace(",", ".")) || 250);
+        const rawRateStr = String(fl.dailyRate ?? "").trim().replace(",", ".");
+        const parsedRate = rawRateStr !== "" ? Number(rawRateStr) : NaN;
+        const rNum = !isNaN(parsedRate) && parsedRate >= 0
+          ? parsedRate
+          : (!selectedRes && resCreateMode === "simple" && !formChannel ? 0 : 250);
         const nextRates = validRange
           ? buildReservationDailyRates(newCin, newCout, rNum, formChannel || "whatsapp", fl.dailyRates)
           : fl.dailyRates;
@@ -8696,6 +8855,10 @@ export default function PmsCalendar(props?: {
         variant: "destructive"
       });
       return;
+    }
+    if (!selectedRes) {
+      simplePriceManuallyEditedRef.current = true;
+      setSimplePriceManuallyEdited(true);
     }
     const targetFlat = formFlats.find(f => f.uid === uid);
     if (!targetFlat) return;
@@ -8845,6 +9008,10 @@ export default function PmsCalendar(props?: {
   const handleEqualizeNightsForFlat = (uid: string) => {
     const targetFlat = formFlats.find(f => f.uid === uid);
     if (!targetFlat || targetFlat.dailyRates.length === 0) return;
+    if (!selectedRes) {
+      simplePriceManuallyEditedRef.current = true;
+      setSimplePriceManuallyEdited(true);
+    }
     const firstRate = Number(targetFlat.dailyRates[0].rate) || 250;
     const firstChan = targetFlat.dailyRates[0].channel || formChannel;
     let nextFlats = formFlats.map(f =>
@@ -8874,6 +9041,10 @@ export default function PmsCalendar(props?: {
   };
 
   const handleUpdateNightForFlat = (uid: string, nightIndex: number, patch: Partial<DailyRateItem>) => {
+    if (!selectedRes && patch.rate !== undefined) {
+      simplePriceManuallyEditedRef.current = true;
+      setSimplePriceManuallyEdited(true);
+    }
     let nextFlats = formFlats.map(f => {
       if (f.uid !== uid) return f;
       const nextRates = f.dailyRates.map((item, i) => {
@@ -8908,6 +9079,10 @@ export default function PmsCalendar(props?: {
     defaultTitle: string,
     defaultAmount: number
   ) => {
+    if (!selectedRes) {
+      simplePriceManuallyEditedRef.current = true;
+      setSimplePriceManuallyEdited(true);
+    }
     let amt = type === "cleaning" && defaultAmount === 80 ? 50 : defaultAmount;
     const targetFlat = formFlats.find(f => f.uid === uid);
     if (!targetFlat) return;
@@ -8951,6 +9126,10 @@ export default function PmsCalendar(props?: {
     field: "title" | "amount" | "type",
     val: any
   ) => {
+    if (!selectedRes && field === "amount") {
+      simplePriceManuallyEditedRef.current = true;
+      setSimplePriceManuallyEdited(true);
+    }
     const targetFlat = formFlats.find(f => f.uid === uid);
     if (!targetFlat) return;
     let nextVal = val;
@@ -8967,7 +9146,7 @@ export default function PmsCalendar(props?: {
             charges: f.charges.map(c => {
               if (c.id !== chargeId) return c;
               const { baseAmount: _b, ...cleanC } = c;
-              return { ...cleanC, [field]: nextVal };
+              return { ...cleanC, [field]: nextVal, ...(field === "amount" ? { autoOtaCleaning: false } : {}) };
             }),
           }
         : f
@@ -8984,6 +9163,10 @@ export default function PmsCalendar(props?: {
   };
 
   const handleRemoveChargeForFlat = (uid: string, chargeId: string) => {
+    if (!selectedRes) {
+      simplePriceManuallyEditedRef.current = true;
+      setSimplePriceManuallyEdited(true);
+    }
     const nextFlats = formFlats.map(f =>
       f.uid === uid ? { ...f, charges: f.charges.filter(c => c.id !== chargeId) } : f
     );
@@ -8995,6 +9178,468 @@ export default function PmsCalendar(props?: {
     } else {
       setFormFlats(nextFlats);
       syncTotalsAndPayments(nextFlats, pkgExtraCharges, formChannel);
+    }
+  };
+
+  // ── Modo Simplificado de Nova Reserva & Auto-Preenchimento pelo Tarifário ──
+  const pkgExtraChargesRef = useRef(pkgExtraCharges);
+  pkgExtraChargesRef.current = pkgExtraCharges;
+  const syncTotalsAndPaymentsRef = useRef(syncTotalsAndPayments);
+  syncTotalsAndPaymentsRef.current = syncTotalsAndPayments;
+  const formChannelRef = useRef(formChannel);
+  formChannelRef.current = formChannel;
+  const tariffQuoteAbortRef = useRef<AbortController | null>(null);
+
+  const fetchAndMaybeApplyTariffQuote = async ({
+    checkin,
+    checkout,
+    channel,
+    guests,
+    includeBreakfast,
+    flatId,
+    forceApply = false,
+    signal,
+  }: {
+    checkin: string;
+    checkout: string;
+    channel: string;
+    guests: string | number;
+    includeBreakfast: boolean;
+    flatId: string | null;
+    forceApply?: boolean;
+    signal?: AbortSignal;
+  }) => {
+    if (!checkin || !checkout || checkout <= checkin) return;
+    if (channel !== "booking" && channel !== "airbnb") return;
+
+    tariffQuoteAbortRef.current?.abort();
+    const localController = new AbortController();
+    tariffQuoteAbortRef.current = localController;
+    if (signal) {
+      if (signal.aborted) {
+        localController.abort();
+        return;
+      }
+      signal.addEventListener("abort", () => localController.abort(), { once: true });
+    }
+
+    const reqId = ++tariffQuoteReqIdRef.current;
+    setLoadingTariffQuote(true);
+    try {
+      const params = new URLSearchParams({
+        checkin,
+        checkout,
+        channel,
+        guests: String(guests || 1),
+        includeBreakfast: includeBreakfast ? "true" : "false",
+      });
+      if (flatId && flatId !== "auto") {
+        params.set("flatId", String(flatId));
+      }
+      const res = await fetch(`/api/pms/tariff-quote?${params.toString()}`, {
+        credentials: "include",
+        cache: "no-store",
+        signal: localController.signal,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const quote: PmsTariffQuoteResponse = await res.json();
+      if (
+        reqId !== tariffQuoteReqIdRef.current ||
+        !resModalOpenRef.current ||
+        selectedResRef.current ||
+        resCreateModeRef.current !== "simple" ||
+        formChannelRef.current !== channel
+      ) {
+        return;
+      }
+      if (!quote || !quote.success) return;
+
+      setTariffQuote(quote);
+      if (forceApply || !simplePriceManuallyEditedRef.current) {
+        const latestFlats = formFlatsRef.current;
+        const firstFlat = latestFlats[0];
+        if (!firstFlat) return;
+        if (
+          firstFlat.checkinDate !== checkin ||
+          firstFlat.checkoutDate !== checkout ||
+          String(firstFlat.guestCount || "1") !== String(guests || 1) ||
+          Boolean(firstFlat.includeBreakfast) !== Boolean(includeBreakfast)
+        ) {
+          return;
+        }
+        const { nextFlat } = applyTariffQuoteToFlatState(firstFlat, quote);
+        const nextFlats = latestFlats.map((fl, idx) => (idx === 0 ? nextFlat : fl));
+        setFormFlats(nextFlats);
+        setSimpleTotalDraft(null);
+        syncTotalsAndPaymentsRef.current(nextFlats, pkgExtraChargesRef.current, channel, channel);
+      }
+    } catch (err: any) {
+      if (err?.name === "AbortError") return;
+      if (
+        reqId !== tariffQuoteReqIdRef.current ||
+        !resModalOpenRef.current ||
+        selectedResRef.current ||
+        resCreateModeRef.current !== "simple" ||
+        formChannelRef.current !== channel
+      ) {
+        return;
+      }
+      if (forceApply) {
+        toast({
+          title: "Não foi possível consultar o Tarifário",
+          description: "Verifique a conexão e tente novamente ou informe os valores manualmente.",
+          variant: "destructive",
+        });
+      } else if (!simplePriceManuallyEditedRef.current && !includeBreakfast) {
+        const latestFlats = formFlatsRef.current;
+        const firstFlat = latestFlats[0];
+        if (firstFlat && !firstFlat.charges.some(c => c.type === "cleaning")) {
+          const fallbackCharges: ReservationChargeItem[] = [
+            ...firstFlat.charges,
+            {
+              id: `charge_${Date.now()}_clean`,
+              type: "cleaning",
+              title: "Taxa de Limpeza",
+              amount: 50,
+              notes: "",
+              autoOtaCleaning: true,
+            },
+          ];
+          const nextFlats = latestFlats.map((fl, idx) =>
+            idx === 0 ? { ...fl, charges: fallbackCharges } : fl
+          );
+          setFormFlats(nextFlats);
+          syncTotalsAndPaymentsRef.current(nextFlats, pkgExtraChargesRef.current, channel, channel);
+        }
+      }
+    } finally {
+      if (reqId === tariffQuoteReqIdRef.current) {
+        setLoadingTariffQuote(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (
+      !resModalOpen ||
+      selectedRes ||
+      resCreateMode !== "simple" ||
+      (formChannel !== "booking" && formChannel !== "airbnb") ||
+      !formCheckin ||
+      !formCheckout ||
+      formCheckout <= formCheckin
+    ) {
+      tariffQuoteAbortRef.current?.abort();
+      setLoadingTariffQuote(false);
+      return;
+    }
+    const controller = new AbortController();
+    fetchAndMaybeApplyTariffQuote({
+      checkin: formCheckin,
+      checkout: formCheckout,
+      channel: formChannel,
+      guests: primaryFlat.guestCount || "1",
+      includeBreakfast: Boolean(primaryFlat.includeBreakfast),
+      flatId: primaryFlat.flatId && primaryFlat.flatId !== "auto" ? primaryFlat.flatId : null,
+      forceApply: false,
+      signal: controller.signal,
+    });
+    return () => controller.abort();
+  }, [
+    resModalOpen,
+    selectedRes?.id,
+    resCreateMode,
+    formChannel,
+    formCheckin,
+    formCheckout,
+    primaryFlat.guestCount,
+    primaryFlat.includeBreakfast,
+    primaryFlat.flatId,
+  ]);
+
+  const handleRecalculateSimpleTariff = () => {
+    if (formChannel !== "booking" && formChannel !== "airbnb") return;
+    simplePriceManuallyEditedRef.current = false;
+    setSimplePriceManuallyEdited(false);
+    setSimpleTotalDraft(null);
+    fetchAndMaybeApplyTariffQuote({
+      checkin: formCheckin,
+      checkout: formCheckout,
+      channel: formChannel,
+      guests: primaryFlat.guestCount || "1",
+      includeBreakfast: Boolean(primaryFlat.includeBreakfast),
+      flatId: primaryFlat.flatId && primaryFlat.flatId !== "auto" ? primaryFlat.flatId : null,
+      forceApply: true,
+    });
+  };
+
+  const handleSimpleSelectChannel = (val: "booking" | "airbnb") => {
+    setFormChannel(val);
+    setFormPaymentMethod(val);
+    setFormStatus("confirmada");
+    setFormPaymentStatus("pago_total");
+    const nextFlats = formFlats.map((fl) => ({
+      ...fl,
+      dailyRates: fl.dailyRates.map((d) => ({ ...d, channel: val })),
+    }));
+    setFormFlats(nextFlats);
+    syncTotalsAndPayments(nextFlats, pkgExtraCharges, val, val, undefined, undefined, {
+      overrideStatus: "confirmada",
+      overridePaymentStatus: "pago_total",
+      forceResetSyntheticPayment: true,
+    });
+  };
+
+  const handleSimpleDatesChange = (newCin: string, newCout: string) => {
+    setSimpleTotalDraft(null);
+    handleDatesChangeForFlat(primaryFlat.uid, newCin, newCout);
+  };
+
+  const handleSimpleSelectFlat = (val: string) => {
+    if (!val || String(val) === String(primaryFlat.flatId || "")) return;
+    isFlatManuallyChangedRef.current = true;
+    setIsFlatManualSelection(true);
+    handlePatchFlat(primaryFlat.uid, { flatId: val, forceOverbooking: false }, { manualFlatSelect: true });
+  };
+
+  const handleSimpleResetFlatAuto = () => {
+    isFlatManuallyChangedRef.current = false;
+    setIsFlatManualSelection(false);
+    const hasFreshFairShare =
+      fairShareResult &&
+      fairShareResult._checkin === formCheckin &&
+      fairShareResult._checkout === formCheckout;
+    if (hasFreshFairShare && fairShareResult.bestFlatId) {
+      handlePatchFlat(primaryFlat.uid, { flatId: String(fairShareResult.bestFlatId), forceOverbooking: false });
+    } else if (formCheckin && formCheckout) {
+      fetchFairShare(formCheckin, formCheckout, null).then((result) => {
+        if (!result || !resModalOpenRef.current || selectedResRef.current) return;
+        const latestPrimary = formFlatsRef.current[0];
+        if (!latestPrimary) return;
+        if (
+          latestPrimary.checkinDate &&
+          latestPrimary.checkoutDate &&
+          latestPrimary.checkoutDate > latestPrimary.checkinDate &&
+          (result._checkin !== latestPrimary.checkinDate || result._checkout !== latestPrimary.checkoutDate)
+        ) {
+          return;
+        }
+        if (result.bestFlatId && !isFlatManuallyChangedRef.current) {
+          setFormFlats(prev =>
+            prev.map((f, idx) => (idx === 0 ? { ...f, flatId: String(result.bestFlatId), forceOverbooking: false } : f))
+          );
+        } else if (result.availableCount === 0 && !isFlatManuallyChangedRef.current) {
+          setFormFlats(prev =>
+            prev.map((f, idx) => (idx === 0 ? { ...f, flatId: "", forceOverbooking: false } : f))
+          );
+        }
+      });
+    }
+  };
+
+  const handleSimpleDailyRateChange = (val: number) => {
+    simplePriceManuallyEditedRef.current = true;
+    setSimplePriceManuallyEdited(true);
+    setSimpleTotalDraft(null);
+    const res = applySimpleDailyRateEdit(primaryFlat.dailyRates, primaryFlat.charges, val);
+    const nextFlats = formFlats.map((fl, idx) =>
+      idx === 0
+        ? {
+            ...fl,
+            dailyRates: res.dailyRates,
+            dailyRate: String(res.avgDailyRate),
+            rateioTargetInput: String(res.totalAmount),
+          }
+        : fl
+    );
+    setFormFlats(nextFlats);
+    const isOta = formChannel === "booking" || formChannel === "airbnb";
+    syncTotalsAndPayments(nextFlats, pkgExtraCharges, formChannel || "whatsapp", isOta ? formChannel : undefined);
+  };
+
+  const handleSimpleTotalAmountChange = (val: number) => {
+    simplePriceManuallyEditedRef.current = true;
+    setSimplePriceManuallyEdited(true);
+    const res = applySimpleTotalEdit(primaryFlat.dailyRates, primaryFlat.charges, val);
+    setSimpleTotalDraft(res.isBelowCharges ? val : null);
+    const nextFlats = formFlats.map((fl, idx) =>
+      idx === 0
+        ? {
+            ...fl,
+            dailyRates: res.dailyRates,
+            dailyRate: String(res.avgDailyRate),
+            rateioTargetInput: String(res.effectiveTotal),
+          }
+        : fl
+    );
+    setFormFlats(nextFlats);
+    const isOta = formChannel === "booking" || formChannel === "airbnb";
+    syncTotalsAndPayments(nextFlats, pkgExtraCharges, formChannel || "whatsapp", isOta ? formChannel : undefined);
+  };
+
+  const handleSimpleCleaningFeeChange = (val: number) => {
+    simplePriceManuallyEditedRef.current = true;
+    setSimplePriceManuallyEdited(true);
+    const res = applySimpleCleaningFeeEdit(
+      primaryFlat.dailyRates,
+      primaryFlat.charges,
+      val,
+      undefined,
+      simpleTotalDraft
+    );
+    setSimpleTotalDraft(res.nextTotalDraft);
+    const nextFlats = formFlats.map((fl, idx) =>
+      idx === 0
+        ? {
+            ...fl,
+            dailyRates: res.dailyRates,
+            dailyRate: String(res.avgDailyRate),
+            charges: res.charges,
+            rateioTargetInput: String(res.totalAmount),
+          }
+        : fl
+    );
+    setFormFlats(nextFlats);
+    const isOta = formChannel === "booking" || formChannel === "airbnb";
+    syncTotalsAndPayments(nextFlats, pkgExtraCharges, formChannel || "whatsapp", isOta ? formChannel : undefined);
+  };
+
+  const handleSimpleCleaningFeeRemove = () => {
+    simplePriceManuallyEditedRef.current = true;
+    setSimplePriceManuallyEdited(true);
+    const res = applySimpleCleaningFeeRemove(
+      primaryFlat.dailyRates,
+      primaryFlat.charges,
+      simpleTotalDraft
+    );
+    setSimpleTotalDraft(res.nextTotalDraft);
+    const nextFlats = formFlats.map((fl, idx) =>
+      idx === 0
+        ? {
+            ...fl,
+            dailyRates: res.dailyRates,
+            dailyRate: String(res.avgDailyRate),
+            charges: res.charges,
+            rateioTargetInput: String(res.totalAmount),
+          }
+        : fl
+    );
+    setFormFlats(nextFlats);
+    const isOta = formChannel === "booking" || formChannel === "airbnb";
+    syncTotalsAndPayments(nextFlats, pkgExtraCharges, formChannel || "whatsapp", isOta ? formChannel : undefined);
+  };
+
+  const handleSimpleCleaningFeeAdd = () => {
+    const defaultAmt = tariffQuote?.defaultCleaningFeeForChannel || 50;
+    handleSimpleCleaningFeeChange(defaultAmt);
+  };
+
+  const handleSwitchToAdvanced = () => {
+    tariffQuoteAbortRef.current?.abort();
+    setLoadingTariffQuote(false);
+    setResCreateMode("advanced");
+    setSimpleSubmitAttempted(false);
+    setSimpleTotalDraft(null);
+    if (!formChannel) {
+      const nextChan = "whatsapp";
+      setFormChannel(nextChan);
+      setFormPaymentMethod("pix");
+      setFormStatus("confirmada");
+      setFormPaymentStatus("pago_total");
+      const nextFlats = formFlats.map((fl, idx) => {
+        if (idx === 0 && !simplePriceManuallyEditedRef.current) {
+          const rebuilt = buildReservationDailyRates(fl.checkinDate, fl.checkoutDate, 250, nextChan);
+          const sub = rebuilt.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
+          const chSum = (fl.charges || []).reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+          return {
+            ...fl,
+            dailyRate: "250",
+            dailyRates: rebuilt,
+            rateioTargetInput: String(round2(sub + chSum)),
+          };
+        }
+        return {
+          ...fl,
+          dailyRates: fl.dailyRates.map((d) => ({ ...d, channel: nextChan })),
+        };
+      });
+      setFormFlats(nextFlats);
+      syncTotalsAndPayments(nextFlats, pkgExtraCharges, nextChan, "pix", undefined, undefined, {
+        overrideStatus: "confirmada",
+        overridePaymentStatus: "pago_total",
+        forceResetSyntheticPayment: true,
+      });
+    }
+  };
+
+  const handleSwitchToSimple = () => {
+    const hasNonCleaningFlatCharges = (primaryFlat.charges || []).some((c) => c && c.type !== "cleaning");
+    const hasAdvancedPaymentState =
+      formPaymentStatus !== "pago_total" ||
+      formPayments.length > 1 ||
+      pkgExtraCharges.length > 0 ||
+      hasNonCleaningFlatCharges;
+    if (
+      formFlats.length > 1 ||
+      primaryFlat.guestCount === "3" ||
+      primaryFlat.informGuestsLater ||
+      formRequesterType !== "guest" ||
+      formStatus === "pre_reserva" ||
+      formIsFaturadoBoleto ||
+      formChannel === "b2b" ||
+      formChannel === "site" ||
+      hasAdvancedPaymentState
+    ) {
+      toast({
+        title: "Opções avançadas ativas",
+        description:
+          "O Modo Simplificado atende 1 flat (1–2 hóspedes) em Booking.com ou Airbnb com pagamento confirmado e sem taxas extras. Continue no Modo Avançado.",
+      });
+      return;
+    }
+    setResCreateMode("simple");
+    setSimpleSubmitAttempted(false);
+    setSimpleTotalDraft(null);
+    setFormStatus("confirmada");
+    setFormPaymentStatus("pago_total");
+    if (primaryFlat.forceOverbooking) {
+      setFormFlats((prev) =>
+        prev.map((fl, idx) => (idx === 0 ? { ...fl, forceOverbooking: false } : fl))
+      );
+    }
+    if (formChannel !== "booking" && formChannel !== "airbnb") {
+      setFormChannel("");
+      setTariffQuote(null);
+      if (!simplePriceManuallyEditedRef.current) {
+        const nextFlats = formFlats.map((fl, idx) => {
+          if (idx !== 0) return fl;
+          const zeroRates = buildReservationDailyRates(fl.checkinDate, fl.checkoutDate, 0, "");
+          return {
+            ...fl,
+            dailyRate: "0",
+            dailyRates: zeroRates,
+            charges: [],
+            rateioTargetInput: "0",
+          };
+        });
+        setFormFlats(nextFlats);
+        setFormTotalAmount("0");
+        setFormPaidAmount("0");
+        setFormPayments((prev) =>
+          prev.length <= 1
+            ? [
+                {
+                  id: prev[0]?.id || `pay_${Date.now()}`,
+                  amount: 0,
+                  method: "pix",
+                  category: "quitacao",
+                  date: prev[0]?.date || format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+                  notes: "Pagamento integral",
+                },
+              ]
+            : prev
+        );
+      }
     }
   };
 
@@ -9215,7 +9860,58 @@ export default function PmsCalendar(props?: {
     e.preventDefault()
 
     const isMultiFlatSubmit = !selectedRes && formFlats.length > 1
+    const isSimpleCreateSubmit = !selectedRes && resCreateMode === "simple"
     const pFlat = formFlats[0] || primaryFlat
+
+    if (isSimpleCreateSubmit) {
+      setSimpleSubmitAttempted(true)
+      const simpleAvail = evaluateSimpleFlatAvailability({
+        flatsList: data.flats || [],
+        reservationsList: data.reservations || [],
+        blocksList: data.blocks || [],
+        fairShareResult,
+        checkinDate: pFlat.checkinDate,
+        checkoutDate: pFlat.checkoutDate,
+        flatId: pFlat.flatId,
+      })
+      const blockReason = validateSimplifiedReservationSubmit({
+        channel: formChannel,
+        checkinDate: pFlat.checkinDate,
+        checkoutDate: pFlat.checkoutDate,
+        loadingFairShare,
+        availability: simpleAvail,
+        flatId: pFlat.flatId,
+        guest1Name: pFlat.guest1.name,
+        loadingTariffQuote,
+        isManualPrice: simplePriceManuallyEdited,
+        totalDraft: simpleTotalDraft,
+        charges: pFlat.charges,
+      })
+      if (blockReason) {
+        const isPendingNotice =
+          blockReason.code === "loading_fair_share" || blockReason.code === "loading_tariff_quote"
+        toast({
+          title: blockReason.title,
+          description: blockReason.description,
+          ...(isPendingNotice ? {} : { variant: "destructive" as const }),
+        })
+        if (blockReason.focusTarget === "channel") simpleChannelBookingRef.current?.focus()
+        else if (blockReason.focusTarget === "checkin") simpleCheckinRef.current?.focus()
+        else if (blockReason.focusTarget === "flat") simpleFlatTriggerRef.current?.focus()
+        else if (blockReason.focusTarget === "guestName") simpleGuestNameRef.current?.focus()
+        else if (blockReason.focusTarget === "total") simpleTotalRef.current?.focus()
+        return
+      }
+    }
+
+    if (!formChannel || !formChannel.trim()) {
+      toast({
+        title: "Canal de origem obrigatório",
+        description: "Selecione o canal de origem da reserva.",
+        variant: "destructive"
+      })
+      return
+    }
 
     if (!pFlat.flatId || (!isMultiFlatSubmit && pFlat.flatId === "auto")) {
       toast({
@@ -9309,37 +10005,41 @@ export default function PmsCalendar(props?: {
     }
 
     // Validação R4 de múltiplos e-mails separados por ';' em todos os flats 1..N + Solicitante/NF
-    const emailFieldsToValidate: Array<{ label: string; value: string }> = [
-      ...(formRequesterType === "other_person" || formRequesterType === "company"
-        ? [{ label: "E-mail do Solicitante", value: formRequesterEmail }]
-        : []),
-      ...((formChannel === "b2b" || formRequesterType === "agency_b2b")
-        ? [{ label: "E-mail do Agente B2B", value: formAgencyAgentEmail }]
-        : []),
-      { label: "E-mail do Responsável Financeiro", value: formFinRespEmail },
-      { label: "E-mails p/ Envio da NFS-e", value: formNfDeliveryEmails },
-      { label: "E-mail Financeiro da Empresa (CNPJ Inline)", value: String(inlineCompanyData?.financialEmail || "") },
-      ...formFlats.flatMap((fl, idx) => {
-        if (fl.informGuestsLater) return []
-        const occ = Number(fl.guestCount) || 1
-        const suffix = isMultiFlatSubmit ? ` (Flat ${idx + 1})` : ""
-        return [
-          { label: `E-mail do Hóspede 1${suffix}`, value: fl.guest1.email },
-          ...(occ >= 2 && !fl.guest2InformLater ? [{ label: `E-mail do Hóspede 2${suffix}`, value: fl.guest2.email }] : []),
-          ...(occ === 3 && !fl.guest3InformLater ? [{ label: `E-mail do Hóspede 3${suffix}`, value: fl.guest3.email }] : []),
-        ]
-      }),
-    ]
-    for (const efField of emailFieldsToValidate) {
-      if (efField.value && efField.value.trim()) {
-        const check = validateEmailList(efField.value)
-        if (!check.valid) {
-          toast({
-            title: `${efField.label} inválido`,
-            description: `Endereço(s) inválido(s): ${check.invalidTokens.join(", ")}. Separe múltiplos e-mails usando ;`,
-            variant: "destructive"
-          })
-          return
+    // No Modo Simplificado os campos de e-mail ficam ocultos: e-mails legados inválidos vindos do CRM
+    // são higienizados via formatEmailList no payload sem travar o salvamento.
+    if (!isSimpleCreateSubmit) {
+      const emailFieldsToValidate: Array<{ label: string; value: string }> = [
+        ...(formRequesterType === "other_person" || formRequesterType === "company"
+          ? [{ label: "E-mail do Solicitante", value: formRequesterEmail }]
+          : []),
+        ...((formChannel === "b2b" || formRequesterType === "agency_b2b")
+          ? [{ label: "E-mail do Agente B2B", value: formAgencyAgentEmail }]
+          : []),
+        { label: "E-mail do Responsável Financeiro", value: formFinRespEmail },
+        { label: "E-mails p/ Envio da NFS-e", value: formNfDeliveryEmails },
+        { label: "E-mail Financeiro da Empresa (CNPJ Inline)", value: String(inlineCompanyData?.financialEmail || "") },
+        ...formFlats.flatMap((fl, idx) => {
+          if (fl.informGuestsLater) return []
+          const occ = Number(fl.guestCount) || 1
+          const suffix = isMultiFlatSubmit ? ` (Flat ${idx + 1})` : ""
+          return [
+            { label: `E-mail do Hóspede 1${suffix}`, value: fl.guest1.email },
+            ...(occ >= 2 && !fl.guest2InformLater ? [{ label: `E-mail do Hóspede 2${suffix}`, value: fl.guest2.email }] : []),
+            ...(occ === 3 && !fl.guest3InformLater ? [{ label: `E-mail do Hóspede 3${suffix}`, value: fl.guest3.email }] : []),
+          ]
+        }),
+      ]
+      for (const efField of emailFieldsToValidate) {
+        if (efField.value && efField.value.trim()) {
+          const check = validateEmailList(efField.value)
+          if (!check.valid) {
+            toast({
+              title: `${efField.label} inválido`,
+              description: `Endereço(s) inválido(s): ${check.invalidTokens.join(", ")}. Separe múltiplos e-mails usando ;`,
+              variant: "destructive"
+            })
+            return
+          }
         }
       }
     }
@@ -9531,7 +10231,9 @@ export default function PmsCalendar(props?: {
           statusToSave = selectedRes.status
         }
       }
-      if (!isOta) {
+      if (isOta) {
+        if (statusToSave === "pre_reserva") statusToSave = "confirmada"
+      } else {
         if (isB2b) {
           if (statusToSave === "pre_reserva") statusToSave = "confirmada"
         } else if (formStatus === "pre_reserva") {
@@ -9595,7 +10297,7 @@ export default function PmsCalendar(props?: {
           ? fl.dailyRates
           : buildReservationDailyRates(flCin, flCout, Math.max(0, Number(String(fl.dailyRate || "250").replace(",", ".")) || 250), formChannel || "whatsapp")
         const cleanRates = rawRates.map(({ baseRate: _b, ...d }) => d)
-        const cleanCharges = (fl.charges || []).map(({ baseAmount: _b, ...c }) => c)
+        const cleanCharges = (fl.charges || []).map(({ baseAmount: _b, autoOtaCleaning: _a, ...c }) => c)
         const ratesSum = round2(cleanRates.reduce((s, d) => s + (Number(d.rate) || 0), 0))
         const chargesSum = round2(cleanCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0))
         const flTotal = idx === 0 && !isMultiFlatSubmit ? flat1TotalAmount : Math.max(0, round2(ratesSum + chargesSum))
@@ -9631,6 +10333,7 @@ export default function PmsCalendar(props?: {
         const g2InformLater = occ >= 2 && (Boolean(fl.guest2InformLater) || !fl.guest2.name.trim())
         const g3InformLater = occ >= 3 && (Boolean(fl.guest3InformLater) || !fl.guest3.name.trim())
 
+        const safeG1Email = isSimpleCreateSubmit ? formatEmailList(fl.guest1.email) : fl.guest1.email.trim()
         const guestsArr: any[] = [
           {
             index: 1,
@@ -9638,7 +10341,7 @@ export default function PmsCalendar(props?: {
             name: fl.guest1.name.trim(),
             cpf: fl.guest1.cpf.trim(),
             phone: fl.guest1.phone.trim(),
-            email: fl.guest1.email.trim(),
+            email: safeG1Email,
             informLater
           }
         ]
@@ -9677,7 +10380,7 @@ export default function PmsCalendar(props?: {
           guestId: g1Id,
           guestName: fl.guest1.name.trim(),
           guestPhone: fl.guest1.phone.trim(),
-          guestEmail: fl.guest1.email.trim(),
+          guestEmail: safeG1Email,
           guestDocument: fl.guest1.cpf.trim(),
           guest2InformLater: g2InformLater,
           guest2Id: g2Id,
@@ -9805,7 +10508,7 @@ export default function PmsCalendar(props?: {
               : c
           )
         : pkgExtraCharges
-      ).map(({ baseAmount: _b, ...c }) => c)
+      ).map(({ baseAmount: _b, autoOtaCleaning: _a, ...c }) => c)
 
       const basePayload: any = {
         ...primaryPayloadFlat,
@@ -9976,6 +10679,17 @@ export default function PmsCalendar(props?: {
 
       if (resp.status === 409) {
         const errJson = await resp.json().catch(() => ({}))
+        if (isSimpleCreateSubmit) {
+          toast({
+            title: "Apartamento indisponível neste período",
+            description:
+              (errJson.error || "Este flat já possui conflito de reserva/bloqueio neste período.") +
+              " Selecione outro apartamento disponível ou abra o Modo Avançado para encaixe.",
+            variant: "destructive"
+          })
+          fetchFairShare(pFlat.checkinDate, pFlat.checkoutDate, null)
+          return
+        }
         const conflictSummary = Array.isArray(errJson?.conflicts) && errJson.conflicts.length > 0
           ? `\n\nConflitos: ${errJson.conflicts.map((c: any) => `Flat ${c.flatNumber || c.flatId || "?"} (${c.guestName || c.reason || "ocupado"})`).slice(0, 4).join(", ")}`
           : ""
@@ -10846,55 +11560,207 @@ export default function PmsCalendar(props?: {
   })
 
   const stableSelectFlat = useStableCallback((val: string) => {
+    if (!val || String(val) === String(primaryFlat.flatId || "")) return
     isFlatManuallyChangedRef.current = true
+    setIsFlatManualSelection(true)
     setFormFlats(prev =>
       prev.map((f, idx) => (idx === 0 ? { ...f, flatId: val, forceOverbooking: false } : f))
     )
   })
 
-  const stableSelectChannel = useStableCallback((val: string) => {
-    setFormChannel(val)
-    let nextFlats = formFlats.map((fl) => ({
-      ...fl,
-      dailyRates: fl.dailyRates.map(d => ({ ...d, channel: val })),
-    }))
+  const renderFlatRangePickerContent = (activeFlat: FlatReservationFormItem) => {
+    const effCin = activeFlat.uid !== primaryFlat.uid && activeFlat.sameDatesAsPrimary ? primaryFlat.checkinDate : activeFlat.checkinDate;
+    const effCout = activeFlat.uid !== primaryFlat.uid && activeFlat.sameDatesAsPrimary ? primaryFlat.checkoutDate : activeFlat.checkoutDate;
+    const mStart = startOfMonth(pickerMonth);
+    const mEnd = endOfMonth(pickerMonth);
+    const monthDays = eachDayOfInterval({ start: mStart, end: mEnd });
+    const leadingEmpty = getDay(mStart);
+    const selectedFlatNum = activeFlat.flatId && activeFlat.flatId !== "auto"
+      ? (data.flats || []).find((f: any) => String(f.id) === String(activeFlat.flatId))?.number
+      : null;
 
-    if (val === "b2b") {
-      setFormRequesterType("agency_b2b")
-      syncSigiloAutoDefault("agency_b2b", nextFlats.length)
-      const pm = formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b"
-      setFormPaymentMethod(pm)
-      setFormStatus("confirmada")
-      setFormFlats(nextFlats)
-      syncTotalsAndPayments(nextFlats, pkgExtraCharges, val, pm)
-    } else if (val === "booking" || val === "airbnb") {
-      nextFlats = nextFlats.map((fl, idx) => {
-        if (idx > 0) return fl
-        const updatedCharges = [...fl.charges]
-        const cleanIdx = updatedCharges.findIndex(c => c.type === "cleaning")
-        if (cleanIdx === -1) {
-          updatedCharges.push({
-            id: `charge_${Date.now()}_clean`,
-            type: "cleaning",
-            title: "Taxa de Limpeza",
-            amount: 50,
-            notes: ""
-          })
-        } else if (updatedCharges[cleanIdx].amount === 80) {
-          updatedCharges[cleanIdx] = { ...updatedCharges[cleanIdx], amount: 50 }
-        }
-        return { ...fl, charges: updatedCharges }
-      })
-      setFormFlats(nextFlats)
-      syncTotalsAndPayments(nextFlats, pkgExtraCharges, val, val)
-    } else if (val === "site") {
-      setFormPaymentMethod("pix")
-      setFormFlats(nextFlats)
-      syncTotalsAndPayments(nextFlats, pkgExtraCharges, val, "pix")
-    } else {
-      setFormFlats(nextFlats)
-      syncTotalsAndPayments(nextFlats, pkgExtraCharges, val)
+    return (
+      <div className="space-y-2.5 select-none">
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => setPickerMonth(subMonths(pickerMonth, 1))}
+            className="h-7 w-7 rounded-lg border border-border flex items-center justify-center hover:bg-muted cursor-pointer"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <div className="text-center">
+            <span className="text-xs font-black capitalize block">
+              {format(pickerMonth, "MMMM yyyy", { locale: ptBR })}
+            </span>
+            <span className="text-[10px] text-muted-foreground block">
+              {pickerRangeStart ? "Agora clique na Saída (Check-out)" : "1º clique: Entrada • 2º clique: Saída"}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPickerMonth(addMonths(pickerMonth, 1))}
+            className="h-7 w-7 rounded-lg border border-border flex items-center justify-center hover:bg-muted cursor-pointer"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-muted-foreground">
+          {["D", "S", "T", "Q", "Q", "S", "S"].map((w, wi) => (
+            <span key={wi} className="py-0.5">{w}</span>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-7 gap-1">
+          {Array.from({ length: leadingEmpty }).map((_, padIdx) => (
+            <div key={`pad_${padIdx}`} />
+          ))}
+          {monthDays.map((dayDate) => {
+            const dStr = format(dayDate, "yyyy-MM-dd");
+            const rangeStart = pickerRangeStart || effCin;
+            const rangeEnd = pickerRangeStart
+              ? (pickerHoverDate && pickerHoverDate > pickerRangeStart ? pickerHoverDate : "")
+              : effCout;
+            const isStart = dStr === rangeStart;
+            const isEnd = Boolean(rangeEnd && dStr === rangeEnd);
+            const isInRange = Boolean(rangeStart && rangeEnd && dStr > rangeStart && dStr < rangeEnd);
+            const isOccupied = Boolean(
+              activeFlat.flatId && activeFlat.flatId !== "auto" &&
+              (data.reservations || []).some((r: any) => {
+                if (selectedRes && String(r.id) === String(selectedRes.id)) return false;
+                if (Number(r.flatId) !== Number(activeFlat.flatId) && (!selectedFlatNum || String(r.flatNumber) !== String(selectedFlatNum))) return false;
+                const st = String(r.status || "").toLowerCase();
+                if (["cancelada", "cancelled", "no_show", "expirada"].includes(st)) return false;
+                return r.checkinDate <= dStr && r.checkoutDate > dStr;
+              })
+            );
+
+            return (
+              <button
+                key={dStr}
+                type="button"
+                onMouseEnter={() => {
+                  if (pickerRangeStart) setPickerHoverDate(dStr);
+                }}
+                onClick={() => {
+                  if (!pickerRangeStart || dStr <= pickerRangeStart) {
+                    setPickerRangeStart(dStr);
+                    setPickerHoverDate(null);
+                  } else {
+                    setSimpleTotalDraft(null);
+                    handleDatesChangeForFlat(activeFlat.uid, pickerRangeStart, dStr);
+                    setRangePickerFlatUid(null);
+                    setPickerRangeStart(null);
+                    setPickerHoverDate(null);
+                  }
+                }}
+                className={cn(
+                  "h-8 rounded-lg text-xs font-bold transition-colors relative cursor-pointer",
+                  isStart || isEnd
+                    ? "bg-primary text-primary-foreground shadow-xs"
+                    : isInRange
+                    ? "bg-primary/20 text-primary"
+                    : isOccupied
+                    ? "bg-rose-500/15 text-rose-700 dark:text-rose-300 hover:bg-rose-500/25"
+                    : "hover:bg-muted text-foreground",
+                  isToday(dayDate) && !isStart && !isEnd && "ring-1 ring-primary/60"
+                )}
+              >
+                {format(dayDate, "d")}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="pt-2 border-t border-border/60 flex items-center justify-between gap-2 text-[10.5px]">
+          <span className="text-muted-foreground">
+            {pickerRangeStart
+              ? `Entrada: ${pickerRangeStart.split("-").reverse().join("/")}`
+              : `${effCin.split("-").reverse().join("/")} → ${effCout.split("-").reverse().join("/")}`}
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setRangePickerFlatUid(null);
+              setPickerRangeStart(null);
+              setPickerHoverDate(null);
+            }}
+            className="h-6 px-2 text-[10.5px] font-bold"
+          >
+            Fechar
+          </Button>
+        </div>
+      </div>
+    );
+  };
+
+  const stableSelectChannel = useStableCallback((val: string) => {
+    const transition = computeChannelTransition({
+      prevChannel: formChannel,
+      nextChannel: val,
+      isEdit: Boolean(selectedRes),
+      currentStatus: formStatus,
+      currentRequesterType: formRequesterType,
+      currentInvoiceRecipientType: formInvoiceRecipientType,
+      currentNfHideFromGuest: formNfHideFromGuest,
+      nfHideManuallySet: nfHideManuallySetRef.current,
+      currentPaymentMethod: formPaymentMethod,
+      currentPaymentStatus: formPaymentStatus,
+      currentPaymentsCount: formPayments.length,
+      isFaturadoBoleto: formIsFaturadoBoleto,
+      b2bPaymentType: formB2bPaymentType,
+      hasCompanyLink: Boolean(formCompanyId || formCompanyName.trim()),
+      flats: formFlats,
+    })
+
+    setFormChannel(val)
+    if (transition.nextRequesterType !== formRequesterType) {
+      setFormRequesterType(transition.nextRequesterType)
     }
+    if (transition.nextInvoiceRecipientType !== formInvoiceRecipientType) {
+      setFormInvoiceRecipientType(transition.nextInvoiceRecipientType)
+    }
+    if (transition.nextNfHideFromGuest !== formNfHideFromGuest) {
+      setFormNfHideFromGuest(transition.nextNfHideFromGuest)
+    }
+    if (transition.shouldCloseVoucherParser) {
+      setShowVoucherParser(false)
+    }
+    if (transition.shouldClearTariffQuote) {
+      setTariffQuote(null)
+    }
+    if (transition.nextStatus !== formStatus) {
+      setFormStatus(transition.nextStatus)
+    }
+    if (transition.nextIsFaturadoBoleto !== formIsFaturadoBoleto) {
+      setFormIsFaturadoBoleto(transition.nextIsFaturadoBoleto)
+    }
+    if (transition.nextPaymentMethod !== formPaymentMethod) {
+      setFormPaymentMethod(transition.nextPaymentMethod)
+    }
+    if (transition.nextPaymentStatus !== formPaymentStatus) {
+      setFormPaymentStatus(transition.nextPaymentStatus)
+    }
+    if (val === "b2b") {
+      syncSigiloAutoDefault("agency_b2b", transition.nextFlats.length)
+    }
+    setFormFlats(transition.nextFlats)
+    syncTotalsAndPayments(
+      transition.nextFlats,
+      pkgExtraCharges,
+      val,
+      transition.nextPaymentMethod,
+      undefined,
+      undefined,
+      {
+        overrideStatus: transition.nextStatus,
+        overridePaymentStatus: transition.nextPaymentStatus,
+        forceResetSyntheticPayment: transition.forceResetSyntheticPayment,
+      }
+    )
   })
 
   const flatSelectOptions = useMemo(() => {
@@ -12714,10 +13580,44 @@ export default function PmsCalendar(props?: {
                 </div>
               </div>
               <DialogDescription className="text-xs text-muted-foreground">
-                {selectedRes 
-                  ? "Gerencie os dados da estadia, consulte o histórico de e-mails transacionais ou envie novas mensagens." 
-                  : "Preencha os dados do hóspede, datas da estadia e valores."}
+                {selectedRes
+                  ? "Gerencie os dados da estadia, consulte o histórico de e-mails transacionais ou envie novas mensagens."
+                  : resCreateMode === "simple"
+                    ? "Criação rápida (Booking / Airbnb) • Status Confirmada e Pago automático."
+                    : "Modo completo: todos os canais, pré-reserva, múltiplos flats, solicitante/B2B e NFS-e."}
               </DialogDescription>
+              {!selectedRes && (
+                <div className="flex items-center gap-1 p-1 rounded-xl bg-muted/70 border border-border/70 mt-1.5">
+                  <button
+                    type="button"
+                    aria-pressed={resCreateMode === "simple"}
+                    onClick={handleSwitchToSimple}
+                    className={cn(
+                      "flex-1 min-h-[40px] sm:min-h-[32px] py-2 sm:py-1.5 px-2.5 rounded-lg text-xs font-extrabold transition-all flex items-center justify-center gap-1.5 cursor-pointer",
+                      resCreateMode === "simple"
+                        ? "bg-primary text-primary-foreground shadow-xs"
+                        : "text-muted-foreground hover:text-foreground hover:bg-background/70"
+                    )}
+                  >
+                    <Zap className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>Simplificado</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={resCreateMode === "advanced"}
+                    onClick={handleSwitchToAdvanced}
+                    className={cn(
+                      "flex-1 min-h-[40px] sm:min-h-[32px] py-2 sm:py-1.5 px-2.5 rounded-lg text-xs font-extrabold transition-all flex items-center justify-center gap-1.5 cursor-pointer",
+                      resCreateMode === "advanced"
+                        ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 shadow-xs"
+                        : "text-muted-foreground hover:text-foreground hover:bg-background/70"
+                    )}
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>Avançado</span>
+                  </button>
+                </div>
+              )}
             </DialogHeader>
 
             {selectedRes ? (
@@ -12772,7 +13672,7 @@ export default function PmsCalendar(props?: {
                   </TabsTrigger>
                 </TabsList>
               </Tabs>
-            ) : (
+            ) : resCreateMode === "advanced" ? (
               <div className="w-full p-1 bg-muted/60 rounded-xl grid grid-cols-4 gap-1 mt-1 mb-2 text-[10.5px] sm:text-xs">
                 {[
                   { id: "sec-1-solicitante", label: "1. Solicitante" },
@@ -12790,10 +13690,153 @@ export default function PmsCalendar(props?: {
                   </button>
                 ))}
               </div>
-            )}
+            ) : null}
 
             {(!selectedRes || resModalTab === "reservation" || resModalTab === "details" || resModalTab === "payments") && (
               <form noValidate onSubmit={handleSaveRes}>
+                {!selectedRes && resCreateMode === "simple" ? (
+                  <SimplifiedReservationForm
+                    channel={formChannel}
+                    onSelectChannel={handleSimpleSelectChannel}
+                    onSwitchToAdvanced={handleSwitchToAdvanced}
+                    checkinDate={primaryFlat.checkinDate}
+                    checkoutDate={primaryFlat.checkoutDate}
+                    onDatesChange={handleSimpleDatesChange}
+                    flatId={primaryFlat.flatId}
+                    isFlatManual={isFlatManualSelection}
+                    onSelectFlat={handleSimpleSelectFlat}
+                    onResetFlatAuto={handleSimpleResetFlatAuto}
+                    flatsList={data.flats || []}
+                    reservationsList={data.reservations || []}
+                    blocksList={data.blocks || []}
+                    fairShareResult={fairShareResult}
+                    loadingFairShare={loadingFairShare}
+                    isRangePickerOpen={rangePickerFlatUid === primaryFlat.uid}
+                    rangePickerContent={
+                      rangePickerFlatUid === primaryFlat.uid ? renderFlatRangePickerContent(primaryFlat) : null
+                    }
+                    onOpenRangePicker={(initialDate) => {
+                      const d = safeParseDate(initialDate || primaryFlat.checkinDate) || new Date();
+                      setPickerMonth(d);
+                      setPickerRangeStart(null);
+                      setPickerHoverDate(null);
+                      setRangePickerFlatUid(primaryFlat.uid);
+                    }}
+                    onCloseRangePicker={() => {
+                      setRangePickerFlatUid(null);
+                      setPickerRangeStart(null);
+                      setPickerHoverDate(null);
+                    }}
+                    guestCount={primaryFlat.guestCount}
+                    onChangeGuestCount={(cnt) => handlePatchFlat(primaryFlat.uid, { guestCount: cnt })}
+                    guest1={primaryFlat.guest1}
+                    onChangeGuest1Field={(field, val) => {
+                      if (
+                        field === "name" &&
+                        primaryFlat.guest1.guestId &&
+                        primaryFlat.guest1.guestId !== "manual"
+                      ) {
+                        const linkedCrm = crmGuests.find(
+                          (cg) => String(cg.id) === String(primaryFlat.guest1.guestId)
+                        );
+                        const linkedName = linkedCrm?.name || linkedCrm?.fullName || primaryFlat.guest1.name || "";
+                        const shouldUnlink =
+                          !val.trim() ||
+                          (linkedName && !areGuestNamesCompatibleUI(val, linkedName));
+                        if (shouldUnlink) {
+                          const keepPhone = shouldKeepPhoneOnCrmUnlink(primaryFlat.guest1.phone, linkedCrm?.phone)
+                            ? primaryFlat.guest1.phone
+                            : "";
+                          resetCrmInheritedReservationLinks();
+                          handlePatchFlat(primaryFlat.uid, {
+                            requesterIsGuest1: false,
+                            docPhotoUrl: "",
+                            docFileName: "",
+                            isCamposResident: false,
+                            prefersHighFloor: false,
+                            twinBeds: false,
+                            guest1: {
+                              guestId: "manual",
+                              name: val,
+                              cpf: "",
+                              phone: keepPhone,
+                              email: "",
+                            },
+                          });
+                          return;
+                        }
+                      }
+                      handlePatchFlat(primaryFlat.uid, {
+                        requesterIsGuest1: false,
+                        guest1: { ...primaryFlat.guest1, [field]: val },
+                      });
+                    }}
+                    onSelectCrmGuest1={(g) => handleSelectCrmGuestForFlat(primaryFlat.uid, 1, g)}
+                    onMarkGuest1Manual={(clearFields) => {
+                      const linkedCrm =
+                        primaryFlat.guest1.guestId && primaryFlat.guest1.guestId !== "manual"
+                          ? crmGuests.find((cg) => String(cg.id) === String(primaryFlat.guest1.guestId))
+                          : null;
+                      const keepPhone =
+                        !clearFields && shouldKeepPhoneOnCrmUnlink(primaryFlat.guest1.phone, linkedCrm?.phone)
+                          ? primaryFlat.guest1.phone
+                          : "";
+                      resetCrmInheritedReservationLinks();
+                      handlePatchFlat(primaryFlat.uid, {
+                        requesterIsGuest1: false,
+                        docPhotoUrl: "",
+                        docFileName: "",
+                        isCamposResident: false,
+                        prefersHighFloor: false,
+                        twinBeds: false,
+                        guest1: clearFields
+                          ? { guestId: "manual", name: "", cpf: "", phone: "", email: "" }
+                          : { ...primaryFlat.guest1, guestId: "manual", cpf: "", phone: keepPhone, email: "" },
+                      });
+                    }}
+                    inheritedCrmContext={inspectSimpleCrmGuestState({
+                      guestId: primaryFlat.guest1.guestId,
+                      guestEmail: primaryFlat.guest1.email,
+                      companyId: formCompanyId,
+                      companyName:
+                        formCompanyName ||
+                        (formCompanyId
+                          ? (companies.find((c) => String(c.id) === String(formCompanyId))?.tradeName ||
+                             companies.find((c) => String(c.id) === String(formCompanyId))?.corporateName ||
+                             "")
+                          : ""),
+                      isMonthlyGuest: formIsMonthlyGuest,
+                      autoInvoice: formAutoInvoice,
+                      finRespName: formFinRespName,
+                      finRespEmail: formFinRespEmail,
+                    })}
+                    searchIndexedCrm={searchIndexedCrm}
+                    onVerifyPhone={verifyGuestPhoneWhatsApp}
+                    phoneVerificationMap={phoneVerificationMap}
+                    includeBreakfast={primaryFlat.includeBreakfast}
+                    onChangeBreakfast={(include) => handlePatchFlat(primaryFlat.uid, { includeBreakfast: include })}
+                    dailyRates={primaryFlat.dailyRates}
+                    charges={primaryFlat.charges}
+                    totalDraft={simpleTotalDraft}
+                    onChangeDailyRate={handleSimpleDailyRateChange}
+                    onChangeTotalAmount={handleSimpleTotalAmountChange}
+                    onChangeCleaningFee={handleSimpleCleaningFeeChange}
+                    onRemoveCleaningFee={handleSimpleCleaningFeeRemove}
+                    onAddCleaningFee={handleSimpleCleaningFeeAdd}
+                    isManualPrice={simplePriceManuallyEdited}
+                    loadingTariffQuote={loadingTariffQuote}
+                    tariffQuote={tariffQuote}
+                    onRecalculateTariff={handleRecalculateSimpleTariff}
+                    submitAttempted={simpleSubmitAttempted}
+                    fieldRefs={{
+                      channelBookingRef: simpleChannelBookingRef,
+                      checkinRef: simpleCheckinRef,
+                      flatTriggerRef: simpleFlatTriggerRef,
+                      guestNameRef: simpleGuestNameRef,
+                      totalRef: simpleTotalRef,
+                    }}
+                  />
+                ) : (
                 <div className="py-2.5 space-y-4">
                 {/* Botão Trocar / Inverter Flat & Jornada de Troca de Quarto */}
                 {selectedRes &&
@@ -13502,10 +14545,11 @@ export default function PmsCalendar(props?: {
                       size="sm"
                       variant="outline"
                       onClick={() => {
-                        setFormChannel("b2b")
-                        setFormRequesterType("agency_b2b")
-                        syncSigiloAutoDefault("agency_b2b", formFlats.length)
-                        setShowVoucherParser(!showVoucherParser)
+                        const nextShow = !showVoucherParser
+                        if (formChannel !== "b2b" || formRequesterType !== "agency_b2b") {
+                          stableSelectChannel("b2b")
+                        }
+                        setShowVoucherParser(nextShow)
                       }}
                       className="h-7 px-2.5 text-[10.5px] font-bold bg-purple-600/10 hover:bg-purple-600/20 text-purple-700 dark:text-purple-300 border-purple-400/50 gap-1"
                     >
@@ -13517,6 +14561,9 @@ export default function PmsCalendar(props?: {
                     <button
                       type="button"
                       onClick={() => {
+                        if (formChannel === "b2b") {
+                          stableSelectChannel("whatsapp")
+                        }
                         setFormRequesterType("guest")
                         setFormRequesterId("")
                         setFormRequesterName("")
@@ -13545,6 +14592,9 @@ export default function PmsCalendar(props?: {
                     <button
                       type="button"
                       onClick={() => {
+                        if (formChannel === "b2b") {
+                          stableSelectChannel("whatsapp")
+                        }
                         setFormRequesterType("other_person")
                         if (formInvoiceRecipientType === "agency") {
                           setFormInvoiceRecipientType("guest")
@@ -13562,6 +14612,9 @@ export default function PmsCalendar(props?: {
                     <button
                       type="button"
                       onClick={() => {
+                        if (formChannel === "b2b") {
+                          stableSelectChannel("whatsapp")
+                        }
                         setFormRequesterType("company")
                         if (!selectedRes) {
                           setFormInvoiceRecipientType("company")
@@ -13579,15 +14632,7 @@ export default function PmsCalendar(props?: {
                     <button
                       type="button"
                       onClick={() => {
-                        setFormRequesterType("agency_b2b")
-                        setFormChannel("b2b")
-                        setFormPaymentMethod(formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b")
-                        setFormStatus("confirmada")
-                        if (!selectedRes) {
-                          setFormInvoiceRecipientType("agency")
-                          if (!nfHideManuallySetRef.current) setFormNfHideFromGuest(true)
-                        }
-                        syncSigiloAutoDefault("agency_b2b", formFlats.length)
+                        stableSelectChannel("b2b")
                       }}
                       className={`p-2 rounded-xl border text-[11px] font-bold text-left transition-all ${
                         formRequesterType === "agency_b2b" || formChannel === "b2b"
@@ -15538,6 +16583,33 @@ export default function PmsCalendar(props?: {
                         }}
                         onDatesChangeForFlat={handleDatesChangeForFlat}
                         onSelectCrmGuestForFlat={handleSelectCrmGuestForFlat}
+                        onUnlinkCrmGuest1={
+                          !selectedRes && idx === 0
+                            ? (uid, clearFields) => {
+                                const target = formFlats.find((f) => f.uid === uid) || primaryFlat;
+                                const linkedCrm =
+                                  target.guest1.guestId && target.guest1.guestId !== "manual"
+                                    ? crmGuests.find((cg) => String(cg.id) === String(target.guest1.guestId))
+                                    : null;
+                                const keepPhone =
+                                  !clearFields && shouldKeepPhoneOnCrmUnlink(target.guest1.phone, linkedCrm?.phone)
+                                    ? target.guest1.phone
+                                    : "";
+                                resetCrmInheritedReservationLinks();
+                                handlePatchFlat(uid, {
+                                  requesterIsGuest1: false,
+                                  docPhotoUrl: "",
+                                  docFileName: "",
+                                  isCamposResident: false,
+                                  prefersHighFloor: false,
+                                  twinBeds: false,
+                                  guest1: clearFields
+                                    ? { guestId: "manual", name: "", cpf: "", phone: "", email: "" }
+                                    : { ...target.guest1, guestId: "manual", cpf: "", phone: keepPhone, email: "" },
+                                });
+                              }
+                            : undefined
+                        }
                         onSaveGuestToCrmForFlat={handleSaveGuestToCrmForFlat}
                         onToggleRequesterIsGuest1={handleToggleRequesterIsGuest1}
                         onVerifyPhone={(phone) => { void verifyGuestPhoneWhatsApp(phone); }}
@@ -17541,12 +18613,24 @@ export default function PmsCalendar(props?: {
                 </div>
               </div>
               </div>
+                )}
 
-              <DialogFooter className="gap-2 justify-between">
+              <DialogFooter className="gap-2 justify-between pt-2">
                 {selectedRes ? (
                   <Button type="button" variant="destructive" size="sm" onClick={handleDeleteRes} className="font-semibold text-xs gap-1">
                     <Trash2 className="w-3.5 h-3.5" />
                     <span>Cancelar Reserva</span>
+                  </Button>
+                ) : resCreateMode === "simple" ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleSwitchToAdvanced}
+                    className="font-bold text-xs text-muted-foreground hover:text-foreground gap-1.5 px-2 cursor-pointer"
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                    <span>Avançado</span>
                   </Button>
                 ) : <div />}
 
@@ -17554,9 +18638,22 @@ export default function PmsCalendar(props?: {
                   <Button type="button" variant="outline" size="sm" onClick={() => setResModalOpen(false)} className="font-semibold text-xs">
                     Cancelar
                   </Button>
-                  <Button type="submit" size="sm" disabled={savingRes} className="font-bold text-xs bg-primary hover:bg-primary/90 text-primary-foreground min-w-[100px] shadow-sm">
-                    {savingRes ? <RefreshCw className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
-                    {selectedRes ? "Salvar Alterações" : isMultiFlat ? `Criar Pacote (${formFlats.length} Flats)` : "Criar Reserva"}
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={savingRes || (!selectedRes && resCreateMode === "simple" && loadingFairShare)}
+                    className="font-bold text-xs bg-primary hover:bg-primary/90 text-primary-foreground min-w-[100px] shadow-sm"
+                  >
+                    {savingRes || (!selectedRes && resCreateMode === "simple" && loadingFairShare) ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin mr-1" />
+                    ) : null}
+                    {!savingRes && !selectedRes && resCreateMode === "simple" && loadingFairShare
+                      ? "Verificando flats..."
+                      : selectedRes
+                        ? "Salvar Alterações"
+                        : isMultiFlat
+                          ? `Criar Pacote (${formFlats.length} Flats)`
+                          : "Criar Reserva"}
                   </Button>
                 </div>
               </DialogFooter>
