@@ -121,6 +121,8 @@ function buildMtlsAgent() {
   }
 }
 
+const INTER_CASH_OUT_TIMEOUT_MS = Math.max(2000, Number(process.env.INTER_PIX_TIMEOUT_MS) || 8000);
+
 async function httpsRequest(url, options, body = null) {
   return new Promise((resolve, reject) => {
     const urlObj = new URL(url);
@@ -130,6 +132,7 @@ async function httpsRequest(url, options, body = null) {
       method: options.method || "GET",
       headers: options.headers || {},
       agent: options.agent,
+      timeout: options.timeout || INTER_CASH_OUT_TIMEOUT_MS,
     };
 
     const req = https.request(reqOptions, (res) => {
@@ -144,6 +147,9 @@ async function httpsRequest(url, options, body = null) {
       });
     });
 
+    req.on("timeout", () => {
+      req.destroy(new Error(`[Inter PIX] Timeout após ${reqOptions.timeout}ms em ${urlObj.pathname}`));
+    });
     req.on("error", reject);
     if (body) req.write(body);
     req.end();

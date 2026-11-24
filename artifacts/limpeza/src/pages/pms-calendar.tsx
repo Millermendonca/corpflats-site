@@ -3601,12 +3601,20 @@ export default function PmsCalendar(props?: {
     setRawBoletoInputs({})
   }, [resModalOpen, selectedRes?.id])
 
+  const lastModalAuxFetchRef = useRef(0)
+
   useEffect(() => {
-    if (resModalOpen) {
+    if (!resModalOpen) return
+    const now = Date.now()
+    if (now - lastModalAuxFetchRef.current > 60000) {
+      lastModalAuxFetchRef.current = now
       fetchCrmGuests()
       fetchCompanies()
       fetchAgencies()
     }
+  }, [resModalOpen])
+
+  useEffect(() => {
     if (resModalOpen && formCheckin && formCheckout) {
       fetchFairShare(formCheckin, formCheckout, selectedRes?.id).then((result) => {
         // Auto-select Flat da Vez on new reservation (and when dates change) unless user manually picked a flat
@@ -5360,6 +5368,8 @@ export default function PmsCalendar(props?: {
   const isFetchingRef = useRef(false);
   const pendingFetchRef = useRef(false);
   const lastAuxFetchRef = useRef(0);
+  const hasLoadedInitialCalendarRef = useRef(false);
+  const hasLoadedPaymentMethodsRef = useRef(false);
   const focusTargetCodeRef = useRef<string>("");
   focusTargetCodeRef.current = String(reactivateReservationCode || editReservationCode || "").trim();
   const modalFetchDoneForKeyRef = useRef<string | null>(null);
@@ -5390,31 +5400,43 @@ export default function PmsCalendar(props?: {
         ).trim();
       }
       const focusQs = focusCodeParam ? `&focusCode=${encodeURIComponent(focusCodeParam)}` : "";
+      const isBackgroundSync = !showLoading && hasLoadedInitialCalendarRef.current;
+      const syncQs = isBackgroundSync ? "&sync=1" : "";
       const activeTargetKey =
         modalOnly && focusTargetCodeRef.current
           ? `${reactivateReservationCode ? "R:" : "E:"}${focusTargetCodeRef.current}`
           : null;
-      const res = await fetch(`/api/pms/calendar?startDate=${startStr}&endDate=${endStr}${focusQs}&_t=${Date.now()}`, { cache: "no-store", credentials: "include" });
+      const res = await fetch(`/api/pms/calendar?startDate=${startStr}&endDate=${endStr}${focusQs}${syncQs}&_t=${Date.now()}`, { cache: "no-store", credentials: "include" });
       if (res.ok) {
         const json = await res.json();
-        setData(json);
+        hasLoadedInitialCalendarRef.current = true;
+        setData(prev => ({
+          ...prev,
+          ...json,
+          guests: Array.isArray(json.guests) ? json.guests : prev.guests,
+        }));
         if (activeTargetKey) {
           modalFetchDoneForKeyRef.current = activeTargetKey;
         }
         if (Array.isArray(json.agencies)) setAgencies(json.agencies);
         if (Array.isArray(json.companies)) setCompanies(json.companies);
+        if (Array.isArray(json.guests)) {
+          setCrmGuests(prev => (prev.length > 0 ? prev : json.guests));
+        }
         if (json.settings?.checkinTime) setDefaultCheckinTime(json.settings.checkinTime);
         if (json.settings?.checkoutTime) setDefaultCheckoutTime(json.settings.checkoutTime);
       }
 
-      // Atualiza pedidos de café da manhã e dados auxiliares a cada 30s ou no carregamento inicial
-      const now = Date.now();
-      if (showLoading || now - lastAuxFetchRef.current > 30000) {
-        lastAuxFetchRef.current = now;
-        fetchCompanies();
-        fetchAgencies();
-        fetchCrmGuests();
+      if (!hasLoadedPaymentMethodsRef.current) {
+        hasLoadedPaymentMethodsRef.current = true;
         fetchPaymentMethods();
+      }
+
+      // Atualiza pedidos de café da manhã e Quarto da Vez a cada 60s ou no carregamento inicial
+      // (companies/agencies/crmGuests já vêm na carga inicial do calendário e são atualizados ao abrir o modal)
+      const now = Date.now();
+      if (showLoading || now - lastAuxFetchRef.current > 60000) {
+        lastAuxFetchRef.current = now;
 
         try {
           const todayStr = format(new Date(), "yyyy-MM-dd");
@@ -10016,9 +10038,8 @@ export default function PmsCalendar(props?: {
       }
 
       setResModalOpen(false)
-      fetchData()
-      fetchCrmGuests()
-      fetchCompanies()
+      lastModalAuxFetchRef.current = 0
+      fetchData(false)
       notifyCalendarUpdated()
     } catch (err: any) {
       console.error("[PMS Calendar] Erro ao salvar reserva:", err)

@@ -645,11 +645,12 @@ function getMaskedPgHost() {
 
 function createPgPoolInstance() {
   if (!process.env.DATABASE_URL) return null;
+  const configuredPoolMax = Math.max(2, Math.min(20, Number(process.env.PG_POOL_MAX) || 2));
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false },
-    // Limite enxuto (max: 2) para proteger instâncias PostgreSQL de 256MB RAM (0.1c-256mb no Render) contra OOM
-    max: 2,
+    // Padrão enxuto (max: 2) para instâncias PostgreSQL de 256MB RAM; escalável via PG_POOL_MAX após upgrade de plano
+    max: configuredPoolMax,
     idleTimeoutMillis: 10000,
     connectionTimeoutMillis: 15000,
     query_timeout: 30000,
@@ -725,11 +726,57 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors({ origin: true, credentials: true }));
+// Compressão Gzip assíncrona (libuv thread pool, não bloqueia Event Loop) para respostas JSON >= 1KB
+app.use((req, res, next) => {
+  if (req.method === "HEAD") return next();
+  const acceptEncoding = String(req.headers["accept-encoding"] || "");
+  if (!/\bgzip\b/i.test(acceptEncoding)) return next();
+
+  const origJson = res.json.bind(res);
+  res.json = function compressedJson(body) {
+    if (res.headersSent || res.getHeader("Content-Encoding")) {
+      return origJson(body);
+    }
+    const cacheCtrl = String(res.getHeader("Cache-Control") || "");
+    if (/\bno-transform\b/i.test(cacheCtrl)) {
+      return origJson(body);
+    }
+    let jsonStr;
+    try {
+      jsonStr = JSON.stringify(body);
+    } catch {
+      return origJson(body);
+    }
+    if (!jsonStr || Buffer.byteLength(jsonStr, "utf8") < 1024) {
+      return origJson(body);
+    }
+    const rawBuf = Buffer.from(jsonStr, "utf8");
+    zlib.gzip(rawBuf, { level: 5 }, (err, compressed) => {
+      if (res.headersSent) return;
+      if (err || !compressed || compressed.length >= rawBuf.length) {
+        return origJson(body);
+      }
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Content-Encoding", "gzip");
+      if (typeof res.vary === "function") {
+        res.vary("Accept-Encoding");
+      } else {
+        res.setHeader("Vary", "Accept-Encoding");
+      }
+      res.setHeader("Content-Length", compressed.length);
+      res.end(compressed);
+    });
+    return res;
+  };
+  next();
+});
 app.use(
   express.json({
     limit: "50mb",
     verify: (req, _res, buf) => {
-      if (buf && buf.length) {
+      // Clona rawBody apenas em rotas de webhook/callback que validam assinatura HMAC
+      const reqUrl = String(req.originalUrl || req.url || "");
+      if (buf && buf.length && (reqUrl.startsWith("/api/callback") || reqUrl.includes("webhook"))) {
         req.rawBody = buf.toString("utf8");
         req.rawBodyBuffer = Buffer.from(buf);
       }
@@ -12975,10 +13022,14 @@ async function _loadDatabaseImpl() {
           }
           if (!Array.isArray(db.faqItems)) db.faqItems = [];
 
-          if ((!Array.isArray(db.shoppingList) || db.shoppingList.length === 0) && localShoppingList.length > 0) {
+          // A tabela shopping_list no PostgreSQL é a fonte autoritativa.
+          // Só herda localShoppingList se pgLoaded nunca possuiu a chave shoppingList (migração inicial),
+          // evitando ressuscitar itens antigos de data/database.json quando a lista foi legitimamente esvaziada.
+          if (!Array.isArray(pgLoaded.shoppingList) && localShoppingList.length > 0) {
             db.shoppingList = localShoppingList;
           }
           if (!Array.isArray(db.shoppingList)) db.shoppingList = [];
+          if (!Array.isArray(db.shoppingPendingDeletes)) db.shoppingPendingDeletes = [];
           if ((!Array.isArray(db.shoppingCatalog) || db.shoppingCatalog.length === 0) && localShoppingCatalog.length > 0) {
             db.shoppingCatalog = localShoppingCatalog;
           }
@@ -18770,6 +18821,8 @@ async function flushPgState() {
     lastPgSaveCompletedAt = Date.now();
     lastPersistInfo = { status: "success", timestamp: new Date().toISOString(), error: null };
     console.log(`[PostgreSQL] db_state persistido (${Math.round(stateToSave.length / 1024)} KB em ${Date.now() - t0}ms, motivo: ${reasonToSave}).`);
+    // Espelha o snapshot já serializado em disco local sem re-executar JSON.stringify/pruneDatabase
+    atomicWriteFileAsync(DB_FILE, stateToSave, ++localDiskWriteVersion).catch(() => {});
 
     const resCount = db.reservations ? db.reservations.length : 0;
     if (resCount > 0) {
@@ -19461,12 +19514,17 @@ function saveDatabase(reason = "auto_save") {
       return;
     }
 
-    pendingLocalDirty = true;
-    if (!localSaveTimeout && !isLocalSaving) {
-      localSaveTimeout = setTimeout(() => {
-        localSaveTimeout = null;
-        flushLocalDiskState();
-      }, 300);
+    // Em produção com PostgreSQL hidratado (disco efêmero no Render), evita re-serializar o db inteiro
+    // a cada 300ms em disco; o flushPgState já espelha o snapshot serializado em DB_FILE após gravar no PG.
+    const shouldThrottleLocalDiskInCloudPg = Boolean(pgPool && pgHydratedSuccessfully && process.env.NODE_ENV !== "test");
+    if (!shouldThrottleLocalDiskInCloudPg) {
+      pendingLocalDirty = true;
+      if (!localSaveTimeout && !isLocalSaving) {
+        localSaveTimeout = setTimeout(() => {
+          localSaveTimeout = null;
+          flushLocalDiskState();
+        }, 300);
+      }
     }
 
     if (pgPool) {
@@ -37817,6 +37875,8 @@ export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase
   return expiredCount;
 }
 
+let lastCalendarObsPurgeTime = 0;
+
 app.get("/api/pms/calendar", (req, res) => {
   const userAuth = getAuthUser(req);
   if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "reception" && userAuth.role !== "recepcao")) {
@@ -37839,6 +37899,11 @@ app.get("/api/pms/calendar", (req, res) => {
     if (isUniversalIntegrityDirty && reconcileUniversalIntegrity()) {
       setImmediate(() => saveDatabase("integrity_reconciled"));
     }
+  }
+  // Executa purgeNonMaintenanceObservations no máximo 1x a cada 60s (antes rodava 19x dentro do flats.map a cada request)
+  if (now - lastCalendarObsPurgeTime > 60000) {
+    lastCalendarObsPurgeTime = now;
+    purgeNonMaintenanceObservations(db);
   }
 
   const { startDate, endDate, focusCode } = req.query;
@@ -37880,7 +37945,6 @@ app.get("/api/pms/calendar", (req, res) => {
         cleaningLabel = "Limpo";
       }
     }
-    purgeNonMaintenanceObservations(db);
     const openMaintenanceIssues = (db.observations || [])
       .filter(o => isRealMaintenanceObservation(o) && o.status === "aberta" && (Number(o.flatId) === Number(f.id) || String(o.flatNumber) === fNum))
       .map(o => typeof enrichObservationWithLiveStatus === "function" ? enrichObservationWithLiveStatus(o, todayStr) : o);
@@ -37894,8 +37958,6 @@ app.get("/api/pms/calendar", (req, res) => {
       hasImpeditiveMaintenance
     };
   });
-  // Expira automaticamente pré-reservas cujo prazo (expiresAt) já venceu antes de montar o calendário
-  sweepExpiredPreReservations(db, saveDatabase);
 
   const rawReservations = (db.reservations || []).filter(r => {
     if (!r || r.status === "expirada") return false;
@@ -38043,7 +38105,7 @@ app.get("/api/pms/calendar", (req, res) => {
       checkoutReportedBy: r.checkoutReportedBy || r.earlyCheckoutReportedBy || null,
       minibarOrders: getVisibleReservationMinibarOrders(r)
     };
-    if (req.query.lite === "1") {
+    if (req.query.lite === "1" || req.query.sync === "1") {
       delete mappedRes.auditLogs;
       delete mappedRes.fnrhAuditTrail;
     }
@@ -38087,6 +38149,7 @@ app.get("/api/pms/calendar", (req, res) => {
     ...serviceOrderBlocks
   ];
   const isLiteMode = req.query.lite === "1";
+  const isSyncMode = req.query.sync === "1";
 
   const fullExpiredItems = (db.reservations || [])
     .filter(r => {
@@ -38190,9 +38253,13 @@ app.get("/api/pms/calendar", (req, res) => {
     reservations,
     expiredPreReservations,
     blocks: isLiteMode ? [] : blocks,
-    guests: isLiteMode ? [] : (db.guests || []),
-    companies: isLiteMode ? [] : (db.companies || []),
-    agencies: isLiteMode ? [] : (db.agencies || []),
+    ...(isSyncMode
+      ? {}
+      : {
+          guests: isLiteMode ? [] : (db.guests || []),
+          companies: isLiteMode ? [] : (db.companies || []),
+          agencies: isLiteMode ? [] : (db.agencies || [])
+        }),
     settings: {
       checkinTime: db.settings?.checkinTime || "14:00",
       checkoutTime: db.settings?.checkoutTime || "12:00"
@@ -42023,12 +42090,6 @@ app.post("/api/pms/reservations", async (req, res) => {
     }
   }
 
-  try {
-    scheduleUpcomingReservationTriggers(db, saveDatabase);
-  } catch (schedErr) {
-    console.warn("[PMS Reservation] Aviso ao agendar régua inicial de WhatsApp:", schedErr?.message || schedErr);
-  }
-
   // Gatilho E-mail Recepção: Apenas se a reserva for para o dia de hoje (same-day check-in) e já tiver o hóspede definido.
   // Reservas para datas futuras aguardam a rotina matinal das 07:00 do dia de chegada.
   if (resolvedStatus !== "pre_reserva" && !newReservation.guestPending && isReservationForToday(newReservation)) {
@@ -42110,14 +42171,28 @@ app.post("/api/pms/reservations", async (req, res) => {
     });
   } catch (_) {}
 
-  try {
-    invalidateGuestCache();
-    reconcileAndMergeGuests(db);
-    const syncedMainGuest = (db.guests || []).find(g => Number(g.id) === Number(newReservation.guestId));
-    if (syncedMainGuest) triggerAutoGoogleContactSync(db, syncedMainGuest);
-  } catch (_) {}
+  invalidateGuestCache();
+
+  const runDeferredPostCreateHousekeeping = () => {
+    try {
+      scheduleUpcomingReservationTriggers(db, saveDatabase);
+    } catch (schedErr) {
+      console.warn("[PMS Reservation] Aviso ao agendar régua inicial de WhatsApp:", schedErr?.message || schedErr);
+    }
+    try {
+      reconcileAndMergeGuests(db);
+      const syncedMainGuest = (db.guests || []).find(g => Number(g.id) === Number(newReservation.guestId));
+      if (syncedMainGuest) triggerAutoGoogleContactSync(db, syncedMainGuest);
+    } catch (_) {}
+  };
+
+  if (process.env.NODE_ENV === "test") {
+    runDeferredPostCreateHousekeeping();
+    return res.status(201).json(newReservation);
+  }
 
   res.status(201).json(newReservation);
+  setImmediate(runDeferredPostCreateHousekeeping);
 });
 
 
@@ -45903,16 +45978,6 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
   }
 
-  // Sincroniza agendamentos de WhatsApp e E-mail caso datas, flat ou contato tenham sido alterados
-  if (!isPreReservationBlocked(r)) {
-    try {
-      scheduleUpcomingReservationTriggers(db, saveDatabase);
-      ensureReservationScheduledEmails(db, saveDatabase, r);
-    } catch (schedErr) {
-      console.warn("[Scheduler Sync] Erro ao atualizar filas de comunicação na edição da reserva:", schedErr.message);
-    }
-  }
-
   // Sincroniza governança e card de camareira para o check-in desta reserva na edição
   syncCleaningCardsForConfirmedReservation(db, r);
   saveDatabase();
@@ -45946,16 +46011,35 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
   } catch (_) {}
 
-  try {
-    reconcileAndMergeGuests(db);
-    const syncedMainGuest = (db.guests || []).find(g => Number(g.id) === Number(r.guestId));
-    if (syncedMainGuest) triggerAutoGoogleContactSync(db, syncedMainGuest);
-  } catch (_) {}
+  const shouldSyncSchedulers = !isPreReservationBlocked(r);
+  const runDeferredPostUpdateHousekeeping = () => {
+    if (shouldSyncSchedulers) {
+      try {
+        scheduleUpcomingReservationTriggers(db, saveDatabase);
+        ensureReservationScheduledEmails(db, saveDatabase, r);
+      } catch (schedErr) {
+        console.warn("[Scheduler Sync] Erro ao atualizar filas de comunicação na edição da reserva:", schedErr.message);
+      }
+    }
+    try {
+      reconcileAndMergeGuests(db);
+      const syncedMainGuest = (db.guests || []).find(g => Number(g.id) === Number(r.guestId));
+      if (syncedMainGuest) triggerAutoGoogleContactSync(db, syncedMainGuest);
+    } catch (_) {}
+  };
 
-  res.json({
+  const responsePayload = {
     ...r,
     minibarOrders: getVisibleReservationMinibarOrders(r)
-  });
+  };
+
+  if (process.env.NODE_ENV === "test") {
+    runDeferredPostUpdateHousekeeping();
+    return res.json(responsePayload);
+  }
+
+  res.json(responsePayload);
+  setImmediate(runDeferredPostUpdateHousekeeping);
 });
 
 // ── Portal do Hóspede (Guest Hub & Área do Cliente) ─────────────────────────
@@ -65445,6 +65529,180 @@ app.get("/api/tariffs/calendar", (req, res) => {
   });
 });
 
+export function calculatePmsTariffQuote({
+  checkin,
+  checkout,
+  channel = "direct",
+  guests = 1,
+  includeBreakfast = false,
+  flatId = null
+} = {}) {
+  const cinStr = String(checkin || "").trim().slice(0, 10);
+  const coutStr = String(checkout || "").trim().slice(0, 10);
+  const isoRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!isoRegex.test(cinStr) || !isoRegex.test(coutStr)) {
+    return { error: "INVALID_DATE_FORMAT", message: "Check-in e check-out devem estar no formato YYYY-MM-DD." };
+  }
+  const start = new Date(`${cinStr}T12:00:00Z`);
+  const end = new Date(`${coutStr}T12:00:00Z`);
+  if (
+    isNaN(start.getTime()) ||
+    isNaN(end.getTime()) ||
+    start.toISOString().slice(0, 10) !== cinStr ||
+    end.toISOString().slice(0, 10) !== coutStr ||
+    start >= end
+  ) {
+    return { error: "INVALID_DATE_RANGE", message: "A data de check-out deve ser posterior à data de check-in." };
+  }
+
+  const requestedNights = [];
+  const cursor = new Date(start);
+  while (cursor < end) {
+    requestedNights.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    if (requestedNights.length > 365) {
+      return { error: "MAX_STAY_EXCEEDED", message: "O período máximo para cotação do tarifário é de 365 noites." };
+    }
+  }
+  const nights = requestedNights.length;
+
+  const rawChan = String(channel || "direct").toLowerCase().trim();
+  const normChan = ["whatsapp", "site", "direta", "direto", "balcao"].includes(rawChan) ? "direct" : rawChan;
+  const reservationChan = rawChan === "direct" ? "whatsapp" : rawChan;
+  const guestCount = Math.min(3, Math.max(1, Math.round(Number(guests) || 1)));
+  const withBreakfast =
+    includeBreakfast === true ||
+    includeBreakfast === 1 ||
+    ["true", "1", "yes", "sim"].includes(String(includeBreakfast || "").toLowerCase().trim());
+
+  const cleanFlatId =
+    flatId === null ||
+    flatId === undefined ||
+    ["", "auto", "all", "null", "undefined"].includes(String(flatId).trim().toLowerCase())
+      ? null
+      : String(flatId).trim();
+
+  const roundMoney = (v) => Math.round((Number(v) + Number.EPSILON) * 100) / 100;
+
+  const wbpState = WbpPricingManager.getPricingState(db);
+  const tarSettings = getTariffSettings();
+  const siteCfg = db.siteConfig || DEFAULT_SITE_CONFIG;
+
+  const chanMarkupPct = resolveChannelEffectiveMarkupPct(tarSettings.channelMarkups, normChan);
+  const bfSurchargeBase = Number(
+    wbpState.settings?.breakfastSurchargePerGuest ??
+    tarSettings.breakfastSurchargePerGuest ??
+    siteCfg.pricing?.breakfastSurchargePerGuest ??
+    20
+  );
+  const extraBedBase = Number(
+    wbpState.settings?.extraBedFee ??
+    tarSettings.extraBedFee ??
+    siteCfg.extraBedConfig?.feeAmount ??
+    60
+  );
+  const bfForChannel = roundMoney(bfSurchargeBase * (1 + chanMarkupPct));
+  const extraBedForChannel = roundMoney(extraBedBase * (1 + chanMarkupPct));
+
+  const stayDiscounts = tarSettings.stayDiscounts || { weeklyPct: 0.10, biweeklyPct: 0.15, monthlyPct: 0.25 };
+  let stayDiscountPct = 0;
+  if (nights >= 30) stayDiscountPct = Number(stayDiscounts.monthlyPct ?? 0.25);
+  else if (nights >= 15) stayDiscountPct = Number(stayDiscounts.biweeklyPct ?? 0.15);
+  else if (nights >= 7) stayDiscountPct = Number(stayDiscounts.weeklyPct ?? 0.10);
+
+  const dailyRates = requestedNights.map((dayStr) => {
+    const override = findEffectiveTariffOverride(cleanFlatId, dayStr, normChan);
+    const baseChannelRate = calculateDailyRate(cleanFlatId, dayStr, normChan);
+    const roomRate = stayDiscountPct > 0 && !override
+      ? roundMoney(baseChannelRate * (1 - stayDiscountPct))
+      : baseChannelRate;
+    const breakfastAddon = withBreakfast ? roundMoney(bfForChannel * guestCount) : 0;
+    const extraBedAddon = guestCount >= 3 ? extraBedForChannel : 0;
+    const rate = roundMoney(roomRate + breakfastAddon + extraBedAddon);
+    return {
+      date: dayStr,
+      rate,
+      channel: reservationChan,
+      baseRoomRate: roomRate,
+      breakfastAddon,
+      extraBedAddon,
+      hasOverride: Boolean(override)
+    };
+  });
+
+  const rawWbCfg = siteCfg.ratePlans?.with_breakfast || DEFAULT_SITE_CONFIG.ratePlans.with_breakfast;
+  const rawRoCfg = siteCfg.ratePlans?.room_only || DEFAULT_SITE_CONFIG.ratePlans.room_only;
+  const activePlanCfg = withBreakfast
+    ? {
+        cleaningFeeEnabled: Boolean(rawWbCfg.cleaningFeeEnabled),
+        cleaningFeeAmount: Math.max(0, Number(rawWbCfg.cleaningFeeAmount ?? 0)),
+        cleaningFeeType: rawWbCfg.cleaningFeeType || "per_stay"
+      }
+    : {
+        cleaningFeeEnabled: rawRoCfg.cleaningFeeEnabled !== false,
+        cleaningFeeAmount: Math.max(0, Number(rawRoCfg.cleaningFeeAmount ?? 50)),
+        cleaningFeeType: rawRoCfg.cleaningFeeType || "per_stay"
+      };
+
+  const baseCleaningUnit = activePlanCfg.cleaningFeeEnabled ? activePlanCfg.cleaningFeeAmount : 0;
+  const baseCleaningTotal = activePlanCfg.cleaningFeeType === "per_night"
+    ? roundMoney(baseCleaningUnit * nights)
+    : roundMoney(baseCleaningUnit);
+  const cleaningFee = baseCleaningTotal > 0 ? roundMoney(baseCleaningTotal * (1 + chanMarkupPct)) : 0;
+
+  const fallbackRoCleanUnit = Math.max(0, Number(rawRoCfg.cleaningFeeAmount ?? 50)) || 50;
+  const defaultCleaningFeeForChannel = roundMoney(fallbackRoCleanUnit * (1 + chanMarkupPct));
+
+  const nightsSubtotal = roundMoney(dailyRates.reduce((acc, item) => acc + (Number(item.rate) || 0), 0));
+  const avgDailyRate = nights > 0 ? roundMoney(nightsSubtotal / nights) : 0;
+  const totalAmount = roundMoney(nightsSubtotal + cleaningFee);
+  const hasMixedNightRates = dailyRates.length > 1 && new Set(dailyRates.map((d) => d.rate)).size > 1;
+
+  return {
+    success: true,
+    checkin: cinStr,
+    checkout: coutStr,
+    nights,
+    channel: reservationChan,
+    normalizedChannel: normChan,
+    flatId: cleanFlatId,
+    guests: guestCount,
+    includeBreakfast: withBreakfast,
+    channelMarkupPct: chanMarkupPct,
+    stayDiscountPct,
+    breakfastSurchargePerGuest: bfForChannel,
+    breakfastSurchargeBase: bfSurchargeBase,
+    extraBedFee: extraBedForChannel,
+    cleaningFee,
+    cleaningFeeEnabled: Boolean(activePlanCfg.cleaningFeeEnabled && cleaningFee > 0),
+    cleaningFeeBaseAmount: baseCleaningUnit,
+    cleaningFeeType: activePlanCfg.cleaningFeeType,
+    defaultCleaningFeeForChannel,
+    nightsSubtotal,
+    avgDailyRate,
+    totalAmount,
+    hasMixedNightRates,
+    dailyRates
+  };
+}
+
+app.get("/api/pms/tariff-quote", (req, res) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+  const { checkin, checkout, channel = "booking", guests = "1", includeBreakfast = "false", flatId = null } = req.query;
+  const quote = calculatePmsTariffQuote({
+    checkin,
+    checkout,
+    channel,
+    guests,
+    includeBreakfast,
+    flatId
+  });
+  if (quote.error) {
+    return res.status(400).json(quote);
+  }
+  return res.json(quote);
+});
+
 app.post("/api/tariffs/bulk-update", (req, res) => {
   const { startDate, endDate, flatIds, channels, daysOfWeek, rate, reason } = req.body || {};
 
@@ -84138,6 +84396,8 @@ function getInterHttpsAgent() {
 }
 
 
+const INTER_PIX_TIMEOUT_MS = Math.max(2000, Number(process.env.INTER_PIX_TIMEOUT_MS) || 5000);
+
 async function getInterAccessToken() {
   const now = Date.now();
   if (interTokenCache.accessToken && interTokenCache.expiresAt > now + 60000) {
@@ -84160,6 +84420,7 @@ async function getInterAccessToken() {
     const req = https.request("https://cdpj.partners.bancointer.com.br/oauth/v2/token", {
       method: "POST",
       agent: httpsAgent,
+      timeout: INTER_PIX_TIMEOUT_MS,
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         "Content-Length": Buffer.byteLength(body)
@@ -84183,6 +84444,9 @@ async function getInterAccessToken() {
           reject(new Error(`Falha parse OAuth Inter: ${data}`));
         }
       });
+    });
+    req.on("timeout", () => {
+      req.destroy(new Error(`Timeout OAuth Banco Inter (${INTER_PIX_TIMEOUT_MS}ms)`));
     });
     req.on("error", reject);
     req.write(body);
@@ -84231,6 +84495,7 @@ async function createInterPixCob({ amount, description, debtorName, debtorDocume
     const req = https.request(`https://cdpj.partners.bancointer.com.br/pix/v2/cob/${txid}`, {
       method: "PUT",
       agent: httpsAgent,
+      timeout: INTER_PIX_TIMEOUT_MS,
       headers: {
         "Authorization": `Bearer ${token}`,
         "Content-Type": "application/json",
@@ -84259,6 +84524,9 @@ async function createInterPixCob({ amount, description, debtorName, debtorDocume
           reject(new Error(`Erro ao interpretar retorno Pix Inter: ${raw}`));
         }
       });
+    });
+    req.on("timeout", () => {
+      req.destroy(new Error(`Timeout emissão cobrança PIX Inter (${INTER_PIX_TIMEOUT_MS}ms)`));
     });
     req.on("error", reject);
     req.write(bodyStr);
@@ -94048,94 +94316,206 @@ if (fs.existsSync(distPath)) {
 
 // Bootstrap das tabelas de shopping list no PostgreSQL (roda após hidratação para não disputar pool no boot)
 let shoppingTablesBootstrapped = false;
+let shoppingDuplicatesCleanedOnBoot = false;
+let _lastShoppingListPgReadAt = 0;
+let shoppingListSyncPromise = null;
+let shoppingListMutationSeq = 0;
+const shoppingListDeletingIds = new Set();
+const shoppingListInFlightCreates = new Map();
 
-async function syncShoppingListCacheFromPg() {
-  if (!pgPool) return;
-  try {
-    // 1. Se houver itens criados em modo fallback (id começando com 'shop_' ou _pendingPgSync) na memória, insere no PostgreSQL primeiro
-    if (Array.isArray(db.shoppingList) && db.shoppingList.length > 0) {
-      const pendingOffline = db.shoppingList.filter(it => it && (it._pendingPgSync || String(it.id || "").startsWith("shop_")));
-      for (const item of pendingOffline) {
-        try {
-          const catStr = item.category && String(item.category).startsWith("[")
-            ? item.category
-            : autoCategorizeRules(item.title || "Item");
-          await pgPool.query(
-            `INSERT INTO shopping_list (title, quantity, category, notes, completed, sort_order, created_by_user_id, created_by_name, created_by_role, completed_by_user_id, completed_by_name, completed_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-            [
-              String(item.title || "").trim(),
-              item.quantity ? String(item.quantity).trim() : null,
-              catStr,
-              item.notes ? String(item.notes).trim() : null,
-              Boolean(item.completed),
-              item.sortOrder ?? 0,
-              item.createdBy?.id || 1,
-              item.createdBy?.name || "Admin",
-              item.createdBy?.role || "admin",
-              item.completedBy?.id || null,
-              item.completedBy?.name || null,
-              item.completedAt ? new Date(item.completedAt) : null
-            ]
-          );
-          item._pendingPgSync = false;
-        } catch (_) {}
-      }
-    }
+function normalizeShoppingKeyPart(val) {
+  return String(val || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+}
 
-    // 2. Carrega a lista autoritativa do PostgreSQL para db.shoppingList em memória
-    const listRes = await pgPool.query(`SELECT * FROM shopping_list ORDER BY sort_order ASC, created_at DESC`);
-    if (listRes.rows.length > 0) {
-      const mapped = listRes.rows.map(mapShoppingRow);
-      const prevSig = Array.isArray(db.shoppingList) ? db.shoppingList.map(i => `${i.id}:${i.completed}`).join(",") : "";
-      const nextSig = mapped.map(i => `${i.id}:${i.completed}`).join(",");
-      db.shoppingList = mapped;
-      if (prevSig !== nextSig) {
-        saveDatabase("shopping_list_cache_sync");
-      }
-    } else if (Array.isArray(db.shoppingList) && db.shoppingList.length > 0) {
-      // Se a tabela do PostgreSQL estiver vazia mas db.shoppingList tiver backup em memória/JSON, restaura para o PostgreSQL!
-      console.log(`[ShoppingList] Restaurando ${db.shoppingList.length} itens do backup em memória para shopping_list no PostgreSQL...`);
-      for (const item of db.shoppingList) {
-        if (!item || !item.title) continue;
-        try {
-          const catStr = item.category && String(item.category).startsWith("[")
-            ? item.category
-            : autoCategorizeRules(item.title);
-          await pgPool.query(
-            `INSERT INTO shopping_list (title, quantity, category, notes, completed, sort_order, created_by_user_id, created_by_name, created_by_role, completed_by_user_id, completed_by_name, completed_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-            [
-              String(item.title).trim(),
-              item.quantity ? String(item.quantity).trim() : null,
-              catStr,
-              item.notes ? String(item.notes).trim() : null,
-              Boolean(item.completed),
-              item.sortOrder ?? 0,
-              item.createdBy?.id || 1,
-              item.createdBy?.name || "Admin",
-              item.createdBy?.role || "admin",
-              item.completedBy?.id || null,
-              item.completedBy?.name || null,
-              item.completedAt ? new Date(item.completedAt) : null
-            ]
-          );
-        } catch (_) {}
-      }
-      const restored = await pgPool.query(`SELECT * FROM shopping_list ORDER BY sort_order ASC, created_at DESC`);
-      if (restored.rows.length > 0) {
-        db.shoppingList = restored.rows.map(mapShoppingRow);
-      }
-    }
+function getShoppingItemExactKey(item) {
+  const title = normalizeShoppingKeyPart(item?.title);
+  const qty = normalizeShoppingKeyPart(item?.quantity);
+  const notes = normalizeShoppingKeyPart(item?.notes);
+  const completed = Boolean(item?.completed) ? "1" : "0";
+  return `${completed}|${title}|${qty}|${notes}`;
+}
 
-    // 3. Sincroniza o catálogo em memória (db.shoppingCatalog)
-    const catRes = await pgPool.query(`SELECT id, name, use_count FROM shopping_catalog ORDER BY use_count DESC, name ASC`);
-    if (catRes.rows.length > 0) {
-      db.shoppingCatalog = catRes.rows.map(r => ({ id: r.id, name: r.name, useCount: r.use_count }));
+function buildShoppingListSignature(list) {
+  if (!Array.isArray(list)) return "";
+  return list
+    .map(i => `${i.id}:${i.title}:${i.quantity || ""}:${i.notes || ""}:${i.completed ? 1 : 0}:${i.sortOrder ?? 0}`)
+    .join("|");
+}
+
+function findMatchingPendingShoppingItem(list, { title, quantity = "", notes = "" }) {
+  if (!Array.isArray(list) || list.length === 0) return null;
+  const targetExactKey = getShoppingItemExactKey({ title, quantity, notes, completed: false });
+  for (const it of list) {
+    if (!it || it.completed) continue;
+    if (getShoppingItemExactKey(it) === targetExactKey) {
+      return it;
     }
-  } catch (err) {
-    console.warn("[ShoppingList] Aviso ao sincronizar cache em memória:", err.message);
   }
+  return null;
+}
+
+async function flushPendingShoppingDeletesToPg() {
+  if (!pgPool) return 0;
+  if (!Array.isArray(db.shoppingPendingDeletes) || db.shoppingPendingDeletes.length === 0) return 0;
+  const idsToDelete = [...new Set(
+    db.shoppingPendingDeletes
+      .map(id => parseInt(String(id), 10))
+      .filter(n => Number.isInteger(n) && n > 0)
+  )];
+  if (idsToDelete.length === 0) {
+    db.shoppingPendingDeletes = [];
+    return 0;
+  }
+  await pgPool.query(`DELETE FROM shopping_list WHERE id = ANY($1::int[])`, [idsToDelete]);
+  db.shoppingPendingDeletes = [];
+  idsToDelete.forEach(n => shoppingListDeletingIds.delete(String(n)));
+  saveDatabase("shopping_list_flush_pending_deletes");
+  return idsToDelete.length;
+}
+
+async function deduplicateShoppingListTableInPg() {
+  if (!pgPool) return 0;
+  const { rows } = await pgPool.query(
+    `SELECT id, title, quantity, notes, completed, sort_order, created_at
+     FROM shopping_list
+     ORDER BY sort_order ASC, id ASC`
+  );
+  const seen = new Map();
+  const duplicateIds = [];
+  for (const row of rows) {
+    const key = getShoppingItemExactKey(row);
+    if (seen.has(key)) {
+      duplicateIds.push(row.id);
+    } else {
+      seen.set(key, row.id);
+    }
+  }
+  if (duplicateIds.length > 0) {
+    await pgPool.query(`DELETE FROM shopping_list WHERE id = ANY($1::int[])`, [duplicateIds]);
+    console.log(`[ShoppingList] ${duplicateIds.length} item(ns) duplicado(s) removido(s) automaticamente do PostgreSQL.`);
+  }
+  shoppingDuplicatesCleanedOnBoot = true;
+  return duplicateIds.length;
+}
+
+async function syncShoppingListCacheFromPg(options = {}) {
+  if (!pgPool) return;
+  if (shoppingListSyncPromise) {
+    return shoppingListSyncPromise;
+  }
+  shoppingListSyncPromise = (async () => {
+    try {
+      // 0. Executa primeiro eventuais deleções pendentes que falharam em oscilações anteriores do PG
+      await flushPendingShoppingDeletesToPg();
+
+      // Captura a versão de mutação ANTES de ler do PG para impedir que um SELECT antigo sobrescreva um DELETE/POST em voo
+      const seqBefore = shoppingListMutationSeq;
+
+      // 1. Lê o estado atual do PostgreSQL antes de subir eventuais itens criados offline (shop_*)
+      //    para garantir zero duplicação caso o item já exista no banco.
+      const existingRes = await pgPool.query(`SELECT * FROM shopping_list ORDER BY sort_order ASC, created_at DESC`);
+      const existingExactKeys = new Set(existingRes.rows.map(r => getShoppingItemExactKey(r)));
+
+      let insertedOffline = 0;
+      if (Array.isArray(db.shoppingList) && db.shoppingList.length > 0) {
+        const pendingOffline = db.shoppingList.filter(
+          it => it && (it._pendingPgSync === true || String(it.id || "").startsWith("shop_"))
+        );
+        if (pendingOffline.length > 0) {
+          const processedOfflineIds = new Set();
+          for (const item of pendingOffline) {
+            const offlineId = String(item.id || "");
+            const exactKey = getShoppingItemExactKey(item);
+            if (!String(item.title || "").trim() || existingExactKeys.has(exactKey)) {
+              item._pendingPgSync = false;
+              if (offlineId) processedOfflineIds.add(offlineId);
+              continue;
+            }
+            try {
+              const catStr = item.category && String(item.category).startsWith("[")
+                ? item.category
+                : autoCategorizeRules(item.title || "Item");
+              await pgPool.query(
+                `INSERT INTO shopping_list (title, quantity, category, notes, completed, sort_order, created_by_user_id, created_by_name, created_by_role, completed_by_user_id, completed_by_name, completed_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+                [
+                  String(item.title || "").trim(),
+                  item.quantity ? String(item.quantity).trim() : null,
+                  catStr,
+                  item.notes ? String(item.notes).trim() : null,
+                  Boolean(item.completed),
+                  item.sortOrder ?? 0,
+                  item.createdBy?.id || 1,
+                  item.createdBy?.name || "Admin",
+                  item.createdBy?.role || "admin",
+                  item.completedBy?.id || null,
+                  item.completedBy?.name || null,
+                  item.completedAt ? new Date(item.completedAt) : null
+                ]
+              );
+              existingExactKeys.add(exactKey);
+              item._pendingPgSync = false;
+              if (offlineId) processedOfflineIds.add(offlineId);
+              insertedOffline++;
+            } catch (insErr) {
+              console.warn("[ShoppingList] Aviso ao sincronizar item offline para PG:", insErr.message);
+            }
+          }
+          if (processedOfflineIds.size > 0) {
+            db.shoppingList = db.shoppingList.filter(it => !processedOfflineIds.has(String(it?.id || "")));
+          }
+        }
+      }
+
+      // 2. Deduplicação segura de cópias exatas já existentes no PostgreSQL (no boot ou quando solicitado)
+      let removedDuplicates = 0;
+      if (options.deduplicate || !shoppingDuplicatesCleanedOnBoot) {
+        try {
+          removedDuplicates = await deduplicateShoppingListTableInPg();
+        } catch (dedupErr) {
+          console.warn("[ShoppingList] Aviso ao deduplicar tabela:", dedupErr.message);
+        }
+      }
+
+      // 3. Carrega a lista autoritativa do PostgreSQL (mesmo quando vazia: NUNCA re-insere itens numéricos já apagados!)
+      const listRes = (insertedOffline > 0 || removedDuplicates > 0)
+        ? await pgPool.query(`SELECT * FROM shopping_list ORDER BY sort_order ASC, created_at DESC`)
+        : existingRes;
+
+      if (shoppingListMutationSeq === seqBefore) {
+        const pendingDelSet = new Set([
+          ...shoppingListDeletingIds,
+          ...(Array.isArray(db.shoppingPendingDeletes) ? db.shoppingPendingDeletes.map(String) : [])
+        ]);
+        const mapped = listRes.rows
+          .map(mapShoppingRow)
+          .filter(item => !pendingDelSet.has(String(item.id)));
+        const prevSig = buildShoppingListSignature(db.shoppingList);
+        const nextSig = buildShoppingListSignature(mapped);
+        db.shoppingList = mapped;
+        _lastShoppingListPgReadAt = Date.now();
+        if (prevSig !== nextSig || insertedOffline > 0 || removedDuplicates > 0) {
+          saveDatabase("shopping_list_cache_sync");
+        }
+      }
+
+      // 4. Sincroniza o catálogo em memória (db.shoppingCatalog)
+      const catRes = await pgPool.query(`SELECT id, name, use_count FROM shopping_catalog ORDER BY use_count DESC, name ASC`);
+      if (catRes.rows.length > 0) {
+        db.shoppingCatalog = catRes.rows.map(r => ({ id: r.id, name: r.name, useCount: r.use_count }));
+      }
+    } catch (err) {
+      console.warn("[ShoppingList] Aviso ao sincronizar cache em memória:", err.message);
+    } finally {
+      shoppingListSyncPromise = null;
+    }
+  })();
+  return shoppingListSyncPromise;
 }
 
 async function bootstrapShoppingTables() {
@@ -94181,7 +94561,7 @@ async function bootstrapShoppingTables() {
        ON CONFLICT (name) DO NOTHING`,
       [initialItems]
     );
-    await syncShoppingListCacheFromPg();
+    await syncShoppingListCacheFromPg({ deduplicate: true });
     shoppingTablesBootstrapped = true;
     console.log(`[ShoppingList] Tabelas PostgreSQL prontas e cache sincronizado (${Array.isArray(db.shoppingList) ? db.shoppingList.length : 0} itens).`);
   } catch (err) {
@@ -94470,6 +94850,7 @@ app.patch("/api/shopping-list/reorder", async (req, res) => {
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: "items[] obrigatório" });
   }
+  shoppingListMutationSeq++;
   const order = {};
   items.forEach(({ id, sortOrder }) => { order[String(id)] = sortOrder; });
   if (Array.isArray(db.shoppingList)) {
@@ -94486,6 +94867,7 @@ app.patch("/api/shopping-list/reorder", async (req, res) => {
         if (Number.isNaN(numId)) return Promise.resolve();
         return pgPool.query(`UPDATE shopping_list SET sort_order=$1, updated_at=now() WHERE id=$2`, [sortOrder, numId]);
       }));
+      _lastShoppingListPgReadAt = Date.now();
       return res.json({ ok: true });
     } catch (err) {
       console.error("[ShoppingList] reorder error:", err.message);
@@ -95396,48 +95778,144 @@ app.get("/api/shopping-list/ai-test", async (req, res) => {
   return res.json(results);
 });
 
+// Refinamento assíncrono de categoria via Gemini em background (não bloqueia POST /api/shopping-list)
+function refineShoppingItemCategoryInBackground(itemId, cleanTitle) {
+  if (!itemId || !cleanTitle || process.env.NODE_ENV === "test") return;
+  setImmediate(async () => {
+    try {
+      const detailed = await autoCategorizeDetailed(cleanTitle);
+      if (!detailed?.ok || !detailed.serialized) return;
+      const newCats = parseCategories(detailed.serialized);
+      if (newCats.length === 0 || (newCats.length === 1 && newCats[0] === "Geral")) return;
+      if (Array.isArray(db.shoppingList)) {
+        const target = db.shoppingList.find(it => String(it?.id) === String(itemId));
+        if (target) {
+          target.category = detailed.serialized;
+          target.categories = newCats;
+        }
+      }
+      const numId = parseInt(String(itemId), 10);
+      if (pgPool && !String(itemId).startsWith("shop_") && Number.isInteger(numId) && numId > 0) {
+        await pgPool.query(
+          `UPDATE shopping_list SET category = $1, updated_at = now() WHERE id = $2`,
+          [detailed.serialized, numId]
+        ).catch(() => {});
+      }
+      saveDatabase("shopping_list_ai_category_bg");
+    } catch (_) {}
+  });
+}
+
 // GET /api/shopping-list
-let _lastShoppingListPgReadAt = 0;
 app.get("/api/shopping-list", async (req, res) => {
   const nowMs = Date.now();
+  const hasPendingOffline = Array.isArray(db.shoppingList) && db.shoppingList.some(
+    it => it && (it._pendingPgSync === true || String(it.id || "").startsWith("shop_"))
+  );
+  const hasPendingDeletes = Array.isArray(db.shoppingPendingDeletes) && db.shoppingPendingDeletes.length > 0;
+  const needsInitialDedup = !shoppingDuplicatesCleanedOnBoot;
+
+  // Caminho rápido em memória: após o bootstrap/hidratação do PG, todas as mutações passam por este servidor
+  // e atualizam db.shoppingList em tempo real. Evita travar na fila do pgPool (max: 2) em todo GET.
+  const canServeHydratedMemory = Boolean(
+    shoppingTablesBootstrapped &&
+    pgHydratedSuccessfully &&
+    Array.isArray(db.shoppingList) &&
+    req.query.refresh !== "1" &&
+    !hasPendingOffline &&
+    !hasPendingDeletes &&
+    !needsInitialDedup
+  );
+  if (canServeHydratedMemory) {
+    const pendingDelSet = new Set([
+      ...shoppingListDeletingIds,
+      ...(Array.isArray(db.shoppingPendingDeletes) ? db.shoppingPendingDeletes.map(String) : [])
+    ]);
+    const items = db.shoppingList
+      .filter(i => i && !pendingDelSet.has(String(i.id)))
+      .sort((a, b) => {
+        if ((a.sortOrder ?? 0) !== (b.sortOrder ?? 0)) return (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+        if (a.completed === b.completed) return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+        return a.completed ? 1 : -1;
+      });
+    res.setHeader("X-Shopping-Source", "memory-synced");
+    res.json(items);
+    if (pgPool && !isPgSaving && !shoppingListSyncPromise && (nowMs - _lastShoppingListPgReadAt > 300000)) {
+      _lastShoppingListPgReadAt = nowMs;
+      setImmediate(() => {
+        syncShoppingListCacheFromPg({ deduplicate: false }).catch(() => {});
+      });
+    }
+    return;
+  }
+
   const shouldSyncFromPg = pgPool && pgHydratedSuccessfully && !isPgSaving && (
     req.query.refresh === "1" ||
+    hasPendingOffline ||
+    hasPendingDeletes ||
+    needsInitialDedup ||
     !Array.isArray(db.shoppingList) ||
-    db.shoppingList.length === 0 ||
+    !shoppingTablesBootstrapped ||
     (nowMs - _lastShoppingListPgReadAt > 30000)
   );
   if (shouldSyncFromPg) {
     try {
-      _lastShoppingListPgReadAt = nowMs;
-      const result = await pgPool.query(
-        `SELECT * FROM shopping_list ORDER BY sort_order ASC, created_at DESC`
-      );
-      let mapped = result.rows.map(mapShoppingRow);
-      // Se o banco retornou vazio mas db.shoppingList em memória tem itens (ex: itens adicionados durante oscilação de conexão), sincroniza de volta para o PG!
-      if (mapped.length === 0 && Array.isArray(db.shoppingList) && db.shoppingList.length > 0) {
-        await syncShoppingListCacheFromPg();
-        mapped = Array.isArray(db.shoppingList) ? db.shoppingList : [];
-      } else if (mapped.length > 0) {
-        const prevSig = Array.isArray(db.shoppingList) ? db.shoppingList.map(i => `${i.id}:${i.completed}`).join(",") : "";
-        const nextSig = mapped.map(i => `${i.id}:${i.completed}`).join(",");
-        db.shoppingList = mapped;
-        if (prevSig !== nextSig) {
-          saveDatabase("shopping_list_get_sync");
+      if (hasPendingOffline || hasPendingDeletes || needsInitialDedup) {
+        await syncShoppingListCacheFromPg({ deduplicate: needsInitialDedup });
+      } else {
+        const seqBefore = shoppingListMutationSeq;
+        _lastShoppingListPgReadAt = nowMs;
+        const result = await pgPool.query(
+          `SELECT * FROM shopping_list ORDER BY sort_order ASC, created_at DESC`
+        );
+        const pendingDelSet = new Set([
+          ...shoppingListDeletingIds,
+          ...(Array.isArray(db.shoppingPendingDeletes) ? db.shoppingPendingDeletes.map(String) : [])
+        ]);
+        const mapped = result.rows
+          .map(mapShoppingRow)
+          .filter(item => !pendingDelSet.has(String(item.id)));
+        if (shoppingListMutationSeq === seqBefore) {
+          const prevSig = buildShoppingListSignature(db.shoppingList);
+          const nextSig = buildShoppingListSignature(mapped);
+          db.shoppingList = mapped;
+          if (prevSig !== nextSig) {
+            saveDatabase("shopping_list_get_sync");
+          }
+        } else {
+          const current = Array.isArray(db.shoppingList)
+            ? db.shoppingList.filter(i => i && !pendingDelSet.has(String(i.id)))
+            : mapped;
+          res.setHeader("X-Shopping-Source", "postgres");
+          return res.json(current);
         }
       }
+      const pendingDelSet = new Set([
+        ...shoppingListDeletingIds,
+        ...(Array.isArray(db.shoppingPendingDeletes) ? db.shoppingPendingDeletes.map(String) : [])
+      ]);
+      const finalItems = Array.isArray(db.shoppingList)
+        ? db.shoppingList.filter(i => i && !pendingDelSet.has(String(i.id)))
+        : [];
       res.setHeader("X-Shopping-Source", "postgres");
-      return res.json(mapped);
+      return res.json(finalItems);
     } catch (err) {
       console.error("[ShoppingList] GET error (usando espelho em memória):", err.message);
     }
   }
   // Fallback espelho em memória (blindado contra oscilações de rede do PostgreSQL)
   if (!Array.isArray(db.shoppingList)) db.shoppingList = [];
-  const items = [...db.shoppingList].sort((a, b) => {
-    if ((a.sortOrder ?? 0) !== (b.sortOrder ?? 0)) return (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
-    if (a.completed === b.completed) return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
-    return a.completed ? 1 : -1;
-  });
+  const pendingDelSet = new Set([
+    ...shoppingListDeletingIds,
+    ...(Array.isArray(db.shoppingPendingDeletes) ? db.shoppingPendingDeletes.map(String) : [])
+  ]);
+  const items = db.shoppingList
+    .filter(i => i && !pendingDelSet.has(String(i.id)))
+    .sort((a, b) => {
+      if ((a.sortOrder ?? 0) !== (b.sortOrder ?? 0)) return (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+      if (a.completed === b.completed) return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+      return a.completed ? 1 : -1;
+    });
   res.setHeader("X-Shopping-Source", "memory-cache");
   res.json(items);
 });
@@ -95445,37 +95923,95 @@ app.get("/api/shopping-list", async (req, res) => {
 // POST /api/shopping-list
 app.post("/api/shopping-list", async (req, res) => {
   const { title, quantity, notes } = req.body || {};
-  if (!title || !String(title).trim()) {
+  const cleanTitle = String(title || "").trim();
+  if (!cleanTitle) {
     return res.status(400).json({ error: "Título do item é obrigatório." });
   }
+  const cleanQty = quantity ? String(quantity).trim() : "";
+  const cleanNotes = notes ? String(notes).trim() : "";
   const userAuth = getAuthUser(req);
   const name = userAuth?.name || userAuth?.username || "Colaborador";
-  // Auto-categorização por IA (Gemini + fallback keywords)
-  const category = await autoCategorize(String(title).trim());
+  const inFlightKey = getShoppingItemExactKey({ title: cleanTitle, quantity: cleanQty, notes: cleanNotes, completed: false });
 
-  if (pgPool) {
+  // Deduplicação de cliques duplos / requisições simultâneas idênticas
+  if (shoppingListInFlightCreates.has(inFlightKey)) {
     try {
-      const minQ = await pgPool.query(`SELECT COALESCE(MIN(sort_order), 0) as min_order FROM shopping_list`);
-      const sortOrder = (parseInt(minQ.rows[0].min_order) || 0) - 1;
-      const result = await pgPool.query(
-        `INSERT INTO shopping_list (title, quantity, category, notes, completed, sort_order, created_by_user_id, created_by_name, created_by_role)
-         VALUES ($1,$2,$3,$4,false,$5,$6,$7,$8) RETURNING *`,
-        [
-          String(title).trim(),
-          quantity ? String(quantity).trim() : null,
-          category,
-          notes ? String(notes).trim() : null,
-          sortOrder,
-          userAuth?.id || 1,
-          name,
-          userAuth?.role || "camareira"
-        ]
-      );
-      await upsertCatalogEntry(String(title).trim());
-      const newItem = mapShoppingRow(result.rows[0]);
+      const existingResult = await shoppingListInFlightCreates.get(inFlightKey);
+      return res.status(200).json(existingResult.item);
+    } catch (_) {
+      // Se o request original falhou, continua para tentar normalmente
+    }
+  }
+
+  const createPromise = (async () => {
+    let pgRow = null;
+    // Categorização instantânea via regras locais (<1ms); IA Gemini roda em background apenas se cair em ["Geral"]
+    const fastCategory = autoCategorizeRules(cleanTitle);
+    const fastCats = parseCategories(fastCategory);
+    const needsAiRefinement = fastCats.length === 1 && fastCats[0] === "Geral";
+
+    if (pgPool) {
+      try {
+        // Verifica primeiro no PG se já existe um item pendente idêntico (evita duplicação real)
+        const pendingRes = await pgPool.query(
+          `SELECT * FROM shopping_list WHERE completed = false ORDER BY sort_order ASC, id ASC`
+        );
+        const pendingDelSet = new Set([
+          ...shoppingListDeletingIds,
+          ...(Array.isArray(db.shoppingPendingDeletes) ? db.shoppingPendingDeletes.map(String) : [])
+        ]);
+        const activePendingRows = pendingRes.rows.filter(r => !pendingDelSet.has(String(r.id)));
+        const existingPg = findMatchingPendingShoppingItem(
+          activePendingRows,
+          { title: cleanTitle, quantity: cleanQty, notes: cleanNotes }
+        );
+        if (existingPg) {
+          const existingMapped = mapShoppingRow(existingPg);
+          if (!Array.isArray(db.shoppingList)) db.shoppingList = [];
+          if (!db.shoppingList.some(i => String(i.id) === String(existingMapped.id))) {
+            db.shoppingList = [existingMapped, ...db.shoppingList];
+          }
+          _lastShoppingListPgReadAt = Date.now();
+          return { item: existingMapped, deduplicated: true };
+        }
+
+        // Calcula sort_order no próprio INSERT (economiza 1 round-trip ao PostgreSQL)
+        const result = await pgPool.query(
+          `INSERT INTO shopping_list (title, quantity, category, notes, completed, sort_order, created_by_user_id, created_by_name, created_by_role)
+           VALUES ($1,$2,$3,$4,false,(SELECT COALESCE(MIN(sort_order), 0) - 1 FROM shopping_list),$5,$6,$7) RETURNING *`,
+          [
+            cleanTitle,
+            cleanQty || null,
+            fastCategory,
+            cleanNotes || null,
+            userAuth?.id || 1,
+            name,
+            userAuth?.role || "camareira"
+          ]
+        );
+        pgRow = result.rows[0] || null;
+      } catch (err) {
+        console.error("[ShoppingList] POST error:", err.message);
+      }
+    }
+
+    // Se o INSERT no PostgreSQL foi confirmado, NUNCA cai no fallback criando item duplicado shop_*
+    if (pgRow) {
+      upsertCatalogEntry(cleanTitle).catch(() => {});
+      if (Array.isArray(db.shoppingCatalog)) {
+        const existingCat = db.shoppingCatalog.find(c => String(c?.name || "").toLowerCase() === cleanTitle.toLowerCase());
+        if (existingCat) existingCat.useCount = (existingCat.useCount || 0) + 1;
+        else db.shoppingCatalog.push({ id: Date.now(), name: cleanTitle, useCount: 1 });
+      }
+      const newItem = mapShoppingRow(pgRow);
+      shoppingListMutationSeq++;
       if (!Array.isArray(db.shoppingList)) db.shoppingList = [];
       db.shoppingList = [newItem, ...db.shoppingList.filter(i => String(i.id) !== String(newItem.id))];
+      _lastShoppingListPgReadAt = Date.now();
       saveDatabase("shopping_list_post");
+      if (needsAiRefinement) {
+        refineShoppingItemCategoryInBackground(newItem.id, cleanTitle);
+      }
       try {
         createNotification({
           category: "shopping_list",
@@ -95486,43 +96022,64 @@ app.post("/api/shopping-list", async (req, res) => {
           targetUrl: "/lista-compras"
         });
       } catch {}
-      return res.status(201).json(newItem);
-    } catch (err) {
-      console.error("[ShoppingList] POST error:", err.message);
+      return { item: newItem, deduplicated: false };
+    }
+
+    // Fallback JSON (apenas se PG indisponível ou INSERT realmente falhou)
+    if (!Array.isArray(db.shoppingList)) db.shoppingList = [];
+    const existingMem = findMatchingPendingShoppingItem(
+      db.shoppingList,
+      { title: cleanTitle, quantity: cleanQty, notes: cleanNotes }
+    );
+    if (existingMem) {
+      return { item: existingMem, deduplicated: true };
+    }
+
+    const minOrder = db.shoppingList.reduce((acc, it) => Math.min(acc, it.sortOrder ?? 0), 0);
+    const rawCat = fastCategory || autoCategorizeRules(cleanTitle);
+    const newItem = {
+      id: `shop_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      title: cleanTitle,
+      quantity: cleanQty,
+      category: rawCat,
+      categories: parseCategories(rawCat),
+      notes: cleanNotes,
+      completed: false,
+      sortOrder: minOrder - 1,
+      createdBy: { id: userAuth?.id || 1, name, role: userAuth?.role || "camareira" },
+      createdAt: new Date().toISOString(),
+      completedBy: null,
+      completedAt: null,
+      _pendingPgSync: true
+    };
+    shoppingListMutationSeq++;
+    db.shoppingList.unshift(newItem);
+    saveDatabase("shopping_list_post_fallback");
+    if (needsAiRefinement) {
+      refineShoppingItemCategoryInBackground(newItem.id, cleanTitle);
+    }
+    try {
+      createNotification({
+        category: "shopping_list",
+        title: "🛒 Lista de Compras",
+        message: `${name} adicionou: "${newItem.title}"${newItem.quantity ? ` (${newItem.quantity})` : ""}`,
+        severity: "info",
+        metadata: { itemId: newItem.id, itemTitle: newItem.title },
+        targetUrl: "/lista-compras"
+      });
+    } catch {}
+    return { item: newItem, deduplicated: false };
+  })();
+
+  shoppingListInFlightCreates.set(inFlightKey, createPromise);
+  try {
+    const outcome = await createPromise;
+    return res.status(outcome.deduplicated ? 200 : 201).json(outcome.item);
+  } finally {
+    if (shoppingListInFlightCreates.get(inFlightKey) === createPromise) {
+      shoppingListInFlightCreates.delete(inFlightKey);
     }
   }
-  // Fallback JSON (com flag _pendingPgSync para sincronizar assim que o PostgreSQL reconectar)
-  if (!Array.isArray(db.shoppingList)) db.shoppingList = [];
-  const minOrder = db.shoppingList.reduce((acc, it) => Math.min(acc, it.sortOrder ?? 0), 0);
-  const rawCat = category || autoCategorizeRules(String(title).trim());
-  const newItem = {
-    id: `shop_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-    title: String(title).trim(),
-    quantity: quantity || "",
-    category: rawCat,
-    categories: parseCategories(rawCat),
-    notes: notes || "",
-    completed: false,
-    sortOrder: minOrder - 1,
-    createdBy: { id: userAuth?.id || 1, name, role: userAuth?.role || "camareira" },
-    createdAt: new Date().toISOString(),
-    completedBy: null,
-    completedAt: null,
-    _pendingPgSync: true
-  };
-  db.shoppingList.unshift(newItem);
-  saveDatabase("shopping_list_post_fallback");
-  try {
-    createNotification({
-      category: "shopping_list",
-      title: "🛒 Lista de Compras",
-      message: `${name} adicionou: "${newItem.title}"${newItem.quantity ? ` (${newItem.quantity})` : ""}`,
-      severity: "info",
-      metadata: { itemId: newItem.id, itemTitle: newItem.title },
-      targetUrl: "/lista-compras"
-    });
-  } catch {}
-  res.status(201).json(newItem);
 });
 
 // PATCH /api/shopping-list/:id/toggle
@@ -95530,10 +96087,11 @@ app.patch("/api/shopping-list/:id/toggle", async (req, res) => {
   const { id } = req.params;
   const userAuth = getAuthUser(req);
   const name = userAuth?.name || userAuth?.username || "Admin";
+  shoppingListMutationSeq++;
 
   if (pgPool && !String(id).startsWith("shop_")) {
     try {
-      const cur = await pgPool.query(`SELECT * FROM shopping_list WHERE id=$1`, [parseInt(id)]);
+      const cur = await pgPool.query(`SELECT * FROM shopping_list WHERE id=$1`, [parseInt(id, 10)]);
       if (!cur.rows[0]) return res.status(404).json({ error: "Item não encontrado." });
       const willComplete = req.body?.completed !== undefined ? Boolean(req.body.completed) : !cur.rows[0].completed;
       const result = await pgPool.query(
@@ -95545,7 +96103,7 @@ app.patch("/api/shopping-list/:id/toggle", async (req, res) => {
           willComplete ? new Date() : null,
           willComplete ? (userAuth?.id || 1) : null,
           willComplete ? name : null,
-          parseInt(id)
+          parseInt(id, 10)
         ]
       );
       const updatedItem = mapShoppingRow(result.rows[0]);
@@ -95553,6 +96111,7 @@ app.patch("/api/shopping-list/:id/toggle", async (req, res) => {
         db.shoppingList = db.shoppingList.map(i => String(i.id) === String(id) ? updatedItem : i);
         saveDatabase("shopping_list_toggle");
       }
+      _lastShoppingListPgReadAt = Date.now();
       return res.json(updatedItem);
     } catch (err) {
       console.error("[ShoppingList] toggle error:", err.message);
@@ -95577,6 +96136,7 @@ app.patch("/api/shopping-list/:id", async (req, res) => {
   if (title !== undefined && !String(title).trim()) {
     return res.status(400).json({ error: "Título não pode ficar vazio." });
   }
+  shoppingListMutationSeq++;
   if (pgPool && !String(id).startsWith("shop_")) {
     try {
       const sets = [];
@@ -95587,18 +96147,19 @@ app.patch("/api/shopping-list/:id", async (req, res) => {
       if (category !== undefined) { sets.push(`category=$${i++}`); vals.push(category); }
       if (notes !== undefined) { sets.push(`notes=$${i++}`); vals.push(notes ? String(notes).trim() : null); }
       sets.push(`updated_at=now()`);
-      vals.push(parseInt(id));
+      vals.push(parseInt(id, 10));
       const result = await pgPool.query(
         `UPDATE shopping_list SET ${sets.join(",")} WHERE id=$${i} RETURNING *`,
         vals
       );
       if (!result.rows[0]) return res.status(404).json({ error: "Item não encontrado." });
-      if (title) await upsertCatalogEntry(String(title).trim());
+      if (title) await upsertCatalogEntry(String(title).trim()).catch(() => {});
       const updatedItem = mapShoppingRow(result.rows[0]);
       if (Array.isArray(db.shoppingList)) {
         db.shoppingList = db.shoppingList.map(it => String(it.id) === String(id) ? updatedItem : it);
         saveDatabase("shopping_list_patch");
       }
+      _lastShoppingListPgReadAt = Date.now();
       return res.json(updatedItem);
     } catch (err) {
       console.error("[ShoppingList] PATCH error:", err.message);
@@ -95619,21 +96180,59 @@ app.patch("/api/shopping-list/:id", async (req, res) => {
 // DELETE /api/shopping-list/:id
 app.delete("/api/shopping-list/:id", async (req, res) => {
   const { id } = req.params;
+  const idStr = String(id || "").trim();
+  if (!idStr || idStr.startsWith("temp_")) {
+    return res.status(400).json({ error: "ID de item inválido." });
+  }
+
+  shoppingListMutationSeq++;
+  shoppingListDeletingIds.add(idStr);
+
   if (Array.isArray(db.shoppingList)) {
-    const idx = db.shoppingList.findIndex(i => String(i.id) === String(id));
-    if (idx !== -1) {
-      db.shoppingList.splice(idx, 1);
+    const beforeLen = db.shoppingList.length;
+    db.shoppingList = db.shoppingList.filter(i => String(i.id) !== idStr);
+    if (db.shoppingList.length !== beforeLen) {
       saveDatabase("shopping_list_delete");
     }
   }
-  if (pgPool && !String(id).startsWith("shop_")) {
+
+  const numId = parseInt(idStr, 10);
+  if (pgPool && !idStr.startsWith("shop_") && Number.isInteger(numId) && numId > 0) {
+    let deletedInPg = false;
     try {
-      await pgPool.query(`DELETE FROM shopping_list WHERE id=$1`, [parseInt(id)]);
-      return res.json({ success: true });
+      await pgPool.query(`DELETE FROM shopping_list WHERE id=$1`, [numId]);
+      deletedInPg = true;
     } catch (err) {
-      console.error("[ShoppingList] DELETE error:", err.message);
+      console.error("[ShoppingList] DELETE error no pool (tentando cliente direto):", err.message);
+      try {
+        await queryDirectPgClient(`DELETE FROM shopping_list WHERE id=$1`, [numId], 15000);
+        deletedInPg = true;
+      } catch (err2) {
+        console.error("[ShoppingList] DELETE falhou no cliente direto (agendado para flush):", err2.message);
+      }
     }
+
+    if (deletedInPg) {
+      shoppingListDeletingIds.delete(idStr);
+      if (Array.isArray(db.shoppingPendingDeletes) && db.shoppingPendingDeletes.length > 0) {
+        db.shoppingPendingDeletes = db.shoppingPendingDeletes.filter(x => String(x) !== idStr);
+        saveDatabase("shopping_list_delete_confirmed");
+      }
+      _lastShoppingListPgReadAt = Date.now();
+      return res.json({ success: true, persisted: true });
+    }
+
+    // Se o PG estiver momentaneamente fora do ar, agenda a exclusão para o próximo sync e impede ressuscitação
+    if (!Array.isArray(db.shoppingPendingDeletes)) db.shoppingPendingDeletes = [];
+    if (!db.shoppingPendingDeletes.some(x => String(x) === idStr)) {
+      db.shoppingPendingDeletes.push(numId);
+      saveDatabase("shopping_list_delete_pending_pg");
+    }
+    _lastShoppingListPgReadAt = Date.now();
+    return res.json({ success: true, persisted: false, queuedForPgDelete: true });
   }
+
+  shoppingListDeletingIds.delete(idStr);
   res.json({ success: true });
 });
 

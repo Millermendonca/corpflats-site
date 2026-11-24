@@ -101,6 +101,19 @@ function saveCachedModalItems(items: ShoppingItem[]) {
   } catch {}
 }
 
+function dedupeModalItems(list: ShoppingItem[]): ShoppingItem[] {
+  const seen = new Set<string>()
+  const out: ShoppingItem[] = []
+  for (const item of list) {
+    if (!item || !item.id) continue
+    const idStr = String(item.id)
+    if (seen.has(idStr)) continue
+    seen.add(idStr)
+    out.push(item)
+  }
+  return out
+}
+
 export function QuickShoppingModal({
   open,
   onOpenChange,
@@ -110,8 +123,11 @@ export function QuickShoppingModal({
   const { toast } = useToast()
 
   const inputRef = useRef<HTMLInputElement>(null)
+  const inFlightCreateKeys = useRef<Set<string>>(new Set())
+  const deletingIds = useRef<Set<string>>(new Set())
+  const hasHydrated = useRef(false)
 
-  const [items, setItems] = useState<ShoppingItem[]>(() => loadCachedModalItems())
+  const [items, setItems] = useState<ShoppingItem[]>(() => dedupeModalItems(loadCachedModalItems()))
   const [catalog, setCatalog] = useState<string[]>(COMMON_SHOPPING_ITEMS)
   const [loading, setLoading] = useState(false)
 
@@ -135,20 +151,22 @@ export function QuickShoppingModal({
   const fetchItems = async () => {
     try {
       setLoading(true)
-      const res = await fetch("/api/shopping-list")
+      const res = await fetch("/api/shopping-list?refresh=1")
       if (res.ok) {
         const data = await res.json()
         const itemList: ShoppingItem[] = Array.isArray(data) ? data : []
         const source = res.headers.get("X-Shopping-Source")
-        if (itemList.length === 0 && source === "memory-cache" && loadCachedModalItems().length > 0) {
-          const cached = loadCachedModalItems()
+        if (itemList.length === 0 && source === "memory-cache" && !hasHydrated.current && loadCachedModalItems().length > 0) {
+          const cached = dedupeModalItems(loadCachedModalItems())
           setItems(cached)
           onPendingCountChange?.(cached.filter(i => !i.completed).length)
           return
         }
-        setItems(itemList)
-        saveCachedModalItems(itemList)
-        const pendingCount = itemList.filter(i => !i.completed).length
+        hasHydrated.current = true
+        const clean = dedupeModalItems(itemList).filter(i => !deletingIds.current.has(String(i.id)))
+        setItems(clean)
+        saveCachedModalItems(clean)
+        const pendingCount = clean.filter(i => !i.completed).length
         onPendingCountChange?.(pendingCount)
       }
     } catch {
@@ -201,6 +219,24 @@ export function QuickShoppingModal({
     const trimmed = itemTitle.trim()
     if (!trimmed) return
 
+    const savedQty = quantity.trim()
+    const savedNotes = notes.trim()
+    const createKey = `${normalizeText(trimmed)}|${normalizeText(savedQty)}|${normalizeText(savedNotes)}`
+    if (inFlightCreateKeys.current.has(createKey)) return
+
+    const alreadyPending = items.find(
+      it => !it.completed && `${normalizeText(it.title)}|${normalizeText(it.quantity || "")}|${normalizeText(it.notes || "")}` === createKey
+    )
+    if (alreadyPending) {
+      setTitle("")
+      setSelectedSuggestionIndex(-1)
+      setShowSuggestions(false)
+      toast({ title: `"${alreadyPending.title}" já está na lista` })
+      return
+    }
+
+    inFlightCreateKeys.current.add(createKey)
+
     // 1. Limpa o input e mantém foco imediato
     setTitle("")
     setSelectedSuggestionIndex(-1)
@@ -212,9 +248,9 @@ export function QuickShoppingModal({
     const optimisticItem: ShoppingItem = {
       id: tempId,
       title: trimmed,
-      quantity: quantity.trim(),
+      quantity: savedQty,
       category: "Limpeza",
-      notes: notes.trim(),
+      notes: savedNotes,
       completed: false,
       createdBy: {
         id: user?.id || 1,
@@ -226,7 +262,7 @@ export function QuickShoppingModal({
       completedAt: null,
     }
 
-    setItems(prev => [optimisticItem, ...prev])
+    setItems(prev => dedupeModalItems([optimisticItem, ...prev]))
     onPendingCountChange?.(items.filter(i => !i.completed).length + 1)
     setQuantity("")
     setNotes("")
@@ -247,15 +283,37 @@ export function QuickShoppingModal({
 
       if (res.ok) {
         const saved: ShoppingItem = await res.json()
-        setItems(prev => prev.map(it => (it.id === tempId ? saved : it)))
+        setItems(prev => {
+          const withoutDup = prev.filter(it => it.id !== saved.id)
+          const replaced = withoutDup.some(it => it.id === tempId)
+            ? withoutDup.map(it => (it.id === tempId ? saved : it))
+            : [saved, ...withoutDup]
+          const next = dedupeModalItems(replaced)
+          saveCachedModalItems(next)
+          return next
+        })
         fetchCatalog()
+      } else {
+        setItems(prev => prev.filter(it => it.id !== tempId))
       }
     } catch {
-      // mantém otimista
+      setItems(prev => prev.filter(it => it.id !== tempId))
+    } finally {
+      inFlightCreateKeys.current.delete(createKey)
     }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault()
+      if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229 || e.repeat) return
+      if (showSuggestions && filteredSuggestions.length > 0 && selectedSuggestionIndex >= 0 && filteredSuggestions[selectedSuggestionIndex]) {
+        handleAddItem(filteredSuggestions[selectedSuggestionIndex])
+        return
+      }
+      handleAddItem(title)
+      return
+    }
     if (showSuggestions && filteredSuggestions.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault()
@@ -275,18 +333,6 @@ export function QuickShoppingModal({
         setShowSuggestions(false)
         return
       }
-      if (e.key === "Enter") {
-        e.preventDefault()
-        if (selectedSuggestionIndex >= 0 && filteredSuggestions[selectedSuggestionIndex]) {
-          handleAddItem(filteredSuggestions[selectedSuggestionIndex])
-          return
-        }
-      }
-    }
-
-    if (e.key === "Enter") {
-      e.preventDefault()
-      handleAddItem(title)
     }
   }
 
@@ -322,9 +368,12 @@ export function QuickShoppingModal({
 
       if (res.ok) {
         const updated = await res.json()
-        setItems(prev => prev.map(i => (i.id === item.id ? updated : i)))
-        const pCount = items.filter(i => (i.id === item.id ? !nextState : !i.completed)).length
-        onPendingCountChange?.(pCount)
+        setItems(prev => {
+          const next = dedupeModalItems(prev.map(i => (i.id === item.id ? updated : i)))
+          saveCachedModalItems(next)
+          onPendingCountChange?.(next.filter(i => !i.completed).length)
+          return next
+        })
       } else {
         fetchItems()
       }
@@ -334,12 +383,25 @@ export function QuickShoppingModal({
   }
 
   const handleDelete = async (item: ShoppingItem) => {
-    setItems(prev => prev.filter(i => i.id !== item.id))
+    const idStr = String(item.id)
+    if (deletingIds.current.has(idStr)) return
+    deletingIds.current.add(idStr)
+    setItems(prev => {
+      const next = prev.filter(i => String(i.id) !== idStr)
+      saveCachedModalItems(next)
+      onPendingCountChange?.(next.filter(i => !i.completed).length)
+      return next
+    })
     try {
-      const res = await fetch(`/api/shopping-list/${item.id}`, { method: "DELETE" })
+      const res = await fetch(`/api/shopping-list/${encodeURIComponent(idStr)}`, {
+        method: "DELETE",
+        keepalive: true,
+      })
       if (!res.ok) fetchItems()
     } catch {
       fetchItems()
+    } finally {
+      deletingIds.current.delete(idStr)
     }
   }
 

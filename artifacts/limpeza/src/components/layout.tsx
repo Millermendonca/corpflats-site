@@ -1,7 +1,12 @@
 import { useState, useEffect, useRef, useMemo } from "react"
 import { Link, useLocation } from "wouter"
 import { useGetMe, useLogout, getGetMeQueryKey, useGetAlerts } from "@workspace/api-client-react"
-import { useQueryClient } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+
+// Estado persistente entre remontagens do Shell ao trocar de rota (evita rajadas de requisições e toasts duplicados)
+const globalSeenNotifIds = new Set<number>()
+let globalIsInitialNotifPoll = true
+let globalLastWebPushSyncAt = 0
 import {
   showNativeNotification,
   markInitialHistoryAsSeen,
@@ -129,43 +134,36 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   const isAuthenticated = !isLoading && !!user && location !== "/login"
 
-  // Pending shopping count — fetched directly (no modal needed)
-  const [pendingShoppingCount, setPendingShoppingCount] = useState(0)
-  useEffect(() => {
-    if (!isAuthenticated) return
-    const loadCount = () => {
-      if (typeof document !== "undefined" && document.hidden) return
-      fetch("/api/shopping-list")
-        .then(r => r.json())
-        .then((d: any[]) => { if (Array.isArray(d)) setPendingShoppingCount(d.filter(i => !i.completed).length) })
-        .catch(() => {})
-    }
-    loadCount()
-    const interval = setInterval(loadCount, 60000)
-    return () => clearInterval(interval)
-  }, [isAuthenticated])
+  // Contadores da barra lateral em cache compartilhado (React Query) — evita rajada de fetches a cada troca de página
+  const { data: pendingShoppingCount = 0 } = useQuery<number>({
+    queryKey: ["shell", "shopping-pending-count"],
+    enabled: isAuthenticated,
+    staleTime: 45000,
+    refetchInterval: isAuthenticated ? 60000 : false,
+    refetchIntervalInBackground: false,
+    queryFn: async () => {
+      const r = await fetch("/api/shopping-list")
+      if (!r.ok) return 0
+      const d = await r.json()
+      return Array.isArray(d) ? d.filter((i: any) => !i.completed).length : 0
+    },
+  })
 
-  // Pending quarantine count for WBP integration
-  const [quarantineCount, setQuarantineCount] = useState<number>(0)
-  useEffect(() => {
-    if (!isAuthenticated) return
-    const loadQuarantine = () => {
-      if (typeof document !== "undefined" && document.hidden) return
-      fetch("/api/wbp/quarantine")
-        .then(r => r.json())
-        .then((d: any) => {
-          if (Array.isArray(d)) {
-            setQuarantineCount(d.length)
-          } else if (d && Array.isArray(d.items)) {
-            setQuarantineCount(d.items.length)
-          }
-        })
-        .catch(() => {})
-    }
-    loadQuarantine()
-    const interval = setInterval(loadQuarantine, 30000)
-    return () => clearInterval(interval)
-  }, [isAuthenticated])
+  const { data: quarantineCount = 0 } = useQuery<number>({
+    queryKey: ["shell", "wbp-quarantine-count"],
+    enabled: isAuthenticated,
+    staleTime: 30000,
+    refetchInterval: isAuthenticated ? 30000 : false,
+    refetchIntervalInBackground: false,
+    queryFn: async () => {
+      const r = await fetch("/api/wbp/quarantine")
+      if (!r.ok) return 0
+      const d = await r.json()
+      if (Array.isArray(d)) return d.length
+      if (d && Array.isArray(d.items)) return d.items.length
+      return 0
+    },
+  })
 
   // Change password modal state
   const [pwModalOpen, setPwModalOpen] = useState(false)
@@ -197,18 +195,39 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const { data: alerts } = useGetAlerts({
     query: {
       enabled: isAuthenticated,
+      staleTime: 60000,
       refetchInterval: isAuthenticated ? 60000 : false,
+      refetchIntervalInBackground: false,
       queryKey: ["alerts"] as const,
     },
   })
   const alertCount = alerts?.filter(a => a.severity === "critical" || a.severity === "warning").length ?? 0
 
-  const [unreadNotifications, setUnreadNotifications] = useState<number>(0)
-  const [recentNotificationsList, setRecentNotificationsList] = useState<any[]>([])
   const [notifDropdownOpen, setNotifDropdownOpen] = useState<boolean>(false)
   const [activeToastNotif, setActiveToastNotif] = useState<any | null>(null)
-  const seenNotifIdsRef = useRef<Set<number>>(new Set())
-  const isInitialPollRef = useRef<boolean>(true)
+
+  const { data: notifData } = useQuery<{ unreadCount: number; notifications: any[] }>({
+    queryKey: ["shell", "notifications"],
+    enabled: isAuthenticated,
+    staleTime: 10000,
+    refetchInterval: isAuthenticated ? 12000 : false,
+    refetchIntervalInBackground: false,
+    queryFn: async () => {
+      const res = await fetch("/api/notifications")
+      if (!res.ok) return { unreadCount: 0, notifications: [] }
+      const d = await res.json()
+      return {
+        unreadCount: d.unreadCount || 0,
+        notifications: Array.isArray(d.notifications) ? d.notifications : [],
+      }
+    },
+  })
+
+  const unreadNotifications = notifData?.unreadCount || 0
+  const recentNotificationsList = useMemo(
+    () => (notifData?.notifications || []).slice(0, 8),
+    [notifData?.notifications]
+  )
 
   useEffect(() => {
     if (!location) return
@@ -224,70 +243,62 @@ export function Shell({ children }: { children: React.ReactNode }) {
     }
   }, [location])
 
+  // Sincroniza inscrição Web Push com cooldown de 10 minutos (evita chamadas repetidas ao trocar de tela)
   useEffect(() => {
     if (!isAuthenticated) return
-    syncWebPushSubscription({ roleHint: user?.role }).catch(() => {})
-    const checkNotifs = async () => {
-      if (!isInitialPollRef.current && typeof document !== "undefined" && document.hidden) return
-      try {
-        const res = await fetch("/api/notifications")
-        if (res.ok) {
-          const d = await res.json()
-          setUnreadNotifications(d.unreadCount || 0)
-          const items: any[] = d.notifications || []
-          setRecentNotificationsList(items.slice(0, 8))
-
-          if (isInitialPollRef.current) {
-            isInitialPollRef.current = false
-            items.forEach(it => seenNotifIdsRef.current.add(it.id))
-            const existingIds = items.map(it => it.id).filter(Boolean)
-            markInitialHistoryAsSeen(existingIds)
-            return
-          }
-
-          // Identifica itens novos
-          const newItems = items.filter(it => !it.read && !seenNotifIdsRef.current.has(it.id))
-          if (newItems.length > 0) {
-            const latest = newItems[0]
-            newItems.forEach(it => seenNotifIdsRef.current.add(it.id))
-
-            // Dispara Som e Pop-up Toast Visual
-            playHotelChime(latest.severity === "warning" || latest.severity === "danger" ? "urgent" : "normal")
-            setActiveToastNotif(latest)
-
-            // Auto-oculta o toast após 10 segundos
-            setTimeout(() => {
-              setActiveToastNotif((prev: any) => prev?.id === latest.id ? null : prev)
-            }, 10000)
-
-            // Fallback local agrupado: empilha todos os novos alertas não entregues pelo Web Push real
-            const orderedNew = [...newItems].reverse().slice(-5)
-            for (const item of orderedNew) {
-              showNativeNotification({
-                id: item.id,
-                title: item.title,
-                message: item.message,
-                category: item.category,
-                flatNumber: item.metadata?.flatNumber,
-                url: item.targetUrl || "/notificacoes",
-                createdAt: item.createdAt
-              })
-            }
-          }
-        }
-      } catch {}
+    const now = Date.now()
+    if (now - globalLastWebPushSyncAt > 10 * 60 * 1000) {
+      globalLastWebPushSyncAt = now
+      syncWebPushSubscription({ roleHint: user?.role }).catch(() => {})
     }
-    checkNotifs()
     const onPushReceived = () => {
-      checkNotifs()
+      queryClient.invalidateQueries({ queryKey: ["shell", "notifications"] })
     }
     window.addEventListener("gfm:push-received", onPushReceived)
-    const intv = setInterval(checkNotifs, 12000)
     return () => {
       window.removeEventListener("gfm:push-received", onPushReceived)
-      clearInterval(intv)
     }
-  }, [isAuthenticated])
+  }, [isAuthenticated, user?.role, queryClient])
+
+  // Reage a novas notificações (som, toast visual e fallback nativo) preservando histórico entre trocas de rota
+  useEffect(() => {
+    if (!isAuthenticated || !notifData) return
+    const items: any[] = notifData.notifications || []
+
+    if (globalIsInitialNotifPoll) {
+      globalIsInitialNotifPoll = false
+      items.forEach(it => globalSeenNotifIds.add(it.id))
+      const existingIds = items.map(it => it.id).filter(Boolean)
+      markInitialHistoryAsSeen(existingIds)
+      return
+    }
+
+    const newItems = items.filter(it => !it.read && !globalSeenNotifIds.has(it.id))
+    if (newItems.length > 0) {
+      const latest = newItems[0]
+      newItems.forEach(it => globalSeenNotifIds.add(it.id))
+
+      playHotelChime(latest.severity === "warning" || latest.severity === "danger" ? "urgent" : "normal")
+      setActiveToastNotif(latest)
+
+      setTimeout(() => {
+        setActiveToastNotif((prev: any) => prev?.id === latest.id ? null : prev)
+      }, 10000)
+
+      const orderedNew = [...newItems].reverse().slice(-5)
+      for (const item of orderedNew) {
+        showNativeNotification({
+          id: item.id,
+          title: item.title,
+          message: item.message,
+          category: item.category,
+          flatNumber: item.metadata?.flatNumber,
+          url: item.targetUrl || "/notificacoes",
+          createdAt: item.createdAt
+        })
+      }
+    }
+  }, [isAuthenticated, notifData])
 
   const isAnservePinRoute = location === "/frigobar-reposicao" || location === "/anserve/reposicao"
   const hasLocalAnservePinToken = (() => {
@@ -685,8 +696,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
                       size="sm"
                       onClick={async () => {
                         await fetch("/api/notifications/mark-all-read", { method: "POST" })
-                        setUnreadNotifications(0)
-                        setRecentNotificationsList(prev => prev.map(p => ({ ...p, read: true })))
+                        queryClient.setQueryData<{ unreadCount: number; notifications: any[] }>(
+                          ["shell", "notifications"],
+                          (prev) => ({
+                            unreadCount: 0,
+                            notifications: (prev?.notifications || []).map((p: any) => ({ ...p, read: true })),
+                          })
+                        )
                       }}
                       className="text-[11px] h-7 px-2 font-bold text-muted-foreground hover:text-foreground"
                     >

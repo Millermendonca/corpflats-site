@@ -150,13 +150,33 @@ function loadCachedCatalog(): CatalogEntry[] {
   }
 }
 
+function dedupeShoppingItems(list: ShoppingItem[]): ShoppingItem[] {
+  const seenIds = new Set<string>()
+  const out: ShoppingItem[] = []
+  for (const item of list) {
+    if (!item || !item.id) continue
+    const idStr = String(item.id)
+    if (seenIds.has(idStr)) continue
+    seenIds.add(idStr)
+    out.push(item)
+  }
+  return out
+}
+
+function getPendingItemKey(title: string, quantity?: string, notes?: string) {
+  return `${normalizeText(title)}|${normalizeText(quantity || "")}|${normalizeText(notes || "")}`
+}
+
 export default function ShoppingListPage() {
   const { data: user } = useGetMe()
   const { toast } = useToast()
 
-  const [items, setItems] = useState<ShoppingItem[]>(() => loadCachedShoppingItems())
+  const [items, setItems] = useState<ShoppingItem[]>(() => dedupeShoppingItems(loadCachedShoppingItems()))
   const [catalog, setCatalog] = useState<CatalogEntry[]>(() => loadCachedCatalog())
   const [loading, setLoading] = useState(() => loadCachedShoppingItems().length === 0)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const itemsCountRef = useRef(items.length)
+  itemsCountRef.current = items.length
   const [activeTab, setActiveTab] = useState<"pending" | "completed">("pending")
   useBackTabState(activeTab, setActiveTab, { id: "shopping-list-tabs" })
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -180,11 +200,14 @@ export default function ShoppingListPage() {
   const dragItem = useRef<string | null>(null)
   const dragOver = useRef<string | null>(null)
 
-  // ── Undo delete ────────────────────────────────────────────────────────────
-  const pendingDeletes = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  // ── Guards de concorrência (evita duplo clique e ressuscitação de deletados)
+  const inFlightCreateKeys = useRef<Set<string>>(new Set())
+  const deletingIds = useRef<Set<string>>(new Set())
+  const canceledTempIds = useRef<Set<string>>(new Set())
+  const hasHydratedFromServer = useRef(false)
 
   useEffect(() => {
-    if (items.length > 0) {
+    if (hasHydratedFromServer.current || items.length > 0) {
       saveCachedShoppingItems(items)
     }
   }, [items])
@@ -194,24 +217,37 @@ export default function ShoppingListPage() {
   const applyServerItems = useCallback((res: Response, d: unknown) => {
     if (!Array.isArray(d)) return
     const source = res.headers.get("X-Shopping-Source")
-    if (d.length === 0 && source === "memory-cache" && loadCachedShoppingItems().length > 0) {
+    if (d.length === 0 && source === "memory-cache" && !hasHydratedFromServer.current && loadCachedShoppingItems().length > 0) {
       return
     }
-    setItems(d)
-    saveCachedShoppingItems(d)
+    hasHydratedFromServer.current = true
+    const serverClean = dedupeShoppingItems(d as ShoppingItem[]).filter(
+      it => !deletingIds.current.has(String(it.id))
+    )
+    setItems(prev => {
+      // Preserva apenas itens otimistas (temp_...) ainda em voo que não foram cancelados
+      const pendingTemps = prev.filter(
+        it => String(it.id).startsWith("temp_") && !canceledTempIds.current.has(String(it.id))
+      )
+      const merged = dedupeShoppingItems([...pendingTemps, ...serverClean])
+      saveCachedShoppingItems(merged)
+      return merged
+    })
   }, [])
 
-  const fetchItems = useCallback(async () => {
+  const fetchItems = useCallback(async (forceRefresh = false) => {
     try {
-      setLoading(true)
-      const res = await fetch("/api/shopping-list")
+      setIsRefreshing(true)
+      if (itemsCountRef.current === 0) setLoading(true)
+      const res = await fetch(forceRefresh ? "/api/shopping-list?refresh=1" : "/api/shopping-list")
       if (res.ok) { const d = await res.json(); applyServerItems(res, d) }
     } catch {
       toast({ title: "Erro ao carregar lista", variant: "destructive" })
     } finally {
       setLoading(false)
+      setIsRefreshing(false)
     }
-  }, [applyServerItems])
+  }, [applyServerItems, toast])
 
   const fetchCatalog = useCallback(async () => {
     try {
@@ -226,10 +262,12 @@ export default function ShoppingListPage() {
     } catch {}
   }, [])
 
-  const refresh = useCallback(async () => {
-    setLoading(true)
+  const refresh = useCallback(async (forceRefresh = false) => {
+    setIsRefreshing(true)
+    if (itemsCountRef.current === 0) setLoading(true)
     try {
-      const [r1, r2] = await Promise.all([fetch("/api/shopping-list"), fetch("/api/shopping-list/catalog")])
+      const listUrl = forceRefresh ? "/api/shopping-list?refresh=1" : "/api/shopping-list"
+      const [r1, r2] = await Promise.all([fetch(listUrl), fetch("/api/shopping-list/catalog")])
       if (r1.ok) { const d = await r1.json(); applyServerItems(r1, d) }
       if (r2.ok) {
         const d = await r2.json()
@@ -238,10 +276,13 @@ export default function ShoppingListPage() {
           try { localStorage.setItem(SHOPPING_CATALOG_CACHE_KEY, JSON.stringify(d)) } catch {}
         }
       }
-    } catch {} finally { setLoading(false) }
+    } catch {} finally {
+      setLoading(false)
+      setIsRefreshing(false)
+    }
   }, [applyServerItems])
 
-  useEffect(() => { refresh() }, [])
+  useEffect(() => { refresh(false) }, [refresh])
 
   // ── Suggestions (autocomplete) ─────────────────────────────────────────────
 
@@ -257,20 +298,41 @@ export default function ShoppingListPage() {
     const itemTitle = (overrideTitle ?? newTitle).trim()
     if (!itemTitle) return
 
+    const savedQty = (overrideTitle ? "" : newQuantity).trim()
+    const createKey = getPendingItemKey(itemTitle, savedQty, "")
+
+    // Proteção contra duplo clique / envio concorrente do mesmo item
+    if (inFlightCreateKeys.current.has(createKey)) return
+
+    // Evita duplicar um item que já está pendente na lista com mesmo nome e quantidade
+    const existingPending = items.find(
+      it => !it.completed && getPendingItemKey(it.title, it.quantity, it.notes) === createKey
+    )
+    if (existingPending) {
+      setNewTitle("")
+      setSuggestionIdx(-1)
+      setShowSuggestions(false)
+      setNewQuantity("")
+      setShowQtyField(false)
+      toast({ title: `"${existingPending.title}" já está na lista` })
+      return
+    }
+
+    inFlightCreateKeys.current.add(createKey)
+
     setNewTitle("")
     setSuggestionIdx(-1)
     setShowSuggestions(false)
     inputRef.current?.focus()
 
-    const tempId = `temp_${Date.now()}`
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
     const optimistic: ShoppingItem = {
-      id: tempId, title: itemTitle, quantity: newQuantity.trim() || undefined,
+      id: tempId, title: itemTitle, quantity: savedQty || undefined,
       categories: ["Geral"], completed: false, sortOrder: -999,
       createdBy: { id: user?.id || 1, name: user?.username || "Colaborador", role: user?.role || "camareira" },
       createdAt: new Date().toISOString(), completedBy: null, completedAt: null,
     }
-    setItems(prev => [optimistic, ...prev])
-    const savedQty = newQuantity
+    setItems(prev => dedupeShoppingItems([optimistic, ...prev]))
     setNewQuantity("")
     setShowQtyField(false)
 
@@ -278,17 +340,35 @@ export default function ShoppingListPage() {
       const res = await fetch("/api/shopping-list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: itemTitle, quantity: savedQty.trim() || undefined }),
+        body: JSON.stringify({ title: itemTitle, quantity: savedQty || undefined }),
       })
       if (res.ok) {
         const saved: ShoppingItem = await res.json()
-        setItems(prev => prev.map(it => it.id === tempId ? saved : it))
+        if (canceledTempIds.current.has(tempId)) {
+          canceledTempIds.current.delete(tempId)
+          setItems(prev => prev.filter(it => it.id !== tempId && it.id !== saved.id))
+          fetch(`/api/shopping-list/${saved.id}`, { method: "DELETE", keepalive: true }).catch(() => {})
+          return
+        }
+        setItems(prev => {
+          const withoutDup = prev.filter(it => it.id !== saved.id)
+          const replaced = withoutDup.some(it => it.id === tempId)
+            ? withoutDup.map(it => it.id === tempId ? saved : it)
+            : [saved, ...withoutDup]
+          const next = dedupeShoppingItems(replaced)
+          saveCachedShoppingItems(next)
+          return next
+        })
         fetchCatalog()
       } else {
+        canceledTempIds.current.delete(tempId)
         setItems(prev => prev.filter(it => it.id !== tempId))
       }
     } catch {
+      canceledTempIds.current.delete(tempId)
       setItems(prev => prev.filter(it => it.id !== tempId))
+    } finally {
+      inFlightCreateKeys.current.delete(createKey)
     }
   }
 
@@ -308,9 +388,9 @@ export default function ShoppingListPage() {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ completed: next }),
       })
-      if (res.ok) { const updated: ShoppingItem = await res.json(); setItems(prev => prev.map(i => i.id === item.id ? updated : i)) }
-      else refresh()
-    } catch { refresh() }
+      if (res.ok) { const updated: ShoppingItem = await res.json(); setItems(prev => dedupeShoppingItems(prev.map(i => i.id === item.id ? updated : i))) }
+      else refresh(true)
+    } catch { refresh(true) }
   }
 
   // ── Edit ───────────────────────────────────────────────────────────────────
@@ -323,44 +403,87 @@ export default function ShoppingListPage() {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(fields),
       })
-      if (res.ok) { const updated: ShoppingItem = await res.json(); setItems(prev => prev.map(i => i.id === id ? updated : i)) }
-      else refresh()
-    } catch { refresh() }
+      if (res.ok) { const updated: ShoppingItem = await res.json(); setItems(prev => dedupeShoppingItems(prev.map(i => i.id === id ? updated : i))) }
+      else refresh(true)
+    } catch { refresh(true) }
   }
 
-  // ── Delete com Desfazer ────────────────────────────────────────────────────
+  // ── Delete imediato no servidor + Desfazer confiável ───────────────────────
 
-  const handleDelete = (item: ShoppingItem) => {
-    // Remove da UI imediatamente (otimista)
+  const handleDelete = async (item: ShoppingItem) => {
+    const idStr = String(item.id)
+    if (deletingIds.current.has(idStr)) return
+
+    // Remove da UI e do cache local imediatamente (otimista)
     setItems(prev => {
-      const next = prev.filter(i => i.id !== item.id)
+      const next = prev.filter(i => String(i.id) !== idStr)
       saveCachedShoppingItems(next)
       return next
     })
 
-    // Agenda a deleção real no servidor após 6 segundos
-    const tid = setTimeout(async () => {
-      pendingDeletes.current.delete(item.id)
-      try { await fetch(`/api/shopping-list/${item.id}`, { method: "DELETE" }) } catch {}
-    }, 6000)
-    pendingDeletes.current.set(item.id, tid)
+    // Se o item ainda era otimista (POST em voo), marca para cancelar assim que salvar
+    if (idStr.startsWith("temp_")) {
+      canceledTempIds.current.add(idStr)
+      return
+    }
 
-    // Toast com botão Desfazer
+    deletingIds.current.add(idStr)
+    let deleteSucceeded = false
+    try {
+      const res = await fetch(`/api/shopping-list/${encodeURIComponent(idStr)}`, {
+        method: "DELETE",
+        keepalive: true,
+      })
+      deleteSucceeded = res.ok
+    } catch {
+      deleteSucceeded = false
+    } finally {
+      deletingIds.current.delete(idStr)
+    }
+
+    if (!deleteSucceeded) {
+      // Restaura o item na UI se o servidor não confirmou a remoção
+      setItems(prev => {
+        const next = dedupeShoppingItems([item, ...prev]).sort((a, b) => a.sortOrder - b.sortOrder)
+        saveCachedShoppingItems(next)
+        return next
+      })
+      toast({
+        title: `Não foi possível remover "${item.title}"`,
+        description: "Verifique a conexão e tente novamente.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    // Toast com botão Desfazer (recria no servidor de forma persistente se acionado)
     toast({
       title: `"${item.title}" removido`,
-      description: "Você pode desfazer nos próximos segundos",
-      duration: 6000,
+      description: "Toque em Desfazer se removeu por engano",
+      duration: 5000,
       action: (
         <ToastAction
           altText="Desfazer remoção"
-          onClick={() => {
-            const t = pendingDeletes.current.get(item.id)
-            if (t) { clearTimeout(t); pendingDeletes.current.delete(item.id) }
-            setItems(prev => {
-              // Reinsere na posição original (por sortOrder)
-              const updated = [item, ...prev].sort((a, b) => a.sortOrder - b.sortOrder)
-              return updated
-            })
+          onClick={async () => {
+            try {
+              const res = await fetch("/api/shopping-list", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  title: item.title,
+                  quantity: item.quantity || undefined,
+                  notes: item.notes || undefined,
+                }),
+              })
+              if (res.ok) {
+                const recreated: ShoppingItem = await res.json()
+                setItems(prev => {
+                  const next = dedupeShoppingItems([recreated, ...prev])
+                  saveCachedShoppingItems(next)
+                  return next
+                })
+              }
+            } catch {}
           }}
         >
           Desfazer
@@ -395,16 +518,24 @@ export default function ShoppingListPage() {
     } catch {}
   }
 
-  // ── Keyboard handler ───────────────────────────────────────────────────────
+  // ── Keyboard handler (IME-safe para teclados móveis / Safari) ──────────────
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault()
+      if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229 || e.repeat) return
+      if (showSuggestions && suggestions.length > 0 && suggestionIdx >= 0) {
+        handleCreate(suggestions[suggestionIdx].name)
+        return
+      }
+      handleCreate()
+      return
+    }
     if (showSuggestions && suggestions.length > 0) {
       if (e.key === "ArrowDown") { e.preventDefault(); setSuggestionIdx(p => Math.min(p + 1, suggestions.length - 1)); return }
       if (e.key === "ArrowUp") { e.preventDefault(); setSuggestionIdx(p => Math.max(p - 1, 0)); return }
       if (e.key === "Escape") { setShowSuggestions(false); return }
-      if (e.key === "Enter" && suggestionIdx >= 0) { e.preventDefault(); handleCreate(suggestions[suggestionIdx].name); return }
     }
-    if (e.key === "Enter") { e.preventDefault(); handleCreate() }
   }
 
   // ── Computed ───────────────────────────────────────────────────────────────
@@ -457,11 +588,11 @@ export default function ShoppingListPage() {
             </p>
           </div>
           <button
-            onClick={refresh}
-            disabled={loading}
+            onClick={() => refresh(true)}
+            disabled={isRefreshing}
             className="w-9 h-9 rounded-xl flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-all"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`} />
           </button>
         </div>
 
