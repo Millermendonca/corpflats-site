@@ -3016,15 +3016,24 @@ function areGuestNamesCompatibleInline(nameA = "", nameB = "") {
 const INACTIVE_STAY_RESERVATION_STATUSES = new Set([
   "cancelled",
   "cancelada",
+  "cancelado",
   "canceled",
   "no_show",
   "noshow",
   "expired",
-  "expired_pre_reservation"
+  "expirada",
+  "expirado",
+  "expired_pre_reservation",
+  "rejected",
+  "rejeitada",
+  "deleted",
+  "excluida",
+  "excluída"
 ]);
 
 function isInactiveReservationForStayGuard(r) {
   if (!r || typeof r !== "object") return true;
+  if (r.isDeleted === true || r.isRoomMoveHistoricalSegment === true) return true;
   return INACTIVE_STAY_RESERVATION_STATUSES.has(String(r.status || "").toLowerCase().trim());
 }
 
@@ -3386,6 +3395,17 @@ export function evaluateStayContactEligibility(reservation = {}, db = {}, option
     }
 
     // Filtra apenas flats que podem ser o 1º flat elegível
+    const getStayStatusPriority = (p) => {
+      const st = String(p?.status || "").toLowerCase().trim();
+      if (st === "pre_reserva" || st === "pendente" || st === "pending_payment" || st === "aguardando_pagamento") {
+        return 1;
+      }
+      if (p?.checkoutDone === true || st === "completed" || st === "checkout" || st === "checked_out" || st === "concluida" || st === "concluída") {
+        return 2;
+      }
+      return 0;
+    };
+
     const eligiblePeers = overlappingPeers.filter(p => {
       if (p.requesterIsGuest1 === false) return false;
       const pGuestName = String(p.guestName || p.guests?.[0]?.name || "").trim();
@@ -3399,6 +3419,8 @@ export function evaluateStayContactEligibility(reservation = {}, db = {}, option
       }
       return true;
     }).sort((a, b) => {
+      const statusDiff = getStayStatusPriority(a) - getStayStatusPriority(b);
+      if (statusDiff !== 0) return statusDiff;
       const aReqFlag = a.requesterIsGuest1 === true ? 0 : 1;
       const bReqFlag = b.requesterIsGuest1 === true ? 0 : 1;
       if (aReqFlag !== bReqFlag) return aReqFlag - bReqFlag;
@@ -14285,12 +14307,16 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         const queueButtons = item.renderedButtons || [];
 
         console.log(`[Auto-WhatsApp] Disparando agendamento automático para ${item.recipientName || item.guestName} (${getRecipientTypeLabel(item.recipientType)} / ${item.triggerEvent} / Canal: ${itemChannel || 'Padrão'}${item.guestEmail ? ' / +E-mail' : ''}${waBlockedByTestMode ? ' / WhatsApp bloqueado pelo Modo de Teste' : ''})...`);
-        await deliverQueueItem(db, saveDatabase, item, {
-          method: "automated",
-          historyPrefix: "cron",
-          skipWhatsApp: waBlockedByTestMode,
-          buttons: queueButtons
-        });
+        try {
+          await deliverQueueItem(db, saveDatabase, item, {
+            method: "automated",
+            historyPrefix: "cron",
+            skipWhatsApp: waBlockedByTestMode,
+            buttons: queueButtons
+          });
+        } catch (itemErr) {
+          console.error(`[Auto-WhatsApp Queue Item Error] Falha ao processar item ${item?.id || "(sem id)"} (${item?.triggerEvent || "?"} / ${item?.reservationCode || "?"}):`, itemErr?.message || itemErr);
+        }
 
         saveDatabase();
         // Pequena pausa entre mensagens para segurança anti-bloqueio
@@ -15382,10 +15408,11 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
 
   let waResult = null;
   let emailLog = null;
+  let shouldSendDoc = false;
 
   if (item.guestPhone && !skipWhatsApp) {
     const isCheckinCompletedItem = item.triggerEvent === "checkin_completed" || item.templateId === "tpl_checkin_completed";
-    let shouldSendDoc = !isCheckinCompletedItem && Boolean(includeDocument && item.documentUrl);
+    shouldSendDoc = !isCheckinCompletedItem && Boolean(includeDocument && item.documentUrl);
     const normPhone = normalizePhoneForDedup(item.guestPhone);
     const resKey = String(item.reservationCode || (item.reservationId ? `ID_${item.reservationId}` : "")).trim().toUpperCase();
     const pdfLockKey = (shouldSendDoc && resKey && normPhone) ? `${resKey}:${normPhone}` : "";
@@ -15493,34 +15520,12 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
 
   const waSuccess = Boolean(waResult?.success);
   const anySuccess = waSuccess || Boolean(emailLog);
-  if (waSuccess && resv) {
-    markReservationConfirmationDispatched(db, resv, {
-      phone: item.guestPhone,
-      sentAt: item.sentAt || new Date().toISOString(),
-      eventName: item.triggerEvent,
-      sentPdf: Boolean(shouldSendDoc && item.documentUrl)
-    });
-  }
-  if (anySuccess && resv && ROOM_READY_GROUP_EVENTS.has(item.triggerEvent)) {
-    const { todayStr } = getBrasiliaDateParts(new Date());
-    markReservationRoomReadySent(db, resv, todayStr, new Date().toISOString(), item.triggerEvent);
-  }
-  if (anySuccess && resv && (item.triggerEvent === "pre_reservation_expiring_soon" || item.templateId === "tpl_pre_reserva_lembrete")) {
-    const sentRemIso = new Date().toISOString();
-    resv.preReservationReminderSentAt = sentRemIso;
-    const pkgKeyRem = String(resv.packageCode || resv.packageId || "").trim();
-    if (pkgKeyRem && Array.isArray(db.reservations)) {
-      for (const sib of db.reservations) {
-        if (sib && String(sib.packageCode || sib.packageId || "").trim().toUpperCase() === pkgKeyRem.toUpperCase()) {
-          sib.preReservationReminderSentAt = sentRemIso;
-        }
-      }
-    }
-  }
+  const deliveredAtIso = new Date().toISOString();
+
   item.whatsappStatus = waResult ? (waSuccess ? "sent" : "failed") : (item.guestPhone ? "skipped" : "no_phone");
   if (item.guestEmail) item.emailStatus = emailLog ? "sent" : "skipped";
   item.status = anySuccess ? "sent" : "failed";
-  item.sentAt = new Date().toISOString();
+  item.sentAt = deliveredAtIso;
   item.error = (waResult && !waSuccess)
     ? (waResult.error || "Falha no envio do WhatsApp")
     : (anySuccess ? null : (item.guestEmail
@@ -15528,6 +15533,34 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
       : "Nenhum canal disponível para envio"));
   item.method = waResult?.method || (emailLog ? "email" : method);
   item.messageId = waResult?.messageId || null;
+
+  try {
+    if (waSuccess && resv) {
+      markReservationConfirmationDispatched(db, resv, {
+        phone: item.guestPhone,
+        sentAt: deliveredAtIso,
+        eventName: item.triggerEvent,
+        sentPdf: Boolean(shouldSendDoc && item.documentUrl)
+      });
+    }
+    if (anySuccess && resv && ROOM_READY_GROUP_EVENTS.has(item.triggerEvent)) {
+      const { todayStr } = getBrasiliaDateParts(new Date());
+      markReservationRoomReadySent(db, resv, todayStr, deliveredAtIso, item.triggerEvent);
+    }
+    if (anySuccess && resv && (item.triggerEvent === "pre_reservation_expiring_soon" || item.templateId === "tpl_pre_reserva_lembrete")) {
+      resv.preReservationReminderSentAt = deliveredAtIso;
+      const pkgKeyRem = String(resv.packageCode || resv.packageId || "").trim();
+      if (pkgKeyRem && Array.isArray(db.reservations)) {
+        for (const sib of db.reservations) {
+          if (sib && String(sib.packageCode || sib.packageId || "").trim().toUpperCase() === pkgKeyRem.toUpperCase()) {
+            sib.preReservationReminderSentAt = deliveredAtIso;
+          }
+        }
+      }
+    }
+  } catch (postStampErr) {
+    console.error(`[Auto-WhatsApp Post-Delivery Stamp Error] Item ${item?.id || "?"}:`, postStampErr?.message || postStampErr);
+  }
 
   return { waResult, emailLog, success: anySuccess };
 }
