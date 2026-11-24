@@ -20762,7 +20762,23 @@ export const GUEST_FACING_RESERVATION_FIELDS = new Set([
 
 export function filterGuestFacingDiffs(diffs = []) {
   if (!Array.isArray(diffs)) return [];
-  return diffs.filter(d => GUEST_FACING_RESERVATION_FIELDS.has(d.field));
+  return diffs.filter(d => {
+    if (!d || !GUEST_FACING_RESERVATION_FIELDS.has(d.field)) return false;
+    if (d.field === "guestName") {
+      const oldN = String(d.oldValue || "").trim();
+      const newN = String(d.newValue || "").trim();
+      if (
+        oldN &&
+        newN &&
+        !isPendingGuestName(oldN) &&
+        !isPendingGuestName(newN) &&
+        areGuestNamesCompatible(oldN, newN)
+      ) {
+        return false;
+      }
+    }
+    return true;
+  });
 }
 
 // ── Helpers de Veículo ───────────────────────────────────────────────────────
@@ -33909,6 +33925,7 @@ app.get("/api/reservations/availability", (req, res) => {
     res.json({
       available: totalAvailable > 0,
       totalAvailableFlats: totalAvailable,
+      totalFlatsCount: allFlats.length,
       dailyAvailability,
       minAvailableOnAnyDate,
       hasLowAvailability,
@@ -34916,16 +34933,24 @@ async function handleDirectBookingMultiFlatPackage(req, res) {
     }
   }
 
-  if (Array.isArray(db.abandonedCarts) && body.attribution?.sessionId) {
+  const pkgSessionId = body.sessionId || body.attribution?.sessionId || null;
+  if (Array.isArray(db.abandonedCarts) && pkgSessionId) {
     for (const cart of db.abandonedCarts) {
-      if (cart && cart.sessionId === body.attribution.sessionId) {
+      if (cart && cart.sessionId === pkgSessionId) {
         cart.reservationCode = pkgCode;
+        cart.flatsCount = createdReservations.length;
+        cart.totalAmount = Number(pkgSummary?.totalAmount ?? body.totalAmount ?? cart.totalAmount) || 0;
         if (!isUnpaidFlow) {
           cart.status = "concluido";
           cart.recoveredAt = cart.recoveredAt || new Date().toISOString();
           cart.currentStep = 5;
           cart.currentStepName = "Reserva Confirmada";
+        } else {
+          cart.status = "aguardando_pagamento";
+          cart.currentStep = Math.max(4, Number(cart.currentStep) || 0);
+          cart.currentStepName = "Aguardando Pagamento";
         }
+        cart.updatedAt = new Date().toISOString();
       }
     }
   }
@@ -43214,14 +43239,16 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   const oldGuestId = r.guestId;
   const oldGuestObj = oldGuestId ? (db.guests || []).find(g => g && Number(g.id) === Number(oldGuestId)) : null;
   const oldGuestName = r.guestName;
-  const oldGuestPhone = String(r.guestPhone || "").replace(/\D/g, "");
+  const oldGuestPhoneTopRaw = String(r.guestPhone || "").trim();
+  const oldGuestPhoneSlot1Raw = String(r.guests?.[0]?.phone || r.guests?.[0]?.whatsapp || "").trim();
+  const oldGuestPhone = oldGuestPhoneTopRaw.replace(/\D/g, "");
   const oldCompanionPhonesByIndex = new Map();
   if (Array.isArray(r.guests)) {
     r.guests.forEach((g, idx) => {
       if (!g || idx === 0) return;
       const gIdx = Number(g.index) > 1 ? Number(g.index) : idx + 1;
-      const pDigits = String(g.phone || g.whatsapp || "").replace(/\D/g, "").replace(/^55/, "");
-      oldCompanionPhonesByIndex.set(gIdx, pDigits);
+      const rawCompP = String(g.phone || g.whatsapp || "").trim();
+      oldCompanionPhonesByIndex.set(gIdx, rawCompP);
     });
   }
   const oldTotalAmount = Number(r.totalAmount) || 0;
@@ -44161,6 +44188,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         r.reminderAt = holdInfo.reminderAt;
         r.reminderLeadMinutes = holdInfo.reminderLeadMinutes;
         r.reminderLeadLabel = holdInfo.reminderLeadLabel;
+        const prevExpiredAtForCleanup = r.expiredAt || null;
         delete r.expiredAt;
         delete r.expiredWhatsappSentAt;
         delete r.preReservationReminderSentAt;
@@ -44169,6 +44197,21 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
           r._wasReactivatedBefore = true;
           r.reactivatedAt = new Date().toISOString();
           holdWasUpdatedOnPut = true;
+          if (
+            prevExpiredAtForCleanup &&
+            ((r.b2bCredentialWhatsappSentAt && r.b2bCredentialWhatsappSentAt >= prevExpiredAtForCleanup) ||
+              (r.credentialFirstRequestSentAt && r.credentialFirstRequestSentAt >= prevExpiredAtForCleanup)) &&
+            !r.b2bCredentialCompletedAt &&
+            r.credentialStatus !== "completed"
+          ) {
+            delete r.b2bCredentialWhatsappSentAt;
+            delete r.b2bCredentialWhatsappRecipient;
+            delete r.credentialInitialWaEvaluatedAt;
+            delete r.credentialSentStages;
+            delete r.credentialFirstRequestSentAt;
+            delete r.credentialLastRequestSentAt;
+            delete r.credentialCheckinUrgentAlertSentAt;
+          }
         } else if (oldExp !== r.expiresAt) {
           holdWasUpdatedOnPut = true;
         }
@@ -44184,6 +44227,23 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         }
       }
     } else if (r.status === "confirmada" || r.status === "in_house" || r.status === "hospedado") {
+      const prevExpConfirm = r.expiredAt || null;
+      if (
+        oldStatus === "expirada" &&
+        prevExpConfirm &&
+        ((r.b2bCredentialWhatsappSentAt && r.b2bCredentialWhatsappSentAt >= prevExpConfirm) ||
+          (r.credentialFirstRequestSentAt && r.credentialFirstRequestSentAt >= prevExpConfirm)) &&
+        !r.b2bCredentialCompletedAt &&
+        r.credentialStatus !== "completed"
+      ) {
+        delete r.b2bCredentialWhatsappSentAt;
+        delete r.b2bCredentialWhatsappRecipient;
+        delete r.credentialInitialWaEvaluatedAt;
+        delete r.credentialSentStages;
+        delete r.credentialFirstRequestSentAt;
+        delete r.credentialLastRequestSentAt;
+        delete r.credentialCheckinUrgentAlertSentAt;
+      }
       r.expiresAt = null;
       r.reminderAt = null;
       delete r.expiredAt;
@@ -45153,24 +45213,37 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
   }
 
-  const newGuestPhone = String(r.guestPhone || "").replace(/\D/g, "");
-  const wasGuestPhoneJustAdded = newGuestPhone.length >= 10 && newGuestPhone !== oldGuestPhone;
-  const normPrimaryPhoneAfterPut = newGuestPhone.replace(/^55/, "");
+  const newGuestPhoneRaw = String(r.guestPhone || r.guests?.[0]?.phone || "").trim();
+  const newGuestPhone = newGuestPhoneRaw.replace(/\D/g, "");
+  const oldTopHasDigits = oldGuestPhoneTopRaw.replace(/\D/g, "").length >= 8;
+  const oldSlot1HasDigits = oldGuestPhoneSlot1Raw.replace(/\D/g, "").length >= 8;
+  const hadTopSlotDesyncBeforePut = oldTopHasDigits && oldSlot1HasDigits && !matchClientPhone(oldGuestPhoneTopRaw, oldGuestPhoneSlot1Raw);
+  const matchesOldTop = oldTopHasDigits && matchClientPhone(newGuestPhoneRaw, oldGuestPhoneTopRaw);
+  const matchesOldSlot1 = oldSlot1HasDigits && matchClientPhone(newGuestPhoneRaw, oldGuestPhoneSlot1Raw);
+  const wasGuestPhoneJustAdded = Boolean(
+    newGuestPhone.length >= 10 &&
+    (
+      (!matchesOldTop && !matchesOldSlot1) ||
+      (hadTopSlotDesyncBeforePut && (!matchesOldTop || !matchesOldSlot1))
+    )
+  );
   const newlyAddedCompanionIndices = [];
   if (Array.isArray(r.guests)) {
     r.guests.forEach((g, idx) => {
       if (!g || idx === 0) return;
       const gIdx = Number(g.index) > 1 ? Number(g.index) : idx + 1;
-      const compDigits = String(g.phone || g.whatsapp || "").replace(/\D/g, "").replace(/^55/, "");
-      const oldCompDigits = oldCompanionPhonesByIndex.get(gIdx) || "";
-      if (
-        compDigits.length >= 10 &&
-        compDigits !== oldCompDigits &&
-        compDigits !== normPrimaryPhoneAfterPut
-      ) {
+      const rawCompPhone = String(g.phone || g.whatsapp || "").trim();
+      const compDigits = rawCompPhone.replace(/\D/g, "").replace(/^55/, "");
+      const oldCompPhoneRaw = oldCompanionPhonesByIndex.get(gIdx) || "";
+      const oldCompHasDigits = oldCompPhoneRaw.replace(/\D/g, "").length >= 8;
+      const didCompPhoneChange = compDigits.length >= 10 && (!oldCompHasDigits || !matchClientPhone(rawCompPhone, oldCompPhoneRaw));
+      const isSameAsPrimary = Boolean(newGuestPhoneRaw && matchClientPhone(rawCompPhone, newGuestPhoneRaw));
+      if (didCompPhoneChange && !isSameAsPrimary) {
         const alreadyReceivedConf = (db.whatsappHistory || []).some(h => {
-          if (!h || (h.reservationCode !== r.code && h.reservationId !== r.id)) return false;
-          if (h.status !== "sent" && h.status !== "delivered") return false;
+          if (!h) return false;
+          const hCode = String(h.reservationCode || "").toUpperCase();
+          const isSameRes = (r.code && hCode === String(r.code).toUpperCase()) || (r.id && String(h.reservationId || "") === String(r.id));
+          if (!isSameRes || !isWaHistoryStatusDispatched(h.status)) return false;
           if (
             h.triggerEvent !== "reservation_created" &&
             h.triggerEvent !== "payment_confirmed" &&
@@ -45178,8 +45251,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
           ) {
             return false;
           }
-          const hDigits = String(h.guestPhone || h.phone || "").replace(/\D/g, "").replace(/^55/, "");
-          return hDigits === compDigits || h.recipientType === `guest_${gIdx}`;
+          return Boolean(h.guestPhone || h.phone) && matchClientPhone(h.guestPhone || h.phone, rawCompPhone);
         });
         if (!alreadyReceivedConf) {
           newlyAddedCompanionIndices.push(gIdx);
@@ -45546,14 +45618,21 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     );
 
     // Se o telefone do hóspede foi inserido na reserva agora (ou alterado para um novo telefone que ainda não recebeu a régua),
-    // dispara o motor Catch-Up com a Apresentação CorpFlats + Confirmação + etapas cujo horário já tenha passado
-    const normNewGuestPhone = newGuestPhone.replace(/^55/, "");
+    // dispara apenas as 3 mensagens iniciais (Apresentação + Confirmação/Sameday + Manual PDF) + agenda etapas futuras
     const hasGuestPhoneReceivedConfirmation = (db.whatsappHistory || []).some(h =>
-      (h.reservationCode === r.code || h.reservationId === r.id) &&
+      h &&
+      (String(h.reservationCode || "").toUpperCase() === String(r.code || "").toUpperCase() ||
+        (r.id && String(h.reservationId || "") === String(r.id))) &&
       (h.recipientType || "guest") === "guest" &&
-      (h.triggerEvent === "reservation_created" || h.triggerEvent === "payment_confirmed" || h.triggerEvent === "sameday_reservation") &&
-      (h.status === "sent" || h.status === "delivered") &&
-      (!normNewGuestPhone || String(h.guestPhone || "").replace(/\D/g, "").replace(/^55/, "") === normNewGuestPhone)
+      (
+        h.triggerEvent === "reservation_created" ||
+        h.triggerEvent === "payment_confirmed" ||
+        h.triggerEvent === "sameday_reservation"
+      ) &&
+      isWaHistoryStatusDispatched(h.status) &&
+      Boolean(newGuestPhoneRaw) &&
+      Boolean(h.guestPhone || h.phone) &&
+      matchClientPhone(h.guestPhone || h.phone, newGuestPhoneRaw)
     );
 
     if (isPreReservationBlocked(r)) {
@@ -45601,11 +45680,11 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         }
       }
     } else if (wasGuestPhoneJustAdded && !hasGuestPhoneReceivedConfirmation && !isPreReservationBlocked(r)) {
+      const catchUpGuestIndices = newlyAddedCompanionIndices.length > 0 ? [1, ...newlyAddedCompanionIndices] : [1];
       if (r.packageId || r.packageCode) {
-        const pkgTargetsForEdit = newlyAddedCompanionIndices.length > 0 ? [1, ...newlyAddedCompanionIndices] : [1];
-        console.log(`[WhatsApp Package Guest] Telefone inserido no item de pacote ${r.code} (${r.guestName}). Enviando instruções exclusivas sem valores para [${pkgTargetsForEdit.join(", ")}].`);
+        console.log(`[WhatsApp Package Guest] Telefone inserido/alterado no item de pacote ${r.code} (${r.guestName}). Enviando 3 mensagens iniciais sem valores para [${catchUpGuestIndices.join(", ")}].`);
         dispatchIndividualFlatGuestInstructions(db, [r], editBaseUrl, {
-          onlyGuestIndices: pkgTargetsForEdit,
+          onlyGuestIndices: catchUpGuestIndices,
           cleanWhatsAppPhone,
           sendZapiMessage,
           sendZapiDocument: typeof sendZapiDocument === "function" ? sendZapiDocument : undefined,
@@ -45620,10 +45699,37 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
           console.warn(`[WhatsApp Package Guest] Erro ao enviar instruções sem valores para ${r.code}:`, err?.message || err);
         });
       } else {
-        console.log(`[WhatsApp Catch-Up] Telefone do hóspede inserido na reserva ${r.code} (${r.guestName}). Disparando recuperação da régua de envios.`);
-        dispatchCatchUpGuestRulerMessages(db, saveDatabase, r, { baseUrl: editBaseUrl }).catch(err => {
-          console.warn(`[WhatsApp Catch-Up] Erro ao disparar recuperação da régua para ${r.code}:`, err.message);
+        console.log(`[WhatsApp Catch-Up] Telefone do hóspede inserido/alterado na reserva ${r.code} (${r.guestName}). Disparando as 3 mensagens iniciais da régua para [${catchUpGuestIndices.join(", ")}].`);
+        dispatchCatchUpGuestRulerMessages(db, saveDatabase, r, {
+          baseUrl: editBaseUrl,
+          onlyGuestIndices: catchUpGuestIndices
+        }).catch(err => {
+          console.warn(`[WhatsApp Catch-Up] Erro ao disparar régua inicial para ${r.code}:`, err.message);
         });
+      }
+
+      // Edição mista (telefone novo + mudança real de estadia/datas/flat/café):
+      // Hóspede 1 no telefone novo recebe apenas as 3 mensagens iniciais já atualizadas;
+      // Solicitante distinto e acompanhantes antigos recebem reservation_updated normalmente.
+      const stayDiffsForOthers = guestFacingDiffs.filter(
+        d => d && d.field !== "guestCount" && d.field !== "adults" && d.field !== "children"
+      );
+      if (stayDiffsForOthers.length > 0 || isDatesOrFlatChanged) {
+        const recipsMixed = getReservationRecipients(r, db);
+        const hasSepReqMixed = Boolean(recipsMixed.requester?.isDifferentFromGuest && recipsMixed.requester?.hasOwnContact);
+        const hasExistingCompMixed = (recipsMixed.companions || []).some(
+          c => c && !catchUpGuestIndices.includes(Number(c.index)) && ((c.stayCleanDigits && c.stayCleanDigits.length >= 10) || Boolean(c.stayEmail))
+        );
+        if (hasSepReqMixed || hasExistingCompMixed) {
+          triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", {
+            ...r,
+            _changesContext: stayDiffsForOthers.length > 0 ? stayDiffsForOthers : diffs,
+            _excludeGuestIndices: catchUpGuestIndices,
+            ...(!hasSepReqMixed && hasExistingCompMixed ? { _excludeRequesterTarget: true, _onlyCompanionsTarget: true } : {})
+          }, editBaseUrl).catch(err => {
+            console.warn("[WhatsApp Trigger] Erro ao notificar solicitante/acompanhantes antigos em edição mista:", err.message);
+          });
+        }
       }
     } else if ((hasActiveOrNewExtraNightsWithPending || hadCheckoutExtensionWithPending || hadPendingIncrease) && !isPreReservationBlocked(r)) {
       const requestedExtHoldMode = String(req.body.extensionHoldMode || "").trim().toLowerCase();
@@ -48213,6 +48319,16 @@ app.get(["/api/pms/agency-guest-credential-batch", "/api/agency-guest-credential
     }
     const found = findReservationByLocatorOrContact(code);
     if (!found) continue;
+    const stBatchItem = String(found.status || "").toLowerCase().trim();
+    if (
+      stBatchItem === "expirada" ||
+      stBatchItem === "expired" ||
+      stBatchItem === "cancelada" ||
+      stBatchItem === "cancelled" ||
+      stBatchItem === "cancelado"
+    ) {
+      continue;
+    }
     const uKey = String(found.id || found.code);
     if (seenIds.has(uKey)) continue;
     seenIds.add(uKey);
@@ -48246,6 +48362,19 @@ app.get(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credential
   if (!r) {
     return res.status(404).json({ error: "Reserva não localizada com este código. Verifique o link enviado." });
   }
+  const stCredGet = String(r.status || "").toLowerCase().trim();
+  if (stCredGet === "expirada" || stCredGet === "expired") {
+    return res.status(410).json({
+      error: "Esta pré-reserva expirou por falta de confirmação de pagamento dentro do prazo limite. Entre em contato pelo WhatsApp do CorpFlats para consultar disponibilidade e reativá-la.",
+      expiredReservation: true
+    });
+  }
+  if (stCredGet === "cancelada" || stCredGet === "cancelled" || stCredGet === "cancelado") {
+    return res.status(410).json({
+      error: "Esta reserva encontra-se cancelada no sistema.",
+      cancelledReservation: true
+    });
+  }
   const isGuestSelfQuery = String(req.query?.mode || req.query?.sourceMode || "").toLowerCase() === "guest";
   return res.json({
     reservation: serializeReservationForAgencyCredential(r, {
@@ -48262,6 +48391,19 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
     const r = findReservationByLocatorOrContact(code);
     if (!r) {
       return res.status(404).json({ error: "Reserva não localizada." });
+    }
+    const stCredPost = String(r.status || "").toLowerCase().trim();
+    if (stCredPost === "expirada" || stCredPost === "expired") {
+      return res.status(410).json({
+        error: "Esta pré-reserva expirou por falta de confirmação de pagamento dentro do prazo limite. Entre em contato pelo WhatsApp do CorpFlats para consultar disponibilidade e reativá-la.",
+        expiredReservation: true
+      });
+    }
+    if (stCredPost === "cancelada" || stCredPost === "cancelled" || stCredPost === "cancelado") {
+      return res.status(410).json({
+        error: "Esta reserva encontra-se cancelada no sistema.",
+        cancelledReservation: true
+      });
     }
 
     const {
@@ -56517,7 +56659,7 @@ const handleUpdateGuest = async (req, res) => {
   guest.updatedAt = new Date().toISOString();
 
   // Sincronização Bidirecional Atômica CRM -> Minha Conta (db.guestAccounts) e Reservas
-  syncBidirectionalGuestProfile(db, guest, {
+  const syncOut = syncBidirectionalGuestProfile(db, guest, {
     ...req.body,
     ...(prefVehiclePlate !== undefined && req.body.vehiclePlate === undefined ? { vehiclePlate: prefVehiclePlate } : {}),
     previousName,
@@ -56528,6 +56670,108 @@ const handleUpdateGuest = async (req, res) => {
   });
 
   saveDatabase();
+
+  // Se o telefone/WhatsApp do hóspede foi alterado no CRM, dispara as 3 mensagens iniciais da régua
+  // para reservas ativas/futuras confirmadas cujo novo número ainda não recebeu confirmação
+  if (
+    (req.body.phone !== undefined || req.body.whatsapp !== undefined) &&
+    Array.isArray(syncOut?.phoneUpdatedReservations) &&
+    syncOut.phoneUpdatedReservations.length > 0
+  ) {
+    const crmBaseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
+    const nowCrm = new Date();
+    const nowCrmUtc = nowCrm.getTime() + (nowCrm.getTimezoneOffset() * 60000);
+    const todayCrmStr = new Date(nowCrmUtc - (3 * 3600000)).toISOString().substring(0, 10);
+    const updatedAtIso = nowCrm.toISOString();
+
+    for (const item of syncOut.phoneUpdatedReservations) {
+      const rTarget = item?.reservation;
+      const targetIndices = Array.isArray(item?.guestIndices) ? item.guestIndices : [];
+      if (!rTarget || targetIndices.length === 0) continue;
+      const stLower = String(rTarget.status || "").toLowerCase().trim();
+      if (
+        isPreReservationBlocked(rTarget) ||
+        stLower === "cancelada" ||
+        stLower === "cancelled" ||
+        stLower === "cancelado" ||
+        stLower === "expirada" ||
+        stLower === "no_show" ||
+        stLower === "concluida" ||
+        stLower === "checked_out" ||
+        rTarget.checkoutDone ||
+        rTarget.checkoutCompleted ||
+        (rTarget.checkoutDate && rTarget.checkoutDate < todayCrmStr)
+      ) {
+        continue;
+      }
+
+      const eligibleIndices = targetIndices.filter(gIdx => {
+        const candPhone = gIdx === 1
+          ? String(rTarget.guestPhone || rTarget.guests?.[0]?.phone || "").trim()
+          : String(rTarget.guests?.[gIdx - 1]?.phone || rTarget.guests?.[gIdx - 1]?.whatsapp || "").trim();
+        if (candPhone.replace(/\D/g, "").replace(/^55/, "").length < 10) return false;
+        const alreadySentToCand = (db.whatsappHistory || []).some(h => {
+          if (!h || !isWaHistoryStatusDispatched(h.status)) return false;
+          const hCode = String(h.reservationCode || "").toUpperCase();
+          const isSameRes = (rTarget.code && hCode === String(rTarget.code).toUpperCase()) || (rTarget.id && String(h.reservationId || "") === String(rTarget.id));
+          if (!isSameRes) return false;
+          if (
+            h.triggerEvent !== "reservation_created" &&
+            h.triggerEvent !== "payment_confirmed" &&
+            h.triggerEvent !== "sameday_reservation"
+          ) {
+            return false;
+          }
+          return Boolean(h.guestPhone || h.phone) && matchClientPhone(h.guestPhone || h.phone, candPhone);
+        });
+        return !alreadySentToCand;
+      });
+      if (eligibleIndices.length === 0) continue;
+
+      rTarget.guestPhoneUpdatedAt = updatedAtIso;
+      if (Array.isArray(rTarget.guestPhoneCorrectionRequests)) {
+        for (const corrReq of rTarget.guestPhoneCorrectionRequests) {
+          if (!corrReq || corrReq.status === "resolved") continue;
+          const gIdxMatch = Number(corrReq.guestIndex) || 1;
+          if (eligibleIndices.includes(gIdxMatch)) {
+            corrReq.status = "resolved";
+            corrReq.resolvedAt = updatedAtIso;
+            corrReq.resolvedSource = "crm_edit";
+          }
+        }
+        if (!rTarget.guestPhoneCorrectionRequests.some(c => c && (c.status === "awaiting_reply" || c.status === "pending"))) {
+          rTarget.guestPhoneInvalid = false;
+        }
+      }
+      saveDatabase();
+
+      if (rTarget.packageId || rTarget.packageCode) {
+        dispatchIndividualFlatGuestInstructions(db, [rTarget], crmBaseUrl, {
+          onlyGuestIndices: eligibleIndices,
+          cleanWhatsAppPhone,
+          sendZapiMessage,
+          sendZapiDocument: typeof sendZapiDocument === "function" ? sendZapiDocument : undefined,
+          sendZapiMedia: typeof sendZapiDocument === "function" ? ((cfg, opts) => sendZapiDocument(cfg, opts)) : undefined,
+          hasPdfAlreadyBeenSentOrInFlight: typeof hasPdfAlreadyBeenSentOrInFlight === "function" ? hasPdfAlreadyBeenSentOrInFlight : undefined,
+          checkZapiPhoneExists: typeof checkZapiPhoneExists === "function" ? checkZapiPhoneExists : undefined,
+          createNotification: typeof createNotification === "function" ? createNotification : undefined,
+          scheduleUpcomingReservationTriggers: typeof scheduleUpcomingReservationTriggers === "function" ? ((d) => scheduleUpcomingReservationTriggers(d, saveDatabase)) : undefined,
+          appendMessageToConversation,
+          saveDatabase
+        }).catch(err => {
+          console.warn(`[CRM Phone Sync] Erro ao enviar régua de pacote para ${rTarget.code}:`, err?.message || err);
+        });
+      } else {
+        dispatchCatchUpGuestRulerMessages(db, saveDatabase, rTarget, {
+          baseUrl: crmBaseUrl,
+          onlyGuestIndices: eligibleIndices
+        }).catch(err => {
+          console.warn(`[CRM Phone Sync] Erro ao enviar régua inicial para ${rTarget.code}:`, err?.message || err);
+        });
+      }
+    }
+  }
+
   res.json(guest);
 };
 
@@ -61408,14 +61652,45 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
     }
   }
 
+  const phoneUpdatedMap = new Map();
+  const recordPhoneUpdatedIdx = (resObj, idx) => {
+    if (!resObj) return;
+    if (!phoneUpdatedMap.has(resObj)) phoneUpdatedMap.set(resObj, new Set());
+    phoneUpdatedMap.get(resObj).add(idx);
+  };
+  const explicitNameInUpdates = Boolean(
+    (updates && updates.name !== undefined && String(updates.name || "").trim()) ||
+    (updates && updates.fullName !== undefined && String(updates.fullName || "").trim())
+  );
+  const pickFullerSamePersonName = (existingNm, candidateNm) => {
+    const ex = String(existingNm || "").trim();
+    const cd = String(candidateNm || "").trim();
+    if (!cd) return ex;
+    if (!ex || isPlaceholderOrEmptyGuestName(ex)) return cd;
+    if (!explicitNameInUpdates && areGuestNamesCompatible(ex, cd)) {
+      const exWords = ex.split(/\s+/).filter(Boolean).length;
+      const cdWords = cd.split(/\s+/).filter(Boolean).length;
+      if (exWords > cdWords) return ex;
+      if (exWords === cdWords && ex.length > cd.length) return ex;
+    }
+    return cd;
+  };
+
   for (const r of reservations) {
+    const oldResPhone = String(r.guestPhone || r.guests?.[0]?.phone || "").trim();
     if (guest) {
       r.guestId = guest.id;
       r.guestCode = guest.guestCode;
     }
-    if (finalName) r.guestName = finalName;
+    if (finalName) r.guestName = pickFullerSamePersonName(r.guestName, finalName);
     if (finalEmail) r.guestEmail = finalEmail;
-    if (finalPhone) r.guestPhone = finalPhone;
+    if (finalPhone) {
+      const hadOldResDigits = oldResPhone.replace(/\D/g, "").length >= 8;
+      if (!hadOldResDigits || !matchClientPhone(finalPhone, oldResPhone)) {
+        recordPhoneUpdatedIdx(r, 1);
+      }
+      r.guestPhone = finalPhone;
+    }
     if (finalDocClean) r.guestDocument = finalDocClean;
     if (finalAddress) r.guestAddress = finalAddress;
     if (finalStreet) r.guestStreet = finalStreet;
@@ -61440,7 +61715,7 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
         g0.guestId = guest.id;
         g0.guestCode = guest.guestCode;
       }
-      if (finalName) g0.name = finalName;
+      if (finalName) g0.name = r.guestName || finalName;
       if (finalDocClean) g0.cpf = finalDocClean;
       if (finalPhone) g0.phone = finalPhone;
       if (finalEmail) g0.email = finalEmail;
@@ -61467,11 +61742,50 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
     }
   }
 
+  // Sincroniza também acompanhantes (2º e 3º hóspedes) vinculados a esta ficha do CRM
+  if (guest && Array.isArray(db.reservations)) {
+    for (const rComp of db.reservations) {
+      if (!rComp || !Array.isArray(rComp.guests) || rComp.guests.length < 2) continue;
+      for (let idx = 1; idx < rComp.guests.length; idx++) {
+        const gSlot = rComp.guests[idx];
+        if (!gSlot) continue;
+        const slotDoc = normalizeDoc(gSlot.cpf || gSlot.document);
+        const isLinkedSlot =
+          (gSlot.guestId && Number(gSlot.guestId) === Number(guest.id)) ||
+          (finalDocClean && finalDocClean.length >= 8 && slotDoc === finalDocClean) ||
+          (canMatchPrevDoc && slotDoc === prevDoc);
+        if (!isLinkedSlot) continue;
+        if (!isPlaceholderOrEmptyGuestName(gSlot.name) && finalName && !areGuestNamesCompatible(gSlot.name, finalName)) {
+          continue;
+        }
+        gSlot.guestId = guest.id;
+        if (guest.guestCode) gSlot.guestCode = guest.guestCode;
+        if (finalName) gSlot.name = pickFullerSamePersonName(gSlot.name, finalName);
+        if (finalDocClean) gSlot.cpf = finalDocClean;
+        if (finalEmail) gSlot.email = finalEmail;
+        if (finalPhone) {
+          const oldSlotPhone = String(gSlot.phone || gSlot.whatsapp || "").trim();
+          const hadOldSlotDigits = oldSlotPhone.replace(/\D/g, "").length >= 8;
+          const gIdxNum = Number(gSlot.index) > 1 ? Number(gSlot.index) : idx + 1;
+          if (!hadOldSlotDigits || !matchClientPhone(finalPhone, oldSlotPhone)) {
+            recordPhoneUpdatedIdx(rComp, gIdxNum);
+          }
+          gSlot.phone = finalPhone;
+        }
+      }
+    }
+  }
+
   if (guest) {
     triggerAutoGoogleContactSync(db, guest);
   }
 
-  return { guest, account };
+  const phoneUpdatedReservations = Array.from(phoneUpdatedMap.entries()).map(([reservation, idxSet]) => ({
+    reservation,
+    guestIndices: Array.from(idxSet).sort((a, b) => a - b)
+  }));
+
+  return { guest, account, phoneUpdatedReservations };
 }
 
 
@@ -61712,11 +62026,26 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
       });
     }
   } else {
-    // Garante que o slot 1 sempre contenha os dados cadastrais do hóspede
+    // Garante que o slot 1 sempre contenha os dados cadastrais completos e sincronizados do hóspede
     if (r.guests[0]) {
-      if (!r.guests[0].name || r.guests[0].name.startsWith("Hóspede")) r.guests[0].name = r.guestName || guest?.fullName || guest?.name || "Hóspede 1";
+      const candPrimaryName = String(r.guestName || guest?.fullName || guest?.name || "").trim();
+      const curSlot1Name = String(r.guests[0].name || "").trim();
+      if (
+        !curSlot1Name ||
+        curSlot1Name.startsWith("Hóspede") ||
+        (candPrimaryName &&
+          !isPendingGuestName(candPrimaryName) &&
+          areGuestNamesCompatible(candPrimaryName, curSlot1Name) &&
+          candPrimaryName.length > curSlot1Name.length)
+      ) {
+        r.guests[0].name = candPrimaryName || "Hóspede 1";
+      }
       if (!r.guests[0].cpf) r.guests[0].cpf = r.guestDocument || guest?.document || "";
-      if (!r.guests[0].phone) r.guests[0].phone = r.guestPhone || guest?.phone || "";
+      if (r.guestPhone) {
+        r.guests[0].phone = r.guestPhone;
+      } else if (!r.guests[0].phone) {
+        r.guests[0].phone = guest?.phone || "";
+      }
       if (!r.guests[0].email) r.guests[0].email = r.guestEmail || guest?.email || "";
       if (!r.guests[0].docPhotoUrl && !r.guests[0].preCheckinDraft?.docPhotoCleared) r.guests[0].docPhotoUrl = savedDocPhotoUrl || guest?.docPhotoUrl || r.docPhotoUrl || null;
       if (!r.guests[0].selfieUrl) r.guests[0].selfieUrl = savedSelfieUrl || guest?.photoUrl || r.selfieUrl || null;
@@ -67677,7 +68006,12 @@ app.post("/api/funnel/track", (req, res) => {
     guestDocument,
     checkinDate,
     checkoutDate,
-    flatsCount = 1,
+    flatsCount,
+    roomsCount,
+    adultsCount,
+    placement,
+    pagePath,
+    attribution,
     ratePlan = "with_breakfast",
     rooms = [],
     extras = {},
@@ -67693,18 +68027,42 @@ app.post("/api/funnel/track", (req, res) => {
   if (!db.funnelEvents) db.funnelEvents = [];
   if (!db.abandonedCarts) db.abandonedCarts = [];
 
+  const hasExplicitFlatsCount =
+    flatsCount !== undefined && flatsCount !== null && Number(flatsCount) > 0;
+  const hasExplicitRoomsCount =
+    roomsCount !== undefined && roomsCount !== null && Number(roomsCount) > 0;
+  const roomsArrayLen = Array.isArray(rooms) && rooms.length > 0 ? rooms.length : 0;
+  const resolvedFlatsCount = hasExplicitFlatsCount
+    ? Number(flatsCount)
+    : hasExplicitRoomsCount
+      ? Number(roomsCount)
+      : roomsArrayLen > 0
+        ? roomsArrayLen
+        : 1;
+  const resolvedAdultsCount =
+    adultsCount !== undefined && adultsCount !== null && Number(adultsCount) > 0
+      ? Number(adultsCount)
+      : (Array.isArray(rooms) && rooms.length > 0
+          ? rooms.reduce((acc, r) => acc + (Number(r?.adults) || 1), 0)
+          : undefined);
+  const cleanPlacement = typeof placement === "string" && placement.trim() ? placement.trim().slice(0, 64) : undefined;
+  const cleanPagePath = typeof pagePath === "string" && pagePath.trim() ? pagePath.trim().slice(0, 160) : undefined;
+
   // Registra o evento no histórico de telemetria
   db.funnelEvents.push({
     id: Date.now(),
     sessionId,
     step: Number(step) || 1,
     stepName: stepName || `step_${step}`,
+    ...(cleanPlacement ? { placement: cleanPlacement } : {}),
+    ...(cleanPagePath ? { pagePath: cleanPagePath } : {}),
     guestName: guestName || "",
     guestPhone: guestPhone || "",
     guestEmail: guestEmail || "",
     checkinDate,
     checkoutDate,
-    flatsCount: Number(flatsCount) || 1,
+    flatsCount: resolvedFlatsCount,
+    ...(resolvedAdultsCount ? { adultsCount: resolvedAdultsCount } : {}),
     ratePlan,
     extras,
     paymentMethod,
@@ -67727,12 +68085,15 @@ app.post("/api/funnel/track", (req, res) => {
       sessionId,
       currentStep: Number(step) || 1,
       currentStepName: stepName || "busca",
+      ...(cleanPlacement ? { lastConciergePlacement: cleanPlacement } : {}),
+      ...(cleanPagePath ? { pagePath: cleanPagePath } : {}),
       guestName: guestName || "",
       guestPhone: guestPhone || "",
       guestEmail: guestEmail || "",
       guestDocument: guestDocument || "",
-      flatNumber: rooms?.length > 0 ? rooms.map(r => r.id).join(", ") : "Studio",
-      flatsCount: Number(flatsCount) || 1,
+      flatNumber: roomsArrayLen > 0 ? rooms.map(r => r.id).join(", ") : (resolvedFlatsCount > 1 ? Array.from({ length: resolvedFlatsCount }, (_, i) => i + 1).join(", ") : "Studio"),
+      flatsCount: resolvedFlatsCount,
+      ...(resolvedAdultsCount ? { adultsCount: resolvedAdultsCount } : {}),
       checkinDate: checkinDate || "",
       checkoutDate: checkoutDate || "",
       ratePlan,
@@ -67741,6 +68102,10 @@ app.post("/api/funnel/track", (req, res) => {
       totalAmount: Number(totalAmount) || 0,
       subtotal: Number(subtotal) || 0,
       discountAmount: Number(discountAmount) || 0,
+      ...(attribution?.utm_source ? { utm_source: String(attribution.utm_source) } : {}),
+      ...(attribution?.utm_campaign ? { utm_campaign: String(attribution.utm_campaign) } : {}),
+      ...(attribution?.gclid ? { gclid: String(attribution.gclid) } : {}),
+      ...(attribution?.fbclid ? { fbclid: String(attribution.fbclid) } : {}),
       status: status || (step >= 3 ? "em_andamento" : "pesquisando"),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -67752,19 +68117,33 @@ app.post("/api/funnel/track", (req, res) => {
     cart.sessionId = sessionId;
     cart.currentStep = Math.max(Number(step) || 0, Number(cart.currentStep) || 0) || 1;
     cart.currentStepName = stepName || cart.currentStepName;
+    if (cleanPlacement) cart.lastConciergePlacement = cleanPlacement;
+    if (cleanPagePath) cart.pagePath = cleanPagePath;
     if (guestName) cart.guestName = guestName;
     if (guestPhone) cart.guestPhone = guestPhone;
     if (guestEmail) cart.guestEmail = guestEmail;
     if (guestDocument) cart.guestDocument = guestDocument;
     if (checkinDate) cart.checkinDate = checkinDate;
     if (checkoutDate) cart.checkoutDate = checkoutDate;
-    if (flatsCount) cart.flatsCount = Number(flatsCount);
+    if (hasExplicitFlatsCount || hasExplicitRoomsCount || roomsArrayLen > 0) {
+      cart.flatsCount = resolvedFlatsCount;
+      if (roomsArrayLen > 0) {
+        cart.flatNumber = rooms.map(r => r.id).join(", ");
+      } else if (resolvedFlatsCount > 1) {
+        cart.flatNumber = Array.from({ length: resolvedFlatsCount }, (_, i) => i + 1).join(", ");
+      }
+    }
+    if (resolvedAdultsCount) cart.adultsCount = resolvedAdultsCount;
     if (ratePlan) cart.ratePlan = ratePlan;
-    if (extras) cart.extras = { ...cart.extras, ...extras };
+    if (extras && Object.keys(extras).length > 0) cart.extras = { ...cart.extras, ...extras };
     if (paymentMethod) cart.paymentMethod = paymentMethod;
-    if (totalAmount) cart.totalAmount = Number(totalAmount);
-    if (subtotal) cart.subtotal = Number(subtotal);
-    if (discountAmount) cart.discountAmount = Number(discountAmount);
+    if (Number(totalAmount) > 0) cart.totalAmount = Number(totalAmount);
+    if (Number(subtotal) > 0) cart.subtotal = Number(subtotal);
+    if (Number(discountAmount) > 0) cart.discountAmount = Number(discountAmount);
+    if (attribution?.utm_source && !cart.utm_source) cart.utm_source = String(attribution.utm_source);
+    if (attribution?.utm_campaign && !cart.utm_campaign) cart.utm_campaign = String(attribution.utm_campaign);
+    if (attribution?.gclid && !cart.gclid) cart.gclid = String(attribution.gclid);
+    if (attribution?.fbclid && !cart.fbclid) cart.fbclid = String(attribution.fbclid);
     if (status) cart.status = status;
     cart.updatedAt = new Date().toISOString();
   }
@@ -86035,22 +86414,41 @@ function isConfirmationAlreadyDispatched(r) {
   const rCode = String(r.code || "").toUpperCase();
   const rId = String(r.id || "");
   const recips = getReservationRecipients(r, db);
-  const rawGuestPhone = recips.guest?.phone || r.guestPhone || "";
+  const targetPhoneRaw = !isMissingGuestDataForCredential(r)
+    ? (recips.guest?.stayPhone || recips.guest?.phone || r.guestPhone || "")
+    : "";
   const rawReqPhone = recips.requester?.phone || "";
-  const guestPhoneNorm = String(recips.guest?.cleanDigits || "").replace(/^55/, "");
+  const targetPhoneNorm = String(targetPhoneRaw).replace(/\D/g, "").replace(/^55/, "");
   const reqPhoneNorm = String(recips.requester?.cleanDigits || "").replace(/^55/, "");
-  const requireGuestConfirmation = Boolean(
-    recips.requester?.isDifferentFromGuest &&
-    !isMissingGuestDataForCredential(r) &&
-    guestPhoneNorm.length >= 10
-  );
+  const hasSpecificTargetPhone = targetPhoneNorm.length >= 10;
 
   const stampedPhones = Array.isArray(r.confirmationSentPhones) ? r.confirmationSentPhones : [];
   if (stampedPhones.length > 0) {
-    if (!requireGuestConfirmation) return true;
-    if (stampedPhones.some(p => matchClientPhone(p, rawGuestPhone))) return true;
-  } else if (r.confirmationWhatsappSentAt && !requireGuestConfirmation) {
-    return true;
+    if (hasSpecificTargetPhone) {
+      if (stampedPhones.some(p => matchClientPhone(p, targetPhoneRaw))) return true;
+    } else if (!recips.requester?.isDifferentFromGuest) {
+      return true;
+    }
+  } else if (r.confirmationWhatsappSentAt && !recips.requester?.isDifferentFromGuest) {
+    const phoneChangedAfterLegacyStamp = Boolean(
+      r.guestPhoneUpdatedAt &&
+      new Date(r.guestPhoneUpdatedAt).getTime() > new Date(r.confirmationWhatsappSentAt).getTime()
+    );
+    if (!phoneChangedAfterLegacyStamp) {
+      const historyForRes = history.filter(h => {
+        const hCode = String(h.reservationCode || "").toUpperCase();
+        const hId = h.reservationId ? String(h.reservationId) : "";
+        const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
+        const isConfirmEv =
+          h.triggerEvent === "payment_confirmed" ||
+          h.triggerEvent === "reservation_created" ||
+          h.triggerEvent === "sameday_reservation";
+        return isSameRes && isConfirmEv && isWaHistoryStatusDispatched(h.status);
+      });
+      if (historyForRes.length === 0 || !hasSpecificTargetPhone || historyForRes.some(h => matchClientPhone(h.guestPhone || h.phone, targetPhoneRaw))) {
+        return true;
+      }
+    }
   }
 
   return history.some(h => {
@@ -86063,9 +86461,21 @@ function isConfirmationAlreadyDispatched(r) {
       h.triggerEvent === "reservation_created" ||
       h.triggerEvent === "sameday_reservation";
     if (!isConfirmEv || !isWaHistoryStatusDispatched(h.status)) return false;
-    if (requireGuestConfirmation) {
+    if (hasSpecificTargetPhone) {
+      if (recips.requester?.isDifferentFromGuest) {
+        if (h.recipientType === "requester" || h.recipientRole === "solicitante") return false;
+        if (reqPhoneNorm && !matchClientPhone(rawReqPhone, targetPhoneRaw) && matchClientPhone(h.guestPhone || h.phone, rawReqPhone)) {
+          return false;
+        }
+      }
+      const hPhoneRaw = h.guestPhone || h.phone || "";
+      if (String(hPhoneRaw).replace(/\D/g, "").length >= 8) {
+        return matchClientPhone(hPhoneRaw, targetPhoneRaw);
+      }
+    } else if (recips.requester?.isDifferentFromGuest) {
       if (h.recipientType === "requester" || h.recipientRole === "solicitante") return false;
-      if (reqPhoneNorm && !matchClientPhone(rawReqPhone, rawGuestPhone) && matchClientPhone(h.guestPhone, rawReqPhone)) return false;
+      if (reqPhoneNorm && h.guestPhone && matchClientPhone(h.guestPhone, rawReqPhone)) return false;
+      return Boolean(h.guestPhone || h.phone);
     }
     return true;
   });

@@ -6829,6 +6829,28 @@ export async function dispatchB2bAgencyCredentialEmail(
     stageKey || (isReminder ? `reminder_${reminderKind || reminderNumber}` : "initial")
   ).trim();
 
+  const stLowerCred = String(reservation.status || "").toLowerCase().trim();
+  if (
+    !force &&
+    (stLowerCred === "cancelada" ||
+      stLowerCred === "cancelled" ||
+      stLowerCred === "cancelado" ||
+      stLowerCred === "expirada" ||
+      stLowerCred === "expired" ||
+      stLowerCred === "pre_reserva" ||
+      stLowerCred === "pendente" ||
+      stLowerCred === "pending_payment" ||
+      stLowerCred === "no_show")
+  ) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: `status_${stLowerCred}`,
+      stageKey: resolvedStageKey,
+      sentTo: reservation.b2bCredentialEmailRecipient || ""
+    };
+  }
+
   if (!force && (reservation.b2bCredentialCompletedAt || reservation.credentialStatus === "completed" || !isMissingGuestDataForCredential(reservation, db))) {
     if (!isMissingGuestDataForCredential(reservation, db)) {
       reservation.guestPending = false;
@@ -7112,6 +7134,21 @@ export async function dispatchB2bAgencyBatchCredentialEmail(
   for (const rawItem of batchItems) {
     const r = rawItem?.reservation || rawItem;
     if (!r) continue;
+    const stItem = String(r.status || "").toLowerCase().trim();
+    if (
+      !force &&
+      (stItem === "cancelada" ||
+        stItem === "cancelled" ||
+        stItem === "cancelado" ||
+        stItem === "expirada" ||
+        stItem === "expired" ||
+        stItem === "pre_reserva" ||
+        stItem === "pendente" ||
+        stItem === "pending_payment" ||
+        stItem === "no_show")
+    ) {
+      continue;
+    }
     const stageKey = String(
       rawItem?.stageKey || (rawItem?.isReminder ? `reminder_${rawItem?.reminderKind || rawItem?.reminderNumber || 1}` : "initial")
     ).trim();
@@ -7354,6 +7391,22 @@ export function getBrtDateParts(dateInput = new Date()) {
  */
 export function evaluateCredentialScheduleDecision(reservation, nowInput = new Date(), db = null, options = {}) {
   if (!reservation) return { action: "none", reason: "no_reservation" };
+  const resSt = String(reservation.status || "").toLowerCase().trim();
+  if (
+    resSt === "cancelada" ||
+    resSt === "cancelled" ||
+    resSt === "cancelado" ||
+    resSt === "checkout" ||
+    resSt === "concluida" ||
+    resSt === "no_show" ||
+    resSt === "pre_reserva" ||
+    resSt === "pendente" ||
+    resSt === "pending_payment" ||
+    resSt === "expirada" ||
+    resSt === "expired"
+  ) {
+    return { action: "none", reason: `status_${resSt}` };
+  }
   if (reservation.skipAgencyCredentialAuto) {
     return { action: "none", reason: "manual_skip_flag" };
   }
@@ -7414,11 +7467,15 @@ export function evaluateCredentialScheduleDecision(reservation, nowInput = new D
             if (
               sibSt === "cancelada" ||
               sibSt === "cancelled" ||
+              sibSt === "cancelado" ||
               sibSt === "checkout" ||
               sibSt === "concluida" ||
               sibSt === "no_show" ||
               sibSt === "pre_reserva" ||
-              sibSt === "pendente"
+              sibSt === "pendente" ||
+              sibSt === "pending_payment" ||
+              sibSt === "expirada" ||
+              sibSt === "expired"
             ) {
               continue;
             }
@@ -7639,11 +7696,15 @@ export async function ensurePendingB2bAgencyCredentialDispatches(
       if (
         st === "cancelada" ||
         st === "cancelled" ||
+        st === "cancelado" ||
         st === "checkout" ||
         st === "concluida" ||
         st === "no_show" ||
         st === "pre_reserva" ||
-        st === "pendente"
+        st === "pendente" ||
+        st === "pending_payment" ||
+        st === "expirada" ||
+        st === "expired"
       ) {
         continue;
       }

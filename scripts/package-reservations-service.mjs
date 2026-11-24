@@ -1,6 +1,11 @@
 import crypto from "crypto";
 import { parseEmailList } from "./mail-service.mjs";
-import { evaluateFlatCheckinReadiness } from "./zapi-service.mjs";
+import {
+  evaluateFlatCheckinReadiness,
+  DEFAULT_WHATSAPP_TEMPLATES,
+  resolveWhatsAppTags,
+  isFrequentOrReturningGuestRecipient
+} from "./zapi-service.mjs";
 
 const inFlightInvalidGuestPhoneAlerts = new Set();
 
@@ -2121,9 +2126,106 @@ export async function dispatchIndividualFlatGuestInstructions(db, reservationsLi
 
       const finalButtons = guestButtons.slice(0, 3);
       let gSent = false;
+      let sentIntro = false;
 
       if (cleanTargetPhone && typeof deps.sendZapiMessage === "function" && !deps.suppressExternalSend) {
         try {
+          const targetRecipType = target.index > 1 ? `guest_${target.index}` : "guest";
+          const customIntroTpl = Array.isArray(db?.whatsappTemplates)
+            ? db.whatsappTemplates.find((t) => t && (t.id === "tpl_corpflats_intro" || t.triggerEvent === "corpflats_intro"))
+            : null;
+          const introTpl = customIntroTpl
+            ? (customIntroTpl.enabled === false ? null : customIntroTpl)
+            : DEFAULT_WHATSAPP_TEMPLATES.find((t) => t && t.id === "tpl_corpflats_intro");
+
+          const isReturningGuest = Boolean(
+            isFrequentOrReturningGuestRecipient(db, r, {
+              type: targetRecipType,
+              guestIndex: target.index,
+              phone: cleanTargetPhone,
+              name: target.name,
+              email: target.email
+            })
+          );
+
+          if (introTpl && !isReturningGuest) {
+            const introSentIso = new Date().toISOString();
+            const introMsg = resolveWhatsAppTags(introTpl.message || "", r, db, cleanBase, targetRecipType);
+            const introRes = await deps.sendZapiMessage(db?.zapiConfig, {
+              phone: cleanTargetPhone,
+              message: introMsg,
+              buttons: [],
+              channelId: "guest_schedule",
+              recipientRole: "guest",
+              triggerEvent: "corpflats_intro",
+              db
+            });
+            sentIntro = Boolean(introRes?.success || introRes?.ok || introRes?.sent || introRes?.messageId || introRes?.zaapId);
+
+            if (!sentIntro && introRes?.noWhatsAppAccount && !target.isSameAsRequester && itemReqDigits.length >= 10) {
+              await registerAndNotifyInvalidGuestPhone(
+                db,
+                r,
+                { ...target, reason: "no_whatsapp_account", source: "zapi_send_error" },
+                { ...deps, baseUrl: cleanBase }
+              );
+              sentTo.push({
+                reservationCode: r.code,
+                flatNumber: r.flatNumber,
+                guestIndex: target.index,
+                guestName: target.name,
+                phone: cleanTargetPhone,
+                sent: false,
+                sentIntro: false,
+                hideFinancialForGuest: true
+              });
+              continue;
+            }
+
+            if (!Array.isArray(db.whatsappHistory)) db.whatsappHistory = [];
+            db.whatsappHistory.push({
+              id: `wah_pkgintro_${r.id}_${target.index}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              reservationId: r.id,
+              reservationCode: r.code,
+              packageCode: r.packageCode || r.packageId || null,
+              guestName: target.name,
+              guestPhone: cleanTargetPhone,
+              recipientType: targetRecipType,
+              recipientRole: "guest",
+              triggerEvent: "corpflats_intro",
+              templateId: introTpl.id || "tpl_corpflats_intro",
+              message: introMsg,
+              buttons: [],
+              status: sentIntro ? "sent" : "failed",
+              messageId: introRes?.messageId || null,
+              error: introRes?.error || null,
+              sentAt: introSentIso
+            });
+
+            if (sentIntro && typeof deps.appendMessageToConversation === "function") {
+              deps.appendMessageToConversation(db, {
+                phone: cleanTargetPhone,
+                senderName: "CorpFlats",
+                senderPhone: db?.zapiConfig?.instanceId || "",
+                fromMe: true,
+                text: introMsg,
+                type: "text",
+                buttons: [],
+                triggerEvent: "corpflats_intro",
+                reservationCode: r.code,
+                status: "delivered",
+                timestamp: introSentIso,
+                messageId: introRes?.messageId || `msg_pkgintro_${Date.now()}_${target.index}`
+              });
+            }
+
+            if (sentIntro) {
+              const isLiveZapi = Boolean(db?.zapiConfig?.instanceId?.trim() && db?.zapiConfig?.token?.trim());
+              const delayMs = deps.fastDelay ? 25 : (isLiveZapi ? 1800 : 25);
+              await new Promise((resolve) => setTimeout(resolve, delayMs));
+            }
+          }
+
           const sentIso = new Date().toISOString();
           const alreadyHasPdf =
             typeof deps.hasPdfAlreadyBeenSentOrInFlight === "function"
@@ -2274,6 +2376,7 @@ export async function dispatchIndividualFlatGuestInstructions(db, reservationsLi
         guestName: target.name,
         phone: cleanTargetPhone,
         sent: gSent,
+        sentIntro,
         hideFinancialForGuest: true
       });
     }

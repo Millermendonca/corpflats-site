@@ -607,6 +607,23 @@ export default function MarketingTraffic() {
                                   🎯 {paidSourceLabel}{sess.utm_campaign ? ` • ${sess.utm_campaign}` : ""}
                                 </Badge>
                               )}
+                              {(sess.lastConciergePlacement || sess.status === "transbordo_whatsapp") && (
+                                <Badge variant="outline" className="text-[9px] font-bold border-emerald-300 text-emerald-700 dark:text-emerald-300 bg-emerald-50/60 dark:bg-emerald-950/30">
+                                  💬 WhatsApp: {
+                                    ({
+                                      booking_card: "Card Principal",
+                                      desktop_sticky_pill: "Botão Flutuante",
+                                      mobile_sticky_bar: "Barra Mobile",
+                                      funnel_step_helper: "Ajuda no Funil",
+                                      funnel_exit_intent: "Exit-Intent",
+                                      long_stay_custom: "Estadia Longa",
+                                      footer_contact: "Rodapé",
+                                    } as Record<string, string>)[String(sess.lastConciergePlacement || "")] ||
+                                    sess.lastConciergePlacement ||
+                                    "Concierge"
+                                  }
+                                </Badge>
+                              )}
                             </div>
 
                             <div className="text-[11px] text-muted-foreground flex flex-wrap gap-2">

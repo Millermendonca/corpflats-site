@@ -8,7 +8,7 @@ import {
   Building2, Calendar, Wifi, Tv, Wind, Coffee, ShieldCheck,
   Sparkles, CheckCircle2, ArrowRight, CreditCard, QrCode, Copy, Check, Star, Car, Utensils,
   Ban, MessageCircle, KeyRound, MapPin, ExternalLink, Mail,
-  Dumbbell, Waves, Flame, ChevronDown,
+  Dumbbell, Waves, Flame, ChevronDown, AlertTriangle,
   UserCheck, LogOut, User, ChevronRight, ChevronLeft, Image as ImageIcon,
   Save, Sun, Gamepad2, Instagram
 } from "lucide-react"
@@ -33,6 +33,7 @@ import {
   captureAttributionOnLoad,
   initPublicAnalytics,
   getSessionTrackingId,
+  getStoredAttribution,
   trackViewItem,
   trackSelectDates,
   trackBeginCheckout,
@@ -89,6 +90,13 @@ export function formatDisplayDate(isoDate: string): string {
   const parts = isoDate.split("-")
   if (parts.length !== 3) return isoDate
   return `${parts[2]}/${parts[1]}/${parts[0]}`
+}
+
+function formatShortDateBr(isoDate: string): string {
+  if (!isoDate) return ""
+  const parts = isoDate.split("-")
+  if (parts.length !== 3) return isoDate
+  return `${parts[2]}/${parts[1]}`
 }
 
 function formatPhoneNumber(phone: string): string {
@@ -165,19 +173,44 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
   const [checkin, setCheckin] = useState<string>(() => initialBookingParams.checkin)
   const [checkout, setCheckout] = useState<string>(() => initialBookingParams.checkout)
 
-  // Carrinho de Flats / Multi-Quartos (1 a N flats)
+  // Carrinho de Flats / Multi-Quartos (1 a N flats, com restauração completa de rascunho)
   const [rooms, setRooms] = useState<RoomConfig[]>(() => {
+    if (Array.isArray(initialBookingParams.initialRooms) && initialBookingParams.initialRooms.length > 0) {
+      const isMulti = initialBookingParams.initialRooms.length > 1
+      return initialBookingParams.initialRooms.map((rm, idx) => ({
+        id: Number(rm.id) > 0 ? Number(rm.id) : idx + 1,
+        bedType: rm.bedType === "twin" ? "twin" : "queen",
+        adults: Math.min(2, Math.max(1, Number(rm.adults) || 2)),
+        ...(rm.customDates && rm.checkinDate && rm.checkoutDate
+          ? { customDates: true, checkinDate: rm.checkinDate, checkoutDate: rm.checkoutDate }
+          : {}),
+        ...(rm.ratePlan ? { ratePlan: rm.ratePlan } : {}),
+        ...(isMulti
+          ? idx === 0
+            ? { requesterIsGuest1: true }
+            : { informGuestsLater: true, guest2InformLater: true }
+          : {}),
+      }))
+    }
     const count = Math.max(1, Number(initialBookingParams.roomsCount) || 1)
     const bedType = initialBookingParams.bedType === "twin" ? "twin" : "queen"
-    const adults = Math.min(3, Math.max(1, Number(initialBookingParams.adults) || 2))
+    const adults = Math.min(2, Math.max(1, Number(initialBookingParams.adults) || 2))
     return Array.from({ length: count }, (_, idx) => ({
       id: idx + 1,
       bedType,
       adults,
+      ...(count > 1
+        ? idx === 0
+          ? { requesterIsGuest1: true }
+          : { informGuestsLater: true, guest2InformLater: true }
+        : {}),
     }))
   })
 
   const [availabilityData, setAvailabilityData] = useState<any>(null)
+  const [availabilityWindowKey, setAvailabilityWindowKey] = useState<string>("")
+  const [availabilityError, setAvailabilityError] = useState(false)
+  const availabilityAbortRef = useRef<AbortController | null>(null)
   const [activePhotoIdx, setActivePhotoIdx] = useState(0)
   const [showStickyBottom, setShowStickyBottom] = useState(false)
 
@@ -367,7 +400,7 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
   const [companyEmail, setCompanyEmail] = useState("")
   const [companyPhone, setCompanyPhone] = useState("")
 
-  const [, setLoadingFlats] = useState(false)
+  const [loadingFlats, setLoadingFlats] = useState(true)
 
   // Especificação ativa do Silo de SEO Local (5 páginas indexáveis + overrides do Site Editor)
   const lpSpec = useMemo(
@@ -596,17 +629,28 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
   }, [toast])
 
   useEffect(() => {
-    searchAvailability()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [checkin, checkout, ratePlan])
-
-  const searchAvailability = async () => {
+    if (!checkin || !checkout || checkout <= checkin) return
+    const targetKey = `${checkin}|${checkout}`
+    if (availabilityAbortRef.current) {
+      availabilityAbortRef.current.abort()
+    }
+    const controller = new AbortController()
+    availabilityAbortRef.current = controller
     setLoadingFlats(true)
-    try {
-      const res = await fetch(`/api/reservations/availability?checkin=${checkin}&checkout=${checkout}`)
-      if (res.ok) {
-        const data = await res.json()
+    setAvailabilityError(false)
+
+    fetch(`/api/reservations/availability?checkin=${encodeURIComponent(checkin)}&checkout=${encodeURIComponent(checkout)}`, {
+      signal: controller.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.json()
+      })
+      .then((data) => {
+        if (controller.signal.aborted) return
         setAvailabilityData(data)
+        setAvailabilityWindowKey(targetKey)
+        setAvailabilityError(false)
         if (!data.allowTwinBeds) {
           setRooms((prev) =>
             prev.some((r) => r.bedType === "twin")
@@ -614,17 +658,72 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
               : prev
           )
         }
-      }
-    } catch {
-      // Fallback silencioso
-    } finally {
-      setLoadingFlats(false)
+      })
+      .catch((err) => {
+        if (err?.name === "AbortError" || controller.signal.aborted) return
+        setAvailabilityError(true)
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setLoadingFlats(false)
+        }
+      })
+
+    return () => {
+      controller.abort()
     }
-  }
+  }, [checkin, checkout])
+
+  // Persiste seleção de datas, tarifa e flats no rascunho de 24h (evita perder multi-flats ao recarregar no mobile)
+  const hasMountedDraftSyncRef = useRef(false)
+  useEffect(() => {
+    if (!hasMountedDraftSyncRef.current) {
+      hasMountedDraftSyncRef.current = true
+      return
+    }
+    if (typeof window === "undefined") return
+    try {
+      const existing = readSavedBookingDraft() || {}
+      const sanitizedRooms = rooms.map((r, idx) => ({
+        id: Number(r.id) > 0 ? Number(r.id) : idx + 1,
+        bedType: r.bedType === "twin" ? "twin" : "queen",
+        adults: Math.min(2, Math.max(1, Number(r.adults) || 2)),
+        ...(r.customDates && r.checkinDate && r.checkoutDate
+          ? { customDates: true, checkinDate: r.checkinDate, checkoutDate: r.checkoutDate }
+          : {}),
+        ...(r.ratePlan ? { ratePlan: r.ratePlan } : {}),
+      }))
+      localStorage.setItem(
+        "corpflats_funnel_draft_v1",
+        JSON.stringify({
+          ...existing,
+          savedAt: Date.now(),
+          checkin,
+          checkout,
+          ratePlan,
+          rooms: sanitizedRooms,
+          bringingPet,
+          isWorkTrip,
+        })
+      )
+    } catch {}
+  }, [checkin, checkout, ratePlan, rooms, bringingPet, isWorkTrip])
 
   const nights = Math.max(1, differenceInDays(parseISO(checkout || checkin), parseISO(checkin)))
   const flatsCount = rooms.length
   const totalGuestsCount = rooms.reduce((acc, r) => acc + (Number(r.adults) || 1), 0)
+  const currentWindowKey = `${checkin}|${checkout}`
+  const isAvailabilityReady = Boolean(
+    availabilityData && availabilityWindowKey === currentWindowKey && !loadingFlats
+  )
+  const availableFlatsCount: number | null =
+    isAvailabilityReady && typeof availabilityData?.totalAvailableFlats === "number"
+      ? availabilityData.totalAvailableFlats
+      : null
+  const isSoldOut = availableFlatsCount !== null && availableFlatsCount === 0
+  const hasInsufficientFlats =
+    availableFlatsCount !== null && availableFlatsCount > 0 && rooms.length > availableFlatsCount
+  const isBookingBlocked = isSoldOut || hasInsufficientFlats
 
   // Regra de corte temporal (padrão 12:00 em America/Sao_Paulo) para reservas com check-in hoje + controle de 3º hóspede
   const nowObj = new Date()
@@ -659,8 +758,28 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
     )
   }, [checkin, isCutoffActive, isThirdGuestEnabled, siteConfig?.bedConfig?.allowTwinBeds])
 
-  const addRoom = () => {
-    const maxUnitsInProperty = Math.max(2, Number(availabilityData?.totalFlatsCount || availabilityData?.totalUnits || 10))
+  const addRoom = (options?: { allowCustomDateOverflow?: boolean }) => {
+    const maxUnitsInProperty = Math.max(
+      2,
+      Number(availabilityData?.totalFlatsCount || availabilityData?.totalUnits || 19)
+    )
+    if (!options?.allowCustomDateOverflow) {
+      if (isSoldOut) {
+        toast({
+          variant: "destructive",
+          title: "Sem flats disponíveis nestas datas",
+          description: `Não há unidades livres de ${formatDisplayDate(checkin)} a ${formatDisplayDate(checkout)}. Escolha outras datas para continuar.`,
+        })
+        return
+      }
+      if (availableFlatsCount !== null && rooms.length >= availableFlatsCount) {
+        toast({
+          title: "Limite disponível nestas datas atingido",
+          description: `Para ${formatDisplayDate(checkin)} a ${formatDisplayDate(checkout)}, temos ${availableFlatsCount} ${availableFlatsCount === 1 ? "flat disponível" : "flats disponíveis"}.`,
+        })
+        return
+      }
+    }
     if (rooms.length >= maxUnitsInProperty) {
       toast({
         title: "Limite máximo de apartamentos atingido",
@@ -685,6 +804,12 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
         guest2InformLater: true
       }
     ])
+  }
+
+  const trimRoomsToAvailable = () => {
+    if (availableFlatsCount !== null && availableFlatsCount >= 1) {
+      setRooms((prev) => prev.slice(0, availableFlatsCount))
+    }
   }
 
   const removeRoom = (id: number) => {
@@ -874,6 +999,22 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
   }, [checkin, checkout, nights, totalGuestsCount, ratePlan, pixTotalAmount])
 
   const handleStartBooking = (overridePlan?: "with_breakfast" | "room_only") => {
+    if (isSoldOut) {
+      toast({
+        variant: "destructive",
+        title: "Sem flats disponíveis nestas datas",
+        description: `Não há unidades livres de ${formatDisplayDate(checkin)} a ${formatDisplayDate(checkout)}. Tente alterar as datas ou fale conosco no WhatsApp.`,
+      })
+      return
+    }
+    if (hasInsufficientFlats && availableFlatsCount !== null) {
+      toast({
+        variant: "destructive",
+        title: "Quantidade de flats indisponível",
+        description: `Temos ${availableFlatsCount} ${availableFlatsCount === 1 ? "flat disponível" : "flats disponíveis"} de ${formatDisplayDate(checkin)} a ${formatDisplayDate(checkout)}, mas você selecionou ${rooms.length}. Ajuste a quantidade para continuar.`,
+      })
+      return
+    }
     const activePlan = overridePlan || ratePlan
     if (overridePlan) setRatePlan(overridePlan)
     preloadBookingFunnelModal()
@@ -885,7 +1026,7 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
       nights,
       roomsCount: rooms.length,
       ratePlan: activePlan,
-      value: pixTotalAmount,
+      value: isAvailabilityReady ? pixTotalAmount : 0,
     })
     try {
       fetch("/api/funnel/track", {
@@ -897,7 +1038,14 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
           stepName: "busca_datas",
           checkinDate: checkin,
           checkoutDate: checkout,
+          flatsCount: rooms.length,
+          roomsCount: rooms.length,
+          adultsCount: totalGuestsCount,
+          rooms: rooms.map((r) => ({ id: r.id, bedType: r.bedType, adults: r.adults })),
           ratePlan: activePlan,
+          totalAmount: isAvailabilityReady ? pixTotalAmount : 0,
+          pagePath: lpSpec.path,
+          attribution: getStoredAttribution(),
           status: "pesquisando"
         })
       }).catch(() => {})
@@ -1021,7 +1169,7 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
       roomsCount: rooms.length,
       bedType: rooms.some((r) => r.bedType === "twin") ? "twin" : "queen",
       ratePlan,
-      pixTotalAmount,
+      pixTotalAmount: isAvailabilityReady ? pixTotalAmount : undefined,
       isWorkTrip,
     })
   }
@@ -1635,7 +1783,15 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
                     type="date" 
                     value={checkin} 
                     min={format(new Date(), "yyyy-MM-dd")}
-                    onChange={e => setCheckin(e.target.value)} 
+                    onChange={e => {
+                      const nextIn = e.target.value
+                      setCheckin(nextIn)
+                      if (nextIn && (!checkout || checkout <= nextIn)) {
+                        try {
+                          setCheckout(format(addDays(parseISO(nextIn), 1), "yyyy-MM-dd"))
+                        } catch {}
+                      }
+                    }} 
                     className="bg-slate-50/80 border-slate-200 text-base sm:text-xs text-slate-900 min-h-[44px] sm:h-9 font-bold rounded-xl"
                   />
                 </div>
@@ -1878,15 +2034,94 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
                 </div>
               </div>
 
-              {/* Botão de Ação Principal Protagonista (Self-Service) + Rede de Segurança Concierge IA 24h */}
+              {/* Botão de Ação Principal Protagonista (Self-Service) + Status Real-Time + Concierge 24h */}
               <div className="pt-0.5 space-y-1.5">
+                {/* Faixa de Disponibilidade em Tempo Real (altura mínima estável anti-CLS) */}
+                <div
+                  id="hero-availability-status"
+                  role={isBookingBlocked ? "alert" : isAvailabilityReady ? "status" : undefined}
+                  aria-live={isBookingBlocked ? "assertive" : isAvailabilityReady ? "polite" : "off"}
+                  aria-atomic="true"
+                  className={`min-h-[34px] px-2.5 py-1.5 rounded-xl border text-[11px] font-semibold flex items-center justify-between gap-2 transition-colors ${
+                    isSoldOut
+                      ? "bg-rose-50 border-rose-200 text-rose-800"
+                      : hasInsufficientFlats
+                      ? "bg-amber-50 border-amber-300 text-amber-900"
+                      : isAvailabilityReady
+                      ? availableFlatsCount !== null && availableFlatsCount <= 5
+                        ? "bg-amber-50/90 border-amber-200/90 text-amber-900"
+                        : "bg-emerald-50/90 border-emerald-200/90 text-emerald-900"
+                      : "bg-slate-50 border-slate-200/80 text-slate-500"
+                  }`}
+                >
+                  {isSoldOut ? (
+                    <span className="flex items-center gap-1.5 leading-snug">
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" aria-hidden="true" />
+                      <span>
+                        Sem flats disponíveis de {formatShortDateBr(checkin)} a {formatShortDateBr(checkout)}. Tente outras datas.
+                      </span>
+                    </span>
+                  ) : hasInsufficientFlats && availableFlatsCount !== null ? (
+                    <>
+                      <span className="flex items-center gap-1.5 leading-snug min-w-0">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" aria-hidden="true" />
+                        <span>
+                          Apenas {availableFlatsCount} {availableFlatsCount === 1 ? "flat livre" : "flats livres"} nestas datas (você selecionou {rooms.length}).
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={trimRoomsToAvailable}
+                        className="px-2 py-0.5 rounded-lg bg-amber-900 hover:bg-amber-950 text-white text-[10px] font-bold shrink-0 transition-colors"
+                      >
+                        Usar {availableFlatsCount}
+                      </button>
+                    </>
+                  ) : isAvailabilityReady && availableFlatsCount !== null ? (
+                    <span className="flex items-center gap-1.5 leading-snug">
+                      <CheckCircle2
+                        className={`w-3.5 h-3.5 shrink-0 ${
+                          availableFlatsCount <= 5 ? "text-amber-600" : "text-emerald-600"
+                        }`}
+                        aria-hidden="true"
+                      />
+                      <span>
+                        {rooms.length > 1
+                          ? `${rooms.length} flats disponíveis`
+                          : "Disponível"}{" "}
+                        de {formatShortDateBr(checkin)} a {formatShortDateBr(checkout)}
+                        {availableFlatsCount <= 5
+                          ? ` • ${availableFlatsCount === 1 ? "Última unidade!" : `Restam ${availableFlatsCount} unidades`}`
+                          : " • Reserva imediata"}
+                      </span>
+                    </span>
+                  ) : availabilityError ? (
+                    <span className="flex items-center gap-1.5 leading-snug">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden="true" />
+                      <span>Consultando disponibilidade ao avançar para a reserva.</span>
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1.5 leading-snug">
+                      <span className="w-2 h-2 rounded-full bg-slate-400 animate-pulse shrink-0" aria-hidden="true" />
+                      <span>Verificando disponibilidade em tempo real...</span>
+                    </span>
+                  )}
+                </div>
+
                 <Button
                   onClick={() => handleStartBooking()}
-                  disabled={availabilityData?.available === false}
-                  className="w-full bg-gradient-to-r from-[#091E26] via-[#0F3D4C] to-[#091E26] hover:brightness-110 text-white border border-[#C5A059]/50 font-bold text-xs sm:text-sm min-h-[46px] rounded-xl shadow-md shadow-[#091E26]/20 transition-all flex items-center justify-center gap-2"
+                  aria-disabled={isBookingBlocked || undefined}
+                  aria-describedby="hero-availability-status"
+                  className={`w-full bg-gradient-to-r from-[#091E26] via-[#0F3D4C] to-[#091E26] text-white border border-[#C5A059]/50 font-bold text-xs sm:text-sm min-h-[46px] rounded-xl shadow-md shadow-[#091E26]/20 transition-all flex items-center justify-center gap-2 ${
+                    isBookingBlocked ? "opacity-55 cursor-not-allowed" : "hover:brightness-110"
+                  }`}
                 >
                   <span>
-                    {rooms.length > 1
+                    {isSoldOut
+                      ? "Indisponível nestas datas"
+                      : hasInsufficientFlats
+                      ? "Ajuste a quantidade de flats"
+                      : rooms.length > 1
                       ? `Reservar Pacote (${rooms.length} Flats)`
                       : (lpSpec.ctaButtonText || "Reservar agora")}
                   </span>
@@ -2629,9 +2864,13 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
 
           <Button
             onClick={() => handleStartBooking()}
-            className="bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-bold text-xs min-h-[44px] px-4 rounded-xl shadow-xs"
+            aria-disabled={isBookingBlocked || undefined}
+            aria-describedby="hero-availability-status"
+            className={`bg-[#0F3D4C] text-white border border-[#C5A059]/40 font-bold text-xs min-h-[44px] px-4 rounded-xl shadow-xs ${
+              isBookingBlocked ? "opacity-55 cursor-not-allowed" : "hover:bg-[#091E26]"
+            }`}
           >
-            Reservar
+            {isSoldOut ? "Indisponível" : rooms.length > 1 ? `Reservar (${rooms.length})` : "Reservar"}
           </Button>
         </div>
       </div>
@@ -2692,7 +2931,7 @@ export default function BookingEngine({ landingSlug }: BookingEngineProps = {}) 
             ratePlan={ratePlan}
             setRatePlan={setRatePlan}
             updateRoom={updateRoom}
-            addRoom={addRoom}
+            addRoom={() => addRoom({ allowCustomDateOverflow: true })}
             removeRoom={removeRoom}
             siteConfig={siteConfig}
             guestAccount={guestAccount}

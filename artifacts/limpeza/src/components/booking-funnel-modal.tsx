@@ -23,10 +23,16 @@ import { compressImage } from "@/lib/image-compression"
 import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo"
 import { useStableCallback } from "@/lib/render-freeze"
 import { useToast } from "@/hooks/use-toast"
-import { getStoredAttribution, trackGenerateLead, trackAddPaymentInfo, trackPurchase } from "@/lib/analytics-tracking"
+import {
+  getSessionTrackingId,
+  resetSessionTrackingId,
+  getStoredAttribution,
+  trackGenerateLead,
+  trackAddPaymentInfo,
+  trackPurchase,
+} from "@/lib/analytics-tracking"
 import { openSmartWhatsAppConcierge, buildSmartConciergeUrl } from "@/lib/whatsapp-concierge"
 
-const FUNNEL_SESSION_STORAGE_KEY = "corpflats_funnel_session_v1"
 const FUNNEL_DRAFT_STORAGE_KEY = "corpflats_funnel_draft_v1"
 const FUNNEL_DRAFT_TTL_MS = 24 * 60 * 60 * 1000
 
@@ -863,35 +869,8 @@ export function BookingFunnelModal({
     }
   }
 
-  // Session ID única para telemetria e recuperação de carrinho (persistida por 24h entre abas/sessões mobile)
-  const [sessionId] = useState(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const persistedRaw = localStorage.getItem(FUNNEL_SESSION_STORAGE_KEY)
-        if (persistedRaw) {
-          const parsed = JSON.parse(persistedRaw)
-          if (parsed?.sessionId && parsed?.savedAt && Date.now() - Number(parsed.savedAt) < FUNNEL_DRAFT_TTL_MS) {
-            sessionStorage.setItem("corpflats_funnel_session", parsed.sessionId)
-            return String(parsed.sessionId)
-          }
-        }
-      } catch {}
-      const existing = sessionStorage.getItem("corpflats_funnel_session")
-      if (existing) {
-        try {
-          localStorage.setItem(FUNNEL_SESSION_STORAGE_KEY, JSON.stringify({ sessionId: existing, savedAt: Date.now() }))
-        } catch {}
-        return existing
-      }
-      const newId = `funnel_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
-      sessionStorage.setItem("corpflats_funnel_session", newId)
-      try {
-        localStorage.setItem(FUNNEL_SESSION_STORAGE_KEY, JSON.stringify({ sessionId: newId, savedAt: Date.now() }))
-      } catch {}
-      return newId
-    }
-    return `funnel_${Date.now()}`
-  })
+  // Session ID unificada com o site principal e Concierge WhatsApp (evita carrinhos duplicados no /funil-vendas)
+  const [sessionId] = useState(() => getSessionTrackingId())
 
   // Helper para carregar perfil em cache local
   const getCachedProfile = () => {
@@ -1035,10 +1014,19 @@ export function BookingFunnelModal({
     readSavedFunnelDraft()?.paymentMethod === "card" ? "card" : "pix"
   )
 
-  // Persiste rascunho não sensível por 24h enquanto o hóspede preenche o funil
+  // Persiste rascunho não sensível (incluindo configuração dos flats) por 24h enquanto o hóspede preenche o funil
   useEffect(() => {
     if (typeof window === "undefined" || !open || currentStep >= 4) return
     try {
+      const sanitizedRooms = rooms.map((r, idx) => ({
+        id: Number(r.id) > 0 ? Number(r.id) : idx + 1,
+        bedType: r.bedType === "twin" ? "twin" : "queen",
+        adults: Math.min(2, Math.max(1, Number(r.adults) || 2)),
+        ...(r.customDates && r.checkinDate && r.checkoutDate
+          ? { customDates: true, checkinDate: r.checkinDate, checkoutDate: r.checkoutDate }
+          : {}),
+        ...(r.ratePlan ? { ratePlan: r.ratePlan } : {}),
+      }))
       localStorage.setItem(
         FUNNEL_DRAFT_STORAGE_KEY,
         JSON.stringify({
@@ -1046,6 +1034,7 @@ export function BookingFunnelModal({
           checkin,
           checkout,
           ratePlan,
+          rooms: sanitizedRooms,
           requesterType,
           requesterName: requesterName.trim(),
           requesterPhone: requesterPhone.trim(),
@@ -1067,6 +1056,7 @@ export function BookingFunnelModal({
     checkin,
     checkout,
     ratePlan,
+    rooms,
     requesterType,
     requesterName,
     requesterPhone,
@@ -1356,6 +1346,7 @@ export function BookingFunnelModal({
 
   // Pricing & Calculations (Sincronizados com SEBRAE / Calendário / Preços + datas próprias por flat)
   const [customWindowPricingMap, setCustomWindowPricingMap] = useState<Record<string, any>>({})
+  const [customWindowAvailabilityMap, setCustomWindowAvailabilityMap] = useState<Record<string, number>>({})
 
   useEffect(() => {
     if (!open || rooms.length < 2) return
@@ -1366,7 +1357,7 @@ export function BookingFunnelModal({
       if (!rIn || !rOut || rOut <= rIn) continue
       if (rIn === checkin && rOut === checkout) continue
       const winKey = `${rIn}|${rOut}`
-      if (customWindowPricingMap[winKey]) continue
+      if (customWindowPricingMap[winKey] && customWindowAvailabilityMap[winKey] !== undefined) continue
       fetch(`/api/reservations/availability?checkin=${encodeURIComponent(rIn)}&checkout=${encodeURIComponent(rOut)}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((json) => {
@@ -1375,10 +1366,46 @@ export function BookingFunnelModal({
               prev[winKey] ? prev : { ...prev, [winKey]: json.dynamicPricing }
             )
           }
+          if (typeof json?.totalAvailableFlats === "number") {
+            setCustomWindowAvailabilityMap((prev) =>
+              prev[winKey] !== undefined ? prev : { ...prev, [winKey]: json.totalAvailableFlats }
+            )
+          }
         })
         .catch(() => {})
     }
-  }, [open, rooms, checkin, checkout, customWindowPricingMap])
+  }, [open, rooms, checkin, checkout, customWindowPricingMap, customWindowAvailabilityMap])
+
+  const mainAvailableFlats: number | null =
+    typeof activeAvailability?.totalAvailableFlats === "number"
+      ? activeAvailability.totalAvailableFlats
+      : null
+
+  const modalStockIssue = useMemo(() => {
+    const byWindow = new Map<string, { checkinDate: string; checkoutDate: string; requested: number }>()
+    for (const rm of rooms) {
+      const rIn = (rm.customDates && rm.checkinDate ? rm.checkinDate : checkin) || ""
+      const rOut = (rm.customDates && rm.checkoutDate ? rm.checkoutDate : checkout) || ""
+      if (!rIn || !rOut || rOut <= rIn) continue
+      const key = `${rIn}|${rOut}`
+      const entry = byWindow.get(key)
+      if (entry) entry.requested += 1
+      else byWindow.set(key, { checkinDate: rIn, checkoutDate: rOut, requested: 1 })
+    }
+    const mainKey = `${checkin}|${checkout}`
+    for (const [key, info] of Array.from(byWindow.entries())) {
+      const available = key === mainKey ? mainAvailableFlats : customWindowAvailabilityMap[key]
+      if (typeof available === "number" && (available === 0 || info.requested > available)) {
+        return {
+          checkinDate: info.checkinDate,
+          checkoutDate: info.checkoutDate,
+          requested: info.requested,
+          available,
+        }
+      }
+    }
+    return null
+  }, [rooms, checkin, checkout, mainAvailableFlats, customWindowAvailabilityMap])
 
   const flatsCount = rooms.length
   const dynPricing = activeAvailability?.dynamicPricing
@@ -1729,6 +1756,10 @@ export function BookingFunnelModal({
           checkinDate: checkin,
           checkoutDate: checkout,
           flatsCount,
+          roomsCount: flatsCount,
+          adultsCount: totalGuestsCount,
+          pagePath: pagePath || (typeof window !== "undefined" ? window.location.pathname : "/"),
+          attribution: getStoredAttribution(),
           ratePlan,
           rooms,
           extras: {
@@ -1807,6 +1838,19 @@ export function BookingFunnelModal({
             return
           }
         }
+      }
+      if (modalStockIssue) {
+        const msg =
+          modalStockIssue.available === 0
+            ? `Não há flats disponíveis de ${formatDisplayDate(modalStockIssue.checkinDate)} a ${formatDisplayDate(modalStockIssue.checkoutDate)}. Ajuste as datas para continuar.`
+            : `Para ${formatDisplayDate(modalStockIssue.checkinDate)} a ${formatDisplayDate(modalStockIssue.checkoutDate)}, temos apenas ${modalStockIssue.available} ${modalStockIssue.available === 1 ? "flat disponível" : "flats disponíveis"} (você selecionou ${modalStockIssue.requested}). Remova um flat ou ajuste as datas.`
+        reportValidationFailure(
+          "stock",
+          null,
+          "Disponibilidade insuficiente",
+          msg
+        )
+        return
       }
       if (bringingPet && !petRulesAccepted) {
         reportValidationFailure(
@@ -2173,8 +2217,7 @@ export function BookingFunnelModal({
         sendFunnelTelemetry(5, "reserva_confirmada", "concluido")
         try {
           localStorage.removeItem(FUNNEL_DRAFT_STORAGE_KEY)
-          localStorage.removeItem(FUNNEL_SESSION_STORAGE_KEY)
-          sessionStorage.removeItem("corpflats_funnel_session")
+          resetSessionTrackingId()
         } catch {}
         setCurrentStep(4)
         if (onSuccessBooking) onSuccessBooking(data.reservation)
@@ -2269,7 +2312,7 @@ export function BookingFunnelModal({
       roomsCount: rooms.length,
       bedType: rooms.some((r) => r.bedType === "twin") ? "twin" : "queen",
       ratePlan,
-      pixTotalAmount,
+      pixTotalAmount: activeAvailability ? pixTotalAmount : undefined,
       funnelStep: currentStep,
       funnelStepLabel: activeStepLabel,
       isWorkTrip,
@@ -2287,7 +2330,7 @@ export function BookingFunnelModal({
     roomsCount: rooms.length,
     bedType: rooms.some((r) => r.bedType === "twin") ? "twin" : "queen",
     ratePlan,
-    pixTotalAmount,
+    pixTotalAmount: activeAvailability ? pixTotalAmount : undefined,
     isWorkTrip,
   })
 
@@ -2303,20 +2346,58 @@ export function BookingFunnelModal({
         {/* ── ETAPA 1: PERSONALIZAÇÃO & EXTRAS ────────────────────────────── */}
         {currentStep === 1 && (
           <div className="space-y-4 py-2 animate-in fade-in">
-            {/* Banner de Urgência & Prova Social (Apenas quando restar 5 flats ou menos para uma ou mais datas solicitadas) */}
-            {showUrgencyBanner && (
-              <div className="p-3 bg-[#0F3D4C]/[0.05] border border-[#C5A059]/40 rounded-2xl flex items-center justify-between text-xs shadow-2xs">
+            {/* Banner de Disponibilidade em Tempo Real (Escassez, Indisponibilidade ou Confirmação Imediata) */}
+            {modalStockIssue ? (
+              <div
+                id="funnel-stock-status"
+                role="alert"
+                aria-live="assertive"
+                className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-2xl flex items-start gap-2.5 text-xs text-rose-900 dark:text-rose-200 font-semibold shadow-2xs"
+              >
+                <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" aria-hidden="true" />
+                <span>
+                  {modalStockIssue.available === 0
+                    ? `Sem flats disponíveis de ${formatDisplayDate(modalStockIssue.checkinDate)} a ${formatDisplayDate(modalStockIssue.checkoutDate)}. Ajuste as datas para continuar.`
+                    : `Para ${formatDisplayDate(modalStockIssue.checkinDate)} a ${formatDisplayDate(modalStockIssue.checkoutDate)}, restam apenas ${modalStockIssue.available} ${modalStockIssue.available === 1 ? "flat disponível" : "flats disponíveis"} (você selecionou ${modalStockIssue.requested}). Remova um flat ou ajuste as datas.`}
+                </span>
+              </div>
+            ) : showUrgencyBanner ? (
+              <div
+                id="funnel-stock-status"
+                role="status"
+                aria-live="polite"
+                className="p-3 bg-[#0F3D4C]/[0.05] border border-[#C5A059]/40 rounded-2xl flex items-center justify-between gap-2 text-xs shadow-2xs"
+              >
                 <div className="flex items-center gap-2 text-[#091E26] dark:text-slate-200 font-semibold">
-                  <Flame className="w-4 h-4 text-[#C5A059] shrink-0" />
+                  <Flame className="w-4 h-4 text-[#C5A059] shrink-0" aria-hidden="true" />
                   <span>
-                    Alta procura para essas datas! {minAvailable === 1 ? "Resta apenas 1 unidade" : "Restam poucas unidades"} no Soho Residence.
+                    Disponível! Alta procura para essas datas — {minAvailable === 1 ? "resta apenas 1 unidade" : `restam ${minAvailable} unidades`} no Soho Residence.
                   </span>
                 </div>
                 <Badge className="bg-[#091E26] text-[#E5C98B] border border-[#C5A059]/40 font-bold text-[10px] shrink-0">
                   Desconto no PIX
                 </Badge>
               </div>
-            )}
+            ) : activeAvailability?.available === true ? (
+              <div
+                id="funnel-stock-status"
+                role="status"
+                aria-live="polite"
+                className="p-3 bg-emerald-50/90 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/80 rounded-2xl flex items-center justify-between gap-2 text-xs shadow-2xs"
+              >
+                <div className="flex items-center gap-2 text-emerald-900 dark:text-emerald-200 font-semibold">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" aria-hidden="true" />
+                  <span>
+                    {rooms.length > 1
+                      ? `${rooms.length} flats disponíveis para suas datas! Confirmação imediata online.`
+                      : "Disponibilidade confirmada para suas datas! Confirmação imediata online."}
+                  </span>
+                </div>
+                <Badge className="bg-[#091E26] text-[#E5C98B] border border-[#C5A059]/40 font-bold text-[10px] shrink-0">
+                  -5% OFF PIX
+                </Badge>
+              </div>
+            ) : null}
 
             {/* ── Card Resumo da Hospedagem: Datas & Tarifa ── */}
             <FunnelStaySummaryCard
@@ -2586,7 +2667,11 @@ export function BookingFunnelModal({
 
               <Button
                 onClick={handleNextStep}
-                className="bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-black text-xs h-auto min-h-[44px] sm:min-h-10 py-2.5 px-6 rounded-xl shadow-md gap-1.5 w-full sm:w-auto whitespace-normal leading-tight text-center"
+                aria-disabled={Boolean(modalStockIssue) || undefined}
+                aria-describedby={modalStockIssue ? "funnel-stock-status" : undefined}
+                className={`bg-[#0F3D4C] text-white border border-[#C5A059]/40 font-black text-xs h-auto min-h-[44px] sm:min-h-10 py-2.5 px-6 rounded-xl shadow-md gap-1.5 w-full sm:w-auto whitespace-normal leading-tight text-center ${
+                  modalStockIssue ? "opacity-55 cursor-not-allowed" : "hover:bg-[#091E26]"
+                }`}
               >
                 <span>Avançar para Seus Dados</span>
                 <ArrowRight className="w-4 h-4 shrink-0 text-[#E5C98B]" />

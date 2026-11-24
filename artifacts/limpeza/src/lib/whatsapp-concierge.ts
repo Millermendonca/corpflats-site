@@ -1,6 +1,7 @@
 import {
   getSessionTrackingId,
   getStoredAttribution,
+  sendTelemetryLater,
   trackWhatsAppConciergeClick,
 } from "@/lib/analytics-tracking";
 
@@ -136,6 +137,11 @@ export function openSmartWhatsAppConcierge(ctx: ConciergeContext): void {
   } catch {}
 
   try {
+    const resolvedRoomsCount = Math.max(1, Number(ctx.roomsCount) || 1);
+    const resolvedTotalAmount =
+      typeof ctx.pixTotalAmount === "number" && Number.isFinite(ctx.pixTotalAmount) && ctx.pixTotalAmount > 0
+        ? ctx.pixTotalAmount
+        : 0;
     const payload = JSON.stringify({
       sessionId: getSessionTrackingId(),
       step: ctx.funnelStep || 1,
@@ -146,23 +152,14 @@ export function openSmartWhatsAppConcierge(ctx: ConciergeContext): void {
       checkinDate: ctx.checkinDate,
       checkoutDate: ctx.checkoutDate,
       ratePlan: ctx.ratePlan,
-      roomsCount: ctx.roomsCount || 1,
-      adultsCount: ctx.adultsCount || 1,
-      totalAmount: ctx.pixTotalAmount,
+      flatsCount: resolvedRoomsCount,
+      roomsCount: resolvedRoomsCount,
+      adultsCount: totalGuests,
+      totalAmount: resolvedTotalAmount,
       attribution: getStoredAttribution(),
     });
 
-    if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
-      const blob = new Blob([payload], { type: "application/json" });
-      navigator.sendBeacon("/api/funnel/track", blob);
-    } else if (typeof fetch === "function") {
-      fetch("/api/funnel/track", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: payload,
-        keepalive: true,
-      }).catch(() => {});
-    }
+    sendTelemetryLater("/api/funnel/track", payload);
   } catch {}
 
   const url = buildSmartConciergeUrl(ctx);

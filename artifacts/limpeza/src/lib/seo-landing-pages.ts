@@ -57,11 +57,22 @@ export interface SeoLandingPageSpec {
   faqHeading?: string;
 }
 
+export interface DraftRoomSnapshot {
+  id: number;
+  bedType: "queen" | "twin";
+  adults: number;
+  customDates?: boolean;
+  checkinDate?: string;
+  checkoutDate?: string;
+  ratePlan?: "with_breakfast" | "room_only";
+}
+
 export interface InitialBookingParams {
   checkin: string;
   checkout: string;
   adults: number;
   roomsCount: number;
+  initialRooms?: DraftRoomSnapshot[];
   bedType: "queen" | "twin";
   ratePlan: "with_breakfast" | "room_only";
   isWorkTrip: boolean;
@@ -249,7 +260,7 @@ export const SEO_LANDING_PAGES: Record<LandingPageSlug, SeoLandingPageSpec> = {
     heroImageUrl: "/photos/soho/hero-jacuzzi-cobertura.jpg",
     heroImageAlt:
       "Cobertura com jacuzzi aquecida e deck de madeira da CorpFlats no Edifício Soho Residence no Centro de Campos dos Goytacazes RJ",
-    ctaButtonText: "Ver disponibilidade",
+    ctaButtonText: "Reservar agora",
     defaultNights: 2,
     defaultAdults: 2,
     defaultRatePlan: "with_breakfast",
@@ -1446,18 +1457,53 @@ export function resolveInitialBookingParams(
         span > 30 ? addDaysToIso(draftCheckin, 30) : savedDraft.checkout.trim();
     }
 
-    const firstRoom =
-      Array.isArray(savedDraft.rooms) && savedDraft.rooms.length > 0
-        ? savedDraft.rooms[0]
-        : null;
+    const rawDraftRooms = Array.isArray(savedDraft.rooms) ? savedDraft.rooms : [];
+    const restoredRooms: DraftRoomSnapshot[] | undefined =
+      rawDraftRooms.length > 0
+        ? rawDraftRooms.slice(0, 19).map((rm: any, idx: number) => {
+            const rBed: "queen" | "twin" = rm?.bedType === "twin" ? "twin" : "queen";
+            const rAdults = clampInt(Number(rm?.adults) || spec.defaultAdults, 1, 2);
+            const rCustomDates = Boolean(rm?.customDates);
+            const rIn =
+              rCustomDates &&
+              typeof rm?.checkinDate === "string" &&
+              parseIsoDateLocal(rm.checkinDate) &&
+              rm.checkinDate >= todayIso
+                ? rm.checkinDate.trim()
+                : undefined;
+            const rOut =
+              rCustomDates &&
+              rIn &&
+              typeof rm?.checkoutDate === "string" &&
+              parseIsoDateLocal(rm.checkoutDate) &&
+              rm.checkoutDate > rIn
+                ? rm.checkoutDate.trim()
+                : undefined;
+            const rPlan: "with_breakfast" | "room_only" | undefined =
+              rm?.ratePlan === "with_breakfast" || rm?.ratePlan === "room_only"
+                ? rm.ratePlan
+                : undefined;
+            return {
+              id: Number(rm?.id) > 0 ? Number(rm.id) : idx + 1,
+              bedType: rBed,
+              adults: rAdults,
+              ...(rCustomDates && rIn && rOut
+                ? { customDates: true, checkinDate: rIn, checkoutDate: rOut }
+                : {}),
+              ...(rPlan ? { ratePlan: rPlan } : {}),
+            };
+          })
+        : undefined;
+
+    const firstRoom = restoredRooms && restoredRooms.length > 0 ? restoredRooms[0] : null;
     const draftAdults = firstRoom?.adults
-      ? clampInt(Number(firstRoom.adults), 1, 3)
+      ? clampInt(Number(firstRoom.adults), 1, 2)
       : savedDraft.adults
-        ? clampInt(Number(savedDraft.adults), 1, 3)
+        ? clampInt(Number(savedDraft.adults), 1, 2)
         : spec.defaultAdults;
     const draftRoomsCount =
-      Array.isArray(savedDraft.rooms) && savedDraft.rooms.length > 0
-        ? clampInt(savedDraft.rooms.length, 1, 19)
+      restoredRooms && restoredRooms.length > 0
+        ? clampInt(restoredRooms.length, 1, 19)
         : 1;
     const draftBedType: "queen" | "twin" =
       firstRoom?.bedType === "twin" || savedDraft.bedType === "twin" ? "twin" : "queen";
@@ -1469,6 +1515,7 @@ export function resolveInitialBookingParams(
       checkout: draftCheckout,
       adults: draftAdults,
       roomsCount: draftRoomsCount,
+      ...(restoredRooms ? { initialRooms: restoredRooms } : {}),
       bedType: draftBedType,
       ratePlan: draftRatePlan,
       isWorkTrip: Boolean(savedDraft.isWorkTrip ?? spec.defaultIsWorkTrip),

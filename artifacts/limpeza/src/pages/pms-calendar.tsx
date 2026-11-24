@@ -2592,6 +2592,28 @@ export function areGuestNamesCompatibleUI(nameA?: string | null, nameB?: string 
   return false;
 }
 
+export function pickBestCompatibleGuestNameUI(primaryName?: string | null, secondaryName?: string | null): string {
+  const isPlaceholder = (str?: string | null) => {
+    const s = String(str || "").trim();
+    if (!s || s.length < 2) return true;
+    return /^(h[óo]spede(\s*\d+|\s+a\s+definir|\s+titular|\s+b2b|\s+whatsapp)?|a\s+definir.*|visitante|cliente|sem\s+nome|null|undefined)$/i.test(s);
+  };
+  const p = String(primaryName || "").trim();
+  const s = String(secondaryName || "").trim();
+  const pValid = !isPlaceholder(p);
+  const sValid = !isPlaceholder(s);
+  if (!pValid && !sValid) return p || s || "";
+  if (pValid && !sValid) return p;
+  if (!pValid && sValid) return s;
+  if (areGuestNamesCompatibleUI(p, s)) {
+    const pWords = p.split(/\s+/).filter(Boolean).length;
+    const sWords = s.split(/\s+/).filter(Boolean).length;
+    if (pWords !== sWords) return pWords > sWords ? p : s;
+    return p.length >= s.length ? p : s;
+  }
+  return p;
+}
+
 // Helper exportado para validação e parsing seguro de datas com limitação de ano (2000-2100)
 export function safeParseDate(dateStr: string | null | undefined): Date | null {
   if (!dateStr || typeof dateStr !== "string" || dateStr.length < 10) return null;
@@ -6645,20 +6667,20 @@ export default function PmsCalendar(props?: {
     setGuestSearchFilter("")
 
     const g1 = resItem.guests?.[0]
-    const rawLoadedG1Name = (g1?.name || resItem.guestName || "").trim()
+    const rawLoadedG1Name = pickBestCompatibleGuestNameUI(resItem.guestName, g1?.name)
     const isPendingLoadedG1 = Boolean(
       (resItem as any).guestPending ||
       /^(h[óo]spede(\s*\d+|\s+a\s+definir|\s+titular|\s+b2b)?|a\s+definir.*)$/i.test(rawLoadedG1Name)
     )
     const rawLoadedG1Id = resItem.guestId || g1?.guestId
     const linkedG1Crm = rawLoadedG1Id ? crmGuests.find(cg => String(cg.id) === String(rawLoadedG1Id)) : null
-    const isLinkedG1Compatible = !linkedG1Crm || areGuestNamesCompatibleUI(rawLoadedG1Name, linkedG1Crm.name || linkedG1Crm.fullName)
+    const isLinkedG1Compatible = !linkedG1Crm || areGuestNamesCompatibleUI(rawLoadedG1Name, linkedG1Crm.fullName || linkedG1Crm.name)
     const loadedG1: FlatGuestFormFields = {
       guestId: rawLoadedG1Id && isLinkedG1Compatible ? String(rawLoadedG1Id) : "",
       name: isPendingLoadedG1 ? "" : rawLoadedG1Name,
-      cpf: g1?.cpf || resItem.guestDocument || "",
-      phone: g1?.phone || resItem.guestPhone || "",
-      email: g1?.email || resItem.guestEmail || "",
+      cpf: (resItem.guestDocument || g1?.cpf || "").trim(),
+      phone: (resItem.guestPhone || g1?.phone || "").trim(),
+      email: (resItem.guestEmail || g1?.email || "").trim(),
     }
 
     const g2 = resItem.guests?.[1]
@@ -7373,9 +7395,12 @@ export default function PmsCalendar(props?: {
     const crmCpf = (g.documentNumber || g.document || g.cpf || "").trim()
     const crmPhone = (g.phone || "").trim()
     const crmEmail = (g.email || "").trim()
+    const crmFullName = pickBestCompatibleGuestNameUI(g.fullName, g.name)
     const nextGuestObj: FlatGuestFormFields = {
       guestId: String(g.id),
-      name: g.name || g.fullName || "",
+      name: isSameGuest
+        ? pickBestCompatibleGuestNameUI(prevFields?.name || selectedRes?.guestName, crmFullName)
+        : crmFullName,
       cpf: isSameGuest ? ((prevFields?.cpf || "").trim() || crmCpf) : crmCpf,
       phone: isSameGuest ? ((prevFields?.phone || "").trim() || crmPhone) : crmPhone,
       email: isSameGuest ? ((prevFields?.email || "").trim() || crmEmail) : crmEmail,

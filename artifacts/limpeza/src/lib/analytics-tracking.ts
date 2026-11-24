@@ -42,6 +42,8 @@ declare global {
 
 const ATTRIBUTION_STORAGE_KEY = "corpflats_attribution_v1"
 const SESSION_STORAGE_KEY = "corpflats_funnel_session"
+const LEGACY_SESSION_STORAGE_KEY = "corpflats_funnel_session_v1"
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000
 const PURCHASE_DEDUP_PREFIX = "corpflats_tracked_purchase_"
 const ATTRIBUTION_TTL_MS = 90 * 24 * 60 * 60 * 1000
 
@@ -132,7 +134,37 @@ function isExternalReferrer(ref: string): boolean {
 export function getSessionTrackingId(): string {
   const existing = safeReadStorage(SESSION_STORAGE_KEY)
   if (existing && existing.length >= 8) {
+    try {
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem(SESSION_STORAGE_KEY, existing)
+      }
+    } catch {}
     return existing
+  }
+  if (typeof window !== "undefined") {
+    try {
+      const legacyRaw = window.localStorage.getItem(LEGACY_SESSION_STORAGE_KEY)
+      if (legacyRaw) {
+        const parsed = JSON.parse(legacyRaw)
+        if (
+          parsed?.sessionId &&
+          parsed?.savedAt &&
+          Date.now() - Number(parsed.savedAt) < SESSION_TTL_MS
+        ) {
+          const id = String(parsed.sessionId)
+          safeWriteStorage(SESSION_STORAGE_KEY, id)
+          window.sessionStorage.setItem(SESSION_STORAGE_KEY, id)
+          return id
+        }
+      }
+    } catch {}
+    try {
+      const sessExisting = window.sessionStorage.getItem(SESSION_STORAGE_KEY)
+      if (sessExisting && sessExisting.length >= 8) {
+        safeWriteStorage(SESSION_STORAGE_KEY, sessExisting)
+        return sessExisting
+      }
+    } catch {}
   }
   if (memoryFallbackSessionId) {
     return memoryFallbackSessionId
@@ -144,7 +176,92 @@ export function getSessionTrackingId(): string {
   const generated = `cf_${Date.now()}_${randomPart}`
   memoryFallbackSessionId = generated
   safeWriteStorage(SESSION_STORAGE_KEY, generated)
+  try {
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(SESSION_STORAGE_KEY, generated)
+    }
+  } catch {}
   return generated
+}
+
+export function resetSessionTrackingId(): void {
+  memoryFallbackSessionId = ""
+  if (typeof window === "undefined") return
+  try {
+    window.localStorage.removeItem(SESSION_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_SESSION_STORAGE_KEY)
+    window.sessionStorage.removeItem(SESSION_STORAGE_KEY)
+  } catch {}
+}
+
+type FetchLaterInit = RequestInit & { activateAfter?: number }
+type FetchLaterFn = (url: string, init?: FetchLaterInit) => { readonly activated: boolean }
+
+function ensureFetchLater(): FetchLaterFn | null {
+  if (typeof window === "undefined" || typeof document === "undefined") return null
+  const g = globalThis as typeof globalThis & { fetchLater?: FetchLaterFn }
+  if (typeof g.fetchLater !== "function") {
+    g.fetchLater = function fetchLaterPolyfill(url: string, init: FetchLaterInit = {}) {
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+      let activated = false
+
+      function sendNow() {
+        if (!(init.signal && init.signal.aborted)) {
+          if (
+            (typeof Request !== "undefined" && "keepalive" in Request.prototype) ||
+            init.method !== "POST" ||
+            init.headers
+          ) {
+            fetch(url, Object.assign({}, init, { keepalive: true })).catch(() => {})
+            activated = true
+          } else if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+            activated = navigator.sendBeacon(url, init.body as BodyInit)
+          }
+        }
+        destroy()
+      }
+
+      function destroy() {
+        document.removeEventListener("visibilitychange", sendNow)
+        if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
+      }
+
+      if (document.visibilityState === "hidden") {
+        queueMicrotask(sendNow)
+      } else {
+        document.addEventListener("visibilitychange", sendNow)
+        if (typeof init.activateAfter === "number" && init.activateAfter >= 0) {
+          timeoutHandle = setTimeout(sendNow, init.activateAfter)
+        }
+      }
+
+      if (init.signal) {
+        init.signal.addEventListener("abort", destroy)
+      }
+
+      return {
+        get activated() {
+          return activated
+        },
+      }
+    }
+  }
+  return g.fetchLater
+}
+
+export function sendTelemetryLater(url: string, jsonBody: string): void {
+  const fetchLaterFn = ensureFetchLater()
+  if (!fetchLaterFn) return
+  try {
+    fetchLaterFn(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: jsonBody,
+      activateAfter: 0,
+    })
+  } catch {
+    // Handle quota or restricted-context errors silently for non-blocking telemetry
+  }
 }
 
 export function captureAttributionOnLoad(): AttributionData {
