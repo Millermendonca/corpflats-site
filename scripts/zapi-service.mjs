@@ -3020,6 +3020,15 @@ export function isMissingGuestDataForCredential(reservation = {}, db = null) {
 }
 
 function areGuestNamesCompatibleInline(nameA = "", nameB = "") {
+  const splitParts = (raw) => {
+    const s = String(raw || "").trim();
+    if (!s) return [];
+    if (/[\/|&+;]/.test(s)) {
+      const p = s.split(/[\/|&+;]+/).map(x => x.trim()).filter(x => x.length >= 2);
+      if (p.length > 1) return p;
+    }
+    return [s];
+  };
   const norm = s =>
     String(s || "")
       .normalize("NFD")
@@ -3028,10 +3037,17 @@ function areGuestNamesCompatibleInline(nameA = "", nameB = "") {
       .replace(/[^a-z0-9\s]/g, " ")
       .split(/\s+/)
       .filter(w => w.length >= 2 && !["de", "da", "do", "das", "dos"].includes(w));
-  const tokA = norm(nameA);
-  const tokB = norm(nameB);
-  if (tokA.length === 0 || tokB.length === 0) return false;
-  return tokA[0] === tokB[0] || tokA.every(t => tokB.includes(t)) || tokB.every(t => tokA.includes(t));
+  const listA = splitParts(nameA);
+  const listB = splitParts(nameB);
+  if (listA.length === 0 || listB.length === 0) return false;
+  return listA.some(pa =>
+    listB.some(pb => {
+      const tokA = norm(pa);
+      const tokB = norm(pb);
+      if (tokA.length === 0 || tokB.length === 0) return false;
+      return tokA[0] === tokB[0] || tokA.every(t => tokB.includes(t)) || tokB.every(t => tokA.includes(t));
+    })
+  );
 }
 
 const INACTIVE_STAY_RESERVATION_STATUSES = new Set([

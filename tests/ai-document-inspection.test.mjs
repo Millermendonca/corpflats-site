@@ -9,6 +9,7 @@ import {
   isCamposDosGoytacazes,
   checkYouthLocalRisk,
   comparePersonNames,
+  areGuestNamesCompatible,
   compareCpfDigits,
   compareBirthDates,
   formatOfficialPersonName,
@@ -588,7 +589,50 @@ describe('Inspeção de Documentos com Foto por Inteligência Artificial', () =>
     assert.strictEqual(resMiller.isCamposResident, true);
   });
 
-  it('24. Limpeza de processo pós-testes', () => {
+  it('24. Caso real Flat 509 (Elisangela/Rosana): aceita nomes compostos por barra, solicitante/hóspede, variação Elizangela e mudança de sobrenome com nascimento', async () => {
+    // 1. Reserva com nome duplo "Elisangela/Rosana" ou "Elisangela / Rosana" ou "Elisangela e Rosana"
+    assert.strictEqual(comparePersonNames('ROSANA PEREIRA DA SILVA', 'Elisangela/Rosana'), true);
+    assert.strictEqual(comparePersonNames('ELISANGELA MARIA COSTA', 'Elisangela/Rosana'), true);
+    assert.strictEqual(comparePersonNames('ELIZANGELA MARIA COSTA', 'Elisangela / Rosana'), true);
+    assert.strictEqual(comparePersonNames('ROSANA PEREIRA DA SILVA', 'Elisangela e Rosana'), true);
+    assert.strictEqual(comparePersonNames('CARLOS ALBERTO SOUZA', 'Elisangela/Rosana'), false, 'Terceiro estranho deve continuar bloqueado');
+
+    assert.strictEqual(areGuestNamesCompatible('Rosana Pereira da Silva', 'Elisangela/Rosana'), true);
+    assert.strictEqual(areGuestNamesCompatible('Elisangela Maria Costa', 'Elisangela / Rosana'), true);
+    assert.strictEqual(areGuestNamesCompatible('Carlos Alberto Souza', 'Elisangela/Rosana'), false);
+
+    // 2. Mudança de sobrenome (solteira/casada) em RG antigo sem CPF quando prenome e data de nascimento batem
+    assert.strictEqual(
+      comparePersonNames('ROSANA SANTOS DA SILVA', 'Rosana Oliveira', { birthDateMatches: true }),
+      true,
+      'Deve aprovar mudança de sobrenome de casada/solteira quando prenome e nascimento batem'
+    );
+
+    // 3. PDF de documento oficial de Rosana (inclusive RG sem CPF impresso) na reserva "Elisangela/Rosana"
+    const rawStreamRosana = 'BT /F1 12 Tf (NOME: ROSANA PEREIRA DA SILVA) Tj (DATA DE NASCIMENTO: 14/05/1982) Tj ET';
+    const compressedRosana = zlib.deflateSync(Buffer.from(rawStreamRosana, 'latin1'));
+    const pdfRosana = Buffer.concat([
+      Buffer.from('%PDF-1.4\n1 0 obj\n<< /Length ' + compressedRosana.length + ' /Filter /FlateDecode >>\nstream\r\n', 'latin1'),
+      compressedRosana,
+      Buffer.from('\r\nendstream\nendobj\n%%EOF', 'latin1')
+    ]);
+
+    const res509 = await inspectDocumentWithAI({
+      fileBase64: `data:application/pdf;base64,${pdfRosana.toString('base64')}`,
+      fileName: 'rg_rosana.pdf',
+      providedName: 'Rosana Pereira da Silva',
+      providedCpf: '123.456.789-09',
+      reservationName: 'Elisangela/Rosana',
+      providedBirthDate: '1982-05-14'
+    });
+
+    assert.strictEqual(res509.nameMatches, true, 'Deve aprovar nome de Rosana na reserva Elisangela/Rosana');
+    assert.strictEqual(res509.reservationNameMatches, true, 'reservationNameMatches deve ser true para Elisangela/Rosana');
+    assert.strictEqual(res509.identityMatches, true, 'identityMatches deve ser true para documento legítimo de Rosana');
+    assert.strictEqual(res509.mismatchReasons.length, 0);
+  });
+
+  it('25. Limpeza de processo pós-testes', () => {
     setTimeout(() => { process.exit(0); }, 50);
   });
 });

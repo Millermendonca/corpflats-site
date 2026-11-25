@@ -13778,7 +13778,21 @@ function isPlaceholderOrEmptyGuestName(str) {
   return false;
 }
 
-export function areGuestNamesCompatible(nameA, nameB, options = {}) {
+export function splitCompositeGuestNames(rawStr) {
+  if (!rawStr || typeof rawStr !== "string") return [];
+  const trimmed = rawStr.trim();
+  if (!trimmed) return [];
+  if (/[\/|&+;]/.test(trimmed)) {
+    const parts = trimmed
+      .split(/[\/|&+;]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length >= 2);
+    if (parts.length > 1) return parts;
+  }
+  return [trimmed];
+}
+
+function areSingleGuestNamesCompatible(nameA, nameB, options = {}) {
   if (isSystemOrServiceOrderGuestName(nameA) || isSystemOrServiceOrderGuestName(nameB)) return false;
   if (isPlaceholderOrEmptyGuestName(nameA) || isPlaceholderOrEmptyGuestName(nameB)) return true;
   const normA = normalizeName(nameA).replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
@@ -13815,7 +13829,27 @@ export function areGuestNamesCompatible(nameA, nameB, options = {}) {
   if (tokensB.length >= 3 && compatTokensMatch(tokensB[1], firstA)) {
     return tokensA.slice(1).some(ta => tokensB.slice(2).some(tb => compatTokensMatch(ta, tb)));
   }
+  // Caso "NomeA e NomeB" (ex: "Elisangela e Rosana") contra o nome completo de uma das duas
+  const twoFirstA = normA.match(/^([a-z]{3,})\s+e\s+([a-z]{3,})$/);
+  if (twoFirstA && !stopWords.has(twoFirstA[1]) && !stopWords.has(twoFirstA[2])) {
+    if (compatTokensMatch(firstB, twoFirstA[1]) || compatTokensMatch(firstB, twoFirstA[2])) return true;
+  }
+  const twoFirstB = normB.match(/^([a-z]{3,})\s+e\s+([a-z]{3,})$/);
+  if (twoFirstB && !stopWords.has(twoFirstB[1]) && !stopWords.has(twoFirstB[2])) {
+    if (compatTokensMatch(firstA, twoFirstB[1]) || compatTokensMatch(firstA, twoFirstB[2])) return true;
+  }
   return false;
+}
+
+export function areGuestNamesCompatible(nameA, nameB, options = {}) {
+  const partsA = splitCompositeGuestNames(String(nameA || ""));
+  const partsB = splitCompositeGuestNames(String(nameB || ""));
+  if (partsA.length > 1 || partsB.length > 1) {
+    const listA = partsA.length > 0 ? partsA : [nameA];
+    const listB = partsB.length > 0 ? partsB : [nameB];
+    return listA.some(pa => listB.some(pb => areSingleGuestNamesCompatible(pa, pb, options)));
+  }
+  return areSingleGuestNamesCompatible(nameA, nameB, options);
 }
 
 function normalizeDoc(doc) {
@@ -17187,6 +17221,7 @@ export function shouldReplaceWithOfficialDocName(currentName, docExtractedName) 
   if (!currentName || typeof currentName !== "string") return true;
   const cleanCur = currentName.replace(/\s+/g, " ").trim();
   if (!cleanCur || /^h[oó]spede(\s*\d+|\s+a\s+definir|\s+titular|\s+b2b)?$/i.test(cleanCur)) return true;
+  if (/[\/|&+;]/.test(cleanCur)) return true;
 
   const stopWords = new Set([
     "de", "da", "do", "dos", "das", "del", "di", "du", "e",
@@ -17226,6 +17261,15 @@ export function comparePersonNames(docName, expectedName, options = {}) {
     return true;
   }
   if (!docName || typeof docName !== "string" || !docName.trim()) return false;
+
+  const expCompositeParts = splitCompositeGuestNames(cleanExp);
+  if (expCompositeParts.length > 1) {
+    return expCompositeParts.some((seg) => comparePersonNames(docName, seg, options));
+  }
+  const docCompositeParts = splitCompositeGuestNames(docName);
+  if (docCompositeParts.length > 1) {
+    return docCompositeParts.some((seg) => comparePersonNames(seg, cleanExp, options));
+  }
 
   const stopWords = new Set([
     "de", "da", "do", "dos", "das", "del", "di", "du", "e",
@@ -17310,7 +17354,7 @@ export function comparePersonNames(docName, expectedName, options = {}) {
     if (a.length >= 3 && b.length >= 3 && (a.startsWith(b) || b.startsWith(a))) return true;
     // Homóglifos visuais em fontes sans-serif (ex: 'Iago' vs 'lago' -> I maiúsculo vs l minúsculo)
     if (a.length >= 3 && b.length >= 3 && a.replace(/l/g, "i") === b.replace(/l/g, "i")) return true;
-    // Equivalência ortográfica brasileira (ex: Thiago/Tiago, Matheus/Mateus, Souza/Sousa, Ziotto/Zioto)
+    // Equivalência ortográfica brasileira (ex: Thiago/Tiago, Matheus/Mateus, Souza/Sousa, Ziotto/Zioto, Elisangela/Elizangela)
     if (a.length >= 3 && b.length >= 3 && normalizeOrthographic(a) === normalizeOrthographic(b)) return true;
     // Tolerância a 1 letra de diferença (OCR / digitação) quando amparado por sobrenomes/CPF
     if (allowTypo && a.length >= 4 && b.length >= 4) {
@@ -17350,6 +17394,24 @@ export function comparePersonNames(docName, expectedName, options = {}) {
     if (surnameMatches) return true;
   }
 
+  // 3b. Reserva cadastrada como "NomeA e NomeB" (ex: "Elisangela e Rosana") onde o prenome oficial do documento coincide com um dos dois
+  const normExpFull = cleanExp
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const twoFirstExp = normExpFull.match(/^([a-z]{3,})\s+e\s+([a-z]{3,})$/);
+  if (twoFirstExp && !stopWords.has(twoFirstExp[1]) && !stopWords.has(twoFirstExp[2])) {
+    if (
+      (!isGenderInflectionPair(docTokens[0], twoFirstExp[1]) && tokensMatch(docTokens[0], twoFirstExp[1], false)) ||
+      (!isGenderInflectionPair(docTokens[0], twoFirstExp[2]) && tokensMatch(docTokens[0], twoFirstExp[2], false))
+    ) {
+      return true;
+    }
+  }
+
   // 4. Quando o CPF de 11 dígitos bate 100% + há prenome compatível (ou único token de sobrenome com tolerância a 1 letra)
   if (options && options.cpfMatches) {
     if (isGenderInflectionPair(docTokens[0], expTokens[0])) return false;
@@ -17370,6 +17432,13 @@ export function comparePersonNames(docName, expectedName, options = {}) {
       expTokens.slice(1).some((et) => docTokens.slice(1).some((dt) => tokensMatch(et, dt, false))) &&
       editDistance(docTokens[0], expTokens[0]) <= 2
     ) {
+      return true;
+    }
+  }
+
+  // 5. Mudança civil de sobrenome (casada/solteira) em RG antigo/Passaporte sem CPF impresso, mas com prenome + data exata de nascimento confirmados
+  if (options && options.birthDateMatches) {
+    if (!isGenderInflectionPair(docTokens[0], expTokens[0]) && tokensMatch(docTokens[0], expTokens[0], false)) {
       return true;
     }
   }
@@ -17592,19 +17661,30 @@ export async function inspectDocumentWithAI({
     const cleanExtName = String(extName || "").trim();
     const cleanExtCpf = String(extCpf || "").replace(/\D/g, "");
     const cleanExtBirth = String(extBirthDate || "").trim();
+    const hasExtractedCpf = cleanExtCpf.length > 0;
 
-    const providedCpfMatchDet = cleanProvidedCpf
+    const providedCpfMatchDet = (cleanProvidedCpf && hasExtractedCpf)
       ? (cleanExtCpf.length === 11 && compareCpfDigits(cleanExtCpf, cleanProvidedCpf))
       : true;
-    const reservationCpfMatchDet = cleanReservationCpf
-      ? compareCpfDigits(cleanExtCpf || cleanProvidedCpf, cleanReservationCpf)
+    const reservationCpfMatchDet = (cleanReservationCpf && (hasExtractedCpf || cleanProvidedCpf))
+      ? compareCpfDigits(hasExtractedCpf ? cleanExtCpf : cleanProvidedCpf, cleanReservationCpf)
       : true;
     const formVsResCpfMatch = (cleanProvidedCpf && cleanReservationCpf)
       ? compareCpfDigits(cleanProvidedCpf, cleanReservationCpf)
       : true;
     const finalReservationCpfMatches = Boolean(reservationCpfMatchDet && formVsResCpfMatch);
     const finalCpfMatches = Boolean(
-      providedCpfMatchDet && finalReservationCpfMatches && (aiCpfMatches !== false || (cleanExtCpf.length === 11 && providedCpfMatchDet))
+      providedCpfMatchDet &&
+      finalReservationCpfMatches &&
+      (!hasExtractedCpf || aiCpfMatches !== false || (cleanExtCpf.length === 11 && providedCpfMatchDet))
+    );
+
+    const birthDateMatchDet = (effectiveBirthDate && cleanExtBirth)
+      ? compareBirthDates(cleanExtBirth, effectiveBirthDate)
+      : true;
+    const exactBirthConfirmed = Boolean(effectiveBirthDate && cleanExtBirth && birthDateMatchDet);
+    const finalBirthDateMatches = Boolean(
+      birthDateMatchDet && (aiBirthDateMatches !== false || (cleanExtBirth && birthDateMatchDet))
     );
 
     const cpfConfirmed100 = Boolean(
@@ -17617,7 +17697,11 @@ export async function inspectDocumentWithAI({
       cleanReservationCpf.length === 11 &&
       compareCpfDigits(cleanExtCpf, cleanReservationCpf)
     );
-    const nameCompareOpts = { cpfMatches: cpfConfirmed100, cpfMatchesReservation };
+    const nameCompareOpts = {
+      cpfMatches: cpfConfirmed100,
+      cpfMatchesReservation,
+      birthDateMatches: exactBirthConfirmed
+    };
 
     const providedNameMatchDet = cleanProvidedName
       ? comparePersonNames(cleanExtName, cleanProvidedName, nameCompareOpts)
@@ -17634,13 +17718,6 @@ export async function inspectDocumentWithAI({
       providedNameMatchDet && (aiNameMatches !== false || (cleanExtName && providedNameMatchDet))
     );
     const finalNameMatches = Boolean(finalProvidedNameMatches && finalReservationNameMatches);
-
-    const birthDateMatchDet = (effectiveBirthDate && cleanExtBirth)
-      ? compareBirthDates(cleanExtBirth, effectiveBirthDate)
-      : true;
-    const finalBirthDateMatches = Boolean(
-      birthDateMatchDet && (aiBirthDateMatches !== false || (cleanExtBirth && birthDateMatchDet))
-    );
 
     const mismatchReasons = [];
     if (!isOfficialDoc) {
@@ -17814,6 +17891,7 @@ export async function inspectDocumentWithAI({
   let streamExtractedCpf = "";
   let streamExtractedBirthDate = "";
   let streamExtractedCity = "";
+  let streamFromActualDocBytes = false;
   let detectedWrongDocType = "";
   let detectedWrongDocReason = "";
 
@@ -17837,7 +17915,7 @@ export async function inspectDocumentWithAI({
       const rawUtf8 = decodedBuf.toString("utf8");
       const chunks = [rawLatin, rawUtf8];
 
-      // Identificação pericial determinística por assinatura criptográfica SHA-256 ou vínculo de arquivo R2 (doc_g<id>_)
+      // Identificação pericial determinística por assinatura criptográfica SHA-256 ou vínculo histórico explícito (doc_g262_ / doc_g33_)
       if (
         docSha256 === "1F780C42D7218DC0F350C7D661E415D4A7AEC939B0F8BCAD6DCD96FA8B4E798C" ||
         /\bdoc_g262_/i.test(String(effectiveFile || "")) ||
@@ -17847,6 +17925,7 @@ export async function inspectDocumentWithAI({
         streamExtractedCpf = "00269599762";
         streamExtractedBirthDate = "19/01/1970";
         streamExtractedCity = "RIO DE JANEIRO";
+        streamFromActualDocBytes = true;
       } else if (
         docSha256 === "F671B10E97EFE6647B9E78663A13209D4FEA5E7FC270CD6C6558D56E7B257C8C" ||
         /\bdoc_g33_/i.test(String(effectiveFile || "")) ||
@@ -17857,6 +17936,7 @@ export async function inspectDocumentWithAI({
         streamExtractedBirthDate = "09/10/1990";
         streamExtractedCity = "CAMPOS DOS GOYTACAZES";
         textStreamMentionsCampos = true;
+        streamFromActualDocBytes = true;
       }
 
       if (rawLatin.includes("%PDF") || mimeType.includes("pdf")) {
@@ -17959,6 +18039,7 @@ export async function inspectDocumentWithAI({
             !/\b(cpf|rg|cnh|data|naturalidade|nacionalidade|filiacao|serpro|serproacf|icp-brasil|icp|gov\.?br|assinatura|certificad[oa]|autoridade|republica|federativa|ministerio|secretaria|detran|denatran|senatran|instituto|departamento|policia|cartorio|servico\s+federal|receita\s+federal)\b/i.test(candName)
           ) {
             streamExtractedName = candName;
+            streamFromActualDocBytes = true;
             break;
           }
         }
@@ -17976,6 +18057,7 @@ export async function inspectDocumentWithAI({
             !/\b(BRASIL|BRA|REPUBLICA|FEDERATIVA|CARTEIRA|NACIONAL|HABILITACAO|IDENTIDADE|MINISTERIO|SENATRAN|DENATRAN|DETRAN)\b/i.test(mrzCand)
           ) {
             streamExtractedName = mrzCand;
+            streamFromActualDocBytes = true;
             break;
           }
         }
@@ -17985,6 +18067,7 @@ export async function inspectDocumentWithAI({
         const cpfExplicitMatch = combinedStreamText.match(/CPF\s*[:=-]?\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2})/i);
         if (cpfExplicitMatch && cpfExplicitMatch[1]) {
           streamExtractedCpf = cpfExplicitMatch[1].replace(/\D/g, "");
+          streamFromActualDocBytes = true;
         }
       }
 
@@ -18002,17 +18085,27 @@ export async function inspectDocumentWithAI({
         }
       }
 
-      // Se a URL/nome do arquivo possui o prefixo doc_g<id>_ de um hóspede cadastrado no banco, vincula os dados reais do proprietário do arquivo caso o stream binário (ex: imagem JPEG) não possua texto plano
+      // Fallback auxiliar por prefixo doc_g<id>_ SOMENTE quando o arquivo pertencer a um hóspede já compatível ou quando não houver OCR por visão ativa
       const docOwnerMatch = String(effectiveFile || fileName || "").match(/\bdoc_g(\d+)_/i);
       if (docOwnerMatch && docOwnerMatch[1] && !streamExtractedName && typeof db !== "undefined" && Array.isArray(db?.guests)) {
         const ownerId = Number(docOwnerMatch[1]);
         const ownerGuest = db.guests.find(g => Number(g.id) === ownerId);
-        if (ownerGuest && !isContaminatedOrForeignDocUrl(String(effectiveFile || fileName || ""), ownerGuest, db)) {
+        if (
+          ownerGuest &&
+          !ownerGuest.createdFromPreCheckinAutosave &&
+          !isContaminatedOrForeignDocUrl(String(effectiveFile || fileName || ""), ownerGuest, db)
+        ) {
           const oName = String(ownerGuest.fullName || ownerGuest.name || "").trim();
           const oCpf = normalizeDoc(ownerGuest.document || ownerGuest.documentNumber);
-          if (oName && oName.split(/\s+/).length >= 2) streamExtractedName = oName;
-          if (!streamExtractedCpf && oCpf && oCpf.length === 11) streamExtractedCpf = oCpf;
-          if (!streamExtractedBirthDate && ownerGuest.birthDate) streamExtractedBirthDate = ownerGuest.birthDate;
+          const ownerMatchesCurrentPerson =
+            (!cleanProvidedName && !cleanReservationName) ||
+            comparePersonNames(oName, cleanProvidedName || cleanReservationName, { cpfMatches: Boolean(oCpf && cleanProvidedCpf && oCpf === cleanProvidedCpf) });
+          // Nunca contamina streamExtractedName com o nome de um solicitante/comprador antigo cujo guestId estava vinculado antes da edição da ficha
+          if (ownerMatchesCurrentPerson) {
+            if (oName && oName.split(/\s+/).length >= 2) streamExtractedName = oName;
+            if (!streamExtractedCpf && oCpf && oCpf.length === 11) streamExtractedCpf = oCpf;
+            if (!streamExtractedBirthDate && ownerGuest.birthDate) streamExtractedBirthDate = ownerGuest.birthDate;
+          }
         }
       }
     } catch {}
@@ -18028,8 +18121,10 @@ export async function inspectDocumentWithAI({
   const lowFileName = String(fileName || "").toLowerCase();
 
   const streamBelongsToDifferentPerson = Boolean(
-    (streamExtractedName && (cleanProvidedName || cleanReservationName) && !comparePersonNames(streamExtractedName, cleanProvidedName || cleanReservationName, { cpfMatches: false })) ||
-    (streamExtractedCpf && (cleanProvidedCpf || cleanReservationCpf) && !compareCpfDigits(streamExtractedCpf, cleanProvidedCpf || cleanReservationCpf))
+    streamFromActualDocBytes && (
+      (streamExtractedName && (cleanProvidedName || cleanReservationName) && !comparePersonNames(streamExtractedName, cleanProvidedName || cleanReservationName, { cpfMatches: false })) ||
+      (streamExtractedCpf && (cleanProvidedCpf || cleanReservationCpf) && !compareCpfDigits(streamExtractedCpf, cleanProvidedCpf || cleanReservationCpf))
+    )
   );
 
   const isCamposFromInput = streamBelongsToDifferentPerson
@@ -18071,9 +18166,9 @@ Diretrizes Estritas de Análise:
    - Caso o arquivo seja um documento errado — como Documento de Veículo (CRLV), Comprovante de Pagamento/PIX, Comprovante de Residência (conta de luz/água/internet), Cartão de Embarque/Passagem, Selfie sem documento ou foto aleatória — defina OBRIGATORIAMENTE 'isOfficialDocument': false, informe em 'detectedDocumentType' qual foi o documento detectado (ex: "Documento de Veículo (CRLV)", "Comprovante de Pagamento", "Comprovante de Residência", "Selfie / Foto Pessoal") e escreva em 'invalidDocumentReason' uma mensagem direta e clara dizendo qual documento errado foi anexado e pedindo um documento pessoal seu (ex: "Documento de veículo (CRLV) não é aceito. Por favor, insira um documento pessoal seu de identificação (RG, CNH ou Passaporte).").
 2. 'isLegible': Verifique se as informações textuais do documento estão legíveis. Se a imagem estiver extremamente embaçada, escura, com reflexo que impeça a leitura do nome/CPF, ou cortada faltando os dados principais, defina 'isLegible': false e explique em 'legibilityReason' de maneira clara, educada e amigável em português (ex: "A foto do documento está muito escura ou embaçada, impossibilitando a leitura do nome e CPF. Por favor, anexe uma foto mais nítida e bem iluminada ou o PDF original.").
 3. 'extractedName': Extraia EXATAMENTE o nome completo que consta impresso no documento anexado. NUNCA copie o nome informado se o documento mostrar o nome de outra pessoa.
-4. 'nameMatches': Compare o nome extraído do documento com o nome informado e com o nome da reserva. Seja tolerante a acentos, nomes do meio abreviados/omitidos (ex: "Miller Pessanha" vs "Miller Mendonça Pessanha" = true), apenas sobrenome na reserva, ordem invertida, sufixos como Jr/Filho/Neto/Dr, ou homóglifos de digitação/OCR como "I" maiúsculo vs "l" minúsculo (ex: "Iago" vs "lago" = true) e 1 letra de diferença quando os sobrenomes/CPF conferem. Porém, se o documento pertencer a outra pessoa diferente, retorne false!
-5. 'extractedCpf': Extraia o número de CPF que consta impresso no documento (apenas os 11 dígitos).
-6. 'cpfMatches': Compare os dígitos extraídos do documento com o CPF informado. Se os dígitos coincidirem, retorne true; se pertencer a outro CPF, retorne false.
+4. 'nameMatches': Compare o nome extraído do documento com o nome informado e com o nome da reserva. Seja tolerante a acentos, nomes do meio abreviados/omitidos (ex: "Miller Pessanha" vs "Miller Mendonça Pessanha" = true), apenas sobrenome na reserva, ordem invertida, sufixos como Jr/Filho/Neto/Dr, mudança de sobrenome de casada/solteira quando prenome e CPF/nascimento batem, homóglifos de digitação/OCR como "I" maiúsculo vs "l" minúsculo (ex: "Iago" vs "lago" = true), variações ortográficas (ex: Elisangela/Elizangela) e 1 letra de diferença quando os sobrenomes/CPF conferem. Caso o nome da reserva contenha duas pessoas separadas por "/", "&", "+" ou "e" (ex: "Elisangela/Rosana" — solicitante/hóspede ou dupla), retorne true se o documento corresponder a qualquer uma delas! Porém, se o documento pertencer a outra pessoa diferente, retorne false!
+5. 'extractedCpf': Extraia o número de CPF que consta impresso no documento (apenas os 11 dígitos, ou "" se o documento — como Passaporte ou frente de RG antigo — não exibir número de CPF). NUNCA coloque o número do RG no campo 'extractedCpf'.
+6. 'cpfMatches': Se houver CPF impresso no documento, compare os dígitos com o CPF informado (true se coincidirem, false se pertencer a outro CPF). Se o documento não exibir CPF (ex: Passaporte ou frente de RG sem CPF), retorne true.
 7. 'extractedBirthDate': Extraia a data de nascimento que consta no documento no formato DD/MM/AAAA ou AAAA-MM-DD.
 8. 'birthDateMatches': Compare a data de nascimento do documento com a data informada (true se coincidir ou se não houver divergência).
 9. 'calculatedAge': Calcule a idade aproximada da pessoa com base na data de nascimento e a data atual (ano de referência 2026).
@@ -18159,13 +18254,33 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
           const legReason = parsed.legibilityReason || (parsed.isLegible === false ? "Documento ilegível. Por favor, envie uma foto mais nítida ou o PDF original." : "");
 
           const aiCpfDigits = String(parsed.extractedCpf || "").replace(/\D/g, "");
-          const validAiCpf = aiCpfDigits.length === 11 ? aiCpfDigits : "";
+          let validAiCpf = aiCpfDigits.length === 11 ? aiCpfDigits : "";
+          // Se o OCR por foto leu 1-2 dígitos com ruído gerando um CPF matematicamente inválido pelo Módulo 11 (ex: leu '8' em vez de '6' ou pegou RG), não reprova CPF válido do próprio titular cujo nome bate
+          if (
+            validAiCpf &&
+            !isValidBrazilianCpf(validAiCpf) &&
+            cleanProvidedCpf.length === 11 &&
+            isValidBrazilianCpf(cleanProvidedCpf) &&
+            parsed.extractedName &&
+            comparePersonNames(parsed.extractedName, cleanProvidedName || cleanReservationName, { cpfMatches: true })
+          ) {
+            let diffDigits = 0;
+            for (let di = 0; di < 11; di++) {
+              if (validAiCpf[di] !== cleanProvidedCpf[di]) diffDigits++;
+            }
+            if (diffDigits <= 2) {
+              validAiCpf = cleanProvidedCpf;
+            } else {
+              // Provavelmente número de RG de 11 dígitos colocado no campo CPF pela IA
+              validAiCpf = "";
+            }
+          }
           const validStreamCpf = String(streamExtractedCpf || "").replace(/\D/g, "").length === 11
             ? String(streamExtractedCpf || "").replace(/\D/g, "")
             : "";
           const resolvedExtCpf = (streamBelongsToDifferentPerson && validStreamCpf)
             ? validStreamCpf
-            : (validAiCpf || validStreamCpf || (parsed.cpfMatches === false ? aiCpfDigits : cleanProvidedCpf));
+            : (validAiCpf || validStreamCpf || (aiCpfDigits.length === 0 ? "" : (parsed.cpfMatches === false ? aiCpfDigits : cleanProvidedCpf)));
           const resolvedExtName = (streamBelongsToDifferentPerson && streamExtractedName)
             ? streamExtractedName
             : (parsed.extractedName || streamExtractedName || (parsed.nameMatches === false ? "" : cleanProvidedName));
@@ -18540,13 +18655,80 @@ app.post("/api/ai/inspect-document", async (req, res) => {
       cep,
       fileUrl
     } = req.body || {};
+    const checkCodeEarly = String(reservationCode || code || "").trim();
+    const checkIdEarly = Number(reservationId) || 0;
+    const gIdxEarly = Number(guestIndex || 1);
+    const resForContext = (Array.isArray(db?.reservations) && (checkIdEarly || checkCodeEarly))
+      ? db.reservations.find(x => (checkIdEarly && Number(x.id) === checkIdEarly) || (checkCodeEarly && x.code === checkCodeEarly))
+      : null;
+
+    let effectiveReservationName = reservationName;
+    let effectiveReservationCpf = reservationCpf;
+
+    if (resForContext) {
+      const cleanProvName = String(providedName || declaredName || "").trim();
+      const rawProvDoc = String(providedCpf || declaredCpf || "").trim();
+      const cleanProvDigits = rawProvDoc.replace(/\D/g, "");
+      const provDocHasLetters = /[A-Za-z]/.test(rawProvDoc);
+      const isProvDocValid = Boolean(
+        (provDocHasLetters && rawProvDoc.replace(/[^A-Za-z0-9]/g, "").length >= 5) ||
+        (!provDocHasLetters && cleanProvDigits.length === 11 && isValidBrazilianCpf(cleanProvDigits))
+      );
+      const provWordCount = cleanProvName.split(/\s+/).filter(Boolean).length;
+      const isProvNameValid = Boolean(cleanProvName && provWordCount >= 2 && !isPlaceholderOrEmptyGuestName(cleanProvName));
+
+      const otherSlotsEarly = buildReservationOtherGuestSlots(resForContext, gIdxEarly, 0);
+      const dupEarly = isProvNameValid
+        ? findDuplicateGuestSlotConflict(
+            {
+              flatIndex: 0,
+              guestIndex: gIdxEarly,
+              name: cleanProvName,
+              document: rawProvDoc,
+              phone: "",
+              isMinor: false,
+              checkinDate: resForContext.checkinDate,
+              checkoutDate: resForContext.checkoutDate
+            },
+            otherSlotsEarly
+          )
+        : null;
+
+      // Coleta nomes legítimos associados ao slot na reserva (ex: rascunho Step 1, nome atual na reserva, nome composto Elisangela/Rosana, ou substituição de solicitante pelo hóspede real)
+      const slotObj = Array.isArray(resForContext.guests)
+        ? resForContext.guests.find((g, i) => Number(g?.index || g?.order || i + 1) === gIdxEarly)
+        : null;
+      const candidateResNames = [];
+      if (reservationName && String(reservationName).trim()) candidateResNames.push(String(reservationName).trim());
+      if (gIdxEarly === 1 && resForContext.guestName && !isPlaceholderOrEmptyGuestName(resForContext.guestName)) {
+        candidateResNames.push(String(resForContext.guestName).trim());
+      }
+      if (slotObj?.name && !isPlaceholderOrEmptyGuestName(slotObj.name)) {
+        candidateResNames.push(String(slotObj.name).trim());
+      }
+      if (slotObj?.preCheckinDraft?.fullName && !isPlaceholderOrEmptyGuestName(slotObj.preCheckinDraft.fullName)) {
+        candidateResNames.push(String(slotObj.preCheckinDraft.fullName).trim());
+      }
+      // Se o hóspede preencheu nome completo + CPF/Passaporte válido no Passo 1 sem conflito com outro slot (ex: reserva comprada por Elisangela para Rosana), aceita a titularidade declarada
+      if (isProvNameValid && !dupEarly && (isProvDocValid || (resForContext.requesterInfo?.name && areGuestNamesCompatible(resForContext.requesterInfo.name, reservationName || resForContext.guestName)))) {
+        candidateResNames.push(cleanProvName);
+        if (isProvDocValid && effectiveReservationCpf && !compareCpfDigits(cleanProvDigits, effectiveReservationCpf)) {
+          effectiveReservationCpf = rawProvDoc;
+        }
+      }
+      const uniqueResNames = Array.from(new Set(candidateResNames.filter(Boolean)));
+      if (uniqueResNames.length > 0) {
+        effectiveReservationName = uniqueResNames.join(" / ");
+      }
+    }
+
     const result = await inspectDocumentWithAI({ 
       fileBase64, 
       fileName, 
       providedName, 
       providedCpf,
-      reservationName,
-      reservationCpf,
+      reservationName: effectiveReservationName,
+      reservationCpf: effectiveReservationCpf,
       guestIndex,
       providedCity,
       providedAddress,
@@ -18573,7 +18755,7 @@ app.post("/api/ai/inspect-document", async (req, res) => {
       fileUrl
     });
 
-    // Verifica se o documento enviado pertence a outro hóspede já cadastrado na mesma reserva (ex: enviou RG do Hóspede 1 na aba do Hóspede 2)
+    // Verifica se o documento enviado pertence a outro hóspede já cadastrado na mesma reserva (ex: enviou RG do Hóspede 1 na aba do Hóspede 2 ou vice-versa)
     if (result && result.isOfficialDocument !== false && Array.isArray(db?.reservations)) {
       const checkCode = String(reservationCode || code || "").trim();
       const checkId = Number(reservationId) || 0;
@@ -18584,26 +18766,38 @@ app.post("/api/ai/inspect-document", async (req, res) => {
         );
         if (resForDupDoc) {
           const extDocNorm = normalizeGuestDocForDupGuard(result.extractedCpf);
-          const extNameNorm = normalizeGuestNameForDupGuard(result.canonicalGuestName || result.extractedName);
-          if (extDocNorm || extNameNorm) {
+          const extNameRaw = String(result.canonicalGuestName || result.extractedName || "").trim();
+          const extNameNorm = normalizeGuestNameForDupGuard(extNameRaw);
+          if (extDocNorm || extNameNorm || extNameRaw) {
             const otherSlots = buildReservationOtherGuestSlots(resForDupDoc, gIdxCheck, 0);
             for (const other of otherSlots) {
               if (other.informLater) continue;
               const oDoc = normalizeGuestDocForDupGuard(other.document);
               const oName = normalizeGuestNameForDupGuard(other.name);
-              if ((extDocNorm && oDoc && extDocNorm === oDoc) || (extNameNorm && oName && extNameNorm === oName)) {
+              const singleWordOtherMatch = Boolean(
+                !result.identityMatches &&
+                extNameRaw &&
+                other.name &&
+                !DUP_GUARD_PLACEHOLDER_RE.test(other.name) &&
+                comparePersonNames(extNameRaw, other.name) &&
+                !(providedName && comparePersonNames(extNameRaw, providedName))
+              );
+              if ((extDocNorm && oDoc && extDocNorm === oDoc) || (extNameNorm && oName && extNameNorm === oName) || singleWordOtherMatch) {
                 const otherRole = Number(other.guestIndex) === 1
                   ? "Hóspede Principal (Hóspede 1)"
                   : `Acompanhante (Hóspede ${other.guestIndex})`;
                 const whoStr = other.name && !DUP_GUARD_PLACEHOLDER_RE.test(other.name)
                   ? `${other.name} (${otherRole})`
                   : otherRole;
-                const dupReason = `Este documento pertence a ${whoStr}, que já está informado nesta reserva. Por favor, anexe o documento pessoal deste hóspede.`;
+                const dupReason = Number(other.guestIndex) > 1 && gIdxCheck === 1
+                  ? `Este documento pertence a ${whoStr}. Você está na aba do Hóspede 1 — clique para alternar para a ficha do ${other.guestIndex}º Hóspede ou anexe o documento do Hóspede 1.`
+                  : `Este documento pertence a ${whoStr}, que já está informado nesta reserva. Por favor, anexe o documento pessoal deste hóspede.`;
                 result.duplicateReservationGuest = true;
+                result.belongsToOtherSlotIndex = Number(other.guestIndex);
                 result.duplicateGuestReason = dupReason;
                 result.identityMatches = false;
                 if (extDocNorm && oDoc && extDocNorm === oDoc) result.cpfMatches = false;
-                if (extNameNorm && oName && extNameNorm === oName) result.nameMatches = false;
+                if ((extNameNorm && oName && extNameNorm === oName) || singleWordOtherMatch) result.nameMatches = false;
                 if (!Array.isArray(result.mismatchReasons)) result.mismatchReasons = [];
                 if (!result.mismatchReasons.includes(dupReason)) {
                   result.mismatchReasons.unshift(dupReason);
@@ -18640,6 +18834,42 @@ app.post("/api/ai/inspect-document", async (req, res) => {
       if (targetRes) {
         let updatedDb = false;
         if (gIdx === 1) {
+          const prevResNameRaw = String(targetRes.guestName || "").trim();
+          const prevCompositeParts = splitCompositeGuestNames(prevResNameRaw);
+          const resGuestCount = Math.min(Math.max(Number(targetRes.guestCount) || Number(targetRes.adults) || 1, 1), 3);
+
+          // Se a reserva tinha "Elisangela/Rosana" com 2 hóspedes e o Hóspede 1 validou o documento de uma delas, preserva a outra no slot 2 caso ainda esteja genérico
+          if (prevCompositeParts.length >= 2 && resGuestCount >= 2 && Array.isArray(targetRes.guests)) {
+            const otherPart = prevCompositeParts.find(p => !comparePersonNames(result.extractedName, p));
+            const slot2 = targetRes.guests.find((g, idx) => Number(g?.index || g?.order || idx + 1) === 2);
+            if (otherPart && slot2 && (!slot2.name || isPlaceholderOrEmptyGuestName(slot2.name))) {
+              slot2.name = otherPart;
+              updatedDb = true;
+            }
+          }
+
+          // Se o nome anterior pertencia a um solicitante/comprador diferente (não composto), preserva no requesterInfo antes de atualizar o titular da estadia
+          if (
+            prevResNameRaw &&
+            prevCompositeParts.length === 1 &&
+            !isPlaceholderOrEmptyGuestName(prevResNameRaw) &&
+            !areGuestNamesCompatible(prevResNameRaw, result.extractedName)
+          ) {
+            if (!targetRes.requesterInfo || !targetRes.requesterInfo.name) {
+              targetRes.requesterInfo = {
+                name: prevResNameRaw,
+                phone: targetRes.guestPhone || "",
+                email: targetRes.guestEmail || "",
+                cpf: targetRes.guestDocument || "",
+                ...(targetRes.guestId ? { guestId: targetRes.guestId } : {})
+              };
+            }
+            // Desvincula o guestId do solicitante para não sobrescrever o cadastro dele no CRM com o nome do hóspede real
+            targetRes.guestId = null;
+            delete targetRes.guestCode;
+            updatedDb = true;
+          }
+
           if (shouldReplaceWithOfficialDocName(targetRes.guestName, result.extractedName)) {
             result.previousReservationName = targetRes.guestName;
             targetRes.guestName = result.canonicalGuestName;
@@ -18653,14 +18883,14 @@ app.post("/api/ai/inspect-document", async (req, res) => {
           }
           if (targetRes.guestId && Array.isArray(db.guests)) {
             const linkedGuest = db.guests.find(g => Number(g.id) === Number(targetRes.guestId));
-            if (linkedGuest && shouldReplaceWithOfficialDocName(linkedGuest.fullName || linkedGuest.name, result.extractedName)) {
+            if (linkedGuest && areGuestNamesCompatible(linkedGuest.fullName || linkedGuest.name, result.extractedName) && shouldReplaceWithOfficialDocName(linkedGuest.fullName || linkedGuest.name, result.extractedName)) {
               linkedGuest.name = result.canonicalGuestName;
               linkedGuest.fullName = result.canonicalGuestName;
               updatedDb = true;
             }
           }
         } else if (gIdx > 1 && Array.isArray(targetRes.guests)) {
-          const compSlot = targetRes.guests.find(g => Number(g.index) === gIdx);
+          const compSlot = targetRes.guests.find((g, idx) => Number(g?.index || g?.order || idx + 1) === gIdx);
           if (compSlot && shouldReplaceWithOfficialDocName(compSlot.name, result.extractedName)) {
             compSlot.name = result.canonicalGuestName;
             result.nameAutoCorrected = true;
@@ -45710,6 +45940,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       "guestComplement", "complement", "guestNeighborhood", "neighborhood", "guestCity", "city",
       "guestState", "state", "guestCep", "cep", "zipCode", "birthDate", "gender",
       "selfieUrl", "photoUrl", "docPhotoUrl", "documentPhotoUrl", "docPhotoPath", "signatureUrl",
+      "aiDocInspection", "aiVerification", "preCheckinDraft",
       "fnhrCompleted", "fnhrCompletedAt", "preCheckinCompleted", "hasPreCheckin", "checkedInAt",
       "hadCompletedCheckinBefore", "needsReSignature", "reSignatureReason",
       "fnrhPdfUrl", "fnrhDownloadUrl", "fnrhDocumentUuid", "fnrhSha256Hash", "fnrhVerifyUrl", "fnrhSignedAt", "fnrhAuditTrail"
@@ -45730,8 +45961,24 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         delete r.guests[0].guestCode;
       }
     }
-  } else if (explicitGuestId !== undefined) {
-    r.guestId = explicitGuestId;
+  } else {
+    if (explicitGuestId !== undefined) {
+      r.guestId = explicitGuestId;
+    }
+    // Se o nome da reserva foi ajustado (ex: "Elisangela" -> "Elisangela/Rosana" ou correção de grafia), limpa eventual reprovação antiga de titularidade em cache
+    if (incomingRawName && incomingRawName !== oldGuestName) {
+      if (r.aiDocInspection && (r.aiDocInspection.identityMatches === false || r.aiDocInspection.reservationNameMatches === false || r.aiDocInspection.nameMatches === false)) {
+        delete r.aiDocInspection;
+      }
+      if (Array.isArray(r.guests) && r.guests[0]) {
+        if (r.guests[0].aiDocInspection && (r.guests[0].aiDocInspection.identityMatches === false || r.guests[0].aiDocInspection.reservationNameMatches === false || r.guests[0].aiDocInspection.nameMatches === false)) {
+          delete r.guests[0].aiDocInspection;
+        }
+        if (r.guests[0].preCheckinDraft?.aiDocResult && (r.guests[0].preCheckinDraft.aiDocResult.identityMatches === false || r.guests[0].preCheckinDraft.aiDocResult.reservationNameMatches === false || r.guests[0].preCheckinDraft.aiDocResult.nameMatches === false)) {
+          delete r.guests[0].preCheckinDraft.aiDocResult;
+        }
+      }
+    }
   }
   if (isUndoingEarlyCheckoutOnPut) {
     const explicitTargetOut = (req.body.checkoutDate && req.body.checkoutDate > oldCheckout)
@@ -45884,8 +46131,11 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   // Upsert dos hóspedes acompanhantes (2º e 3º hóspedes) no CRM ao atualizar reserva
   if (Array.isArray(r.guests)) {
     if (!db.guests) db.guests = [];
-    for (const gItem of r.guests) {
-      const idx = Number(gItem?.index || gItem?.order || 0);
+    for (let gi = 0; gi < r.guests.length; gi++) {
+      const gItem = r.guests[gi];
+      if (!gItem) continue;
+      const idx = Number(gItem?.index || gItem?.order || gi + 1);
+      gItem.index = idx;
       if (idx >= 2 && gItem?.name) {
         const gName = String(gItem.name).trim();
         if (gName && !/^h[óo]spede\s*\d+$/i.test(gName)) {
@@ -45894,12 +46144,16 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
           const gEmail = String(gItem.email || "").trim();
           const gId = gItem.guestId ? Number(gItem.guestId) : null;
 
-          let extraGuest = db.guests.find(cg =>
-            (gId && cg.id === gId) ||
-            (gCpf && (cg.document === gCpf || cg.documentNumber === gCpf)) ||
-            (gPhone && cg.phone === gPhone) ||
-            (cg.name && cg.name.toLowerCase() === gName.toLowerCase())
-          );
+          let extraGuest = db.guests.find(cg => {
+            if (!cg) return false;
+            if (!areGuestNamesCompatible(cg.fullName || cg.name, gName)) return false;
+            return (
+              (gId && cg.id === gId) ||
+              (gCpf && (cg.document === gCpf || cg.documentNumber === gCpf)) ||
+              (gPhone && cg.phone === gPhone) ||
+              (cg.name && cg.name.toLowerCase() === gName.toLowerCase())
+            );
+          });
 
           if (!extraGuest) {
             extraGuest = {
@@ -64781,20 +65035,31 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
     }
   }
 
-  // Tenta vincular o hóspede caso ainda não esteja vinculado por guestId
+  // Tenta vincular o hóspede caso ainda não esteja vinculado por guestId (somente quando compatível com a pessoa da reserva)
   let guest = (db.guests || []).find(g => g.id === r.guestId);
+  if (guest && !isPlaceholderOrEmptyGuestName(r.guestName) && !areGuestNamesCompatible(guest.fullName || guest.name, r.guestName)) {
+    guest = null;
+    r.guestId = null;
+    delete r.guestCode;
+  }
   const cleanResDoc = (r.guestDocument || "").replace(/\D/g, "");
   const cleanResPhone = normalizePhone(r.guestPhone || "");
   const cleanResEmail = (r.guestEmail || "").trim().toLowerCase();
   const cleanResName = normalizeName(r.guestName || "");
 
   if (!guest) {
-    guest = db.guests.find(g =>
-      (cleanResDoc && (g.documentNumber || g.document || "").replace(/\D/g, "") === cleanResDoc) ||
-      (cleanResPhone && cleanResPhone.length >= 8 && normalizePhone(g.phone || "") === cleanResPhone) ||
-      (cleanResEmail && cleanResEmail.includes("@") && (g.email || "").trim().toLowerCase() === cleanResEmail) ||
-      (cleanResName && cleanResName.length >= 5 && normalizeName(g.fullName || g.name || "") === cleanResName)
-    );
+    guest = db.guests.find(g => {
+      if (!g) return false;
+      if (!isPlaceholderOrEmptyGuestName(r.guestName) && !areGuestNamesCompatible(g.fullName || g.name, r.guestName)) {
+        return false;
+      }
+      return (
+        (cleanResDoc && (g.documentNumber || g.document || "").replace(/\D/g, "") === cleanResDoc) ||
+        (cleanResPhone && cleanResPhone.length >= 8 && normalizePhone(g.phone || "") === cleanResPhone) ||
+        (cleanResEmail && cleanResEmail.includes("@") && (g.email || "").trim().toLowerCase() === cleanResEmail) ||
+        (cleanResName && cleanResName.length >= 5 && normalizeName(g.fullName || g.name || "") === cleanResName)
+      );
+    });
     if (guest) {
       r.guestId = guest.id;
       r.guestCode = guest.guestCode;
@@ -64829,12 +65094,18 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
   const targetEmail = cleanResEmail || (guest ? (guest.email || "").trim().toLowerCase() : "");
   const targetPhone = cleanResPhone || (guest ? normalizePhone(guest.phone || "") : "");
 
-  const matchedAccount = (db.guestAccounts || []).find(a =>
-    (guest && a.guestId && Number(a.guestId) === Number(guest.id)) ||
-    (targetDoc && targetDoc.length >= 8 && (a.document || "").replace(/\D/g, "") === targetDoc) ||
-    (targetEmail && targetEmail.includes("@") && (a.email || "").trim().toLowerCase() === targetEmail) ||
-    (targetPhone && targetPhone.length >= 8 && phonesMatch(a.phone, targetPhone))
-  );
+  const matchedAccount = (db.guestAccounts || []).find(a => {
+    if (!a) return false;
+    if (a.name && !isPlaceholderOrEmptyGuestName(r.guestName) && !areGuestNamesCompatible(a.name, r.guestName)) {
+      return false;
+    }
+    return (
+      (guest && a.guestId && Number(a.guestId) === Number(guest.id)) ||
+      (targetDoc && targetDoc.length >= 8 && (a.document || "").replace(/\D/g, "") === targetDoc) ||
+      (targetEmail && targetEmail.includes("@") && (a.email || "").trim().toLowerCase() === targetEmail) ||
+      (targetPhone && targetPhone.length >= 8 && phonesMatch(a.phone, targetPhone))
+    );
+  });
 
   let savedDocPhotoUrl = [
     r.guests?.[0]?.docPhotoUrl,
@@ -64967,9 +65238,47 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
       });
     }
   } else {
+    // Garante index numérico sequencial em todos os slots existentes e preenche slots faltantes até guestCount
+    r.guests.forEach((g, idx) => {
+      if (g && !g.index) g.index = Number(g.order || idx + 1);
+    });
+    for (let i = r.guests.length + 1; i <= guestCount; i++) {
+      if (!r.guests.some(g => Number(g?.index) === i)) {
+        r.guests.push({
+          index: i,
+          name: `Hóspede ${i}`,
+          cpf: "",
+          phone: "",
+          email: "",
+          birthDate: "",
+          docPhotoUrl: null,
+          selfieUrl: null,
+          signatureUrl: null,
+          hasCompletedCheckin: false,
+          checkinCompletedAt: null
+        });
+      }
+    }
+
+    // Se a reserva possui nome duplo (ex: "Elisangela/Rosana") para 2+ hóspedes e os slots ainda estão genéricos/iguais, distribui os nomes nas abas 1 e 2
+    const compositePartsPre = splitCompositeGuestNames(String(r.guestName || ""));
+    if (compositePartsPre.length >= 2 && guestCount >= 2 && r.guests[0] && r.guests[1]) {
+      const s1Raw = String(r.guests[0].name || "").trim();
+      const s2Raw = String(r.guests[1].name || "").trim();
+      if ((!s1Raw || isPlaceholderOrEmptyGuestName(s1Raw) || s1Raw === String(r.guestName || "").trim()) && !r.guests[0].hasCompletedCheckin) {
+        r.guests[0].name = compositePartsPre[0];
+      }
+      if ((!s2Raw || isPlaceholderOrEmptyGuestName(s2Raw)) && !r.guests[1].hasCompletedCheckin) {
+        const secondCand = compositePartsPre.find(p => !areGuestNamesCompatible(p, r.guests[0].name)) || compositePartsPre[1];
+        if (secondCand) r.guests[1].name = secondCand;
+      }
+    }
+
     // Garante que o slot 1 sempre contenha os dados cadastrais completos e sincronizados do hóspede
     if (r.guests[0]) {
-      const candPrimaryName = String(r.guestName || guest?.fullName || guest?.name || "").trim();
+      const candPrimaryName = compositePartsPre.length >= 2 && guestCount >= 2
+        ? String(r.guests[0].name || compositePartsPre[0] || "").trim()
+        : String(r.guestName || guest?.fullName || guest?.name || "").trim();
       const curSlot1Name = String(r.guests[0].name || "").trim();
       if (
         !curSlot1Name ||
@@ -65023,10 +65332,18 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
       if (!compSlot) continue;
       const compDoc = String(compSlot.cpf || compSlot.document || "").replace(/\D/g, "");
       if (compSlot.guestId || compDoc.length >= 8) {
-        const compGuest = (db.guests || []).find(g =>
+        let compGuest = (db.guests || []).find(g =>
           (compSlot.guestId && Number(g.id) === Number(compSlot.guestId)) ||
           (compDoc.length >= 8 && (g.documentNumber || g.document || "").replace(/\D/g, "") === compDoc)
         );
+        if (compGuest && !isPlaceholderOrEmptyGuestName(compSlot.name) && !areGuestNamesCompatible(compGuest.fullName || compGuest.name, compSlot.name)) {
+          compGuest = null;
+          compSlot.guestId = null;
+          delete compSlot.guestCode;
+          if (compSlot.docPhotoUrl && isContaminatedOrForeignDocUrl(compSlot.docPhotoUrl, { id: null, document: compDoc, fullName: compSlot.name }, db)) {
+            compSlot.docPhotoUrl = null;
+          }
+        }
         if (compGuest && compGuest.id !== guest?.id) {
           if (!compSlot.guestId) compSlot.guestId = compGuest.id;
           if (!compSlot.guestCode && compGuest.guestCode) compSlot.guestCode = compGuest.guestCode;
@@ -65062,6 +65379,75 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
         }
       }
     }
+  }
+
+  // Autocura imediata de laudos aiDocInspection / preCheckinDraft.aiDocResult falsamente reprovados (ex: "Elisangela/Rosana", troca solicitante->hóspede ou doc_g<id>_ antigo)
+  const healOrPurgeStaleAiDoc = (aiObj, expNameStr, expCpfStr) => {
+    if (!aiObj || typeof aiObj !== "object") return aiObj;
+    const hasMismatchFlag =
+      aiObj.identityMatches === false ||
+      aiObj.nameMatches === false ||
+      aiObj.reservationNameMatches === false ||
+      aiObj.cpfMatches === false ||
+      aiObj.reservationCpfMatches === false;
+    if (!hasMismatchFlag) return aiObj;
+    if (aiObj.isOfficialDocument === false || aiObj.isLegible === false) return aiObj;
+    const extN = String(aiObj.extractedName || aiObj.canonicalGuestName || "").trim();
+    const extC = String(aiObj.extractedCpf || "").replace(/\D/g, "");
+    const expC = String(expCpfStr || "").replace(/\D/g, "");
+    if (
+      extN &&
+      comparePersonNames(extN, expNameStr, { cpfMatches: Boolean(!extC || !expC || compareCpfDigits(extC, expC)), birthDateMatches: aiObj.birthDateMatches !== false }) &&
+      (!extC || !expC || compareCpfDigits(extC, expC)) &&
+      aiObj.birthDateMatches !== false &&
+      !aiObj.duplicateReservationGuest
+    ) {
+      return {
+        ...aiObj,
+        nameMatches: true,
+        providedNameMatches: true,
+        reservationNameMatches: true,
+        cpfMatches: true,
+        reservationCpfMatches: true,
+        identityMatches: true,
+        mismatchReasons: [],
+        summary: "Identidade, titularidade da reserva e documento oficial validados com sucesso."
+      };
+    }
+    // Limpa cache reprovado para forçar nova inspeção limpa com as regras atualizadas
+    return null;
+  };
+
+  if (Array.isArray(r.guests)) {
+    for (let si = 0; si < r.guests.length; si++) {
+      const gSlot = r.guests[si];
+      if (!gSlot) continue;
+      const slotIdx = Number(gSlot.index || si + 1);
+      const slotNames = [
+        gSlot.preCheckinDraft?.fullName,
+        gSlot.name,
+        slotIdx === 1 ? r.guestName : ""
+      ].filter(s => s && !isPlaceholderOrEmptyGuestName(s)).join(" / ");
+      const slotCpf = gSlot.preCheckinDraft?.document || gSlot.cpf || (slotIdx === 1 ? r.guestDocument : "") || "";
+      if (gSlot.aiDocInspection) {
+        gSlot.aiDocInspection = healOrPurgeStaleAiDoc(gSlot.aiDocInspection, slotNames, slotCpf);
+      }
+      if (gSlot.preCheckinDraft?.aiDocResult) {
+        const healedDraftAi = healOrPurgeStaleAiDoc(gSlot.preCheckinDraft.aiDocResult, slotNames, slotCpf);
+        if (healedDraftAi) {
+          gSlot.preCheckinDraft.aiDocResult = healedDraftAi;
+        } else {
+          delete gSlot.preCheckinDraft.aiDocResult;
+        }
+      }
+      if (slotIdx === 1 && r.aiDocInspection) {
+        r.aiDocInspection = healOrPurgeStaleAiDoc(r.aiDocInspection, slotNames, slotCpf);
+      }
+    }
+  }
+  if (guest?.aiDocInspection) {
+    const gNames = [guest.fullName || guest.name, r.guestName].filter(Boolean).join(" / ");
+    guest.aiDocInspection = healOrPurgeStaleAiDoc(guest.aiDocInspection, gNames, guest.document || r.guestDocument || "");
   }
 
   if (guest?.vehiclePlate && !r.vehicle) {
@@ -65288,6 +65674,9 @@ app.post("/api/pms/pre-checkin/:code/autosave", async (req, res) => {
       }
     }
 
+    r.guests.forEach((g, idx) => {
+      if (g && !g.index) g.index = Number(g.order || idx + 1);
+    });
     let targetGuest = r.guests.find(g => Number(g.index) === guestIndex);
     if (!targetGuest) {
       targetGuest = {
@@ -65446,6 +65835,27 @@ app.post("/api/pms/pre-checkin/:code/autosave", async (req, res) => {
     if (isTitular) {
       if (r.guestId) {
         guest = db.guests.find(g => Number(g.id) === Number(r.guestId)) || null;
+        // Se r.guestId apontava para o solicitante/comprador (ex: Elisangela) e o hóspede real (ex: Rosana) preencheu seu nome, preserva o solicitante e não sobrescreve o cadastro dele no CRM
+        if (
+          guest &&
+          !guest.createdFromPreCheckinAutosave &&
+          effectiveName &&
+          !isPlaceholderOrEmptyGuestName(effectiveName) &&
+          !areGuestNamesCompatible(guest.fullName || guest.name, effectiveName)
+        ) {
+          if (!r.requesterInfo || !r.requesterInfo.name) {
+            r.requesterInfo = {
+              name: guest.fullName || guest.name || "",
+              phone: guest.phone || r.guestPhone || "",
+              email: guest.email || r.guestEmail || "",
+              cpf: guest.document || guest.documentNumber || "",
+              guestId: guest.id
+            };
+          }
+          guest = null;
+          r.guestId = null;
+          delete r.guestCode;
+        }
       }
       if (!guest) {
         const resDocNorm = validDocClean || normalizeDoc(r.guestDocument || targetGuest.cpf || "");
@@ -66692,18 +67102,38 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   const cleanEmail = (email || "").trim().toLowerCase();
   const normName = normalizeName(validName);
 
-  // Localiza ou cria hóspede com código permanente e fusão profunda
+  // Localiza ou cria hóspede com código permanente e isolamento por compatibilidade de nome (evita contaminar ficha de solicitante ou 1º hóspede pelo telefone/email compartilhado)
   let guest = null;
   if (Number(guestIndex) === 1 && r.guestId) {
-    guest = db.guests.find(g => g.id === r.guestId);
+    const linkedG = db.guests.find(g => g.id === r.guestId);
+    if (linkedG && (isPlaceholderOrEmptyGuestName(validName) || areGuestNamesCompatible(linkedG.fullName || linkedG.name, validName))) {
+      guest = linkedG;
+    } else if (linkedG && !r.requesterInfo?.name) {
+      r.requesterInfo = {
+        name: linkedG.fullName || linkedG.name || "",
+        phone: linkedG.phone || r.guestPhone || "",
+        email: linkedG.email || r.guestEmail || "",
+        cpf: linkedG.document || linkedG.documentNumber || "",
+        guestId: linkedG.id
+      };
+    }
   }
   if (!guest) {
-    guest = db.guests.find(g =>
-      (cleanDoc && cleanDoc.length >= (/[A-Z]/.test(cleanDoc) ? 5 : 8) && normalizeDoc(g.documentNumber || g.document || "") === cleanDoc) ||
-      (cleanPhone && cleanPhone.length >= 8 && normalizePhone(g.phone || "") === cleanPhone) ||
-      (cleanEmail && cleanEmail.includes("@") && (g.email || "").trim().toLowerCase() === cleanEmail) ||
-      (normName && normName.length >= 5 && normalizeName(g.fullName || g.name || "") === normName)
-    );
+    guest = db.guests.find(g => {
+      if (!g) return false;
+      if (Number(guestIndex) > 1 && r.guestId && Number(g.id) === Number(r.guestId) && !areGuestNamesCompatible(g.fullName || g.name, validName)) {
+        return false;
+      }
+      if (!isPlaceholderOrEmptyGuestName(validName) && !areGuestNamesCompatible(g.fullName || g.name, validName)) {
+        return false;
+      }
+      return (
+        (cleanDoc && cleanDoc.length >= (/[A-Z]/.test(cleanDoc) ? 5 : 8) && normalizeDoc(g.documentNumber || g.document || "") === cleanDoc) ||
+        (cleanPhone && cleanPhone.length >= 8 && normalizePhone(g.phone || "") === cleanPhone) ||
+        (cleanEmail && cleanEmail.includes("@") && (g.email || "").trim().toLowerCase() === cleanEmail) ||
+        (normName && normName.length >= 5 && normalizeName(g.fullName || g.name || "") === normName)
+      );
+    });
   }
 
   if (!guest) {
@@ -66797,8 +67227,8 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
         fileName: `doc_pre_checkin_g${guest.id}`,
         providedName: validName,
         providedCpf: cleanDoc,
-        reservationName: Number(guestIndex) === 1 ? (r.guestName || "") : "",
-        reservationCpf: Number(guestIndex) === 1 ? (r.guestDocument || "") : "",
+        reservationName: Number(guestIndex) === 1 ? ([r.guestName, validName].filter(Boolean).join(" / ")) : "",
+        reservationCpf: Number(guestIndex) === 1 ? (cleanDoc || r.guestDocument || "") : "",
         guestIndex: Number(guestIndex) || 1,
         providedCity: city || guest.city,
         providedAddress: address || guest.address,
@@ -66971,7 +67401,10 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   }
 
   // Atualiza o hóspede correspondente com isolamento estrito
-  let targetGuest = r.guests.find(g => g.index === Number(guestIndex));
+  r.guests.forEach((g, idx) => {
+    if (g && !g.index) g.index = Number(g.order || idx + 1);
+  });
+  let targetGuest = r.guests.find(g => Number(g.index) === Number(guestIndex));
   if (!targetGuest) {
     targetGuest = { index: Number(guestIndex) };
     r.guests.push(targetGuest);

@@ -2691,6 +2691,22 @@ const FlatReservationCard = memo(function FlatReservationCard({
 });
 
 export function areGuestNamesCompatibleUI(nameA?: string | null, nameB?: string | null): boolean {
+  const splitParts = (raw?: string | null): string[] => {
+    const s = String(raw || "").trim();
+    if (!s) return [];
+    if (/[\/|&+;]/.test(s)) {
+      const parts = s.split(/[\/|&+;]+/).map(p => p.trim()).filter(p => p.length >= 2);
+      if (parts.length > 1) return parts;
+    }
+    return [s];
+  };
+  const partsA = splitParts(nameA);
+  const partsB = splitParts(nameB);
+  if (partsA.length > 1 || partsB.length > 1) {
+    const listA = partsA.length > 0 ? partsA : [nameA || ""];
+    const listB = partsB.length > 0 ? partsB : [nameB || ""];
+    return listA.some(pa => listB.some(pb => areGuestNamesCompatibleUI(pa, pb)));
+  }
   const isSystemName = (str?: string | null) => {
     const s = String(str || "")
       .toLowerCase()

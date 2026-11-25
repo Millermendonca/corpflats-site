@@ -357,6 +357,7 @@ export default function GuestPreCheckin() {
     canonicalGuestName?: string
     nameAutoCorrected?: boolean
     duplicateReservationGuest?: boolean
+    belongsToOtherSlotIndex?: number
     duplicateGuestReason?: string | null
     mismatchReasons?: string[]
     summary?: string
@@ -649,8 +650,9 @@ export default function GuestPreCheckin() {
     }
 
     if (Array.isArray(guestList)) {
-      for (const g of guestList) {
-        const idx = Number(g?.index) || 0
+      for (let arrIdx = 0; arrIdx < guestList.length; arrIdx++) {
+        const g = guestList[arrIdx]
+        const idx = Number(g?.index || g?.order || arrIdx + 1) || 0
         if (!idx || idx === Number(selectedGuestIndex)) continue
         const gAge = calcAgeIso(g?.birthDate)
         slotsByIdx.set(idx, {
@@ -694,6 +696,27 @@ export default function GuestPreCheckin() {
       preCheckinOtherSlots
     )
   }, [selectedGuestIndex, fullName, document, phone, isMinorGuest, preCheckinOtherSlots])
+
+  const preCheckinDocAiDuplicateSlotIndex = useMemo<number | null>(() => {
+    if (!aiDocResult) return null
+    if (aiDocResult.belongsToOtherSlotIndex && Number(aiDocResult.belongsToOtherSlotIndex) !== Number(selectedGuestIndex)) {
+      return Number(aiDocResult.belongsToOtherSlotIndex)
+    }
+    const extDoc = normalizeGuestDocumentForDuplicateCheck(aiDocResult.extractedCpf)
+    const extName = normalizeGuestFullNameForDuplicateCheck(
+      aiDocResult.canonicalGuestName || aiDocResult.extractedName
+    )
+    if (!extDoc && !extName) return null
+    for (const other of preCheckinOtherSlots) {
+      if (other.informLater) continue
+      const otherDoc = normalizeGuestDocumentForDuplicateCheck(other.document)
+      const otherName = normalizeGuestFullNameForDuplicateCheck(other.name)
+      if ((extDoc && otherDoc && extDoc === otherDoc) || (extName && otherName && extName === otherName)) {
+        return Number(other.guestIndex)
+      }
+    }
+    return null
+  }, [aiDocResult, preCheckinOtherSlots, selectedGuestIndex])
 
   const preCheckinDocAiDuplicateConflict = useMemo<string | null>(() => {
     if (!aiDocResult) return null
@@ -1138,9 +1161,13 @@ export default function GuestPreCheckin() {
     minorAuthUploadGenRef.current += 1
     lastInspectedDocGenRef.current = -1
 
-    const gList = resData.guests || []
+    const rawGList = Array.isArray(resData.guests) ? resData.guests : []
+    const gList = rawGList.map((g: any, idx: number) => ({
+      ...g,
+      index: Number(g?.index || g?.order || idx + 1)
+    }))
     setGuestList(gList)
-    const currentG = gList.find((g: any) => Number(g.index) === Number(gIdx)) || gList[0]
+    const currentG = gList.find((g: any) => Number(g.index) === Number(gIdx)) || (Number(gIdx) === 1 ? gList[0] : null)
     const res = resData.reservation || {}
     const guest = resData.guest || {}
 
@@ -1310,11 +1337,20 @@ export default function GuestPreCheckin() {
           const resPhone = String(gPhone || "").replace(/\D/g, "")
           const profName = String(prof?.name || prof?.fullName || "").trim().toLowerCase()
           const resName = String(gName || "").trim().toLowerCase()
+          const namesClearlyCompatible =
+            !profName ||
+            !resName ||
+            /^h[oó]spede\s*\d*$/i.test(resName) ||
+            profName === resName ||
+            resName.split(/[\s/|&+;]+/).some((tok) => tok.length >= 3 && profName.includes(tok)) ||
+            profName.split(/[\s/|&+;]+/).some((tok) => tok.length >= 3 && resName.includes(tok))
           const isSamePersonCache = Boolean(
-            (profCpf.length >= 8 && resCpf.length >= 8 && profCpf === resCpf) ||
-            (profEmail.includes("@") && resEmail.includes("@") && profEmail === resEmail) ||
-            (profPhone.length >= 8 && resPhone.length >= 8 && profPhone === resPhone) ||
-            (profName.length >= 5 && resName.length >= 5 && profName === resName)
+            namesClearlyCompatible && (
+              (profCpf.length >= 8 && resCpf.length >= 8 && profCpf === resCpf) ||
+              (profEmail.includes("@") && resEmail.includes("@") && profEmail === resEmail) ||
+              (profPhone.length >= 8 && resPhone.length >= 8 && profPhone === resPhone) ||
+              (profName.length >= 5 && resName.length >= 5 && profName === resName)
+            )
           )
           if (isSamePersonCache && prof?.docPhotoUrl && !isForeignContaminatedDocUrl(prof.docPhotoUrl)) {
             nextDoc = prof.docPhotoUrl
@@ -1667,6 +1703,21 @@ export default function GuestPreCheckin() {
     setVehicleModel(nextVehicleModel)
     setVehicleBrand(nextVehicleBrand)
     setVehicleColor(nextVehicleColor)
+    if (
+      !fnhrDone &&
+      nextDoc &&
+      nextAiDocResult &&
+      nextAiDocResult.isOfficialDocument !== false &&
+      nextAiDocResult.isLegible !== false &&
+      (nextAiDocResult.identityMatches === false ||
+        nextAiDocResult.nameMatches === false ||
+        nextAiDocResult.reservationNameMatches === false ||
+        nextAiDocResult.cpfMatches === false ||
+        nextAiDocResult.reservationCpfMatches === false)
+    ) {
+      nextAiDocResult = null
+    }
+
     setSelfiePhoto(nextSelfie)
     setDocPhoto(nextDoc)
     setIsSavedDocFromProfile(Boolean(nextDoc && !docCameFromCurrentDraft))
@@ -1698,12 +1749,20 @@ export default function GuestPreCheckin() {
         const sessName = String(sessionUser.name || (sessionUser as any).fullName || "").trim().toLowerCase()
         const resName = String(gName || "").trim().toLowerCase()
         const isGenericResName = !resName || /^h[oó]spede\s*\d*$/i.test(resName)
+        const sessNamesCompatible =
+          !sessName ||
+          isGenericResName ||
+          sessName === resName ||
+          resName.split(/[\s/|&+;]+/).some((tok) => tok.length >= 3 && sessName.includes(tok)) ||
+          sessName.split(/[\s/|&+;]+/).some((tok) => tok.length >= 3 && resName.includes(tok))
         const isSameSess = Boolean(
-          (sessCpf.length >= 8 && resCpf.length >= 8 && sessCpf === resCpf) ||
-          (sessEmail.includes("@") && resEmail.includes("@") && sessEmail === resEmail) ||
-          (sessPhone.length >= 8 && resPhone.length >= 8 && sessPhone === resPhone) ||
-          (sessName.length >= 5 && resName.length >= 5 && sessName === resName) ||
-          (!resCpf && !resEmail && !resPhone && isGenericResName)
+          sessNamesCompatible && (
+            (sessCpf.length >= 8 && resCpf.length >= 8 && sessCpf === resCpf) ||
+            (sessEmail.includes("@") && resEmail.includes("@") && sessEmail === resEmail) ||
+            (sessPhone.length >= 8 && resPhone.length >= 8 && sessPhone === resPhone) ||
+            (sessName.length >= 5 && resName.length >= 5 && sessName === resName) ||
+            (!resCpf && !resEmail && !resPhone && isGenericResName)
+          )
         )
         if (!isSameSess) return
 
@@ -2218,13 +2277,21 @@ export default function GuestPreCheckin() {
   const runAiDocInspection = async (base64String: string, fileNameStr: string) => {
     setAiInspectingDoc(true)
     try {
-      const currentGuestSlot = (guestList || []).find((g: any) => Number(g.index) === Number(selectedGuestIndex))
+      const currentGuestSlot = (guestList || []).find((g: any, idx: number) => Number(g?.index || idx + 1) === Number(selectedGuestIndex))
+      const trimmedStep1Name = fullName.trim()
+      const trimmedStep1Doc = document.trim()
       const expectedResName = selectedGuestIndex === 1
-        ? (reservation?.guestName || currentGuestSlot?.name || "")
-        : (currentGuestSlot?.name && !String(currentGuestSlot.name).startsWith("Hóspede") ? currentGuestSlot.name : "")
+        ? Array.from(
+            new Set(
+              [reservation?.guestName, currentGuestSlot?.name, trimmedStep1Name]
+                .map((s) => String(s || "").trim())
+                .filter((s) => s && !/^h[oó]spede(\s*\d+)?$/i.test(s))
+            )
+          ).join(" / ")
+        : (trimmedStep1Name || (currentGuestSlot?.name && !String(currentGuestSlot.name).startsWith("Hóspede") ? currentGuestSlot.name : ""))
       const expectedResCpf = selectedGuestIndex === 1
-        ? (reservation?.guestDocument || currentGuestSlot?.cpf || currentGuestSlot?.document || "")
-        : (currentGuestSlot?.cpf || currentGuestSlot?.document || "")
+        ? (trimmedStep1Doc || currentGuestSlot?.cpf || currentGuestSlot?.document || reservation?.guestDocument || "")
+        : (trimmedStep1Doc || currentGuestSlot?.cpf || currentGuestSlot?.document || "")
 
       const res = await fetch("/api/ai/inspect-document", {
         method: "POST",
@@ -4754,8 +4821,44 @@ export default function GuestPreCheckin() {
                         return
                       }
                     }
-                    if (!docPhoto) {
+                    const cleanStep1Name = fullName.trim()
+                    const cleanStep1Doc = document.trim()
+                    if (cleanStep1Name) {
+                      setGuestList((prev: any[]) =>
+                        Array.isArray(prev)
+                          ? prev.map((g: any, idx: number) =>
+                              Number(g?.index || idx + 1) === Number(selectedGuestIndex)
+                                ? { ...g, name: cleanStep1Name, cpf: cleanStep1Doc || g.cpf }
+                                : g
+                            )
+                          : prev
+                      )
+                      if (selectedGuestIndex === 1) {
+                        setReservation((prev: any) => {
+                          if (!prev) return prev
+                          const prevResN = String(prev.guestName || "").trim()
+                          // Preserva nome duplo "Elisangela/Rosana" se já existir, senão sincroniza com o titular confirmado no Passo 1
+                          const keepComposite = /[\/|&+;]/.test(prevResN)
+                          return {
+                            ...prev,
+                            guestName: keepComposite ? prevResN : cleanStep1Name,
+                            guestDocument: cleanStep1Doc || prev.guestDocument
+                          }
+                        })
+                      }
+                    }
+                    if (
+                      !docPhoto ||
+                      !aiDocResult ||
+                      aiDocResult.identityMatches === false ||
+                      aiDocResult.nameMatches === false ||
+                      aiDocResult.reservationNameMatches === false ||
+                      aiDocResult.cpfMatches === false ||
+                      aiDocResult.reservationCpfMatches === false ||
+                      aiDocResult.birthDateMatches === false
+                    ) {
                       setAiDocResult(null)
+                      lastInspectedDocGenRef.current = -1
                     }
                     setStep(2)
                   }}
@@ -4925,16 +5028,22 @@ export default function GuestPreCheckin() {
                                 <p className="text-[11px] text-rose-900 font-medium leading-relaxed">
                                   {preCheckinDocAiDuplicateConflict}
                                 </p>
-                                {selectedGuestIndex > 1 && (
+                                {(selectedGuestIndex > 1 || (preCheckinDocAiDuplicateSlotIndex && preCheckinDocAiDuplicateSlotIndex > 1)) && (
                                   <div className="pt-1">
                                     <Button
                                       type="button"
                                       size="sm"
                                       variant="outline"
-                                      onClick={() => handleSwitchGuest(1)}
+                                      onClick={() =>
+                                        handleSwitchGuest(
+                                          selectedGuestIndex > 1 ? 1 : Number(preCheckinDocAiDuplicateSlotIndex)
+                                        )
+                                      }
                                       className="h-7 px-2.5 text-[11px] font-bold border-rose-300 bg-white text-rose-900 hover:bg-rose-100 rounded-lg"
                                     >
-                                      ← Voltar para a ficha do Hóspede Principal
+                                      {selectedGuestIndex > 1
+                                        ? "← Voltar para a ficha do Hóspede Principal"
+                                        : `Ir para a ficha do ${preCheckinDocAiDuplicateSlotIndex}º Hóspede →`}
                                     </Button>
                                   </div>
                                 )}
