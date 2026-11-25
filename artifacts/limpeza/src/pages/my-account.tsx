@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react"
-import { useLocation } from "wouter"
+import { useState, useEffect, useMemo } from "react"
+import { useLocation, useRoute } from "wouter"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,7 +10,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { 
   User, Shield, Key, KeyRound, Fingerprint, Calendar, Car, Briefcase, 
   Trash2, Download, CheckCircle2, AlertTriangle, LogOut, ArrowRight, 
-  ExternalLink, Lock, Eye, EyeOff, Save, Check, Smartphone, Globe, MapPin
+  ExternalLink, Lock, Eye, EyeOff, Save, Check, Smartphone, Globe, MapPin,
+  Wallet, Receipt, Building2, FileText, FileCode2, Search, Clock
 } from "lucide-react"
 import { 
   getCurrentSession, updateAccountProfile, changeAccountPassword, 
@@ -21,13 +22,65 @@ import { AddToCalendar } from "@/components/add-to-calendar"
 import { useToast } from "@/hooks/use-toast"
 import { CorpFlatsIcon, CorpFlatsWordmark, CorpFlatsSplashScreen } from "@/components/brand-logo"
 import { formatSmartPhone, formatPassport, isPlausibleCpfOrPassport } from "@/lib/phone-mask"
+import { ClientFinancialHubPanel, FinancialHubSummary } from "@/components/client-financial-hub-panel"
+import {
+  PublicBoletoItem,
+  PublicNfseItem,
+  PublicPreBoletoItem,
+  formatDateBrShort,
+  formatMoneyBr,
+  getBoletoStatusBadgeMeta,
+} from "@/components/financial-documents-section"
 
 export default function MyAccount() {
   const [, setLocation] = useLocation()
+  const [, paramsHub1] = useRoute("/painel-financeiro/:token")
+  const [, paramsHub2] = useRoute("/financeiro-cliente/:token")
   const { toast } = useToast()
+
+  const magicHubToken = useMemo(() => {
+    const fromRoute = paramsHub1?.token || paramsHub2?.token || ""
+    if (fromRoute) return fromRoute.trim()
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search)
+      return (sp.get("hub") || sp.get("portal") || "").trim()
+    }
+    return ""
+  }, [paramsHub1?.token, paramsHub2?.token])
+
+  const isMagicHubMode = Boolean(magicHubToken)
+
+  const getInitialTab = () => {
+    if (isMagicHubMode) return "financial"
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search)
+      const qTab = (sp.get("tab") || "").toLowerCase()
+      if (qTab === "financeiro" || qTab === "financial") return "financial"
+      if (qTab === "reservas" || qTab === "reservations") return "reservations"
+      if (qTab === "seguranca" || qTab === "security") return "security"
+      if (qTab === "privacidade" || qTab === "privacy") return "privacy"
+    }
+    return "profile"
+  }
+
   const [user, setUser] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState("profile")
+  const [activeTab, setActiveTab] = useState(getInitialTab)
+  const [hubError, setHubError] = useState<string | null>(null)
+  const [hubMeta, setHubMeta] = useState<any | null>(null)
+  const [linkedCompanies, setLinkedCompanies] = useState<Array<{ id: number; name: string; cnpj?: string }>>([])
+  const [linkedAgencies, setLinkedAgencies] = useState<Array<{ id: number; name: string; cnpj?: string }>>([])
+
+  // Financial Hub States
+  const [loadingFinancial, setLoadingFinancial] = useState(false)
+  const [financialSummary, setFinancialSummary] = useState<FinancialHubSummary | null>(null)
+  const [financialBoletos, setFinancialBoletos] = useState<PublicBoletoItem[]>([])
+  const [financialPreBoletos, setFinancialPreBoletos] = useState<PublicPreBoletoItem[]>([])
+  const [financialInvoices, setFinancialInvoices] = useState<PublicNfseItem[]>([])
+
+  // Reservations Filter States
+  const [reservationRoleFilter, setReservationRoleFilter] = useState<"all" | "requester" | "guest">("all")
+  const [reservationSearch, setReservationSearch] = useState("")
 
   // Form States - Profile (Personal & Demographic)
   const [name, setName] = useState("")
@@ -80,11 +133,39 @@ export default function MyAccount() {
 
   useEffect(() => {
     loadUserData()
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [magicHubToken])
 
   const loadUserData = async () => {
     try {
       setLoading(true)
+      setHubError(null)
+
+      // Modo Link Mágico Revogável (/painel-financeiro/:token) — sem senha, escopo Reservas + Financeiro
+      if (magicHubToken) {
+        setActiveTab((prev) => (prev === "reservations" ? "reservations" : "financial"))
+        const res = await fetch(`/api/public/financial-hub/${encodeURIComponent(magicHubToken)}`)
+        const json = await res.json().catch(() => ({}))
+        if (!res.ok || !json.success) {
+          setHubError(json.error || "Este link do Painel Financeiro é inválido ou foi revogado.")
+          setReservations([])
+          setFinancialSummary(null)
+          setFinancialBoletos([])
+          setFinancialPreBoletos([])
+          setFinancialInvoices([])
+          return
+        }
+        setHubMeta(json.hubMeta || null)
+        setLinkedCompanies(Array.isArray(json.linkedCompanies) ? json.linkedCompanies : [])
+        setLinkedAgencies(Array.isArray(json.linkedAgencies) ? json.linkedAgencies : [])
+        setReservations(Array.isArray(json.reservations) ? json.reservations : [])
+        setFinancialSummary(json.financial?.summary || null)
+        setFinancialBoletos(Array.isArray(json.financial?.boletos) ? json.financial.boletos : [])
+        setFinancialPreBoletos(Array.isArray(json.financial?.preBoletos) ? json.financial.preBoletos : [])
+        setFinancialInvoices(Array.isArray(json.financial?.invoices) ? json.financial.invoices : [])
+        return
+      }
+
       const sessionUser = await getCurrentSession()
       if (!sessionUser) {
         const raw = localStorage.getItem("corpflats_guest_profile")
@@ -101,20 +182,23 @@ export default function MyAccount() {
         populateFields(sessionUser)
       }
 
-      // Carrega histórico de reservas via sessão autenticada
+      // Carrega histórico de reservas (Hóspede + Solicitante + Empresa validada) e Financeiro em paralelo
       const legacyToken = localStorage.getItem("corpflats_guest_token") || ""
       const headers: Record<string, string> = {}
       if (legacyToken) {
         headers["Authorization"] = `Bearer ${legacyToken}`
       }
-      const bookingsRes = await fetch("/api/v2/auth/bookings", {
-        method: "GET",
-        credentials: "include",
-        headers
-      })
+      setLoadingFinancial(true)
+      const [bookingsRes, financialRes] = await Promise.all([
+        fetch("/api/v2/auth/bookings", { method: "GET", credentials: "include", headers }),
+        fetch("/api/v2/auth/financial", { method: "GET", credentials: "include", headers }),
+      ])
+
       if (bookingsRes.ok) {
         const bData = await bookingsRes.json()
         setReservations(bData.bookings || bData.reservations || [])
+        if (Array.isArray(bData.linkedCompanies)) setLinkedCompanies(bData.linkedCompanies)
+        if (Array.isArray(bData.linkedAgencies)) setLinkedAgencies(bData.linkedAgencies)
       } else {
         const meRes = await fetch("/api/guest-auth/me", {
           method: "GET",
@@ -124,11 +208,24 @@ export default function MyAccount() {
         if (meRes.ok) {
           const meData = await meRes.json()
           setReservations(meData.reservations || [])
+          if (Array.isArray(meData.linkedCompanies)) setLinkedCompanies(meData.linkedCompanies)
+          if (Array.isArray(meData.linkedAgencies)) setLinkedAgencies(meData.linkedAgencies)
         }
+      }
+
+      if (financialRes.ok) {
+        const fData = await financialRes.json()
+        setFinancialSummary(fData.summary || null)
+        setFinancialBoletos(Array.isArray(fData.boletos) ? fData.boletos : [])
+        setFinancialPreBoletos(Array.isArray(fData.preBoletos) ? fData.preBoletos : [])
+        setFinancialInvoices(Array.isArray(fData.invoices) ? fData.invoices : [])
+        if (Array.isArray(fData.linkedCompanies)) setLinkedCompanies(fData.linkedCompanies)
+        if (Array.isArray(fData.linkedAgencies)) setLinkedAgencies(fData.linkedAgencies)
       }
     } catch {
       // Ignore
     } finally {
+      setLoadingFinancial(false)
       setLoading(false)
     }
   }
@@ -455,13 +552,82 @@ export default function MyAccount() {
     }
   }
 
+  const requesterReservationsCount = useMemo(
+    () => reservations.filter((r) => Boolean(r?.isRequesterRole)).length,
+    [reservations]
+  )
+  const guestOwnReservationsCount = useMemo(
+    () => reservations.filter((r) => Boolean(r?.isGuestRole && !r?.isRequesterRole)).length,
+    [reservations]
+  )
+  const hasBothRoles = requesterReservationsCount > 0 && guestOwnReservationsCount > 0
+
+  const filteredReservations = useMemo(() => {
+    const q = reservationSearch.trim().toLowerCase()
+    return reservations.filter((r) => {
+      if (reservationRoleFilter === "requester" && !r?.isRequesterRole) return false
+      if (reservationRoleFilter === "guest" && !(r?.isGuestRole && !r?.isRequesterRole)) return false
+      if (!q) return true
+      const hay = [
+        r.code,
+        r.reservationCode,
+        r.packageCode,
+        r.guestName,
+        r.companyName,
+        r.agencyName,
+        r.flatNumber ? `flat ${r.flatNumber}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+      return hay.includes(q)
+    })
+  }, [reservations, reservationRoleFilter, reservationSearch])
+
+  const urgentFinancialCount = (financialSummary?.overdueCount || 0) + (financialSummary?.dueTodayCount || 0)
+
   if (loading) {
-    return <CorpFlatsSplashScreen label="Carregando painel do hóspede..." />
+    return <CorpFlatsSplashScreen label={isMagicHubMode ? "Carregando Painel Financeiro..." : "Carregando painel do cliente..."} />
+  }
+
+  if (isMagicHubMode && hubError) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans">
+        <header className="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
+          <div className="max-w-5xl mx-auto px-4 sm:px-8 min-h-16 py-2 flex items-center justify-between gap-2">
+            <div onClick={() => setLocation("/reservar")} className="flex items-center gap-2.5 cursor-pointer">
+              <CorpFlatsIcon className="w-9 h-9" />
+              <CorpFlatsWordmark className="text-base text-[#0F3D4C] dark:text-white leading-tight" />
+            </div>
+            <Button size="sm" variant="outline" onClick={() => setLocation("/reservar?login=1")} className="rounded-xl text-xs font-bold">
+              Entrar na Minha Conta
+            </Button>
+          </div>
+        </header>
+        <main className="flex-1 flex items-center justify-center p-4">
+          <Card className="w-full max-w-md rounded-3xl border-rose-200 dark:border-rose-900 p-6 text-center space-y-4">
+            <AlertTriangle className="w-10 h-10 text-rose-500 mx-auto" />
+            <div className="space-y-1">
+              <h1 className="text-lg font-black text-slate-900 dark:text-slate-100">Link Inválido ou Revogado</h1>
+              <p className="text-xs text-slate-500 leading-relaxed">{hubError}</p>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2 justify-center pt-2">
+              <Button onClick={() => setLocation("/reservar?login=1")} className="rounded-xl bg-[#0F3D4C] hover:bg-[#091E26] text-white font-bold text-xs">
+                Acessar com Login
+              </Button>
+              <Button variant="outline" onClick={() => setLocation("/reservar")} className="rounded-xl font-bold text-xs">
+                Ir para Reservas
+              </Button>
+            </div>
+          </Card>
+        </main>
+      </div>
+    )
   }
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans">
-      {/* Top Navbar do Hóspede */}
+      {/* Top Navbar do Cliente / Solicitante */}
       <header className="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
         <div className="max-w-5xl mx-auto px-4 sm:px-8 min-h-16 py-2 flex items-center justify-between gap-2">
           <div 
@@ -471,7 +637,13 @@ export default function MyAccount() {
             <CorpFlatsIcon className="w-9 h-9" />
             <div className="min-w-0 flex flex-col justify-center">
               <CorpFlatsWordmark className="text-base text-[#0F3D4C] dark:text-white leading-tight" />
-              <span className="text-[10px] text-slate-500 font-semibold leading-tight mt-0.5">Área do Hóspede</span>
+              <span className="text-[10px] text-slate-500 font-semibold leading-tight mt-0.5">
+                {isMagicHubMode
+                  ? "Painel Financeiro & Reservas"
+                  : requesterReservationsCount > 0 || linkedCompanies.length > 0
+                    ? "Área do Hóspede & Solicitante"
+                    : "Área do Hóspede"}
+              </span>
             </div>
           </div>
 
@@ -483,40 +655,67 @@ export default function MyAccount() {
               className="text-xs font-bold gap-1.5 h-auto min-h-9 py-1.5 px-2.5 sm:px-3 rounded-xl border-slate-200 hover:border-slate-300 dark:border-slate-800"
             >
               <ArrowRight className="w-3.5 h-3.5 rotate-180 shrink-0" />
-              <span>Voltar a Reservas</span>
+              <span>Fazer Reserva</span>
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleLogout}
-              className="text-xs font-bold gap-1.5 h-9 px-2.5 sm:px-3 rounded-xl text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 shrink-0"
-            >
-              <LogOut className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden sm:inline">Sair</span>
-            </Button>
+            {isMagicHubMode ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setLocation("/reservar?login=1")}
+                className="text-xs font-bold gap-1.5 h-9 px-2.5 sm:px-3 rounded-xl text-[#0F3D4C] dark:text-sky-300 border-sky-200 dark:border-sky-800 shrink-0"
+              >
+                <User className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden sm:inline">Minha Conta</span>
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleLogout}
+                className="text-xs font-bold gap-1.5 h-9 px-2.5 sm:px-3 rounded-xl text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 shrink-0"
+              >
+                <LogOut className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden sm:inline">Sair</span>
+              </Button>
+            )}
           </div>
         </div>
       </header>
 
       <main className="flex-1">
         <div className="p-4 sm:p-8 max-w-5xl mx-auto space-y-6 pb-28">
-        {/* Header do Usuário */}
+        {/* Header do Usuário / Solicitante */}
         <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3.5 sm:gap-4 min-w-0 w-full sm:w-auto">
             <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-[#091E26] to-[#0F3D4C] border border-[#C5A059]/40 text-[#E5C98B] flex items-center justify-center font-black text-xl shadow-md shrink-0">
-              {user?.name ? user.name.charAt(0).toUpperCase() : <User className="w-7 h-7" />}
+              {isMagicHubMode
+                ? (hubMeta?.label ? hubMeta.label.charAt(0).toUpperCase() : <Building2 className="w-7 h-7" />)
+                : (user?.name ? user.name.charAt(0).toUpperCase() : <User className="w-7 h-7" />)}
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight break-words">
-                  {user?.name || "Minha Conta"}
+                  {isMagicHubMode ? (hubMeta?.label || "Painel Financeiro") : (user?.name || "Minha Conta")}
                 </h1>
-                <Badge className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 text-[10px] font-bold shrink-0">
-                  ✓ Hóspede Verificado
-                </Badge>
+                {isMagicHubMode ? (
+                  <Badge className="bg-sky-100 dark:bg-sky-950 text-sky-800 dark:text-sky-300 text-[10px] font-bold shrink-0">
+                    ✓ Acesso Direto ao Painel Financeiro
+                  </Badge>
+                ) : (
+                  <Badge className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 text-[10px] font-bold shrink-0">
+                    ✓ Conta Verificada
+                  </Badge>
+                )}
+                {(requesterReservationsCount > 0 || linkedCompanies.length > 0 || linkedAgencies.length > 0) && (
+                  <Badge className="bg-indigo-100 dark:bg-indigo-950 text-indigo-800 dark:text-indigo-300 text-[10px] font-bold shrink-0">
+                    🏢 Solicitante / Corporativo
+                  </Badge>
+                )}
               </div>
               <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 break-all">
-                {user?.email || "Sem e-mail vinculado"}
+                {isMagicHubMode
+                  ? ([hubMeta?.companyName || hubMeta?.agencyName, hubMeta?.email, hubMeta?.document].filter(Boolean).join(" • ") || "Boletos, Notas Fiscais (NFS-e) e Reservas")
+                  : (user?.email || "Sem e-mail vinculado")}
               </p>
             </div>
           </div>
@@ -529,41 +728,71 @@ export default function MyAccount() {
               className="text-xs font-bold gap-1.5 h-auto min-h-9 py-2 rounded-xl flex-1 sm:flex-none border-slate-200 bg-sky-50 text-sky-700 hover:bg-sky-100 dark:bg-sky-950/40 dark:text-sky-300"
             >
               <Calendar className="w-3.5 h-3.5 text-sky-600 shrink-0" />
-              <span>Fazer Reserva</span>
+              <span>Nova Reserva</span>
             </Button>
 
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleLogout}
-              className="text-xs font-bold gap-1.5 h-auto min-h-9 py-2 rounded-xl hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors shrink-0"
-            >
-              <LogOut className="w-3.5 h-3.5 shrink-0" />
-              <span>Sair</span>
-            </Button>
+            {!isMagicHubMode && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleLogout}
+                className="text-xs font-bold gap-1.5 h-auto min-h-9 py-2 rounded-xl hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors shrink-0"
+              >
+                <LogOut className="w-3.5 h-3.5 shrink-0" />
+                <span>Sair</span>
+              </Button>
+            )}
           </div>
         </div>
 
-        {/* Abas Principais */}
+        {/* Abas Principais — linha única rolável com indicador estrutural de borda */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl border border-slate-200 dark:border-slate-700 grid grid-cols-2 sm:inline-flex gap-1 h-auto w-full sm:w-auto">
-            <TabsTrigger value="profile" className="rounded-xl py-2 px-3 sm:px-4 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-sky-700 data-[state=active]:shadow-xs gap-1.5 whitespace-normal leading-tight">
-              <User className="w-3.5 h-3.5 shrink-0" />
-              <span>Meu Perfil</span>
+          <TabsList className="bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl border border-slate-200 dark:border-slate-700 flex overflow-x-auto justify-start gap-1 h-auto w-full">
+            {!isMagicHubMode && (
+              <TabsTrigger value="profile" className="shrink-0 relative rounded-xl py-2 px-3.5 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-[#0F3D4C] dark:data-[state=active]:text-sky-300 data-[state=active]:border-b-2 data-[state=active]:border-[#0F3D4C] dark:data-[state=active]:border-sky-400 data-[state=active]:shadow-xs gap-1.5">
+                <User className="w-3.5 h-3.5 shrink-0" />
+                <span>Meu Perfil</span>
+              </TabsTrigger>
+            )}
+            <TabsTrigger value="financial" className="shrink-0 relative rounded-xl py-2 px-3.5 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-[#0F3D4C] dark:data-[state=active]:text-sky-300 data-[state=active]:border-b-2 data-[state=active]:border-[#0F3D4C] dark:data-[state=active]:border-sky-400 data-[state=active]:shadow-xs gap-1.5">
+              <Wallet className="w-3.5 h-3.5 shrink-0" />
+              <span>Financeiro (Boletos &amp; Notas)</span>
+              {urgentFinancialCount > 0 && (
+                <Badge className="bg-rose-600 text-white text-[10px] px-1.5 py-0 ml-0.5">
+                  {urgentFinancialCount}
+                </Badge>
+              )}
             </TabsTrigger>
-            <TabsTrigger value="security" className="rounded-xl py-2 px-3 sm:px-4 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-sky-700 data-[state=active]:shadow-xs gap-1.5 whitespace-normal leading-tight">
-              <Shield className="w-3.5 h-3.5 shrink-0" />
-              <span>Segurança & Passkeys</span>
-            </TabsTrigger>
-            <TabsTrigger value="reservations" className="rounded-xl py-2 px-3 sm:px-4 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-sky-700 data-[state=active]:shadow-xs gap-1.5 whitespace-normal leading-tight">
+            <TabsTrigger value="reservations" className="shrink-0 relative rounded-xl py-2 px-3.5 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-[#0F3D4C] dark:data-[state=active]:text-sky-300 data-[state=active]:border-b-2 data-[state=active]:border-[#0F3D4C] dark:data-[state=active]:border-sky-400 data-[state=active]:shadow-xs gap-1.5">
               <Calendar className="w-3.5 h-3.5 shrink-0" />
-              <span>Minhas Reservas</span>
+              <span>{isMagicHubMode ? "Reservas" : "Minhas Reservas"} ({reservations.length})</span>
             </TabsTrigger>
-            <TabsTrigger value="privacy" className="rounded-xl py-2 px-3 sm:px-4 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-sky-700 data-[state=active]:shadow-xs gap-1.5 whitespace-normal leading-tight">
-              <Lock className="w-3.5 h-3.5 shrink-0" />
-              <span>Privacidade & LGPD</span>
-            </TabsTrigger>
+            {!isMagicHubMode && (
+              <>
+                <TabsTrigger value="security" className="shrink-0 relative rounded-xl py-2 px-3.5 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-[#0F3D4C] dark:data-[state=active]:text-sky-300 data-[state=active]:border-b-2 data-[state=active]:border-[#0F3D4C] dark:data-[state=active]:border-sky-400 data-[state=active]:shadow-xs gap-1.5">
+                  <Shield className="w-3.5 h-3.5 shrink-0" />
+                  <span>Segurança &amp; Passkeys</span>
+                </TabsTrigger>
+                <TabsTrigger value="privacy" className="shrink-0 relative rounded-xl py-2 px-3.5 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-[#0F3D4C] dark:data-[state=active]:text-sky-300 data-[state=active]:border-b-2 data-[state=active]:border-[#0F3D4C] dark:data-[state=active]:border-sky-400 data-[state=active]:shadow-xs gap-1.5">
+                  <Lock className="w-3.5 h-3.5 shrink-0" />
+                  <span>Privacidade &amp; LGPD</span>
+                </TabsTrigger>
+              </>
+            )}
           </TabsList>
+
+          {/* 0. ABA FINANCEIRO (BOLETOS & NOTAS FISCAIS) */}
+          <TabsContent value="financial" className="space-y-6">
+            <ClientFinancialHubPanel
+              summary={financialSummary}
+              boletos={financialBoletos}
+              preBoletos={financialPreBoletos}
+              invoices={financialInvoices}
+              loading={loadingFinancial}
+              linkedCompanies={linkedCompanies}
+              linkedAgencies={linkedAgencies}
+            />
+          </TabsContent>
 
           {/* 1. ABA MEU PERFIL */}
           <TabsContent value="profile" className="space-y-6">
@@ -1032,83 +1261,229 @@ export default function MyAccount() {
             </Card>
           </TabsContent>
 
-          {/* 3. ABA MINHAS RESERVAS */}
+          {/* 3. ABA MINHAS RESERVAS (Hóspede + Solicitante + Documentos por Reserva) */}
           <TabsContent value="reservations" className="space-y-6">
             <Card className="rounded-3xl border-slate-200 dark:border-slate-800 shadow-xs">
-              <CardHeader>
-                <CardTitle className="text-lg font-black flex items-center gap-2">
-                  <Calendar className="w-5 h-5 text-sky-600 shrink-0" />
-                  <span>Histórico de Estadias & Reservas</span>
-                </CardTitle>
-                <CardDescription className="text-xs">
-                  Acompanhe seus flats reservados, pré-check-in digital para retirada do cartão NFC na recepção 24h e comprovantes.
-                </CardDescription>
+              <CardHeader className="space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <CardTitle className="text-lg font-black flex items-center gap-2">
+                      <Calendar className="w-5 h-5 text-sky-600 shrink-0" />
+                      <span>Histórico de Estadias &amp; Reservas</span>
+                    </CardTitle>
+                    <CardDescription className="text-xs">
+                      Acompanhe suas reservas, acesse portais de hóspede/solicitante e baixe boletos e notas fiscais diretamente de cada estadia.
+                    </CardDescription>
+                  </div>
+                  {(financialBoletos.length + financialPreBoletos.length + financialInvoices.length) > 0 && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setActiveTab("financial")}
+                      className="rounded-xl text-xs font-bold gap-1.5 text-[#0F3D4C] dark:text-sky-300 border-sky-200 dark:border-sky-800 shrink-0"
+                    >
+                      <Wallet className="w-3.5 h-3.5" />
+                      <span>Ver Painel Financeiro</span>
+                    </Button>
+                  )}
+                </div>
+
+                {reservations.length > 0 && (
+                  <div className="flex flex-col sm:flex-row gap-2.5 pt-1">
+                    <div className="relative flex-1">
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <Input
+                        value={reservationSearch}
+                        onChange={(e) => setReservationSearch(e.target.value)}
+                        placeholder="Buscar por código, hóspede, flat ou empresa..."
+                        className="pl-9 h-9 rounded-xl text-xs"
+                      />
+                    </div>
+                    {hasBothRoles && (
+                      <div className="flex overflow-x-auto gap-1.5 shrink-0">
+                        {(
+                          [
+                            { id: "all", label: `Todas (${reservations.length})` },
+                            { id: "requester", label: `Que Solicitei (${requesterReservationsCount})` },
+                            { id: "guest", label: `Minhas Estadias (${guestOwnReservationsCount})` },
+                          ] as const
+                        ).map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => setReservationRoleFilter(opt.id)}
+                            className={`shrink-0 px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-colors ${
+                              reservationRoleFilter === opt.id
+                                ? "bg-[#0F3D4C] text-white border-[#0F3D4C] dark:bg-sky-600 dark:border-sky-600"
+                                : "bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </CardHeader>
               <CardContent className="space-y-4">
-                {reservations.length > 0 ? (
+                {filteredReservations.length > 0 ? (
                   <div className="space-y-3">
-                    {reservations.map((r, idx) => (
-                      <div
-                        key={r.id || idx}
-                        className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
-                      >
-                        <div className="space-y-1 min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Badge className="bg-sky-600 text-white font-bold text-xs shrink-0">
-                              Flat {r.flatNumber || r.roomNumber}
-                            </Badge>
-                            <span className="font-bold text-xs text-slate-800 dark:text-slate-200">
-                              {r.checkinDate || r.checkIn} até {r.checkoutDate || r.checkOut}
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-slate-500 break-words">
-                            Hóspede: {r.guestName} • Valor: R$ {r.totalAmount || r.totalPrice || "---"}
-                          </p>
-                        </div>
+                    {filteredReservations.map((r, idx) => {
+                      const resBoletos: PublicBoletoItem[] = Array.isArray(r.boletos) ? r.boletos : []
+                      const resPreBoletos: PublicPreBoletoItem[] = Array.isArray(r.preBoletos) ? r.preBoletos : []
+                      const resInvoices: PublicNfseItem[] = Array.isArray(r.nfseInvoices) ? r.nfseInvoices : []
+                      const detailUrl = r.portalUrl || `/minha-reserva/${encodeURIComponent(r.code || r.reservationCode || r.id || "")}`
 
-                        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                          {r.accessCode && (
-                            <div className="p-2 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 text-center text-xs font-mono font-bold">
-                              Senha: {r.accessCode}
+                      return (
+                        <div
+                          key={r.id || r.code || idx}
+                          className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 space-y-3"
+                        >
+                          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                            <div className="space-y-1 min-w-0">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <Badge className="bg-sky-600 text-white font-bold text-xs shrink-0">
+                                  Flat {r.flatNumber || r.roomNumber}
+                                </Badge>
+                                {(r.code || r.reservationCode) && (
+                                  <Badge variant="outline" className="font-mono text-[10px] font-bold bg-white dark:bg-slate-900">
+                                    {r.code || r.reservationCode}
+                                  </Badge>
+                                )}
+                                {r.isRequesterRole && (
+                                  <Badge className="bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-200 text-[10px] font-bold">
+                                    🏢 Solicitada
+                                  </Badge>
+                                )}
+                                <span className="font-bold text-xs text-slate-800 dark:text-slate-200">
+                                  {formatDateBrShort(r.checkinDate || r.checkIn)} até {formatDateBrShort(r.checkoutDate || r.checkOut)}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-500 break-words">
+                                Hóspede: <strong>{r.guestName || "A definir"}</strong>
+                                {r.companyName ? ` • ${r.companyName}` : ""}
+                                {" • "}
+                                {r.hideFinancialForGuest ? (
+                                  <span>Faturamento gerenciado pelo solicitante/empresa</span>
+                                ) : (
+                                  <span>Valor: <strong className="font-mono text-slate-800 dark:text-slate-200">R$ {formatMoneyBr(r.totalAmount || r.totalPrice)}</strong></span>
+                                )}
+                              </p>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                              {r.accessCode && (
+                                <div className="p-2 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 text-center text-xs font-mono font-bold">
+                                  Senha: {r.accessCode}
+                                </div>
+                              )}
+                              <AddToCalendar
+                                variant="compact"
+                                reservation={{
+                                  id: r.id || r.reservationCode || "res",
+                                  reservationCode: r.reservationCode || r.code || "CORPFLATS",
+                                  guestName: r.guestName || user?.name || "Hóspede",
+                                  guestEmail: r.guestEmail || user?.email,
+                                  flatNumber: r.flatNumber || r.roomNumber || "905",
+                                  checkinDate: r.checkinDate || r.checkIn,
+                                  checkoutDate: r.checkoutDate || r.checkOut,
+                                  numGuests: r.guestCount || 2,
+                                  accessCode: r.accessCode
+                                }}
+                              />
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => window.open(detailUrl, "_blank")}
+                                className="text-xs font-bold gap-1 rounded-xl h-auto min-h-8 py-1.5"
+                              >
+                                <span>{r.isRequesterRole ? "Portal Solicitante" : "Ver Detalhes"}</span>
+                                <ExternalLink className="w-3 h-3 shrink-0" />
+                              </Button>
+                            </div>
+                          </div>
+
+                          {/* Documentos Fiscais & Boletos da Reserva (atalhos rápidos) */}
+                          {!r.hideFinancialForGuest && (resBoletos.length > 0 || resPreBoletos.length > 0 || resInvoices.length > 0) && (
+                            <div className="pt-2.5 border-t border-slate-200/70 dark:border-slate-800 flex flex-wrap items-center gap-1.5">
+                              {resBoletos.map((b) => {
+                                const meta = getBoletoStatusBadgeMeta(b.displayStatus, b.daysOverdue)
+                                return (
+                                  <a
+                                    key={`rbol_${b.id || b.code}`}
+                                    href={b.pdfUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 text-[11px] font-bold text-slate-800 dark:text-slate-100"
+                                    title={`Baixar PDF do Boleto #${b.code}`}
+                                  >
+                                    <Download className="w-3 h-3 text-indigo-600 shrink-0" />
+                                    <span>Boleto R$ {formatMoneyBr(b.amount)}</span>
+                                    <Badge className={`text-[9px] px-1.5 py-0 border ${meta.className}`}>
+                                      {meta.label}
+                                    </Badge>
+                                  </a>
+                                )
+                              })}
+
+                              {resPreBoletos.map((pre) => (
+                                <span
+                                  key={`rpre_${pre.id}`}
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-300"
+                                >
+                                  <Clock className="w-3 h-3 shrink-0" />
+                                  <span>Boleto Aguardando Emissão • Venc. {formatDateBrShort(pre.dueDate)}</span>
+                                </span>
+                              ))}
+
+                              {resInvoices.map((inv) => (
+                                <div key={`rnf_${inv.id || inv.numeroNfse}`} className="inline-flex items-center gap-1">
+                                  <a
+                                    href={inv.pdfUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-[#0F3D4C] hover:bg-[#091E26] text-white text-[11px] font-bold"
+                                  >
+                                    <FileText className="w-3 h-3 shrink-0" />
+                                    <span>NFS-e Nº {inv.numeroNfse} (PDF)</span>
+                                  </a>
+                                  <a
+                                    href={inv.xmlUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 text-[10px] font-bold text-slate-700 dark:text-slate-200"
+                                    title={`Baixar XML da NFS-e Nº ${inv.numeroNfse}`}
+                                  >
+                                    <FileCode2 className="w-3 h-3 shrink-0" />
+                                    <span>XML</span>
+                                  </a>
+                                </div>
+                              ))}
                             </div>
                           )}
-                          <AddToCalendar
-                            variant="compact"
-                            reservation={{
-                              id: r.id || r.reservationCode || "res",
-                              reservationCode: r.reservationCode || r.code || "CORPFLATS",
-                              guestName: r.guestName || user?.name || "Hóspede",
-                              guestEmail: r.guestEmail || user?.email,
-                              flatNumber: r.flatNumber || r.roomNumber || "905",
-                              checkinDate: r.checkinDate || r.checkIn,
-                              checkoutDate: r.checkoutDate || r.checkOut,
-                              numGuests: r.guestCount || 2,
-                              accessCode: r.accessCode
-                            }}
-                          />
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => window.open(`/minha-reserva/${r.id || r.reservationCode || ""}`, "_blank")}
-                            className="text-xs font-bold gap-1 rounded-xl h-auto min-h-8 py-1.5"
-                          >
-                            <span>Ver Detalhes</span>
-                            <ExternalLink className="w-3 h-3 shrink-0" />
-                          </Button>
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 ) : (
                   <div className="text-center py-10 space-y-3">
                     <Calendar className="w-10 h-10 text-slate-300 mx-auto" />
-                    <p className="text-xs text-slate-500 font-medium">Você ainda não possui reservas vinculadas a este e-mail.</p>
-                    <Button
-                      onClick={() => setLocation("/reservar")}
-                      className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-auto min-h-9 py-2 px-4 rounded-xl shadow-xs"
-                    >
-                      Reservar um Flat Agora
-                    </Button>
+                    <p className="text-xs text-slate-500 font-medium">
+                      {reservations.length > 0
+                        ? "Nenhuma reserva encontrada para o filtro informado."
+                        : "Você ainda não possui reservas vinculadas a este cadastro."}
+                    </p>
+                    {reservations.length === 0 && (
+                      <Button
+                        onClick={() => setLocation("/reservar")}
+                        className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-auto min-h-9 py-2 px-4 rounded-xl shadow-xs"
+                      >
+                        Reservar um Flat Agora
+                      </Button>
+                    )}
                   </div>
                 )}
               </CardContent>

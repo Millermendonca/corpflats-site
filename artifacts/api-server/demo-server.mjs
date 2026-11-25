@@ -2335,7 +2335,8 @@ export function getDefaultMinibarSettings() {
     sendPaymentConfirmationWhatsApp: true,
     paymentConfirmationWhatsAppTemplate: DEFAULT_MINIBAR_PAYMENT_CONFIRMATION_WA_TEMPLATE,
     sendCourtesyOnlyCheckoutWhatsApp: true,
-    courtesyOnlyCheckoutWhatsAppTemplate: DEFAULT_MINIBAR_COURTESY_ONLY_WA_TEMPLATE
+    courtesyOnlyCheckoutWhatsAppTemplate: DEFAULT_MINIBAR_COURTESY_ONLY_WA_TEMPLATE,
+    legacyUnrequestedInvoicesClearedAt: null
   };
 }
 
@@ -2351,6 +2352,83 @@ function ensureMinibarSettingsDefaults(targetDb = db) {
     }
   }
   return targetDb.minibarSettings;
+}
+
+export const MINIBAR_INVOICE_RETENTION_DAYS = 30;
+export const MINIBAR_INVOICE_RETENTION_MS = MINIBAR_INVOICE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+function getMinibarOrderPaidRefMs(order) {
+  if (!order || typeof order !== "object") return 0;
+  const raw = order.paidAt || order.createdAt || "";
+  if (!raw) return 0;
+  const ms = new Date(raw).getTime();
+  return Number.isFinite(ms) && ms > 0 ? ms : 0;
+}
+
+function migrateAndReconcileMinibarInvoices(targetDb = db, { nowMs = Date.now() } = {}) {
+  if (!targetDb || typeof targetDb !== "object") {
+    return { migratedLegacyCount: 0, autoExpiredCount: 0, changed: false };
+  }
+  ensureMinibarSettingsDefaults(targetDb);
+  if (!Array.isArray(targetDb.minibarOrders)) targetDb.minibarOrders = [];
+
+  const nowIso = new Date(nowMs).toISOString();
+  let migratedLegacyCount = 0;
+  let autoExpiredCount = 0;
+
+  // 1. Limpeza única e idempotente do passivo antigo (pedidos pagos antes da captação explícita de NF)
+  if (!targetDb.minibarSettings.legacyUnrequestedInvoicesClearedAt) {
+    for (const ord of targetDb.minibarOrders) {
+      if (!ord || ord.paymentStatus !== "pago" || !(Number(ord.totalAmount) > 0)) continue;
+      const curStatus = String(ord.invoice?.status || "pendente").toLowerCase();
+      if (curStatus === "anexada" || curStatus === "nao_aplicavel" || curStatus === "dispensada") continue;
+      if (ord.fiscalPreferences?.wantsInvoice === true) continue;
+
+      ord.fiscalPreferences = {
+        ...(ord.fiscalPreferences || {}),
+        wantsInvoice: false
+      };
+      ord.invoice = {
+        ...(ord.invoice || {}),
+        status: "dispensada",
+        dispensedAt: ord.paidAt || ord.createdAt || nowIso,
+        dispensedBy: "sistema",
+        dispensedReason: "legacy_backlog_cleanup"
+      };
+      migratedLegacyCount += 1;
+    }
+    targetDb.minibarSettings.legacyUnrequestedInvoicesClearedAt = nowIso;
+  }
+
+  // 2. Regra automática de 30 dias: pendências sem emissão após 30 dias são dispensadas automaticamente
+  for (const ord of targetDb.minibarOrders) {
+    if (!ord || ord.paymentStatus !== "pago" || !(Number(ord.totalAmount) > 0)) continue;
+    const curStatus = String(ord.invoice?.status || "pendente").toLowerCase();
+    if (curStatus !== "pendente") continue;
+
+    const pendingRefRaw = ord.invoice?.requestedAt || ord.paidAt || ord.createdAt;
+    const pendingRefMs = pendingRefRaw ? new Date(pendingRefRaw).getTime() : 0;
+    if (pendingRefMs > 0 && nowMs - pendingRefMs > MINIBAR_INVOICE_RETENTION_MS) {
+      ord.fiscalPreferences = {
+        ...(ord.fiscalPreferences || {}),
+        wantsInvoice: false
+      };
+      ord.invoice = {
+        ...(ord.invoice || {}),
+        status: "dispensada",
+        dispensedAt: nowIso,
+        dispensedBy: "sistema",
+        dispensedReason: "auto_expired_30d"
+      };
+      autoExpiredCount += 1;
+    }
+  }
+
+  return {
+    migratedLegacyCount,
+    autoExpiredCount,
+    changed: migratedLegacyCount > 0 || autoExpiredCount > 0
+  };
 }
 
 let db = {
@@ -6764,6 +6842,30 @@ export function reconcileUniversalIntegrity(incomingState = null) {
         }
       });
     }
+
+    // 1.X Tokens de Painel Financeiro do Solicitante / Empresa (db.financialHubTokens)
+    if (Array.isArray(incomingState.financialHubTokens) && incomingState.financialHubTokens.length > 0) {
+      if (!Array.isArray(db.financialHubTokens)) db.financialHubTokens = [];
+      incomingState.financialHubTokens.forEach(incTok => {
+        if (!incTok || !incTok.token) return;
+        const existingIdx = db.financialHubTokens.findIndex(t =>
+          (t.id && incTok.id && String(t.id) === String(incTok.id)) ||
+          (t.token && String(t.token) === String(incTok.token))
+        );
+        if (existingIdx === -1) {
+          db.financialHubTokens.push({ ...incTok });
+          changed = true;
+        } else {
+          const cur = db.financialHubTokens[existingIdx];
+          const incDate = incTok.revokedAt || incTok.updatedAt || incTok.createdAt || "";
+          const curDate = cur.revokedAt || cur.updatedAt || cur.createdAt || "";
+          if ((incTok.revokedAt && !cur.revokedAt) || incDate > curDate) {
+            db.financialHubTokens[existingIdx] = { ...cur, ...incTok };
+            changed = true;
+          }
+        }
+      });
+    }
   }
 
   if (ensureB2bSeedData(db)) {
@@ -8740,6 +8842,12 @@ function sanitizeReservationFlags() {
     try {
       saveDatabase("sanitize_faturado_boleto_reservations");
       console.log("[Auto-Fix] Reservas com Boleto Faturado (incluindo RES-211-0770) regularizadas: pixTxId espúrio removido e status pendente restaurado onde não há liquidação real.");
+    } catch (_) {}
+  }
+  if (sanitizePollutedCompanyContactsAndRequesters(db)) {
+    try {
+      saveDatabase("sanitize_polluted_company_requesters");
+      console.log("[Auto-Fix] Contatos de empresas e solicitantes higienizados contra contaminação por nome de hóspede.");
     } catch (_) {}
   }
 }
@@ -13126,7 +13234,9 @@ async function _loadDatabaseImpl() {
             hydrationRetryTimer = null;
           }
           console.log("[PostgreSQL] Hidratação e reconciliação concluídas com sucesso!");
-          const hadReconcileChanges = Boolean(didChange || didAuditReconcile || didMigrateEmails || didMigratePeriodicTasks);
+          const didSanitizeFatBoletos = sanitizeFaturadoBoletoReservations(db);
+          const didSanitizeCompanyRequesters = sanitizePollutedCompanyContactsAndRequesters(db);
+          const hadReconcileChanges = Boolean(didChange || didAuditReconcile || didMigrateEmails || didMigratePeriodicTasks || didSanitizeFatBoletos || didSanitizeCompanyRequesters);
           if (hadReconcileChanges) {
             console.log("[PostgreSQL] Estado universal reconciliado sem perdas e sincronizado na nuvem!");
           }
@@ -13235,6 +13345,10 @@ async function _loadDatabaseImpl() {
     ensureMinibarSettingsDefaults(db);
     if (db.minibarSettings.pixFeePercent === undefined && (!db.minibarSettings.pixFeeFixed || Number(db.minibarSettings.pixFeeFixed) === 0)) {
       db.minibarSettings.pixFeePercent = 0.99;
+    }
+    const minibarInvoiceMigration = migrateAndReconcileMinibarInvoices(db);
+    if (minibarInvoiceMigration.changed) {
+      saveDatabase("minibar_legacy_invoices_reconciled");
     }
     if (ensureSystemUsers(db)) {
       saveDatabase("manual_migrate_system_users_dev_and_gestor");
@@ -34675,6 +34789,923 @@ export function doesBoletoCoverReservation(b, r) {
   return false;
 }
 
+// ── Motor Unificado de Documentos Fiscais, Boletos & Painel Financeiro do Solicitante / Hóspede ──
+function _fhOnlyDigits(v) {
+  return String(v || "").replace(/\D/g, "");
+}
+
+function _fhParseEmails(raw) {
+  const out = [];
+  const seen = new Set();
+  const visit = (item) => {
+    if (!item) return;
+    if (Array.isArray(item)) {
+      for (const sub of item) visit(sub);
+      return;
+    }
+    const parts = String(item).split(/[;,\s]+/);
+    for (const p of parts) {
+      const clean = p.trim().toLowerCase();
+      if (clean && clean.includes("@") && !seen.has(clean)) {
+        seen.add(clean);
+        out.push(clean);
+      }
+    }
+  };
+  visit(raw);
+  return out;
+}
+
+export function doesInvoiceCoverReservation(inv, r) {
+  if (!inv || !r) return false;
+  if (r.invoiceId && inv.id && Number(r.invoiceId) === Number(inv.id)) return true;
+  if (r.numeroNfse && inv.numeroNfse && String(r.numeroNfse) === String(inv.numeroNfse)) return true;
+  if (inv.reservationId && r.id && Number(inv.reservationId) === Number(r.id)) return true;
+  if (inv.reservationCode && r.code && String(inv.reservationCode).trim().toUpperCase() === String(r.code).trim().toUpperCase()) return true;
+  if (Array.isArray(inv.reservationIds) && r.id && inv.reservationIds.some(id => Number(id) === Number(r.id))) return true;
+  if (Array.isArray(inv.reservationCodes) && r.code && inv.reservationCodes.some(c => String(c || "").trim().toUpperCase() === String(r.code).trim().toUpperCase())) return true;
+  const rPkg = String(r.packageId || r.packageCode || "").trim().toUpperCase();
+  const invPkg = String(inv.packageCode || inv.packageId || (isPackageCode(inv.reservationCode) ? inv.reservationCode : "") || "").trim().toUpperCase();
+  if (rPkg && invPkg && rPkg === invPkg) return true;
+  if (r.roomMoveGroupId && inv.roomMoveGroupId && String(r.roomMoveGroupId) === String(inv.roomMoveGroupId)) return true;
+  return false;
+}
+
+export function serializePublicNfseInvoice(inv) {
+  if (!inv) return null;
+  const statusLower = String(inv.status || "").trim().toLowerCase();
+  if (statusLower !== "autorizada") return null;
+  const ref = String(inv.numeroNfse || inv.id || "").trim();
+  if (!ref) return null;
+  const encodedRef = encodeURIComponent(ref);
+  return {
+    id: inv.id,
+    numeroNfse: String(inv.numeroNfse || inv.id),
+    codigoVerificacao: inv.codigoVerificacao || "",
+    chaveAcesso: inv.chaveAcesso || "",
+    dataEmissao: inv.dataEmissao || inv.createdAt || null,
+    valorServico: Number(inv.valorServico ?? inv.valorServicos ?? inv.amount ?? 0),
+    tomadorNome: inv.tomadorNome || "",
+    tomadorCpfCnpj: inv.tomadorCpfCnpj || "",
+    flatNumber: String(inv.flatNumber || ""),
+    guestName: inv.guestName || "",
+    reservationId: inv.reservationId || null,
+    reservationCode: inv.reservationCode || null,
+    reservationIds: Array.isArray(inv.reservationIds) ? inv.reservationIds : (inv.reservationId ? [inv.reservationId] : []),
+    reservationCodes: Array.isArray(inv.reservationCodes) ? inv.reservationCodes : (inv.reservationCode ? [inv.reservationCode] : []),
+    packageCode: inv.packageCode || inv.packageId || (isPackageCode(inv.reservationCode) ? inv.reservationCode : null),
+    isConsolidated: Boolean(inv.isConsolidated),
+    status: "autorizada",
+    pdfUrl: `/api/nfse/pdf/${encodedRef}?download=1`,
+    danfseUrl: `/api/nfse/danfse/${encodedRef}`,
+    xmlUrl: `/api/nfse/xml/${encodedRef}`,
+    linkPrefeitura: inv.linkPrefeitura || null
+  };
+}
+
+export function serializePublicBoleto(bol, authorizedPublicInvoices = []) {
+  if (!bol) return null;
+  const enriched = typeof enrichBoletoDynamicStatus === "function" ? enrichBoletoDynamicStatus(bol) : bol;
+  if (!enriched) return null;
+  const st = String(enriched.status || "aberto").trim().toLowerCase();
+  if (st === "cancelado" || st === "cancelled" || st === "baixado" || st === "expirado") return null;
+
+  const displayStatus =
+    st === "pago"
+      ? "pago"
+      : st === "vencido"
+      ? "vencido"
+      : enriched.isDueToday
+      ? "vence_hoje"
+      : "aberto";
+
+  const bolPkg = String(enriched.packageId || enriched.packageCode || (isPackageCode(enriched.reservationCode) ? enriched.reservationCode : "") || "").trim().toUpperCase();
+  const matchedInv = (Array.isArray(authorizedPublicInvoices) ? authorizedPublicInvoices : []).find(inv => {
+    if (!inv) return false;
+    if (enriched.invoiceId && Number(inv.id) === Number(enriched.invoiceId)) return true;
+    if (enriched.nfseNumber && String(inv.numeroNfse) === String(enriched.nfseNumber)) return true;
+    if (enriched.reservationId && (Number(inv.reservationId) === Number(enriched.reservationId) || (Array.isArray(inv.reservationIds) && inv.reservationIds.some(x => Number(x) === Number(enriched.reservationId))))) return true;
+    if (enriched.reservationCode && (String(inv.reservationCode) === String(enriched.reservationCode) || (Array.isArray(inv.reservationCodes) && inv.reservationCodes.includes(String(enriched.reservationCode))))) return true;
+    if (bolPkg && inv.packageCode && String(inv.packageCode).trim().toUpperCase() === bolPkg) return true;
+    return false;
+  }) || null;
+
+  const bolRef = encodeURIComponent(enriched.code || enriched.id);
+  return {
+    id: enriched.id,
+    code: enriched.code || `BOL-${enriched.id}`,
+    nossoNumero: enriched.nossoNumero || "",
+    status: st,
+    displayStatus,
+    isOpen: displayStatus === "aberto" || displayStatus === "vence_hoje",
+    isDueToday: Boolean(enriched.isDueToday),
+    isOverdue: displayStatus === "vencido",
+    isPaid: displayStatus === "pago",
+    daysOverdue: Number(enriched.daysOverdue || 0),
+    amount: Number(enriched.amount || enriched.valorNominal || 0),
+    paidAmount: Number(enriched.paidAmount || (displayStatus === "pago" ? (enriched.amount || 0) : 0)),
+    paidAt: enriched.paidAt || null,
+    dueDate: String(enriched.dueDate || enriched.dataVencimento || "").slice(0, 10) || null,
+    issuedAt: enriched.createdAt || enriched.issuedAt || null,
+    finePct: Number(enriched.finePct ?? enriched.multaPct ?? 2),
+    interestPct: Number(enriched.interestPct ?? enriched.jurosMonthlyPct ?? 1),
+    fineAmount: Number(enriched.fineAmount || 0),
+    interestAmount: Number(enriched.interestAmount || 0),
+    updatedTotalWithCharges: Number(enriched.updatedTotalWithCharges || enriched.amount || 0),
+    boletoKind: enriched.boletoKind || "single",
+    billingScope: enriched.billingScope || "combined",
+    payerName: enriched.payer?.nome || enriched.payerName || enriched.guestName || "Pagador",
+    payerDocument: enriched.payer?.cpfCnpj || enriched.payerDocument || enriched.payerDoc || "",
+    guestName: enriched.guestName || "",
+    companyId: enriched.companyId || null,
+    companyName: enriched.companyName || null,
+    agencyId: enriched.agencyId || null,
+    agencyName: enriched.agencyName || null,
+    flatNumber: String(enriched.flatNumber || ""),
+    reservationId: enriched.reservationId || null,
+    reservationIds: Array.isArray(enriched.reservationIds) ? enriched.reservationIds : (enriched.reservationId ? [enriched.reservationId] : []),
+    reservationCode: enriched.reservationCode || null,
+    packageId: bolPkg || null,
+    linhaDigitavel: displayStatus === "pago" ? "" : (enriched.linhaDigitavel || ""),
+    pixCopiaECola: displayStatus === "pago" ? "" : (enriched.pixCopiaECola || ""),
+    pdfUrl: `/api/boletos/${encodeURIComponent(enriched.id)}/pdf`,
+    copyPageUrl: `/copiar-boleto/${bolRef}`,
+    linkedInvoice: matchedInv ? {
+      id: matchedInv.id,
+      numeroNfse: matchedInv.numeroNfse,
+      valorServico: matchedInv.valorServico,
+      pdfUrl: matchedInv.pdfUrl,
+      danfseUrl: matchedInv.danfseUrl,
+      xmlUrl: matchedInv.xmlUrl
+    } : null
+  };
+}
+
+export function serializePublicPreBoleto(pre, authorizedPublicInvoices = []) {
+  if (!pre) return null;
+  const prePkg = String(pre.packageId || (isPackageCode(pre.reservationCode) ? pre.reservationCode : "") || "").trim().toUpperCase();
+  const matchedInv = (Array.isArray(authorizedPublicInvoices) ? authorizedPublicInvoices : []).find(inv => {
+    if (!inv) return false;
+    if (pre.invoiceId && Number(inv.id) === Number(pre.invoiceId)) return true;
+    if (pre.nfseNumber && String(inv.numeroNfse) === String(pre.nfseNumber)) return true;
+    if (pre.reservationId && (Number(inv.reservationId) === Number(pre.reservationId) || (Array.isArray(inv.reservationIds) && inv.reservationIds.some(x => Number(x) === Number(pre.reservationId))))) return true;
+    if (pre.reservationCode && (String(inv.reservationCode) === String(pre.reservationCode) || (Array.isArray(inv.reservationCodes) && inv.reservationCodes.includes(String(pre.reservationCode))))) return true;
+    if (prePkg && inv.packageCode && String(inv.packageCode).trim().toUpperCase() === prePkg) return true;
+    return false;
+  }) || null;
+
+  return {
+    id: pre.id,
+    code: pre.code || `PRE-${pre.reservationCode || pre.reservationId}`,
+    isPreBoleto: true,
+    status: "aguardando_emissao",
+    displayStatus: "aguardando_emissao",
+    amount: Number(pre.amount || 0),
+    accommodationAmount: Number(pre.accommodationAmount || pre.amount || 0),
+    consumptionAmount: Number(pre.consumptionAmount || 0),
+    dueDate: String(pre.dueDate || "").slice(0, 10) || null,
+    termDays: Number(pre.termDays || 0),
+    payerName: pre.payerName || pre.payer?.nome || pre.companyName || pre.agencyName || pre.guestName || "Pagador",
+    payerDocument: pre.payerDocument || pre.payerDoc || pre.payer?.cpfCnpj || "",
+    guestName: pre.guestName || "",
+    companyId: pre.companyId || null,
+    companyName: pre.companyName || null,
+    agencyId: pre.agencyId || null,
+    agencyName: pre.agencyName || null,
+    flatNumber: String(pre.flatNumber || ""),
+    reservationId: pre.reservationId || null,
+    reservationIds: Array.isArray(pre.reservationIds) ? pre.reservationIds : (pre.reservationId ? [pre.reservationId] : []),
+    reservationCode: pre.reservationCode || null,
+    packageId: prePkg || null,
+    checkinDate: pre.checkinDate || null,
+    checkoutDate: pre.checkoutDate || null,
+    linkedInvoice: matchedInv ? {
+      id: matchedInv.id,
+      numeroNfse: matchedInv.numeroNfse,
+      valorServico: matchedInv.valorServico,
+      pdfUrl: matchedInv.pdfUrl,
+      danfseUrl: matchedInv.danfseUrl,
+      xmlUrl: matchedInv.xmlUrl
+    } : null
+  };
+}
+
+export function getFinancialDocumentsForReservation(r, targetDb = db, { includePackageSiblings = false } = {}) {
+  if (!r || !targetDb) return { nfseInvoices: [], boletos: [], preBoletos: [] };
+  const targetList = [r];
+  const seenResIds = new Set([String(r.id || r.code)]);
+
+  if (includePackageSiblings && (r.packageId || r.packageCode) && typeof getPackageReservations === "function") {
+    const pkgItems = getPackageReservations(targetDb, r.packageId || r.packageCode) || [];
+    for (const item of pkgItems) {
+      const k = String(item?.id || item?.code || "");
+      if (item && k && !seenResIds.has(k)) {
+        seenResIds.add(k);
+        targetList.push(item);
+      }
+    }
+  }
+  if (r.roomMoveGroupId) {
+    for (const seg of (targetDb.reservations || [])) {
+      if (seg && seg.roomMoveGroupId && String(seg.roomMoveGroupId) === String(r.roomMoveGroupId)) {
+        const k = String(seg.id || seg.code || "");
+        if (k && !seenResIds.has(k)) {
+          seenResIds.add(k);
+          targetList.push(seg);
+        }
+      }
+    }
+  }
+
+  const invSeen = new Set();
+  const nfseInvoices = [];
+  for (const inv of (targetDb.invoices || [])) {
+    if (!inv) continue;
+    if (!targetList.some(tr => doesInvoiceCoverReservation(inv, tr))) continue;
+    const pub = serializePublicNfseInvoice(inv);
+    if (!pub) continue;
+    const k = String(pub.id || pub.numeroNfse);
+    if (!invSeen.has(k)) {
+      invSeen.add(k);
+      nfseInvoices.push(pub);
+    }
+  }
+
+  const bolSeen = new Set();
+  const boletos = [];
+  for (const b of (targetDb.boletos || [])) {
+    if (!b) continue;
+    if (!targetList.some(tr => doesBoletoCoverReservation(b, tr))) continue;
+    const pub = serializePublicBoleto(b, nfseInvoices);
+    if (!pub) continue;
+    const k = String(pub.id || pub.code);
+    if (!bolSeen.has(k)) {
+      bolSeen.add(k);
+      boletos.push(pub);
+    }
+  }
+
+  const preSeen = new Set();
+  const preBoletos = [];
+  if (typeof buildAwaitingEmissionPreBoletos === "function") {
+    const allPre = buildAwaitingEmissionPreBoletos(targetDb) || [];
+    for (const pre of allPre) {
+      if (!pre) continue;
+      const covers = targetList.some(tr => {
+        if (pre.reservationId && Number(pre.reservationId) === Number(tr.id)) return true;
+        if (pre.reservationCode && tr.code && String(pre.reservationCode) === String(tr.code)) return true;
+        if (Array.isArray(pre.reservationIds) && tr.id && pre.reservationIds.some(id => Number(id) === Number(tr.id))) return true;
+        const trPkg = String(tr.packageId || tr.packageCode || "").trim().toUpperCase();
+        const prePkg = String(pre.packageId || "").trim().toUpperCase();
+        if (trPkg && prePkg && trPkg === prePkg) return true;
+        return false;
+      });
+      if (!covers) continue;
+      const pubPre = serializePublicPreBoleto(pre, nfseInvoices);
+      if (!pubPre) continue;
+      const k = String(pubPre.id || pubPre.code);
+      if (!preSeen.has(k)) {
+        preSeen.add(k);
+        preBoletos.push(pubPre);
+      }
+    }
+  }
+
+  return { nfseInvoices, boletos, preBoletos };
+}
+
+export function ensureFinancialHubToken(targetDb = db, spec = {}, { regenerate = false } = {}) {
+  if (!targetDb) return null;
+  if (!Array.isArray(targetDb.financialHubTokens)) targetDb.financialHubTokens = [];
+
+  const kind = ["company", "agency", "requester", "guest"].includes(String(spec.kind || "").toLowerCase())
+    ? String(spec.kind).toLowerCase()
+    : (spec.companyId ? "company" : (spec.agencyId ? "agency" : (spec.guestId ? "guest" : "requester")));
+  const companyId = spec.companyId ? Number(spec.companyId) : null;
+  const agencyId = spec.agencyId ? Number(spec.agencyId) : null;
+  const guestId = spec.guestId ? Number(spec.guestId) : null;
+  const email = _fhParseEmails(spec.email)[0] || "";
+  const phone = normalizePhone(spec.phone || "");
+  const docDigits = _fhOnlyDigits(spec.document || "");
+  const label = String(spec.label || spec.name || "").trim();
+
+  if (!companyId && !agencyId && !guestId && !email && phone.length < 8 && docDigits.length < 5) {
+    return null;
+  }
+
+  const matchesRecord = (t) => {
+    if (!t || t.revokedAt) return false;
+    if (t.kind !== kind) return false;
+    if (kind === "company" && companyId) return Number(t.companyId) === companyId;
+    if (kind === "agency" && agencyId) return Number(t.agencyId) === agencyId;
+    if (kind === "guest" && guestId) return Number(t.guestId) === guestId;
+    if (email && t.email && t.email === email) return true;
+    if (phone.length >= 8 && t.phone && phonesMatch(t.phone, phone)) return true;
+    if (docDigits.length >= 11 && t.document && _fhOnlyDigits(t.document) === docDigits) return true;
+    return false;
+  };
+
+  const nowIso = new Date().toISOString();
+  if (regenerate) {
+    for (const t of targetDb.financialHubTokens) {
+      if (matchesRecord(t)) {
+        t.revokedAt = nowIso;
+        t.updatedAt = nowIso;
+      }
+    }
+  } else {
+    const existing = targetDb.financialHubTokens.find(matchesRecord);
+    if (existing) {
+      let touched = false;
+      if (label && !existing.label) { existing.label = label; touched = true; }
+      if (email && !existing.email) { existing.email = email; touched = true; }
+      if (phone.length >= 8 && !existing.phone) { existing.phone = phone; touched = true; }
+      if (docDigits.length >= 5 && !existing.document) { existing.document = docDigits; touched = true; }
+      if (touched) existing.updatedAt = nowIso;
+      return { record: existing, created: false, changed: touched };
+    }
+  }
+
+  const newToken = `fhub_${crypto.randomBytes(20).toString("hex")}`;
+  const record = {
+    id: `fht_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`,
+    token: newToken,
+    kind,
+    label: label || (kind === "company" ? "Empresa Corporativa" : kind === "agency" ? "Agência Parceira" : kind === "guest" ? "Cliente" : "Solicitante"),
+    companyId,
+    agencyId,
+    guestId,
+    email,
+    phone: phone.length >= 8 ? phone : "",
+    document: docDigits,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    revokedAt: null
+  };
+  targetDb.financialHubTokens.push(record);
+
+  if (kind === "company" && companyId) {
+    const comp = (targetDb.companies || []).find(c => c && Number(c.id) === companyId);
+    if (comp) comp.financialHubToken = newToken;
+  } else if (kind === "agency" && agencyId) {
+    const ag = (targetDb.agencies || []).find(a => a && Number(a.id) === agencyId);
+    if (ag) ag.financialHubToken = newToken;
+  } else if (kind === "guest" && guestId) {
+    const g = (targetDb.guests || []).find(x => x && Number(x.id) === guestId);
+    if (g) g.financialHubToken = newToken;
+  }
+
+  return { record, created: true, changed: true };
+}
+
+export function resolveFinancialHubSpecForReservationAndRecipient(r, opts = {}, targetDb = db) {
+  const role = String(opts.role || "").trim().toLowerCase();
+  const compId = opts.companyId || r?.companyId || null;
+  const agId = opts.agencyId || r?.agencyId || null;
+  const gId = opts.guestId || r?.guestId || null;
+
+  const compRec = compId
+    ? (targetDb.companies || []).find(c => c && Number(c.id) === Number(compId))
+    : (r?.companyCnpj ? (targetDb.companies || []).find(c => c && _fhOnlyDigits(c.cnpj) === _fhOnlyDigits(r.companyCnpj) && _fhOnlyDigits(c.cnpj).length === 14) : null);
+  const agRec = agId
+    ? (targetDb.agencies || []).find(a => a && Number(a.id) === Number(agId))
+    : (r?.agencyCnpj ? (targetDb.agencies || []).find(a => a && _fhOnlyDigits(a.cnpj) === _fhOnlyDigits(r.agencyCnpj) && _fhOnlyDigits(a.cnpj).length === 14) : null);
+
+  if ((role === "company" || role === "financial_responsible" || role === "requester") && compRec) {
+    return {
+      kind: "company",
+      companyId: compRec.id,
+      label: compRec.tradeName || compRec.corporateName || compRec.razaoSocial || r?.companyName || "Empresa",
+      email: _fhParseEmails([compRec.financialEmail, compRec.emailFinanceiro, compRec.email, opts.email])[0] || "",
+      phone: compRec.phone || compRec.telefone || opts.phone || "",
+      document: _fhOnlyDigits(compRec.cnpj || r?.companyCnpj || "")
+    };
+  }
+  if ((role === "agency" || role === "requester") && agRec) {
+    return {
+      kind: "agency",
+      agencyId: agRec.id,
+      label: agRec.tradeName || agRec.corporateName || r?.agencyTradeName || r?.agencyName || "Agência",
+      email: _fhParseEmails([agRec.financialEmail, agRec.email, opts.email])[0] || "",
+      phone: agRec.phone || agRec.telefone || opts.phone || "",
+      document: _fhOnlyDigits(agRec.cnpj || r?.agencyCnpj || "")
+    };
+  }
+  if (role === "guest") {
+    const gRec = gId ? (targetDb.guests || []).find(g => g && Number(g.id) === Number(gId)) : null;
+    const email = _fhParseEmails([opts.email, r?.guestEmail, gRec?.email])[0] || "";
+    const phone = opts.phone || r?.guestPhone || gRec?.phone || "";
+    const doc = _fhOnlyDigits(opts.document || r?.guestDocument || gRec?.documentNumber || gRec?.document || "");
+    if (!gRec?.id && !email && _fhOnlyDigits(phone).length < 8 && doc.length < 5) return null;
+    return {
+      kind: "guest",
+      guestId: gRec?.id || (gId ? Number(gId) : null),
+      label: opts.name || r?.guestName || gRec?.fullName || gRec?.name || "Hóspede",
+      email,
+      phone,
+      document: doc
+    };
+  }
+  const reqEmail = _fhParseEmails([opts.email, r?.requesterInfo?.email, r?.requesterEmail, r?.agencyAgentEmail, r?.financialResponsible?.email])[0] || "";
+  const reqPhone = opts.phone || r?.requesterInfo?.whatsapp || r?.requesterInfo?.phone || r?.requesterPhone || r?.agencyAgentPhone || r?.financialResponsible?.phone || "";
+  const reqDoc = _fhOnlyDigits(opts.document || r?.requesterInfo?.cpf || r?.requesterInfo?.document || r?.companyCnpj || r?.agencyCnpj || "");
+  if (!reqEmail && _fhOnlyDigits(reqPhone).length < 8 && reqDoc.length < 5) return null;
+  return {
+    kind: "requester",
+    label: opts.name || r?.requesterInfo?.name || r?.requesterName || r?.companyName || r?.agencyName || "Solicitante",
+    email: reqEmail,
+    phone: reqPhone,
+    document: reqDoc
+  };
+}
+
+export function resolveFinancialHubUrlForEntity(targetDb = db, spec = null, baseUrl = "") {
+  if (!spec) return { url: "", path: "", token: "", record: null };
+  const res = ensureFinancialHubToken(targetDb, spec, { regenerate: false });
+  if (!res || !res.record?.token) return { url: "", path: "", token: "", record: null };
+  if (res.changed && typeof saveDatabase === "function" && targetDb === db) {
+    try { saveDatabase("financial_hub_token_created"); } catch {}
+  }
+  const cleanBase = String(baseUrl || process.env.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/+$/, "");
+  const relPath = `/painel-financeiro/${encodeURIComponent(res.record.token)}`;
+  return {
+    token: res.record.token,
+    path: relPath,
+    url: `${cleanBase}${relPath}`,
+    record: res.record
+  };
+}
+
+export function resolveValidatedCrmEntitiesForAccount(account, targetDb = db) {
+  if (!account || !targetDb) return { companies: [], agencies: [] };
+  const accEmails = _fhParseEmails([account.email, account.companyData?.companyEmail]);
+  const accPhone = normalizePhone(account.phone || "");
+  // IMPORTANTE (Segurança): Só vincula empresa/agência se o e-mail ou telefone AUTENTICADO da conta
+  // constar explicitamente nos contatos/financeiro do cadastro da empresa/agência no CRM.
+  // Preencher CNPJ livremente em companyData.cnpj NUNCA libera dados de terceiros.
+  const primaryAuthEmail = _fhParseEmails(account.email)[0] || "";
+
+  const matchesEntity = (ent) => {
+    if (!ent) return false;
+    const entEmails = _fhParseEmails([
+      ent.financialEmail,
+      ent.emailFinanceiro,
+      ent.email,
+      ent.contactEmail,
+      ent.financialResponsible?.email,
+      ent.financialResponsibleEmail
+    ]);
+    if (primaryAuthEmail && entEmails.includes(primaryAuthEmail)) return true;
+    const entPhones = [
+      ent.phone,
+      ent.telefone,
+      ent.whatsapp,
+      ent.financialResponsible?.phone,
+      ent.financialResponsiblePhone
+    ].filter(Boolean);
+    if (accPhone && accPhone.length >= 8 && entPhones.some(ep => phonesMatch(ep, accPhone))) return true;
+    return false;
+  };
+
+  const companies = (targetDb.companies || []).filter(matchesEntity);
+  const agencies = (targetDb.agencies || []).filter(matchesEntity);
+  return { companies, agencies };
+}
+
+export function buildScopeFromAccount(account, targetDb = db) {
+  const { companies, agencies } = resolveValidatedCrmEntitiesForAccount(account, targetDb);
+  const emails = new Set(_fhParseEmails(account?.email));
+  const phones = new Set();
+  const accPhone = normalizePhone(account?.phone || "");
+  if (accPhone && accPhone.length >= 8) phones.add(accPhone);
+
+  const documents = new Set();
+  const accDoc = normalizeDoc(account?.document || "");
+  if (accDoc && accDoc.length >= 5) documents.add(accDoc);
+
+  const guestIds = new Set();
+  if (account?.guestId) guestIds.add(Number(account.guestId));
+  const guestCodes = new Set();
+  if (account?.guestCode) guestCodes.add(String(account.guestCode).trim().toUpperCase());
+
+  const companyIds = new Set(companies.map(c => Number(c.id)).filter(Boolean));
+  const companyCnpjs = new Set(companies.map(c => _fhOnlyDigits(c.cnpj)).filter(d => d.length === 14));
+  const agencyIds = new Set(agencies.map(a => Number(a.id)).filter(Boolean));
+  const agencyCnpjs = new Set(agencies.map(a => _fhOnlyDigits(a.cnpj)).filter(d => d.length === 14));
+
+  return {
+    mode: "account",
+    kind: (companies.length > 0 || agencies.length > 0) ? "corporate_account" : "personal_account",
+    label: account?.name || account?.email || "Minha Conta",
+    accountId: account?.id ? Number(account.id) : null,
+    guestIds,
+    guestCodes,
+    emails,
+    phones,
+    documents,
+    companyIds,
+    companyCnpjs,
+    agencyIds,
+    agencyCnpjs,
+    linkedCompanies: companies.map(c => ({ id: c.id, name: c.tradeName || c.corporateName || c.razaoSocial || "Empresa", cnpj: c.cnpj || "" })),
+    linkedAgencies: agencies.map(a => ({ id: a.id, name: a.tradeName || a.corporateName || "Agência", cnpj: a.cnpj || "" })),
+    allowGuestRole: true
+  };
+}
+
+export function buildScopeFromHubToken(tokRec, targetDb = db) {
+  const emails = new Set(_fhParseEmails(tokRec?.email));
+  const phones = new Set();
+  const tPhone = normalizePhone(tokRec?.phone || "");
+  if (tPhone && tPhone.length >= 8) phones.add(tPhone);
+
+  const documents = new Set();
+  const tDoc = normalizeDoc(tokRec?.document || "");
+  if (tDoc && tDoc.length >= 5) documents.add(tDoc);
+
+  const guestIds = new Set();
+  const guestCodes = new Set();
+  const companyIds = new Set();
+  const companyCnpjs = new Set();
+  const agencyIds = new Set();
+  const agencyCnpjs = new Set();
+  const linkedCompanies = [];
+  const linkedAgencies = [];
+
+  if (tokRec?.kind === "company" && tokRec.companyId) {
+    const comp = (targetDb.companies || []).find(c => c && Number(c.id) === Number(tokRec.companyId));
+    companyIds.add(Number(tokRec.companyId));
+    const cnpj = _fhOnlyDigits(comp?.cnpj || tokRec.document || "");
+    if (cnpj.length === 14) companyCnpjs.add(cnpj);
+    linkedCompanies.push({ id: Number(tokRec.companyId), name: comp?.tradeName || comp?.corporateName || tokRec.label || "Empresa", cnpj: comp?.cnpj || "" });
+  } else if (tokRec?.kind === "agency" && tokRec.agencyId) {
+    const ag = (targetDb.agencies || []).find(a => a && Number(a.id) === Number(tokRec.agencyId));
+    agencyIds.add(Number(tokRec.agencyId));
+    const cnpj = _fhOnlyDigits(ag?.cnpj || tokRec.document || "");
+    if (cnpj.length === 14) agencyCnpjs.add(cnpj);
+    linkedAgencies.push({ id: Number(tokRec.agencyId), name: ag?.tradeName || ag?.corporateName || tokRec.label || "Agência", cnpj: ag?.cnpj || "" });
+  } else if (tokRec?.kind === "guest" && tokRec.guestId) {
+    guestIds.add(Number(tokRec.guestId));
+    const g = (targetDb.guests || []).find(x => x && Number(x.id) === Number(tokRec.guestId));
+    if (g) {
+      if (g.guestCode) guestCodes.add(String(g.guestCode).trim().toUpperCase());
+      for (const em of _fhParseEmails(g.email)) emails.add(em);
+      const gp = normalizePhone(g.phone || g.phoneNumber || "");
+      if (gp && gp.length >= 8) phones.add(gp);
+      const gd = normalizeDoc(g.documentNumber || g.document || "");
+      if (gd && gd.length >= 5) documents.add(gd);
+    }
+  } else if (tokRec?.kind === "requester") {
+    // Se o e-mail/telefone do solicitante constar em uma empresa/agência do CRM, agrega essa empresa validada também
+    const pseudoAcc = { email: Array.from(emails)[0] || "", phone: Array.from(phones)[0] || "" };
+    const validated = resolveValidatedCrmEntitiesForAccount(pseudoAcc, targetDb);
+    for (const c of validated.companies) {
+      companyIds.add(Number(c.id));
+      const cnpj = _fhOnlyDigits(c.cnpj);
+      if (cnpj.length === 14) companyCnpjs.add(cnpj);
+      linkedCompanies.push({ id: c.id, name: c.tradeName || c.corporateName || "Empresa", cnpj: c.cnpj || "" });
+    }
+    for (const a of validated.agencies) {
+      agencyIds.add(Number(a.id));
+      const cnpj = _fhOnlyDigits(a.cnpj);
+      if (cnpj.length === 14) agencyCnpjs.add(cnpj);
+      linkedAgencies.push({ id: a.id, name: a.tradeName || a.corporateName || "Agência", cnpj: a.cnpj || "" });
+    }
+  }
+
+  return {
+    mode: "magic_hub",
+    kind: tokRec?.kind || "requester",
+    label: linkedCompanies[0]?.name || linkedAgencies[0]?.name || tokRec?.label || "Painel Financeiro",
+    accountId: null,
+    guestIds,
+    guestCodes,
+    emails,
+    phones,
+    documents,
+    companyIds,
+    companyCnpjs,
+    agencyIds,
+    agencyCnpjs,
+    linkedCompanies,
+    linkedAgencies,
+    allowGuestRole: tokRec?.kind === "guest" || tokRec?.kind === "requester"
+  };
+}
+
+function _fhPhoneMatchesSet(rawPhone, phoneSet) {
+  if (!rawPhone || !phoneSet || phoneSet.size === 0) return false;
+  for (const p of phoneSet) {
+    if (phonesMatch(rawPhone, p)) return true;
+  }
+  return false;
+}
+
+function _fhEmailMatchesSet(rawEmail, emailSet) {
+  if (!rawEmail || !emailSet || emailSet.size === 0) return false;
+  const list = _fhParseEmails(rawEmail);
+  return list.some(em => emailSet.has(em));
+}
+
+function _fhDocMatchesSet(rawDoc, docSet) {
+  if (!rawDoc || !docSet || docSet.size === 0) return false;
+  const d = normalizeDoc(rawDoc);
+  return Boolean(d && d.length >= 5 && docSet.has(d));
+}
+
+export function getUnifiedReservationsForScope(scope, targetDb = db) {
+  if (!scope || !targetDb) return [];
+  const results = [];
+  let tokenMutated = false;
+
+  for (const r of (targetDb.reservations || [])) {
+    if (!r) continue;
+
+    // 1. Match por Empresa / Agência validada
+    const rCompCnpj = _fhOnlyDigits(r.companyCnpj || "");
+    const rAgCnpj = _fhOnlyDigits(r.agencyCnpj || "");
+    const isCompanyOrAgencyMatch = Boolean(
+      (r.companyId && scope.companyIds.has(Number(r.companyId))) ||
+      (rCompCnpj.length === 14 && scope.companyCnpjs.has(rCompCnpj)) ||
+      (r.agencyId && scope.agencyIds.has(Number(r.agencyId))) ||
+      (rAgCnpj.length === 14 && scope.agencyCnpjs.has(rAgCnpj))
+    );
+
+    // 2. Match por Solicitante / Responsável Financeiro / Destinatário de NF
+    const isRequesterMatch = Boolean(
+      _fhEmailMatchesSet([r.requesterEmail, r.requesterInfo?.email, r.agencyAgentEmail, r.financialResponsible?.email, r.nfDeliveryEmails], scope.emails) ||
+      _fhPhoneMatchesSet(r.requesterPhone, scope.phones) ||
+      _fhPhoneMatchesSet(r.requesterInfo?.phone, scope.phones) ||
+      _fhPhoneMatchesSet(r.requesterInfo?.whatsapp, scope.phones) ||
+      _fhPhoneMatchesSet(r.agencyAgentPhone, scope.phones) ||
+      _fhPhoneMatchesSet(r.financialResponsible?.phone, scope.phones) ||
+      _fhDocMatchesSet(r.requesterInfo?.cpf || r.requesterInfo?.document, scope.documents) ||
+      _fhDocMatchesSet(r.financialResponsible?.document, scope.documents)
+    );
+
+    // 3. Match por Hóspede (titular ou acompanhante)
+    let isGuestMatch = false;
+    if (scope.allowGuestRole) {
+      if (scope.accountId && r.userId && Number(r.userId) === scope.accountId) isGuestMatch = true;
+      if (!isGuestMatch && r.guestId && scope.guestIds.has(Number(r.guestId))) isGuestMatch = true;
+      if (!isGuestMatch && r.guestCode && scope.guestCodes.has(String(r.guestCode).trim().toUpperCase())) isGuestMatch = true;
+      if (!isGuestMatch && Array.isArray(r.guests) && r.guests.some(rg => rg?.guestCode && scope.guestCodes.has(String(rg.guestCode).trim().toUpperCase()))) isGuestMatch = true;
+      if (!isGuestMatch && _fhDocMatchesSet(r.guestDocument, scope.documents)) isGuestMatch = true;
+      if (!isGuestMatch && Array.isArray(r.guests) && r.guests.some(rg => _fhDocMatchesSet(rg?.cpf || rg?.document, scope.documents))) isGuestMatch = true;
+      if (!isGuestMatch && _fhEmailMatchesSet(r.guestEmail, scope.emails)) isGuestMatch = true;
+      if (!isGuestMatch && Array.isArray(r.guests) && r.guests.some(rg => _fhEmailMatchesSet(rg?.email, scope.emails))) isGuestMatch = true;
+      if (!isGuestMatch && _fhPhoneMatchesSet(r.guestPhone, scope.phones)) isGuestMatch = true;
+      if (!isGuestMatch && Array.isArray(r.guests) && r.guests.some(rg => _fhPhoneMatchesSet(rg?.phone, scope.phones))) isGuestMatch = true;
+    }
+
+    if (!isCompanyOrAgencyMatch && !isRequesterMatch && !isGuestMatch) continue;
+
+    // Se a pessoa casou como Empresa/Agência/Solicitante, tem acesso financeiro completo.
+    // Se casou APENAS como hóspede, aplica a regra de sigilo corporativo!
+    const isB2b = typeof isB2bReservation === "function" ? isB2bReservation(r) : Boolean(r.channel === "b2b" || r.b2bReservationNumber || r.agencyId);
+    const portalRecips = typeof getReservationRecipients === "function" ? getReservationRecipients(r, targetDb) : { requester: {} };
+    const isExplicitPrivacyHidden = Boolean(r.hideFinancialForGuest || r.nfHideFromGuest);
+    const isSeparateRequester = Boolean(
+      portalRecips.requester?.isDifferentFromGuest ||
+      isB2b ||
+      (r.requesterType && r.requesterType !== "guest" && !r.requesterIsGuest1) ||
+      ((r.packageId || r.packageCode) && !r.requesterIsGuest1)
+    );
+
+    const hasRequesterAccess = Boolean(isCompanyOrAgencyMatch || isRequesterMatch);
+    const hideFinancialForGuest = Boolean(!hasRequesterAccess && (isB2b || isExplicitPrivacyHidden || isSeparateRequester));
+    const accessRole = hasRequesterAccess
+      ? (isGuestMatch ? "requester_and_guest" : "requester")
+      : (hideFinancialForGuest ? "guest_corporate" : "guest_self");
+
+    const docs = hideFinancialForGuest
+      ? { nfseInvoices: [], boletos: [], preBoletos: [] }
+      : getFinancialDocumentsForReservation(r, targetDb, { includePackageSiblings: hasRequesterAccess });
+
+    let portalUrl = `/minha-reserva/${encodeURIComponent(r.code || r.id)}`;
+    if (hasRequesterAccess) {
+      const hadTok = Boolean(r.requesterPortalToken);
+      const reqTok = ensureLocalRequesterPortalToken(targetDb, r);
+      if (!hadTok && reqTok) tokenMutated = true;
+      const targetLocator = r.packageCode || r.packageId || r.code || r.id;
+      portalUrl = `/solicitante/${encodeURIComponent(targetLocator)}${reqTok ? `?t=${encodeURIComponent(reqTok)}` : ""}`;
+    }
+
+    results.push({
+      id: r.id,
+      code: r.code || `RES-${r.flatNumber || "000"}-${String(r.id || "0").padStart(4, "0")}`,
+      reservationCode: r.code || `RES-${r.flatNumber || "000"}-${String(r.id || "0").padStart(4, "0")}`,
+      packageCode: r.packageCode || r.packageId || null,
+      flatNumber: String(r.flatNumber || ""),
+      checkinDate: r.checkinDate || "",
+      checkoutDate: r.checkoutDate || "",
+      guestName: r.guestName || "",
+      guestEmail: r.guestEmail || "",
+      guestCount: r.guestCount || r.adults || 1,
+      status: r.status || "confirmada",
+      paymentStatus: hideFinancialForGuest ? null : (r.paymentStatus || "pendente"),
+      paymentMethod: hideFinancialForGuest ? null : (r.paymentMethod || "pix"),
+      isFaturadoBoleto: hideFinancialForGuest ? false : (typeof isFaturadoBoletoReservation === "function" ? isFaturadoBoletoReservation(r) : Boolean(r.isFaturadoBoleto)),
+      totalAmount: hideFinancialForGuest ? 0 : (Number(r.totalAmount) || 0),
+      paidAmount: hideFinancialForGuest ? 0 : (Number(r.paidAmount) || 0),
+      companyName: r.companyName || null,
+      agencyName: r.agencyTradeName || r.agencyName || null,
+      requesterName: r.requesterInfo?.name || r.requesterName || null,
+      accessCode: isGuestMatch ? (r.accessCode || null) : null,
+      accessRole,
+      isRequesterRole: hasRequesterAccess,
+      isGuestRole: isGuestMatch,
+      hideFinancialForGuest,
+      portalUrl,
+      guestPortalUrl: `/minha-reserva/${encodeURIComponent(r.code || r.id)}`,
+      nfseInvoices: docs.nfseInvoices,
+      boletos: docs.boletos,
+      preBoletos: docs.preBoletos
+    });
+  }
+
+  if (tokenMutated && typeof saveDatabase === "function" && targetDb === db) {
+    try { saveDatabase("requester_portal_token_sync"); } catch {}
+  }
+
+  results.sort((a, b) => {
+    const cmp = String(b.checkinDate || "").localeCompare(String(a.checkinDate || ""));
+    if (cmp !== 0) return cmp;
+    return Number(b.id || 0) - Number(a.id || 0);
+  });
+  return results;
+}
+
+export function getUnifiedFinancialHubPayload(scope, targetDb = db) {
+  const reservations = getUnifiedReservationsForScope(scope, targetDb);
+  const visibleRes = reservations.filter(r => !r.hideFinancialForGuest);
+  const hiddenRes = reservations.filter(r => r.hideFinancialForGuest);
+  const visibleResIds = new Set(visibleRes.map(r => Number(r.id)).filter(Boolean));
+  const visibleResCodes = new Set(visibleRes.map(r => String(r.code || "").trim().toUpperCase()).filter(Boolean));
+  const visiblePkgCodes = new Set(visibleRes.map(r => String(r.packageCode || "").trim().toUpperCase()).filter(Boolean));
+  const hiddenResIds = new Set(hiddenRes.map(r => Number(r.id)).filter(Boolean));
+  const hiddenResCodes = new Set(hiddenRes.map(r => String(r.code || "").trim().toUpperCase()).filter(Boolean));
+
+  const isGuestOnlyScope = scope.companyIds.size === 0 && scope.agencyIds.size === 0 && scope.kind !== "requester";
+
+  // 1. Todas as NFS-e autorizadas do escopo
+  const invMap = new Map();
+  for (const r of visibleRes) {
+    for (const inv of (r.nfseInvoices || [])) {
+      const k = String(inv.id || inv.numeroNfse);
+      if (!invMap.has(k)) invMap.set(k, inv);
+    }
+  }
+  for (const rawInv of (targetDb.invoices || [])) {
+    if (!rawInv) continue;
+    const pub = serializePublicNfseInvoice(rawInv);
+    if (!pub) continue;
+    const k = String(pub.id || pub.numeroNfse);
+    if (invMap.has(k)) continue;
+
+    if (isGuestOnlyScope && rawInv.nfHideFromGuest) continue;
+    const belongsToHiddenRes = Boolean(
+      (rawInv.reservationId && hiddenResIds.has(Number(rawInv.reservationId)) && !visibleResIds.has(Number(rawInv.reservationId))) ||
+      (rawInv.reservationCode && hiddenResCodes.has(String(rawInv.reservationCode).trim().toUpperCase()) && !visibleResCodes.has(String(rawInv.reservationCode).trim().toUpperCase()))
+    );
+    if (belongsToHiddenRes) continue;
+    const invDoc = _fhOnlyDigits(rawInv.tomadorCpfCnpj || "");
+    const directMatch = Boolean(
+      (rawInv.companyId && scope.companyIds.has(Number(rawInv.companyId))) ||
+      (invDoc.length === 14 && (scope.companyCnpjs.has(invDoc) || scope.agencyCnpjs.has(invDoc))) ||
+      (rawInv.agencyId && scope.agencyIds.has(Number(rawInv.agencyId))) ||
+      (rawInv.reservationId && visibleResIds.has(Number(rawInv.reservationId))) ||
+      (rawInv.reservationCode && visibleResCodes.has(String(rawInv.reservationCode).trim().toUpperCase())) ||
+      (pub.packageCode && visiblePkgCodes.has(String(pub.packageCode).trim().toUpperCase())) ||
+      (!rawInv.nfHideFromGuest && _fhEmailMatchesSet([rawInv.tomadorEmail, rawInv.nfDeliveryEmails], scope.emails)) ||
+      (!rawInv.nfHideFromGuest && invDoc.length === 11 && scope.documents.has(invDoc))
+    );
+    if (directMatch) invMap.set(k, pub);
+  }
+  const invoices = Array.from(invMap.values()).sort((a, b) =>
+    String(b.dataEmissao || "").localeCompare(String(a.dataEmissao || "")) || (Number(b.id || 0) - Number(a.id || 0))
+  );
+
+  // 2. Todos os Boletos emitidos (exceto cancelados) do escopo
+  const bolMap = new Map();
+  for (const r of visibleRes) {
+    for (const b of (r.boletos || [])) {
+      const k = String(b.id || b.code);
+      if (!bolMap.has(k)) bolMap.set(k, b);
+    }
+  }
+  for (const rawBol of (targetDb.boletos || [])) {
+    if (!rawBol) continue;
+    const bolDoc = _fhOnlyDigits(rawBol.payer?.cpfCnpj || rawBol.payerDocument || rawBol.payerDoc || "");
+    const bolPkg = String(rawBol.packageId || (isPackageCode(rawBol.reservationCode) ? rawBol.reservationCode : "") || "").trim().toUpperCase();
+    const directMatch = Boolean(
+      (rawBol.companyId && scope.companyIds.has(Number(rawBol.companyId))) ||
+      (bolDoc.length === 14 && (scope.companyCnpjs.has(bolDoc) || scope.agencyCnpjs.has(bolDoc))) ||
+      (rawBol.agencyId && scope.agencyIds.has(Number(rawBol.agencyId))) ||
+      (rawBol.reservationId && visibleResIds.has(Number(rawBol.reservationId))) ||
+      (rawBol.reservationCode && visibleResCodes.has(String(rawBol.reservationCode).trim().toUpperCase())) ||
+      (bolPkg && visiblePkgCodes.has(bolPkg)) ||
+      _fhEmailMatchesSet([rawBol.payer?.email, rawBol.financialResponsible?.email], scope.emails) ||
+      _fhPhoneMatchesSet(rawBol.financialResponsible?.phone, scope.phones) ||
+      (bolDoc.length === 11 && scope.documents.has(bolDoc))
+    );
+    if (!directMatch) continue;
+    const pub = serializePublicBoleto(rawBol, invoices);
+    if (!pub) continue;
+    const k = String(pub.id || pub.code);
+    if (!bolMap.has(k)) bolMap.set(k, pub);
+  }
+
+  const statusOrder = { vencido: 0, vence_hoje: 1, aberto: 2, pago: 3 };
+  const boletos = Array.from(bolMap.values()).sort((a, b) => {
+    const oa = statusOrder[a.displayStatus] ?? 9;
+    const ob = statusOrder[b.displayStatus] ?? 9;
+    if (oa !== ob) return oa - ob;
+    if (a.displayStatus === "pago") {
+      return String(b.paidAt || b.dueDate || "").localeCompare(String(a.paidAt || a.dueDate || ""));
+    }
+    return String(a.dueDate || "").localeCompare(String(b.dueDate || ""));
+  });
+
+  // 3. Pré-Boletos ("Aguardando Emissão")
+  const preMap = new Map();
+  for (const r of visibleRes) {
+    for (const pre of (r.preBoletos || [])) {
+      const k = String(pre.id || pre.code);
+      if (!preMap.has(k)) preMap.set(k, pre);
+    }
+  }
+  if (typeof buildAwaitingEmissionPreBoletos === "function") {
+    for (const rawPre of (buildAwaitingEmissionPreBoletos(targetDb) || [])) {
+      if (!rawPre) continue;
+      const preDoc = _fhOnlyDigits(rawPre.payerDocument || rawPre.companyCnpj || rawPre.agencyCnpj || "");
+      const prePkg = String(rawPre.packageId || "").trim().toUpperCase();
+      const directMatch = Boolean(
+        (rawPre.companyId && scope.companyIds.has(Number(rawPre.companyId))) ||
+        (preDoc.length === 14 && (scope.companyCnpjs.has(preDoc) || scope.agencyCnpjs.has(preDoc))) ||
+        (rawPre.agencyId && scope.agencyIds.has(Number(rawPre.agencyId))) ||
+        (rawPre.reservationId && visibleResIds.has(Number(rawPre.reservationId))) ||
+        (prePkg && visiblePkgCodes.has(prePkg))
+      );
+      if (!directMatch) continue;
+      const pubPre = serializePublicPreBoleto(rawPre, invoices);
+      if (!pubPre) continue;
+      const k = String(pubPre.id || pubPre.code);
+      if (!preMap.has(k)) preMap.set(k, pubPre);
+    }
+  }
+  const preBoletos = Array.from(preMap.values()).sort((a, b) =>
+    String(a.dueDate || "").localeCompare(String(b.dueDate || ""))
+  );
+
+  // 4. KPIs consolidados
+  const sumField = (arr, field = "amount") =>
+    Number(arr.reduce((acc, item) => acc + (Number(item?.[field] ?? item?.amount ?? 0) || 0), 0).toFixed(2));
+  const overdue = boletos.filter(b => b.displayStatus === "vencido");
+  const dueToday = boletos.filter(b => b.displayStatus === "vence_hoje");
+  const openFuture = boletos.filter(b => b.displayStatus === "aberto");
+  const openAll = boletos.filter(b => b.displayStatus === "aberto" || b.displayStatus === "vence_hoje");
+  const paid = boletos.filter(b => b.displayStatus === "pago");
+
+  const summary = {
+    overdueCount: overdue.length,
+    overdueAmount: sumField(overdue, "amount"),
+    overdueWithChargesAmount: sumField(overdue, "updatedTotalWithCharges"),
+    dueTodayCount: dueToday.length,
+    dueTodayAmount: sumField(dueToday, "amount"),
+    openCount: openFuture.length,
+    openAmount: sumField(openFuture, "amount"),
+    openAllCount: openAll.length,
+    openAllAmount: sumField(openAll, "amount"),
+    awaitingCount: preBoletos.length,
+    awaitingAmount: sumField(preBoletos, "amount"),
+    paidCount: paid.length,
+    paidAmount: sumField(paid, "paidAmount"),
+    totalPendingCount: overdue.length + openAll.length,
+    totalPendingAmount: Number((sumField(overdue, "amount") + sumField(openAll, "amount")).toFixed(2)),
+    invoicesCount: invoices.length,
+    invoicesAmount: sumField(invoices, "valorServico"),
+    reservationsCount: reservations.length,
+    requesterReservationsCount: reservations.filter(r => r.isRequesterRole).length,
+    guestReservationsCount: reservations.filter(r => r.isGuestRole && !r.isRequesterRole).length
+  };
+
+  return {
+    scopeMeta: {
+      mode: scope.mode,
+      kind: scope.kind,
+      label: scope.label,
+      linkedCompanies: scope.linkedCompanies,
+      linkedAgencies: scope.linkedAgencies
+    },
+    summary,
+    boletos,
+    preBoletos,
+    invoices,
+    reservations
+  };
+}
+
 export function hasRealSettlementForFaturadoBoleto(r, targetDb = db) {
   if (!r) return false;
   if (r.pixEndToEndId || r.mpPaymentId) return true;
@@ -34765,6 +35796,179 @@ export function sanitizeFaturadoBoletoReservations(targetDb = db) {
       }
     }
   }
+  return changed;
+}
+
+export function sanitizePollutedCompanyContactsAndRequesters(targetDb = db) {
+  if (!targetDb || typeof targetDb !== "object") return false;
+  const companies = Array.isArray(targetDb.companies) ? targetDb.companies : [];
+  const reservations = Array.isArray(targetDb.reservations) ? targetDb.reservations : [];
+  const guests = Array.isArray(targetDb.guests) ? targetDb.guests : [];
+  const conversations = Array.isArray(targetDb.whatsappConversations) ? targetDb.whatsappConversations : [];
+
+  const normStr = (v) => String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().replace(/\s+/g, " ");
+  const digitsOnly = (v) => String(v || "").replace(/\D/g, "");
+  const phonesEq = (a, b) => {
+    const da = digitsOnly(a);
+    const dbp = digitsOnly(b);
+    if (!da || !dbp || da.length < 8 || dbp.length < 8) return false;
+    return da === dbp || da.slice(-8) === dbp.slice(-8);
+  };
+  const isGenericOrInvalidPerson = (nm) => {
+    const nn = normStr(nm);
+    if (!nn || nn.length < 2) return true;
+    return /^(h[oó]spede|solicitante|cliente|empresa|a definir|aguardando|sem nome|whatsapp|\d+)$/i.test(nn);
+  };
+  const findPhoneOwnerCleanName = (phoneRaw, stayGuestNormSet, compNamesSet, compId = null) => {
+    const pDigits = digitsOnly(phoneRaw);
+    if (pDigits.length < 8) return "";
+    const guestMatches = guests.filter(g => {
+      if (!g) return false;
+      if (!phonesEq(pDigits, g.phone || g.phoneNumber || g.whatsapp)) return false;
+      const gn = normStr(g.fullName || g.name);
+      return !isGenericOrInvalidPerson(gn) && !stayGuestNormSet.has(gn) && !compNamesSet.has(gn);
+    });
+    const prefGuest =
+      guestMatches.find(g => Array.isArray(g.tags) && (g.tags.includes("solicitante_terceiro") || g.tags.includes("Solicitante"))) ||
+      (compId ? guestMatches.find(g => Number(g.companyId) === Number(compId)) : null) ||
+      guestMatches[0] ||
+      null;
+    if (prefGuest) return String(prefGuest.fullName || prefGuest.name).trim();
+
+    const matchedConv = conversations.find(cv => {
+      if (!cv || cv.isGroup) return false;
+      const cvPh = String(cv.phone || cv.guestPhone || cv.remoteJid || cv.id || "").replace(/@.*$/, "");
+      if (!phonesEq(pDigits, cvPh)) return false;
+      const cvNm = cv.contactName || cv.pushName || cv.guestName || cv.name || "";
+      const cnn = normStr(cvNm);
+      return !isGenericOrInvalidPerson(cnn) && !stayGuestNormSet.has(cnn) && !compNamesSet.has(cnn) && !/corpflats|portaria|recep[cç][aã]o/i.test(cnn);
+    });
+    if (matchedConv) {
+      return String(matchedConv.contactName || matchedConv.pushName || matchedConv.guestName || matchedConv.name).trim();
+    }
+    return "";
+  };
+
+  let changed = false;
+
+  // 1) Limpa company.contactPerson contaminado por nome de hóspede em reservas onde requesterIsGuest1 !== true
+  for (const comp of companies) {
+    if (!comp) continue;
+    const compCnpj = digitsOnly(comp.cnpj);
+    const compNamesSet = new Set([comp.corporateName, comp.razaoSocial, comp.tradeName, comp.nomeFantasia].map(normStr).filter(Boolean));
+    const compReservations = reservations.filter(r =>
+      r && !["cancelada", "cancelled"].includes(String(r.status || "").toLowerCase()) && (
+        (comp.id && Number(r.companyId) === Number(comp.id)) ||
+        (compCnpj.length === 14 && digitsOnly(r.companyCnpj) === compCnpj) ||
+        (r.companyName && compNamesSet.has(normStr(r.companyName)))
+      )
+    );
+    if (compReservations.length === 0) continue;
+
+    const compPhone = comp.phone || comp.telefone || "";
+    const stayGuestNormSet = new Set();
+    for (const r of compReservations) {
+      if (r.requesterIsGuest1) continue;
+      const gn = normStr(r.guestName);
+      if (gn && !isGenericOrInvalidPerson(gn) && (!compPhone || !r.guestPhone || !phonesEq(compPhone, r.guestPhone))) {
+        stayGuestNormSet.add(gn);
+      }
+      if (Array.isArray(r.guests)) {
+        for (const rg of r.guests) {
+          const rgn = normStr(rg?.name || rg?.fullName);
+          if (rgn && !isGenericOrInvalidPerson(rgn) && (!compPhone || !(rg?.phone || rg?.whatsapp) || !phonesEq(compPhone, rg.phone || rg.whatsapp))) {
+            stayGuestNormSet.add(rgn);
+          }
+        }
+      }
+    }
+
+    const curContactNorm = normStr(comp.contactPerson || comp.contato);
+    if (curContactNorm && (stayGuestNormSet.has(curContactNorm) || compNamesSet.has(curContactNorm))) {
+      let replacement = "";
+      for (const r of compReservations) {
+        if (r.requesterIsGuest1) continue;
+        for (const cand of [r.requesterInfo?.name, r.requesterName]) {
+          const cnn = normStr(cand);
+          if (!isGenericOrInvalidPerson(cnn) && !stayGuestNormSet.has(cnn) && !compNamesSet.has(cnn)) {
+            replacement = String(cand).trim();
+            break;
+          }
+        }
+        if (replacement) break;
+      }
+      if (!replacement && compPhone) {
+        replacement = findPhoneOwnerCleanName(compPhone, stayGuestNormSet, compNamesSet, comp.id);
+      }
+      if (!replacement && comp.financialResponsible?.name && (!compPhone || !comp.financialResponsible.phone || phonesEq(compPhone, comp.financialResponsible.phone))) {
+        const frn = normStr(comp.financialResponsible.name);
+        if (!isGenericOrInvalidPerson(frn) && !stayGuestNormSet.has(frn) && !compNamesSet.has(frn)) {
+          replacement = String(comp.financialResponsible.name).trim();
+        }
+      }
+      if (comp.contactPerson !== replacement || comp.contato !== replacement) {
+        comp.contactPerson = replacement;
+        comp.contato = replacement;
+        changed = true;
+      }
+    }
+  }
+
+  // 2) Limpa r.requesterInfo.name / r.requesterName contaminados por nome de hóspede quando requesterIsGuest1 !== true
+  for (const r of reservations) {
+    if (!r || r.requesterIsGuest1) continue;
+    if (r.requesterType !== "company" && r.requesterType !== "other_person" && !r.companyId && !r.companyName) continue;
+    const comp = r.companyId ? companies.find(c => c && Number(c.id) === Number(r.companyId)) : null;
+    const compNamesSet = new Set([comp?.corporateName, comp?.razaoSocial, comp?.tradeName, comp?.nomeFantasia, r.companyName].map(normStr).filter(Boolean));
+    const reqPhone = r.requesterInfo?.whatsapp || r.requesterInfo?.phone || r.requesterPhone || (r.requesterType === "company" ? (comp?.phone || comp?.telefone || "") : "") || "";
+    const stayGuestNormSet = new Set();
+    const rGn = normStr(r.guestName);
+    if (rGn && !isGenericOrInvalidPerson(rGn) && (!reqPhone || !r.guestPhone || !phonesEq(reqPhone, r.guestPhone))) {
+      stayGuestNormSet.add(rGn);
+    }
+    if (comp?.id) {
+      for (const cr of reservations) {
+        if (!cr || cr.requesterIsGuest1 || Number(cr.companyId) !== Number(comp.id)) continue;
+        const crGn = normStr(cr.guestName);
+        if (crGn && !isGenericOrInvalidPerson(crGn) && (!reqPhone || !cr.guestPhone || !phonesEq(reqPhone, cr.guestPhone))) {
+          stayGuestNormSet.add(crGn);
+        }
+      }
+    }
+    if (stayGuestNormSet.size === 0) continue;
+
+    const reqInfoNameNorm = normStr(r.requesterInfo?.name);
+    const reqTopNameNorm = normStr(r.requesterName);
+    const infoPolluted = Boolean(reqInfoNameNorm && stayGuestNormSet.has(reqInfoNameNorm));
+    const topPolluted = Boolean(reqTopNameNorm && stayGuestNormSet.has(reqTopNameNorm));
+    if (!infoPolluted && !topPolluted) continue;
+
+    let cleanReqName = "";
+    for (const cand of [
+      !infoPolluted ? r.requesterInfo?.name : "",
+      !topPolluted ? r.requesterName : "",
+      comp?.contactPerson,
+      reqPhone ? findPhoneOwnerCleanName(reqPhone, stayGuestNormSet, compNamesSet, comp?.id) : "",
+      (reqPhone && r.financialResponsible?.phone && phonesEq(reqPhone, r.financialResponsible.phone)) ? r.financialResponsible?.name : "",
+      comp?.tradeName || comp?.corporateName || r.companyName || ""
+    ]) {
+      const cnn = normStr(cand);
+      if (cnn && !stayGuestNormSet.has(cnn)) {
+        cleanReqName = String(cand).trim();
+        break;
+      }
+    }
+
+    if (infoPolluted && r.requesterInfo) {
+      r.requesterInfo.name = cleanReqName;
+      changed = true;
+    }
+    if (topPolluted) {
+      r.requesterName = cleanReqName;
+      changed = true;
+    }
+  }
+
   return changed;
 }
 
@@ -40061,7 +41265,15 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
       b2bCommissionPct,
       invoiceRecipientType,
       nfDeliveryEmails,
-      contactPerson: requesterName || requesterInfo?.name || "",
+      contactPerson: (() => {
+        const explicitCorpContact = String(companyData?.contactPerson || "").trim();
+        if (explicitCorpContact) return explicitCorpContact;
+        if (requesterType !== "company" || payload.requesterIsGuest1 || packageFlats[0]?.requesterIsGuest1) return "";
+        const cand = String(requesterInfo?.name || requesterName || "").trim();
+        const g1Nm = String(payload.guestName || packageFlats[0]?.guestName || packageFlats[0]?.guests?.[0]?.name || "").trim();
+        if (!cand || (g1Nm && cand.toLowerCase() === g1Nm.toLowerCase())) return "";
+        return cand;
+      })(),
       isB2b,
       isFaturado: isFaturadoPkg,
       boletoTermDays
@@ -40085,6 +41297,8 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
     if (!resolvedCompany && (inlineCompName || cleanInlineCnpj.length === 14)) {
       const nextCid = db.companies.length > 0 ? Math.max(...db.companies.map((c) => Number(c?.id) || 0)) + 1 : 1;
       const compMail = safeFormatEmails(companyData?.financialEmail || companyData?.emailFinanceiro || companyData?.companyEmail || companyEmail || "");
+      const g1NmInline = String(payload.guestName || packageFlats[0]?.guestName || packageFlats[0]?.guests?.[0]?.name || "").trim();
+      const candInlineContact = String(companyData?.contactPerson || ((requesterType === "company" && !payload.requesterIsGuest1) ? (requesterInfo?.name || requesterName || "") : "")).trim();
       resolvedCompany = {
         id: nextCid,
         corporateName: inlineCompName || `Empresa ${companyCnpj || cleanInlineCnpj}`,
@@ -40094,7 +41308,7 @@ async function createMultiFlatPackageFromPayload(payload = {}, ctx = {}) {
         financialEmail: compMail,
         emailFinanceiro: compMail,
         phone: String(companyData?.phone || companyData?.telefone || "").trim(),
-        contactPerson: String(companyData?.contactPerson || requesterName || "").trim(),
+        contactPerson: (candInlineContact && (!g1NmInline || candInlineContact.toLowerCase() !== g1NmInline.toLowerCase())) ? candInlineContact : "",
         billingEnabled: Boolean(isB2b || isFaturadoPkg || companyData?.billingEnabled !== false),
         ...(companyData?.defaultBoletoTermDays != null ? { defaultBoletoTermDays: Number(companyData.defaultBoletoTermDays) } : {}),
         createdAt: new Date().toISOString()
@@ -42169,7 +43383,15 @@ app.post("/api/pms/reservations", async (req, res) => {
     companyData: req.body.companyData,
     companyEmail: req.body.companyEmail,
     costCenter,
-    contactPerson: requesterInfo?.name || guestName || "",
+    contactPerson: (() => {
+      const explicitCorpContact = String(req.body.companyData?.contactPerson || "").trim();
+      if (explicitCorpContact) return explicitCorpContact;
+      if (requesterType !== "company" || req.body.requesterIsGuest1) return "";
+      const cand = String(requesterInfo?.name || req.body.requesterName || "").trim();
+      const gNm = String(guestName || guests?.[0]?.name || "").trim();
+      if (!cand || (gNm && cand.toLowerCase() === gNm.toLowerCase())) return "";
+      return cand;
+    })(),
     isB2b,
     isFaturado: isFaturadoOnCreate,
     boletoTermDays: req.body.boletoTermDays
@@ -42300,7 +43522,7 @@ app.post("/api/pms/reservations", async (req, res) => {
           cnpj: invoiceDetails.cnpj,
           financialEmail: invoiceDetails.companyEmail || "",
           phone: invoiceDetails.companyPhone || "",
-          contactPerson: primaryName
+          contactPerson: String(invoiceDetails.contactPerson || "").trim()
         },
         isInvoiceOnly: true
       });
@@ -42482,7 +43704,26 @@ app.post("/api/pms/reservations", async (req, res) => {
     requesterType: isB2b ? "agency_b2b" : (requesterType === "agency_b2b" ? "agency_b2b" : requesterType),
     requesterIsGuest1: resolvedRequesterIsGuest1,
     requesterPortalToken: singleResPortalToken,
-    requesterInfo: finalRequesterInfo || null,
+    requesterName: (() => {
+      const rawReqNm = String(req.body.requesterName || finalRequesterInfo?.name || "").trim();
+      if (!resolvedRequesterIsGuest1 && rawReqNm && primaryName && rawReqNm.toLowerCase() === primaryName.toLowerCase()) {
+        return String(resolvedCompany?.contactPerson || resolvedCompany?.tradeName || "").trim();
+      }
+      return rawReqNm || (resolvedRequesterIsGuest1 ? primaryName : String(resolvedCompany?.contactPerson || "").trim());
+    })(),
+    requesterPhone: String(req.body.requesterPhone || finalRequesterInfo?.whatsapp || finalRequesterInfo?.phone || "").trim(),
+    requesterEmail: String(req.body.requesterEmail || finalRequesterInfo?.email || "").trim(),
+    requesterDocument: String(req.body.requesterDocument || finalRequesterInfo?.cpf || finalRequesterInfo?.document || "").trim(),
+    requesterInfo: (() => {
+      if (!finalRequesterInfo) return null;
+      if (!resolvedRequesterIsGuest1 && finalRequesterInfo.name && primaryName && String(finalRequesterInfo.name).trim().toLowerCase() === primaryName.toLowerCase()) {
+        return {
+          ...finalRequesterInfo,
+          name: String(resolvedCompany?.contactPerson || resolvedCompany?.tradeName || "").trim()
+        };
+      }
+      return finalRequesterInfo;
+    })(),
     // 4-Pontas: Agência + Empresa + Hóspede + B2B
     agencyId: resolvedAgency?.id || (agencyId ? Number(agencyId) : null),
     agencyName: resolvedAgency?.corporateName || agencyName || "",
@@ -44203,7 +45444,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     "adults", "children", "notes", "prefersHighFloor", "twinBeds",
     "extraMattress", "specialRequests", "isMonthlyGuest", "clientType", "includeBreakfast",
     "autoEmitInvoice", "earlyCheckinAuthorized", "receptionNotes",
-    "guestCount", "guests", "guestDocument", "guestPhone", "guestEmail", "requesterType", "requesterInfo", "requesterIsGuest1", "hideFinancialForGuest",
+    "guestCount", "guests", "guestDocument", "guestPhone", "guestEmail", "requesterType", "requesterName", "requesterPhone", "requesterEmail", "requesterDocument", "requesterInfo", "requesterIsGuest1", "hideFinancialForGuest",
     "companyId", "companyName", "companyCnpj", "companyAddress", "companyNumber", "companyComplement", "companyNeighborhood", "companyCep", "companyCity", "companyState", "companyIbgeCode", "costCenter",
     "agencyId", "agencyName", "agencyTradeName", "agencyCorporateName", "agencyCnpj", "agencyPosUnit", "agencyAgentName", "agencyAgentEmail", "agencyAgentPhone",
     "b2bReservationNumber", "externalReservationNumber", "b2bLocatorRloc", "b2bOriginType",
@@ -47567,20 +48808,28 @@ app.get("/api/pms/requester-portal/:code", async (req, res) => {
 
     ensureReservationCompositeTotal(r);
     const singlePendingAmount = Math.max(0, (Number(r.totalAmount) || 0) - (Number(r.paidAmount) || 0));
-    const nfseInvoices = (db.fiscalInvoices || []).filter((nf) =>
-      nf && (
-        nf.reservationId === r.id ||
-        nf.reservationCode === r.code ||
-        (pkgKey && (nf.packageCode === pkgKey || nf.packageId === pkgKey))
-      )
-    );
-    const boletos = (db.boletos || []).filter((b) =>
-      b && (
-        b.reservationId === r.id ||
-        b.reservationCode === r.code ||
-        (pkgKey && (b.packageCode === pkgKey || b.packageId === pkgKey))
-      )
-    );
+    const finDocs = getFinancialDocumentsForReservation(r, db, { includePackageSiblings: isPackage });
+    const nfseInvoices = finDocs.nfseInvoices;
+    const boletos = finDocs.boletos;
+    const preBoletos = finDocs.preBoletos;
+
+    let financialHubUrl = null;
+    if (hasTokenMatch || isStaffAuth) {
+      const hubRole = r.companyId ? "company" : (r.agencyId || isB2b ? "agency" : "requester");
+      const hubSpec = resolveFinancialHubSpecForReservationAndRecipient(r, {
+        role: hubRole,
+        email: reqEmail,
+        phone: reqPhone,
+        name: reqName,
+        document: reqDocument,
+        companyId: r.companyId || null,
+        agencyId: r.agencyId || null
+      }, db);
+      const hubOut = resolveFinancialHubUrlForEntity(db, hubSpec, baseUrl);
+      if (hubOut?.path) {
+        financialHubUrl = hubOut.path;
+      }
+    }
 
     const buildOpStatus = (itemRes) => {
       const stLower = String(itemRes.status || "").toLowerCase();
@@ -47635,6 +48884,8 @@ app.get("/api/pms/requester-portal/:code", async (req, res) => {
       packageSummary: pkgSummary,
       nfseInvoices,
       boletos,
+      preBoletos,
+      financialHubUrl,
       reservation: isPackage ? null : {
         id: r.id,
         code: r.code,
@@ -48101,6 +49352,9 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const portalEffectivePixCopia = showPackageFinancials ? (pkgPortalSummary.pixCopiaECola || r.pixCopiaECola) : r.pixCopiaECola;
   const portalEffectivePixTxId = showPackageFinancials ? (pkgPortalSummary.pixTxId || r.pixTxId) : r.pixTxId;
   const portalEffectiveMpInit = showPackageFinancials ? (pkgPortalSummary.mpInitPoint || r.mpInitPoint) : r.mpInitPoint;
+  const guestPortalFinDocs = hideFinancialForGuest
+    ? { nfseInvoices: [], boletos: [], preBoletos: [] }
+    : getFinancialDocumentsForReservation(r, db, { includePackageSiblings: Boolean(showPackageFinancials) });
 
   res.json({
     checkinProvider: db.settings?.checkinProvider || "proprio",
@@ -48109,6 +49363,9 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     isRequesterView,
     isPackageView: Boolean(showPackageFinancials),
     packageSummary: showPackageFinancials ? pkgPortalSummary : null,
+    nfseInvoices: guestPortalFinDocs.nfseInvoices,
+    boletos: guestPortalFinDocs.boletos,
+    preBoletos: guestPortalFinDocs.preBoletos,
     isExpiredPreReservation: showPackageFinancials ? Boolean(pkgPortalSummary.isAllExpired) : isExpiredPreRes,
     requesterName: isSeparateRequester || showPackageFinancials
       ? (pkgPortalSummary?.requesterName || portalRecips.requester?.name || r.agencyTradeName || r.agencyName || r.companyName || null)
@@ -50139,6 +51396,645 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// QR Code da Portaria: Autoatendimento Rápido do Hóspede (/chegada)
+// Etapa 1: Localiza a reserva (RLOC, código, nome, CPF, e-mail, etc.)
+// Etapa 2: Exibe dados da reserva + valida/salva o WhatsApp + dispara régua imediata + redireciona ao /pre-checkin/:code
+// ══════════════════════════════════════════════════════════════════════════════
+function serializeReservationForLobbyLookup(r, matchedGuestIndex = 1) {
+  const rawLinkedGuest = r.guestId
+    ? (db.guests || []).find(g => String(g.id) === String(r.guestId))
+    : null;
+  const linkedGuest = (rawLinkedGuest && areGuestNamesCompatible(r.guestName, rawLinkedGuest.fullName || rawLinkedGuest.name))
+    ? rawLinkedGuest
+    : null;
+  const linkedAgency = r.agencyId
+    ? (db.agencies || []).find(a => String(a.id) === String(r.agencyId))
+    : null;
+  const linkedCompany = r.companyId
+    ? (db.companies || []).find(c => String(c.id) === String(r.companyId))
+    : null;
+
+  const rawGuestName = String(r.guestName || linkedGuest?.fullName || linkedGuest?.name || "").trim();
+  const pendingName = Boolean(r.guestPending || r.informGuestsLater || isPendingGuestName(rawGuestName));
+  const guestCount = Math.max(1, Math.min(3, Number(r.guestCount || r.adults) || 1));
+  const guestsArr = Array.isArray(r.guests) ? r.guests : [];
+
+  const guestSlots = [];
+  for (let idx = 1; idx <= guestCount; idx++) {
+    const slotObj = guestsArr[idx - 1] || null;
+    if (idx === 1) {
+      guestSlots.push({
+        index: 1,
+        name: pendingName ? "" : rawGuestName,
+        namePending: pendingName,
+        preCheckinCompleted: Boolean(r.preCheckinCompleted || slotObj?.hasCompletedCheckin)
+      });
+    } else {
+      const compRawName = String(slotObj?.name || (idx === 2 ? r.guest2Name : r.guest3Name) || "").trim();
+      const compInformLater = idx === 2 ? Boolean(r.guest2InformLater || slotObj?.informLater) : Boolean(r.guest3InformLater || slotObj?.informLater);
+      const compPending = Boolean(compInformLater || !compRawName || isPendingGuestName(compRawName));
+      guestSlots.push({
+        index: idx,
+        name: compPending ? "" : compRawName,
+        namePending: compPending,
+        preCheckinCompleted: Boolean(slotObj?.hasCompletedCheckin)
+      });
+    }
+  }
+
+  const companyOrAgency =
+    r.companyName ||
+    linkedCompany?.tradeName ||
+    linkedCompany?.corporateName ||
+    r.agencyTradeName ||
+    r.agencyName ||
+    linkedAgency?.tradeName ||
+    null;
+
+  return {
+    id: r.id,
+    code: r.code,
+    packageCode: r.packageCode || null,
+    status: r.status || "confirmada",
+    flatNumber: r.flatNumber || null,
+    checkinDate: r.checkinDate,
+    checkoutDate: r.checkoutDate,
+    checkinTime: r.checkinTime || "14:00",
+    checkoutTime: r.checkoutTime || "12:00",
+    guestCount,
+    matchedGuestIndex: Math.max(1, Math.min(guestCount, Number(matchedGuestIndex) || 1)),
+    guestName: pendingName ? "" : rawGuestName,
+    guestPending: pendingName,
+    companyOrAgencyName: companyOrAgency,
+    b2bLocatorRloc: r.b2bLocatorRloc || null,
+    b2bReservationNumber: r.b2bReservationNumber || r.externalReservationNumber || null,
+    guests: guestSlots
+  };
+}
+
+function detectLobbyMatchedGuestIndex(r, rawQuery) {
+  if (!r || !rawQuery) return 1;
+  const guestCount = Math.max(1, Math.min(3, Number(r.guestCount || r.adults) || 1));
+  if (guestCount < 2 || !Array.isArray(r.guests)) return 1;
+
+  const digits = String(rawQuery).replace(/\D/g, "");
+  const normQ = String(rawQuery).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+
+  for (let i = 1; i < Math.min(guestCount, r.guests.length); i++) {
+    const g = r.guests[i];
+    if (!g) continue;
+    const gDoc = String(g.cpf || g.document || "").replace(/\D/g, "");
+    if (digits.length >= 8 && gDoc && (gDoc === digits || gDoc.includes(digits))) {
+      return i + 1;
+    }
+    const gName = String(g.name || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    if (normQ.length >= 4 && gName && !isPendingGuestName(g.name) && (gName === normQ || gName.includes(normQ))) {
+      return i + 1;
+    }
+  }
+  return 1;
+}
+
+app.get(["/api/pms/guest-lobby-lookup/:query", "/api/public/guest-lobby-lookup/:query"], (req, res) => {
+  try {
+    let raw = String(req.params.query || "").trim();
+    try {
+      raw = decodeURIComponent(raw).trim();
+    } catch {}
+    if (!raw || raw.length < 2) {
+      return res.status(400).json({ error: "Informe o localizador, código da reserva, CPF ou seu nome completo." });
+    }
+
+    if (!Array.isArray(db.reservations)) db.reservations = [];
+    const todayStr = getBrasiliaNow().date;
+
+    const isEligibleActiveRes = (item) => {
+      if (!item) return false;
+      const st = String(item.status || "").toLowerCase().trim();
+      if (["cancelada", "cancelled", "cancelado", "expirada", "expired"].includes(st)) return false;
+      if (item.isRoomMoveHistoricalSegment && item.checkoutDate && item.checkoutDate <= todayStr) return false;
+      return true;
+    };
+
+    const sortReservationsForLobbyArrival = (list) => {
+      return list.slice().sort((a, b) => {
+        const rank = (x) => {
+          const ci = String(x.checkinDate || "");
+          const co = String(x.checkoutDate || "");
+          if (ci === todayStr) return 0; // Check-in hoje (prioridade máxima na portaria)
+          if (ci <= todayStr && co >= todayStr) return 1; // Hóspede já em estadia ativa
+          if (ci > todayStr) return 2; // Próximo check-in futuro
+          return 3; // Estadia passada
+        };
+        const rDiff = rank(a) - rank(b);
+        if (rDiff !== 0) return rDiff;
+        const aCi = String(a.checkinDate || "");
+        const bCi = String(b.checkinDate || "");
+        if (rank(a) === 2 && aCi !== bCi) return aCi.localeCompare(bCi);
+        return Number(b.id || 0) - Number(a.id || 0);
+      });
+    };
+
+    // 1. Pacote Multi-Flat explícito (PKG-...)
+    if (isPackageCode(raw)) {
+      const pkgItems = getPackageReservations(db, raw).filter(x => isPackageItemActive(x));
+      if (pkgItems.length === 0) {
+        return res.status(404).json({ error: "Pacote não localizado ou sem apartamentos ativos." });
+      }
+      if (pkgItems.length === 1) {
+        return res.json({
+          ok: true,
+          reservation: serializeReservationForLobbyLookup(pkgItems[0], 1)
+        });
+      }
+      return res.json({
+        ok: true,
+        isMultipleMatches: true,
+        packageCode: raw.toUpperCase(),
+        candidates: pkgItems.map(item => serializeReservationForLobbyLookup(item, 1))
+      });
+    }
+
+    // 2. Verifica se é um RLOC / número B2B compartilhado por múltiplos flats ativos
+    const upperRaw = raw.toUpperCase();
+    const sharedLocatorMatches = db.reservations.filter(item =>
+      isEligibleActiveRes(item) && (
+        (item.b2bLocatorRloc && String(item.b2bLocatorRloc).toUpperCase() === upperRaw) ||
+        (item.b2bReservationNumber && String(item.b2bReservationNumber).toUpperCase() === upperRaw) ||
+        (item.externalReservationNumber && String(item.externalReservationNumber).toUpperCase() === upperRaw)
+      )
+    );
+    if (sharedLocatorMatches.length > 1) {
+      const sortedShared = sortReservationsForLobbyArrival(sharedLocatorMatches);
+      return res.json({
+        ok: true,
+        isMultipleMatches: true,
+        candidates: sortedShared.map(item => serializeReservationForLobbyLookup(item, 1))
+      });
+    }
+
+    // 3. Busca priorizando reservas ativas/hoje quando pesquisado por CPF, Telefone, E-mail ou Nome Completo
+    let matchedRes = null;
+    const exactCodeMatch = db.reservations.find(resItem =>
+      (resItem.code && String(resItem.code).toUpperCase() === upperRaw) ||
+      (resItem.reservationCode && String(resItem.reservationCode).toUpperCase() === upperRaw) ||
+      (resItem.b2bReservationNumber && String(resItem.b2bReservationNumber).toUpperCase() === upperRaw) ||
+      (resItem.externalReservationNumber && String(resItem.externalReservationNumber).toUpperCase() === upperRaw) ||
+      (resItem.b2bLocatorRloc && String(resItem.b2bLocatorRloc).toUpperCase() === upperRaw) ||
+      (resItem.otaReservationCode && String(resItem.otaReservationCode).toUpperCase() === upperRaw) ||
+      String(resItem.id) === raw
+    );
+
+    if (exactCodeMatch) {
+      matchedRes = exactCodeMatch.isRoomMoveHistoricalSegment
+        ? (getActiveRoomMoveReservation(db, exactCodeMatch) || exactCodeMatch)
+        : exactCodeMatch;
+    } else {
+      const digits = raw.replace(/\D/g, "");
+      const normQuery = raw.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+      const queryWords = normQuery.split(/\s+/).filter(Boolean);
+
+      let activeCandidates = [];
+      if (digits.length >= 8) {
+        activeCandidates = db.reservations.filter(resItem => {
+          if (!isEligibleActiveRes(resItem)) return false;
+          const phones = getAllReservationPhones(resItem);
+          const docs = getAllReservationDocuments(resItem);
+          return phones.some(p => matchBrazilianPhone(digits, p)) || docs.some(d => d === digits || d.includes(digits) || digits.includes(d));
+        });
+      } else if (raw.includes("@")) {
+        const emailLow = raw.toLowerCase();
+        activeCandidates = db.reservations.filter(resItem =>
+          isEligibleActiveRes(resItem) && (
+            (resItem.guestEmail || "").trim().toLowerCase() === emailLow ||
+            (resItem.requesterInfo?.email || "").trim().toLowerCase() === emailLow ||
+            (resItem.guests || []).some(g => (g?.email || "").trim().toLowerCase() === emailLow)
+          )
+        );
+      } else if (normQuery.length >= 5 && queryWords.length >= 2 && /[a-zA-Z]/.test(normQuery)) {
+        activeCandidates = db.reservations.filter(resItem => {
+          if (!isEligibleActiveRes(resItem)) return false;
+          const names = getAllReservationNames(resItem);
+          return names.some(n => {
+            const normN = String(n || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+            return normN === normQuery || normN.includes(normQuery);
+          });
+        });
+      }
+
+      if (activeCandidates.length > 0) {
+        const sortedActive = sortReservationsForLobbyArrival(activeCandidates);
+        // Se houver múltiplos flats ativos na mesma janela para o mesmo nome/solicitação, permite escolher o flat
+        const topRankTodayOrInHouse = sortedActive.filter(x => x.checkinDate <= todayStr && x.checkoutDate >= todayStr);
+        if (topRankTodayOrInHouse.length > 1) {
+          return res.json({
+            ok: true,
+            isMultipleMatches: true,
+            candidates: topRankTodayOrInHouse.map(item => serializeReservationForLobbyLookup(item, detectLobbyMatchedGuestIndex(item, raw)))
+          });
+        }
+        matchedRes = sortedActive[0];
+      }
+    }
+
+    if (!matchedRes) {
+      matchedRes = findReservationByLocatorOrContact(raw);
+    }
+
+    if (!matchedRes) {
+      return res.status(404).json({
+        error: "Reserva não localizada com os dados informados. Confira o código localizador do voucher, CPF ou nome completo."
+      });
+    }
+
+    const stLower = String(matchedRes.status || "").toLowerCase().trim();
+    if (stLower === "expirada" || stLower === "expired") {
+      return res.status(410).json({
+        error: "Esta pré-reserva expirou por falta de confirmação de pagamento dentro do prazo limite. Fale com a administração pelo WhatsApp.",
+        expiredReservation: true
+      });
+    }
+    if (stLower === "cancelada" || stLower === "cancelled" || stLower === "cancelado") {
+      return res.status(410).json({
+        error: "Esta reserva consta como cancelada no sistema.",
+        cancelledReservation: true
+      });
+    }
+
+    const matchedGuestIndex = detectLobbyMatchedGuestIndex(matchedRes, raw);
+    return res.json({
+      ok: true,
+      reservation: serializeReservationForLobbyLookup(matchedRes, matchedGuestIndex)
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err?.message || "Erro ao consultar a reserva." });
+  }
+});
+
+app.post(["/api/pms/guest-lobby-phone/:code", "/api/public/guest-lobby-phone/:code"], async (req, res) => {
+  try {
+    const codeParam = String(req.params.code || "").trim();
+    const explicitResId = req.body?.reservationId !== undefined && req.body?.reservationId !== null
+      ? String(req.body.reservationId).trim()
+      : "";
+
+    if (!Array.isArray(db.reservations)) db.reservations = [];
+    let r = explicitResId
+      ? db.reservations.find(item => item && String(item.id) === explicitResId)
+      : null;
+    if (!r) {
+      r = findReservationByLocatorOrContact(codeParam);
+    }
+    if (!r) {
+      return res.status(404).json({ error: "Reserva não localizada." });
+    }
+
+    const stPost = String(r.status || "").toLowerCase().trim();
+    if (stPost === "expirada" || stPost === "expired") {
+      return res.status(410).json({
+        error: "Esta pré-reserva expirou. Entre em contato pelo WhatsApp do CorpFlats para consultar disponibilidade.",
+        expiredReservation: true
+      });
+    }
+    if (stPost === "cancelada" || stPost === "cancelled" || stPost === "cancelado") {
+      return res.status(410).json({
+        error: "Esta reserva encontra-se cancelada no sistema.",
+        cancelledReservation: true
+      });
+    }
+
+    const maxGuestCount = Math.max(1, Math.min(3, Number(r.guestCount || r.adults) || 1));
+    const safeGuestIndex = Math.max(1, Math.min(maxGuestCount, Number(req.body?.guestIndex) || 1));
+
+    const rawPhoneInput = String(req.body?.phone || req.body?.whatsapp || req.body?.guestPhone || "").trim();
+    const isIntlPhone = rawPhoneInput.startsWith("+") && !rawPhoneInput.slice(1).replace(/\D/g, "").startsWith("55");
+    const cleanPhone = isIntlPhone
+      ? `+${rawPhoneInput.slice(1).replace(/\D/g, "")}`
+      : rawPhoneInput.replace(/\D/g, "");
+    const cleanPhoneDigits = cleanPhone.replace(/\D/g, "");
+
+    if (!cleanPhoneDigits || cleanPhoneDigits.length < (isIntlPhone ? 8 : 10)) {
+      return res.status(400).json({
+        error: "Informe seu número de WhatsApp completo com DDD (ex: 22 99999-9999).",
+        invalidPhoneFormat: true
+      });
+    }
+    if (!isIntlPhone && cleanPhoneDigits.replace(/^55/, "").length < 10) {
+      return res.status(400).json({
+        error: "O telefone informado está incompleto. Digite o DDD + número do celular com WhatsApp.",
+        invalidPhoneFormat: true
+      });
+    }
+
+    // Determina nome do hóspede do slot selecionado
+    const existingGuestsArr = Array.isArray(r.guests) ? r.guests : [];
+    const existingSlot = existingGuestsArr[safeGuestIndex - 1] || null;
+    const rawExistingSlotName = safeGuestIndex === 1
+      ? String(r.guestName || existingSlot?.name || "").trim()
+      : String(existingSlot?.name || (safeGuestIndex === 2 ? r.guest2Name : r.guest3Name) || "").trim();
+    const hasExistingValidName = Boolean(rawExistingSlotName && !isPendingGuestName(rawExistingSlotName));
+    const submittedName = String(req.body?.guestName || "").trim();
+    const resolvedGuestName = submittedName || (hasExistingValidName ? rawExistingSlotName : "");
+
+    if (!resolvedGuestName || isPendingGuestName(resolvedGuestName) || resolvedGuestName.split(/\s+/).filter(Boolean).length < 2) {
+      return res.status(400).json({
+        error: "Informe seu nome e sobrenome para vincularmos seu WhatsApp à reserva.",
+        missingGuestName: true
+      });
+    }
+
+    // Impede uso acidental do telefone central de agência de viagens
+    const agencyPhones = [];
+    const collectAgencyPhone = (val) => {
+      const parts = String(val || "").split(/[\/;|,]+/).map(s => s.trim()).filter(Boolean);
+      for (const p of parts) {
+        if (p.replace(/\D/g, "").length >= 8) agencyPhones.push(p);
+      }
+    };
+    collectAgencyPhone(r.agencyAgentPhone);
+    if (r.agencyId && Array.isArray(db.agencies)) {
+      const ag = db.agencies.find(a => String(a.id) === String(r.agencyId));
+      if (ag) {
+        collectAgencyPhone(ag.whatsapp);
+        collectAgencyPhone(ag.phone);
+        collectAgencyPhone(ag.agents?.[0]?.phone);
+      }
+    }
+    if (agencyPhones.some(ap => matchClientPhone(cleanPhone, ap))) {
+      return res.status(400).json({
+        error: "Este número pertence à agência de viagens. Por favor, digite o SEU WhatsApp pessoal para receber as instruções do flat.",
+        requesterPhoneConflict: true
+      });
+    }
+
+    // Se for 2º ou 3º hóspede, impede repetir o mesmo telefone do 1º hóspede
+    if (safeGuestIndex >= 2) {
+      const g1Phone = String(r.guestPhone || existingGuestsArr[0]?.phone || "").trim();
+      if (g1Phone && g1Phone.replace(/\D/g, "").length >= 8 && matchClientPhone(cleanPhone, g1Phone)) {
+        return res.status(400).json({
+          error: "Este WhatsApp já está vinculado ao 1º Hóspede desta reserva. Selecione o 1º Hóspede acima ou informe o seu WhatsApp individual.",
+          duplicateCompanionPhone: true
+        });
+      }
+    }
+
+    // Validação em tempo real na Z-API para confirmar se o número realmente tem WhatsApp ativo
+    try {
+      const waCheck = await checkZapiPhoneExists(cleanPhone, db?.zapiConfig);
+      if (waCheck && waCheck.checked && waCheck.exists === false) {
+        return res.status(400).json({
+          error: "Este número não possui uma conta ativa no WhatsApp. Confira o DDD e os dígitos informados para receber as instruções de acesso.",
+          invalidWhatsApp: true
+        });
+      }
+    } catch (waErr) {
+      console.warn("[GuestLobbyPhone] Falha ao consultar phone-exists na Z-API (prosseguindo):", waErr?.message);
+    }
+
+    const nowIso = new Date().toISOString();
+    const previousPhone = safeGuestIndex === 1
+      ? String(r.guestPhone || existingSlot?.phone || "").trim()
+      : String(existingSlot?.phone || existingSlot?.whatsapp || "").trim();
+
+    if (!Array.isArray(r.guests) || r.guests.length === 0) {
+      r.guests = [{
+        index: 1,
+        isMain: true,
+        name: safeGuestIndex === 1 ? resolvedGuestName : (hasExistingValidName ? rawExistingSlotName : (r.guestName || "")),
+        cpf: r.guestDocument || "",
+        document: r.guestDocument || "",
+        docType: r.guestDocType || "CPF",
+        phone: safeGuestIndex === 1 ? cleanPhone : (r.guestPhone || ""),
+        whatsapp: safeGuestIndex === 1 ? cleanPhone : (r.guestPhone || ""),
+        email: r.guestEmail || "",
+        docPhotoUrl: r.docPhotoUrl || null,
+        informLater: false,
+        hasCompletedCheckin: Boolean(r.preCheckinCompleted)
+      }];
+    }
+
+    if (safeGuestIndex === 1) {
+      r.guestName = resolvedGuestName;
+      r.guestPhone = cleanPhone;
+      r.whatsappPhone = cleanPhone;
+      r.guestPending = false;
+      r.informGuestsLater = false;
+      r.guests[0] = {
+        ...(r.guests[0] || {}),
+        index: 1,
+        isMain: true,
+        name: resolvedGuestName,
+        phone: cleanPhone,
+        whatsapp: cleanPhone,
+        informLater: false
+      };
+
+      // Se o próprio solicitante PF/empresa for o hóspede no 1º flat e digitou o próprio celular na portaria,
+      // libera elegibilidade de estadia (evitando bloqueio REQUESTER_PHONE_IN_GUEST_FIELD na régua)
+      const reqCandPhones = [
+        r.requesterPhone,
+        r.requesterInfo?.phone,
+        r.requesterInfo?.whatsapp,
+        r.validatedRequesterWhatsapp
+      ].filter(Boolean);
+      const isFirstPkgFlat = !r.packageIndex || Number(r.packageIndex) <= 1;
+      if (isFirstPkgFlat && !r.agencyId && r.requesterType !== "agency" && reqCandPhones.some(rp => matchClientPhone(cleanPhone, rp))) {
+        r.requesterIsGuest1 = true;
+      }
+    } else {
+      for (let fillIdx = r.guests.length; fillIdx < safeGuestIndex; fillIdx++) {
+        r.guests.push({
+          index: fillIdx + 1,
+          isMain: false,
+          name: "",
+          cpf: "",
+          document: "",
+          docType: "CPF",
+          phone: "",
+          whatsapp: "",
+          email: "",
+          informLater: true,
+          hasCompletedCheckin: false
+        });
+      }
+      r.guests[safeGuestIndex - 1] = {
+        ...(r.guests[safeGuestIndex - 1] || {}),
+        index: safeGuestIndex,
+        isMain: false,
+        name: resolvedGuestName,
+        phone: cleanPhone,
+        whatsapp: cleanPhone,
+        informLater: false
+      };
+      if (safeGuestIndex === 2) r.guest2InformLater = false;
+      if (safeGuestIndex === 3) r.guest3InformLater = false;
+    }
+
+    // Limpa carimbos anteriores de instruções de pacote para este slot a fim de garantir disparo imediato
+    delete r[`pkgGuestInstrSent_${safeGuestIndex}_${cleanPhone}`];
+    delete r[`pkgGuestInstrSent_${safeGuestIndex}_${cleanPhoneDigits}`];
+
+    // Resolve eventuais alertas pendentes de telefone inválido para este hóspede
+    if (Array.isArray(r.guestPhoneCorrectionRequests)) {
+      for (const corrReq of r.guestPhoneCorrectionRequests) {
+        if (corrReq && corrReq.status !== "resolved" && (Number(corrReq.guestIndex) || 1) === safeGuestIndex) {
+          corrReq.status = "resolved";
+          corrReq.correctedPhone = cleanPhone;
+          corrReq.resolvedAt = nowIso;
+          corrReq.resolvedSource = "guest_lobby_qrcode";
+        }
+      }
+      if (!r.guestPhoneCorrectionRequests.some(c => c && (c.status === "awaiting_reply" || c.status === "pending"))) {
+        r.guestPhoneInvalid = false;
+      }
+    }
+
+    // Sincroniza CRM de Hóspedes (db.guests) sem sobrescrever cadastro de solicitante distinto
+    if (!Array.isArray(db.guests)) db.guests = [];
+    const slotDoc = String(
+      (safeGuestIndex === 1 ? r.guestDocument : r.guests[safeGuestIndex - 1]?.document) || ""
+    ).replace(/\D/g, "");
+    let crmGuest = (safeGuestIndex === 1 && r.guestId)
+      ? db.guests.find(g => g && String(g.id) === String(r.guestId) && areGuestNamesCompatible(resolvedGuestName, g.fullName || g.name))
+      : null;
+    if (!crmGuest && slotDoc.length >= 11) {
+      crmGuest = db.guests.find(g =>
+        g &&
+        areGuestNamesCompatible(resolvedGuestName, g.fullName || g.name) &&
+        String(g.cpf || g.document || g.documentNumber || "").replace(/\D/g, "") === slotDoc
+      );
+    }
+    if (!crmGuest) {
+      crmGuest = db.guests.find(g =>
+        g &&
+        areGuestNamesCompatible(resolvedGuestName, g.fullName || g.name) &&
+        String(g.whatsapp || g.phone || "").replace(/\D/g, "") === cleanPhoneDigits
+      );
+    }
+    if (crmGuest) {
+      crmGuest.name = resolvedGuestName;
+      crmGuest.fullName = resolvedGuestName;
+      crmGuest.phone = cleanPhone;
+      crmGuest.whatsapp = cleanPhone;
+      crmGuest.updatedAt = nowIso;
+      if (safeGuestIndex === 1) {
+        r.guestId = crmGuest.id;
+        r.guestCode = crmGuest.guestCode || `HOSP-${String(crmGuest.id).padStart(5, "0")}`;
+      }
+      if (r.guests[safeGuestIndex - 1]) r.guests[safeGuestIndex - 1].guestId = crmGuest.id;
+    } else {
+      const nextGId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g?.id) || 0)) + 1 : 1;
+      const newGuest = {
+        id: nextGId,
+        guestCode: `HOSP-${String(nextGId).padStart(5, "0")}`,
+        name: resolvedGuestName,
+        fullName: resolvedGuestName,
+        cpf: safeGuestIndex === 1 ? (r.guestDocument || "") : (r.guests[safeGuestIndex - 1]?.document || ""),
+        document: safeGuestIndex === 1 ? (r.guestDocument || "") : (r.guests[safeGuestIndex - 1]?.document || ""),
+        documentNumber: safeGuestIndex === 1 ? (r.guestDocument || "") : (r.guests[safeGuestIndex - 1]?.document || ""),
+        docType: safeGuestIndex === 1 ? (r.guestDocType || "CPF") : "CPF",
+        phone: cleanPhone,
+        whatsapp: cleanPhone,
+        email: safeGuestIndex === 1 ? (r.guestEmail || "") : (r.guests[safeGuestIndex - 1]?.email || ""),
+        companyId: r.companyId || null,
+        companyName: r.companyName || "",
+        agencyId: r.agencyId || null,
+        agencyName: r.agencyName || "",
+        createdAt: nowIso,
+        updatedAt: nowIso
+      };
+      db.guests.push(newGuest);
+      if (safeGuestIndex === 1) {
+        r.guestId = newGuest.id;
+        r.guestCode = newGuest.guestCode;
+      }
+      if (r.guests[safeGuestIndex - 1]) r.guests[safeGuestIndex - 1].guestId = newGuest.id;
+    }
+
+    r.guestPhoneUpdatedAt = nowIso;
+    r.updatedAt = nowIso;
+
+    if (!Array.isArray(r.auditLogs)) r.auditLogs = [];
+    r.auditLogs.unshift({
+      id: `audit_lobby_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      timestamp: nowIso,
+      action: "guest_lobby_whatsapp_captured",
+      actor: { id: null, name: resolvedGuestName, role: "guest", type: "guest" },
+      source: "QR Code Portaria (/chegada)",
+      description: `WhatsApp do ${safeGuestIndex}º hóspede (${resolvedGuestName}) informado na portaria: ${cleanPhone}`,
+      changes: [
+        {
+          field: safeGuestIndex === 1 ? "guestPhone" : `guest${safeGuestIndex}Phone`,
+          label: `WhatsApp (${resolvedGuestName})`,
+          oldValue: previousPhone || "(vazio)",
+          newValue: cleanPhone
+        }
+      ]
+    });
+
+    saveDatabase("guest_lobby_whatsapp_captured");
+
+    const baseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
+    const redirectUrl = safeGuestIndex > 1
+      ? `/pre-checkin/${encodeURIComponent(r.code)}?guest=${safeGuestIndex}`
+      : `/pre-checkin/${encodeURIComponent(r.code)}`;
+
+    // Dispara imediatamente as mensagens da régua (Apresentação + Confirmação/Instruções do dia + Manual PDF + Agendamento futuro)
+    // em segundo plano para redirecionar o hóspede sem atraso para o formulário padrão de Check-in
+    setImmediate(async () => {
+      try {
+        if (safeGuestIndex === 1 && r.status !== "pre_reserva" && r.status !== "cancelada") {
+          dispatchConfirmedReservationToReceptionAndGarage(r, "guest_lobby_whatsapp_captured").catch(() => {});
+        }
+        if (r.packageId || r.packageCode) {
+          if (r.status !== "pre_reserva" && r.status !== "cancelada") {
+            await dispatchIndividualFlatGuestInstructions(db, [r], baseUrl, {
+              cleanWhatsAppPhone,
+              sendZapiMessage,
+              sendZapiDocument: typeof sendZapiDocument === "function" ? sendZapiDocument : undefined,
+              sendZapiMedia: typeof sendZapiDocument === "function" ? ((cfg, opts) => sendZapiDocument(cfg, opts)) : undefined,
+              hasPdfAlreadyBeenSentOrInFlight: typeof hasPdfAlreadyBeenSentOrInFlight === "function" ? hasPdfAlreadyBeenSentOrInFlight : undefined,
+              checkZapiPhoneExists: typeof checkZapiPhoneExists === "function" ? checkZapiPhoneExists : undefined,
+              createNotification: typeof createNotification === "function" ? createNotification : undefined,
+              scheduleUpcomingReservationTriggers: typeof scheduleUpcomingReservationTriggers === "function" ? ((d) => scheduleUpcomingReservationTriggers(d, saveDatabase)) : undefined,
+              appendMessageToConversation,
+              saveDatabase,
+              onlyGuestIndices: [safeGuestIndex],
+              forceResend: true,
+              skipWhatsAppPreCheck: true
+            });
+            try {
+              scheduleUpcomingReservationTriggers(db, saveDatabase);
+            } catch (_) {}
+            saveDatabase("lobby_package_guest_instructions");
+          }
+        } else {
+          await dispatchCatchUpGuestRulerMessages(db, saveDatabase, r, {
+            baseUrl,
+            onlyGuestIndices: [safeGuestIndex],
+            forceResendInstructions: true
+          });
+        }
+      } catch (errWa) {
+        console.warn("[GuestLobbyPhone] Aviso ao disparar régua de WhatsApp para o hóspede:", errWa?.message);
+      }
+    });
+
+    return res.json({
+      ok: true,
+      success: true,
+      reservationCode: r.code,
+      guestIndex: safeGuestIndex,
+      guestName: resolvedGuestName,
+      phone: cleanPhone,
+      redirectUrl
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err?.message || "Erro ao registrar seu WhatsApp." });
   }
 });
 
@@ -59734,7 +61630,8 @@ async function runCheckoutAutoBillingAndNfse(reservation, options = {}) {
                 (Array.isArray(b.reservationIds) && b.reservationIds.includes(Number(reservation.id))))
           )
         );
-        const needNfseStill = !existingInv && channelRules.autoCheckout !== false;
+        // Em reservas de Boleto Faturado, a Nota Fiscal (NFS-e) SEMPRE deve ser emitida e enviada junto com o boleto
+        const needNfseStill = !existingInv && reqBody.emitNfse !== false;
         if (!alreadyHasConsolidatedPkgBoleto || needNfseStill) {
           const faturadoPkg = await emitCheckoutFaturadoPackage(reservation, {
             ...reqBody,
@@ -59744,7 +61641,7 @@ async function runCheckoutAutoBillingAndNfse(reservation, options = {}) {
                   packageId: pkgKeyCheckout
                 }
               : {}),
-            emitNfse: channelRules.autoCheckout !== false,
+            emitNfse: reqBody.emitNfse !== false,
             triggerSource: "checkout_auto"
           });
           if (faturadoPkg) {
@@ -76481,16 +78378,37 @@ async function dispatchNfseInvoiceWhatsApp(inv, opts = {}) {
   const displayRecipientName = (!isHiddenFromGuest && (inv.guestName || linkedRes?.guestName || linkedGuest?.fullName || linkedGuest?.name)) || inv.tomadorNome || "Hóspede";
   const firstName = String(displayRecipientName).trim().split(/\s+/)[0] || "Hóspede";
   const numNota = String(inv.numeroNfse || inv.numeroNota || inv.id);
-  const danfseUrl = `https://corpflats.com.br/api/nfse/danfse/${numNota}`;
-  const pdfUrl = `https://corpflats.com.br/api/nfse/pdf/${numNota}`;
+  const hostBaseWa = (process.env.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/+$/, "");
+  const danfseUrl = `${hostBaseWa}/api/nfse/danfse/${numNota}`;
+  const pdfUrl = `${hostBaseWa}/api/nfse/pdf/${numNota}`;
   const fileName = `NFSe_${numNota}_CorpFlats.pdf`;
+
+  const nfWaRole = (inv.companyId || linkedRes?.companyId) && (normInvRecType === "company" || isHiddenFromGuest)
+    ? "company"
+    : (inv.agencyId || linkedRes?.agencyId) && (normInvRecType === "agency" || isHiddenFromGuest)
+    ? "agency"
+    : (isInvThirdPartyRequester || normInvRecType === "requester" || isHiddenFromGuest)
+    ? "requester"
+    : "guest";
+  const nfWaHubSpec = resolveFinancialHubSpecForReservationAndRecipient(linkedRes || null, {
+    role: nfWaRole,
+    companyId: inv.companyId || linkedRes?.companyId || null,
+    agencyId: inv.agencyId || linkedRes?.agencyId || null,
+    guestId: !isHiddenFromGuest ? (inv.guestId || linkedRes?.guestId || null) : null,
+    email: !isHiddenFromGuest ? (inv.tomadorEmail || linkedRes?.guestEmail || "") : (inv.tomadorEmail || ""),
+    phone: cleanPhoneNum,
+    name: displayRecipientName,
+    document: inv.tomadorCpfCnpj || ""
+  }, db);
+  const nfWaHubUrl = nfWaHubSpec ? resolveFinancialHubUrlForEntity(db, nfWaHubSpec, hostBaseWa).url : "";
 
   const captionText =
     `Olá, *${firstName}*! Tudo bem? 🧾\n\n` +
     `Segue em anexo o *PDF oficial da sua Nota Fiscal de Serviços Eletrônica (NFS-e Padrão Nacional Nº ${numNota})* — *CorpFlats (Rental Miller's LTDA)*${inv.flatNumber ? ` referente ao Flat ${inv.flatNumber}` : ""}.\n\n` +
     `🔑 *Chave de Acesso Nacional (Gov.br):*\n${inv.chaveAcesso || ""}\n\n` +
-    `📄 *Link direto do PDF:* ${pdfUrl}\n\n` +
-    `Agradecemos a sua preferência e esperamos você de volta em breve! ✨`;
+    `📄 *Link direto do PDF:* ${pdfUrl}\n` +
+    (nfWaHubUrl ? `📊 *Painel com todas as suas Notas e Boletos:* ${nfWaHubUrl}\n` : "") +
+    `\nAgradecemos a sua preferência e esperamos você de volta em breve! ✨`;
 
   const whatsappUrl = `https://wa.me/${cleanPhoneNum.startsWith("55") ? cleanPhoneNum : `55${cleanPhoneNum}`}?text=${encodeURIComponent(captionText)}`;
 
@@ -76569,6 +78487,8 @@ async function dispatchNfseInvoiceWhatsApp(inv, opts = {}) {
     pdfBytes,
     pdfUrl,
     danfseUrl,
+    financialHubUrl: nfWaHubUrl || null,
+    captionText,
     whatsappUrl,
     zapiResult
   };
@@ -76648,6 +78568,26 @@ async function dispatchNfseInvoiceEmail(inv, opts = {}) {
   const fileName = `NFSe_${numNota}_CorpFlats.pdf`;
   const valorFmt = Number(inv.valorServico || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+  const nfEmailRecType = String(inv.invoiceRecipientType || "").trim().toLowerCase();
+  const nfEmailRole = (inv.companyId || linkedRes?.companyId) && (nfEmailRecType === "company" || isHiddenFromGuest)
+    ? "company"
+    : (inv.agencyId || linkedRes?.agencyId) && (nfEmailRecType === "agency" || isHiddenFromGuest)
+    ? "agency"
+    : (nfEmailRecType === "requester" || isHiddenFromGuest)
+    ? "requester"
+    : "guest";
+  const nfEmailHubSpec = resolveFinancialHubSpecForReservationAndRecipient(linkedRes || null, {
+    role: nfEmailRole,
+    companyId: inv.companyId || linkedRes?.companyId || null,
+    agencyId: inv.agencyId || linkedRes?.agencyId || null,
+    guestId: !isHiddenFromGuest ? (inv.guestId || linkedRes?.guestId || null) : null,
+    email: targetEmails[0] || inv.tomadorEmail || "",
+    phone: !isHiddenFromGuest ? (inv.tomadorTelefone || linkedRes?.guestPhone || "") : (inv.tomadorTelefone || ""),
+    name: inv.tomadorNome || "Cliente",
+    document: inv.tomadorCpfCnpj || ""
+  }, db);
+  const nfEmailHubUrl = nfEmailHubSpec ? resolveFinancialHubUrlForEntity(db, nfEmailHubSpec, hostBase).url : "";
+
   let pdfAttachment = null;
   try {
     const pdfBuf = await generateNfsePdfBuffer(inv);
@@ -76680,8 +78620,9 @@ async function dispatchNfseInvoiceEmail(inv, opts = {}) {
         ${inv.chaveAcesso ? `<strong>Chave de Acesso Nacional:</strong> <span style="font-family:monospace;font-size:11.5px;">${inv.chaveAcesso}</span>` : ""}
       </div>
       <div style="margin-top:14px;">
-        <a href="${pdfUrl}" target="_blank" style="display:inline-block;background:#0F172A;color:#FFFFFF;font-size:12.5px;font-weight:700;text-decoration:none;padding:10px 16px;border-radius:8px;margin-right:8px;">📄 Baixar PDF Oficial</a>
-        <a href="${inv.linkPrefeitura || danfseUrl}" target="_blank" style="display:inline-block;background:#0284C7;color:#FFFFFF;font-size:12.5px;font-weight:700;text-decoration:none;padding:10px 16px;border-radius:8px;">🔍 Consultar no Gov.br</a>
+        <a href="${pdfUrl}" target="_blank" style="display:inline-block;background:#0F172A;color:#FFFFFF;font-size:12.5px;font-weight:700;text-decoration:none;padding:10px 16px;border-radius:8px;margin-right:8px;margin-bottom:6px;">📄 Baixar PDF Oficial</a>
+        <a href="${inv.linkPrefeitura || danfseUrl}" target="_blank" style="display:inline-block;background:#0284C7;color:#FFFFFF;font-size:12.5px;font-weight:700;text-decoration:none;padding:10px 16px;border-radius:8px;margin-right:8px;margin-bottom:6px;">🔍 Consultar no Gov.br</a>
+        ${nfEmailHubUrl ? `<a href="${nfEmailHubUrl}" target="_blank" style="display:inline-block;background:#0F3D4C;color:#FFFFFF;font-size:12.5px;font-weight:700;text-decoration:none;padding:10px 16px;border-radius:8px;margin-bottom:6px;">📊 Painel de Notas &amp; Boletos</a>` : ""}
       </div>
     `
   });
@@ -76727,6 +78668,7 @@ async function dispatchNfseInvoiceEmail(inv, opts = {}) {
     success: true,
     sent: emailsSent.length > 0,
     emailsSent,
+    financialHubUrl: nfEmailHubUrl || null,
     blockedByPrivacy: false
   };
 }
@@ -78361,6 +80303,7 @@ const handleUpdateCompany = (req, res) => {
       });
     }
   }
+  const prevContactPerson = String(company.contactPerson || company.contato || "").trim();
   if (b.phone !== undefined || b.telefone !== undefined) {
     const val = (b.phone ?? b.telefone ?? "").trim();
     company.phone = val;
@@ -78445,6 +80388,29 @@ const handleUpdateCompany = (req, res) => {
   }
 
   applyCrmBillingConfigFields(company, b);
+
+  // Sincroniza reservas corporativas vinculadas cujo solicitante estava vazio, antigo ou contaminado por nome de hóspede
+  const nextContactPerson = String(company.contactPerson || "").trim();
+  if (Array.isArray(db.reservations) && (nextContactPerson || company.phone || company.financialEmail)) {
+    const normSync = (v) => String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+    const compNamesNorm = new Set([company.corporateName, company.razaoSocial, company.tradeName, company.nomeFantasia].map(normSync).filter(Boolean));
+    for (const r of db.reservations) {
+      if (!r || r.requesterIsGuest1 || Number(r.companyId) !== Number(company.id)) continue;
+      if (r.requesterType && r.requesterType !== "company") continue;
+      const curReqNm = normSync(r.requesterInfo?.name || r.requesterName);
+      const guestNm = normSync(r.guestName);
+      const isStaleOrPolluted = !curReqNm || curReqNm === normSync(prevContactPerson) || (guestNm && curReqNm === guestNm) || compNamesNorm.has(curReqNm);
+      if (nextContactPerson && isStaleOrPolluted) {
+        r.requesterName = nextContactPerson;
+        r.requesterInfo = {
+          ...(r.requesterInfo || {}),
+          name: nextContactPerson,
+          phone: r.requesterInfo?.phone || r.requesterPhone || company.phone || "",
+          email: r.requesterInfo?.email || r.requesterEmail || company.financialEmail || ""
+        };
+      }
+    }
+  }
 
   company.updatedAt = new Date().toISOString();
   saveDatabase("company_updated_" + id);
@@ -82737,21 +84703,289 @@ app.post("/api/guest-auth/google", async (req, res) => {
   }
 });
 
-// 1.4 Obter Perfil e Reservas do Hóspede Autenticado (V1/V2)
+// 1.4 Obter Perfil e Reservas do Hóspede/Solicitante Autenticado (V1/V2)
 app.get(["/api/guest-auth/me", "/api/guest-auth/profile", "/api/guest-auth/bookings", "/api/v2/auth/bookings"], (req, res) => {
   const account = getAuthenticatedGuestAccount(req);
   if (!account) {
     return res.status(401).json({ error: "Sessão não encontrada ou não autenticada." });
   }
 
-  const myReservations = getGuestReservations(account);
+  const scope = buildScopeFromAccount(account, db);
+  const hubPayload = getUnifiedFinancialHubPayload(scope, db);
   const safeAccount = sanitizeAccountForClient(account);
   res.json({
     guest: safeAccount,
     user: safeAccount,
-    reservations: myReservations,
-    bookings: myReservations
+    reservations: hubPayload.reservations,
+    bookings: hubPayload.reservations,
+    financialSummary: hubPayload.summary,
+    linkedCompanies: scope.linkedCompanies,
+    linkedAgencies: scope.linkedAgencies
   });
+});
+
+// 1.4b Painel Financeiro Consolidado da Conta Autenticada (Boletos, Pré-Boletos & NFS-e)
+app.get("/api/v2/auth/financial", (req, res) => {
+  const account = getAuthenticatedGuestAccount(req);
+  if (!account) {
+    return res.status(401).json({ error: "Sessão não encontrada ou não autenticada." });
+  }
+
+  const scope = buildScopeFromAccount(account, db);
+  const hubPayload = getUnifiedFinancialHubPayload(scope, db);
+  res.json({
+    success: true,
+    scopeMeta: hubPayload.scopeMeta,
+    summary: hubPayload.summary,
+    boletos: hubPayload.boletos,
+    preBoletos: hubPayload.preBoletos,
+    invoices: hubPayload.invoices,
+    linkedCompanies: scope.linkedCompanies,
+    linkedAgencies: scope.linkedAgencies
+  });
+});
+
+// 1.4c Link Mágico Público e Revogável do Painel Financeiro do Solicitante / Empresa
+app.get("/api/public/financial-hub/:token", (req, res) => {
+  try {
+    const rawTok = String(req.params.token || "").trim();
+    if (!rawTok) {
+      return res.status(404).json({ success: false, error: "Token de acesso não informado." });
+    }
+    const tokRec = (db.financialHubTokens || []).find(t => t && String(t.token) === rawTok);
+    if (!tokRec || tokRec.revokedAt) {
+      return res.status(404).json({
+        success: false,
+        revoked: Boolean(tokRec?.revokedAt),
+        error: "Este link do Painel Financeiro é inválido ou foi revogado. Solicite um novo link à equipe CorpFlats."
+      });
+    }
+
+    const scope = buildScopeFromHubToken(tokRec, db);
+    const hubPayload = getUnifiedFinancialHubPayload(scope, db);
+    res.json({
+      success: true,
+      mode: "magic_hub",
+      hubMeta: {
+        kind: tokRec.kind,
+        label: scope.label || tokRec.label || "Painel Financeiro",
+        email: tokRec.email || "",
+        phone: tokRec.phone || "",
+        document: tokRec.document || "",
+        companyName: scope.linkedCompanies[0]?.name || null,
+        agencyName: scope.linkedAgencies[0]?.name || null
+      },
+      linkedCompanies: scope.linkedCompanies,
+      linkedAgencies: scope.linkedAgencies,
+      reservations: hubPayload.reservations,
+      financial: {
+        summary: hubPayload.summary,
+        boletos: hubPayload.boletos,
+        preBoletos: hubPayload.preBoletos,
+        invoices: hubPayload.invoices
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 1.4d Admin: Gerar, Consultar ou Revogar/Regenerar Link Mágico do Painel Financeiro
+function _requireStaffForFinancialHub(req, res) {
+  const authU = typeof getAuthUser === "function" ? getAuthUser(req) : null;
+  if (!authU || !["admin", "dev", "reception", "recepcao"].includes(String(authU.role || "").toLowerCase())) {
+    res.status(403).json({ success: false, error: "Acesso restrito à equipe administrativa/recepção." });
+    return null;
+  }
+  return authU;
+}
+
+function _hydrateAdminFinancialHubSpec(body = {}) {
+  const kind = String(body.kind || "").trim().toLowerCase();
+  let companyId = body.companyId ? Number(body.companyId) : null;
+  let agencyId = body.agencyId ? Number(body.agencyId) : null;
+  let guestId = body.guestId ? Number(body.guestId) : null;
+  let label = String(body.label || body.name || "").trim();
+  let email = String(body.email || "").trim();
+  let phone = String(body.phone || "").trim();
+  let document = String(body.document || "").trim();
+
+  if (companyId) {
+    const c = (db.companies || []).find(x => x && Number(x.id) === companyId);
+    if (c) {
+      if (!label) label = c.tradeName || c.corporateName || c.razaoSocial || "Empresa";
+      if (!email) email = _fhParseEmails([c.financialResponsible?.email, c.financialResponsibleEmail, c.financialEmail, c.emailFinanceiro, c.email])[0] || "";
+      if (!phone) phone = c.financialResponsible?.phone || c.financialResponsiblePhone || c.phone || c.telefone || "";
+      if (!document) document = c.cnpj || "";
+    }
+  } else if (agencyId) {
+    const a = (db.agencies || []).find(x => x && Number(x.id) === agencyId);
+    if (a) {
+      if (!label) label = a.tradeName || a.corporateName || "Agência";
+      if (!email) email = _fhParseEmails([a.financialResponsible?.email, a.financialResponsibleEmail, a.financialEmail, a.email])[0] || "";
+      if (!phone) phone = a.financialResponsible?.phone || a.financialResponsiblePhone || a.phone || a.telefone || "";
+      if (!document) document = a.cnpj || "";
+    }
+  } else if (guestId) {
+    const g = (db.guests || []).find(x => x && Number(x.id) === guestId);
+    if (g) {
+      if (!label) label = g.fullName || g.name || "Cliente";
+      if (!email) email = _fhParseEmails([g.email, g.financialResponsible?.email])[0] || "";
+      if (!phone) phone = g.phone || g.phoneNumber || "";
+      if (!document) document = g.documentNumber || g.document || "";
+    }
+  }
+
+  return {
+    kind: kind || (companyId ? "company" : agencyId ? "agency" : guestId ? "guest" : "requester"),
+    companyId,
+    agencyId,
+    guestId,
+    label,
+    email,
+    phone,
+    document
+  };
+}
+
+app.post("/api/admin/financial-hub-link", (req, res) => {
+  try {
+    const staffUser = _requireStaffForFinancialHub(req, res);
+    if (!staffUser) return;
+
+    const spec = _hydrateAdminFinancialHubSpec(req.body || {});
+    const regenerate = Boolean(req.body?.regenerate);
+    const out = ensureFinancialHubToken(db, spec, { regenerate });
+    if (!out || !out.record?.token) {
+      return res.status(400).json({ success: false, error: "Informe uma empresa, agência, cliente ou e-mail/telefone/documento válido para gerar o link." });
+    }
+    if (out.changed || regenerate) {
+      saveDatabase(regenerate ? "financial_hub_token_regenerated" : "financial_hub_token_created");
+    }
+    const baseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
+    const relPath = `/painel-financeiro/${encodeURIComponent(out.record.token)}`;
+    return res.json({
+      success: true,
+      regenerated: regenerate,
+      token: out.record.token,
+      path: relPath,
+      url: `${baseUrl}${relPath}`,
+      record: out.record
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/admin/financial-hub-link/send", async (req, res) => {
+  try {
+    const staffUser = _requireStaffForFinancialHub(req, res);
+    if (!staffUser) return;
+
+    const body = req.body || {};
+    const spec = _hydrateAdminFinancialHubSpec(body);
+    const regenerate = Boolean(body.regenerate);
+    const out = ensureFinancialHubToken(db, spec, { regenerate });
+    if (!out || !out.record?.token) {
+      return res.status(400).json({ success: false, error: "Dados insuficientes para gerar o link do Painel Financeiro." });
+    }
+    if (out.changed || regenerate) {
+      saveDatabase("financial_hub_token_send");
+    }
+
+    const baseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
+    const relPath = `/painel-financeiro/${encodeURIComponent(out.record.token)}`;
+    const hubUrl = `${baseUrl}${relPath}`;
+    const displayLabel = spec.label || out.record.label || "Cliente";
+
+    const targetPhone = normalizePhone(body.targetPhone || body.phone || spec.phone || "");
+    const targetEmails = _fhParseEmails([body.targetEmail, body.email, spec.email]);
+    const sendWhatsapp = body.sendWhatsapp !== false && targetPhone.length >= 10;
+    const sendEmail = body.sendEmail !== false && targetEmails.length > 0;
+
+    let whatsappSent = false;
+    let emailSent = false;
+
+    if (sendWhatsapp && typeof sendZapiMessage === "function") {
+      const waText =
+        `Olá, *${displayLabel}*! Tudo bem? 📊\n\n` +
+        `Disponibilizamos o seu *Painel Financeiro & Reservas CorpFlats*, onde você pode acompanhar e baixar a qualquer momento:\n` +
+        `• 🏦 *Boletos faturados* (status Pago, Vence Hoje, Pendente, Em Atraso, PDF, Linha Digitável e PIX)\n` +
+        `• 🧾 *Notas Fiscais (NFS-e)* emitidas (PDF/DANFSe e XML)\n` +
+        `• 📅 *Histórico de reservas*\n\n` +
+        `🔗 *Acesse diretamente pelo link exclusivo:*\n${hubUrl}`;
+      try {
+        const zRes = await sendZapiMessage(db.zapiConfig || {}, {
+          phone: targetPhone,
+          message: waText,
+          buttons: [{ id: `btn_fhub_${Date.now()}`, type: "URL", label: "📊 Abrir Painel Financeiro", url: hubUrl }],
+          sendMode: "buttons",
+          fallbackToText: true,
+          channelId: "reservations",
+          recipientRole: spec.kind === "guest" ? "guest" : "company",
+          triggerEvent: "financial_hub_link_dispatch",
+          bypassTestMode: true,
+          db
+        });
+        whatsappSent = Boolean(zRes?.success);
+      } catch (waErr) {
+        console.warn("[Financial Hub Send WA Error]:", waErr?.message || waErr);
+      }
+    }
+
+    if (sendEmail && typeof sendEmailAsync === "function") {
+      const subject = `📊 Seu Painel Financeiro (Boletos e Notas Fiscais) — CorpFlats`;
+      const bodyHtml = wrapEmailTemplate({
+        title: "Painel Financeiro & Reservas — CorpFlats",
+        subtitle: displayLabel,
+        contentHtml: `
+          <p style="font-size:14px;color:#334155;">Olá, <strong>${displayLabel}</strong>!</p>
+          <p style="font-size:13.5px;color:#475569;line-height:1.6;">
+            Compartilhamos o acesso exclusivo ao seu <strong>Painel Financeiro &amp; Reservas CorpFlats</strong>.
+            Por ele, você acompanha em tempo real o status de todos os seus <strong>Boletos</strong> (Pago, Vence Hoje, Pendente, Em Atraso ou Aguardando Emissão), baixa <strong>PDFs</strong>, copia <strong>Linha Digitável / PIX</strong> e faz download de todas as <strong>Notas Fiscais (NFS-e PDF e XML)</strong>.
+          </p>
+          <div style="margin:18px 0;">
+            <a href="${hubUrl}" target="_blank" style="display:inline-block;background:#0F3D4C;color:#FFFFFF;font-size:13px;font-weight:700;text-decoration:none;padding:12px 20px;border-radius:10px;">
+              📊 Acessar Painel Financeiro (Boletos e Notas)
+            </a>
+          </div>
+          <p style="font-size:12px;color:#64748B;">
+            Se preferir, salve este link nos favoritos para consultar sempre que precisar.
+          </p>
+        `
+      });
+      for (const em of targetEmails) {
+        try {
+          const emLog = sendEmailAsync({
+            db,
+            saveDatabase,
+            recipient: em,
+            subject,
+            bodyHtml,
+            metadata: {
+              category: "financial_hub_link",
+              trigger: "admin_manual_dispatch",
+              hubTokenId: out.record.id
+            }
+          });
+          if (emLog !== false) emailSent = true;
+        } catch (emErr) {
+          console.warn("[Financial Hub Send Email Error]:", emErr?.message || emErr);
+        }
+      }
+    }
+
+    return res.json({
+      success: true,
+      url: hubUrl,
+      path: relPath,
+      token: out.record.token,
+      whatsappSent,
+      emailSent
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // 1.5 Atualizar Perfil e Veículo do Hóspede (V1 - Exige Sessão Autenticada)
@@ -90907,9 +93141,9 @@ function buildSinglePreBoletoFromReservation(r, targetDb = db) {
     financialResponsible,
     billingRecipients: recFlags,
     billingDeliveryRecipients: recFlags,
-    invoiceId: existingInv?.id || r.invoiceId || null,
-    nfseNumber: existingInv?.numeroNfse || r.numeroNfse || null,
-    invoiceIssued: Boolean(existingInv || r.invoiceId),
+    invoiceId: existingInv?.id || null,
+    nfseNumber: existingInv?.numeroNfse || null,
+    invoiceIssued: Boolean(existingInv),
     notes: r.invoicingInstructions || ""
   };
 }
@@ -91484,13 +93718,118 @@ function resolveReservationBillingRecipientsList(r, overrideRecipients = null, o
     if (hideGuestNfse && guestPersonalSet.size > 0) {
       reqEmails = reqEmails.filter(e => !guestPersonalSet.has(e));
     }
+    const rawReqPhone = reqInfo.whatsapp || reqInfo.phone || r?.requesterPhone || r?.agencyAgentPhone || "";
+    const resolvedReqPhone = maskRecipientPhone(rawReqPhone);
+    const reqPhoneDigits = cleanPhone(rawReqPhone || "");
+
+    const _normName = (v) => String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().replace(/\s+/g, " ");
+    const _phonesEq = (a, b) => {
+      const da = cleanPhone(a || "");
+      const dbp = cleanPhone(b || "");
+      if (!da || !dbp || da.length < 8 || dbp.length < 8) return false;
+      return da === dbp || da.slice(-8) === dbp.slice(-8);
+    };
+    const stayGuestNormNames = new Set();
+    if (!anyRequesterIsGuest1) {
+      const addStayGuestIfDistinctPhone = (gName, gPh) => {
+        const nn = _normName(gName);
+        if (!nn || nn.length < 2 || /^(h[oó]spede|a definir|pendente)/i.test(nn)) return;
+        if (reqPhoneDigits.length >= 8 && gPh && _phonesEq(reqPhoneDigits, gPh)) return;
+        stayGuestNormNames.add(nn);
+      };
+      for (const item of resListForHide) {
+        if (!item || item.requesterIsGuest1) continue;
+        addStayGuestIfDistinctPhone(item.guestName, item.guestPhone || item.phone);
+        if (Array.isArray(item.guests)) {
+          for (const rg of item.guests) {
+            if (rg) addStayGuestIfDistinctPhone(rg.name || rg.fullName, rg.phone || rg.phoneNumber || rg.whatsapp);
+          }
+        }
+      }
+      if (company?.id && Array.isArray(activeDb?.reservations)) {
+        for (const cr of activeDb.reservations) {
+          if (!cr || cr.requesterIsGuest1 || Number(cr.companyId) !== Number(company.id)) continue;
+          addStayGuestIfDistinctPhone(cr.guestName, cr.guestPhone || cr.phone);
+        }
+      }
+    }
+    const compNamesNorm = new Set(
+      [company?.corporateName, company?.razaoSocial, company?.tradeName, company?.nomeFantasia, r?.companyName]
+        .map(_normName)
+        .filter(Boolean)
+    );
+    const _isCleanPersonRequester = (cand) => {
+      const trimmed = String(cand || "").trim();
+      const nn = _normName(trimmed);
+      if (!nn || nn.length < 2) return false;
+      if (/^(h[oó]spede|solicitante|cliente|empresa|a definir|aguardando|sem nome|whatsapp|\d+)$/i.test(nn)) return false;
+      if (!anyRequesterIsGuest1 && stayGuestNormNames.has(nn)) return false;
+      return true;
+    };
+
+    let resolvedReqName = "";
+    if (
+      (r?.requesterType === "company" || (company && !r?.requesterType)) &&
+      _isCleanPersonRequester(company?.contactPerson) &&
+      !compNamesNorm.has(_normName(company?.contactPerson)) &&
+      (!_isCleanPersonRequester(reqInfo.name) || compNamesNorm.has(_normName(reqInfo.name)))
+    ) {
+      resolvedReqName = String(company.contactPerson).trim();
+    }
+    if (!resolvedReqName) {
+      const directCandidates = [
+        reqInfo.name,
+        r?.requesterName,
+        r?.agencyAgentName,
+        company?.contactPerson,
+        agency?.contactPerson,
+        (reqPhoneDigits.length >= 8 && _phonesEq(reqPhoneDigits, finResp.phone)) ? finResp.name : ""
+      ];
+      for (const c of directCandidates) {
+        if (_isCleanPersonRequester(c) && !compNamesNorm.has(_normName(c))) {
+          resolvedReqName = String(c).trim();
+          break;
+        }
+      }
+    }
+    if (!resolvedReqName && reqPhoneDigits.length >= 8) {
+      const crmGuestsList = Array.isArray(activeDb?.guests) ? activeDb.guests : [];
+      const phoneGuestMatches = crmGuestsList.filter(g =>
+        g && _phonesEq(reqPhoneDigits, g.phone || g.phoneNumber || g.whatsapp) && _isCleanPersonRequester(g.fullName || g.name)
+      );
+      const preferredReqGuest =
+        phoneGuestMatches.find(g => Array.isArray(g.tags) && (g.tags.includes("solicitante_terceiro") || g.tags.includes("Solicitante"))) ||
+        (company?.id ? phoneGuestMatches.find(g => Number(g.companyId) === Number(company.id)) : null) ||
+        phoneGuestMatches[0] ||
+        null;
+      if (preferredReqGuest) {
+        resolvedReqName = String(preferredReqGuest.fullName || preferredReqGuest.name).trim();
+      }
+      if (!resolvedReqName && Array.isArray(activeDb?.whatsappConversations)) {
+        const matchedConv = activeDb.whatsappConversations.find(cv => {
+          if (!cv || cv.isGroup) return false;
+          const cvPh = String(cv.phone || cv.guestPhone || cv.remoteJid || cv.id || "").replace(/@.*$/, "");
+          if (!_phonesEq(reqPhoneDigits, cvPh)) return false;
+          const cvNm = cv.contactName || cv.pushName || cv.guestName || cv.name || "";
+          return _isCleanPersonRequester(cvNm) && !compNamesNorm.has(_normName(cvNm)) && !/corpflats|portaria|recep[cç][aã]o/i.test(cvNm);
+        });
+        if (matchedConv) {
+          resolvedReqName = String(matchedConv.contactName || matchedConv.pushName || matchedConv.guestName || matchedConv.name).trim();
+        }
+      }
+    }
+    if (!resolvedReqName) {
+      const fallbackCandidates = [reqInfo.name, r?.requesterName, company?.contactPerson, agency?.contactPerson, company?.tradeName, company?.corporateName, agency?.tradeName];
+      resolvedReqName = fallbackCandidates.find(c => _isCleanPersonRequester(c)) || company?.tradeName || company?.corporateName || agency?.tradeName || "Solicitante";
+    }
+
     pushEmailExpandedCandidates({
       role: "requester",
       roleLabel: "Solicitante da Reserva",
-      name: reqInfo.name || r?.agencyAgentName || company?.contactPerson || agency?.contactPerson || "Solicitante",
+      name: resolvedReqName,
       rawEmails: reqEmails,
-      phone: maskRecipientPhone(reqInfo.phone || r?.requesterPhone || r?.agencyAgentPhone || ""),
-      document: onlyDigits(reqInfo.cpf || reqInfo.document || "")
+      phone: resolvedReqPhone,
+      document: onlyDigits(reqInfo.cpf || reqInfo.document || r?.requesterDocument || "")
     });
   }
 
@@ -92182,7 +94521,8 @@ async function dispatchFaturadoBillingPackage({
   financialResponsibleOverride = null,
   isReminder = false,
   reminderType = null,
-  includeNfse = !isReminder
+  includeNfse = true,
+  _skipNfseCatchup = false
 }) {
   const _isSettledStatus = (st) => {
     const s = String(st || "").trim().toLowerCase();
@@ -92201,18 +94541,70 @@ async function dispatchFaturadoBillingPackage({
       whatsappCount: 0
     };
   }
-  const shouldIncludeNfse = Boolean(includeNfse) && !isReminder;
+  const hasAccommodationScopeBoleto = validBoletos.some(b => b.billingScope !== "consumption_only");
+  const shouldIncludeNfse = includeNfse !== false && hasAccommodationScopeBoleto;
 
   const firstBoleto = validBoletos[0];
   const linkedRes = reservation || (db.reservations || []).find(r =>
-    r && ((firstBoleto.reservationId && Number(r.id) === Number(firstBoleto.reservationId)) || (firstBoleto.reservationCode && r.code === firstBoleto.reservationCode))
+    r && (
+      (firstBoleto.reservationId && Number(r.id) === Number(firstBoleto.reservationId)) ||
+      (firstBoleto.reservationCode && r.code === firstBoleto.reservationCode) ||
+      (firstBoleto.packageId && (r.packageCode === firstBoleto.packageId || r.packageId === firstBoleto.packageId))
+    )
   ) || null;
 
-  const linkedInvoice = invoice || (
+  const _isActiveInv = (i) => {
+    if (!i) return false;
+    const ist = String(i.status || "autorizada").toLowerCase();
+    return !["cancelada", "cancelled", "substituida", "rejeitada", "erro"].includes(ist);
+  };
+
+  let linkedInvoice = invoice || (
     (firstBoleto.invoiceId || linkedRes?.invoiceId)
-      ? (db.invoices || []).find(i => i && (Number(i.id) === Number(firstBoleto.invoiceId || linkedRes?.invoiceId) || String(i.numeroNfse) === String(firstBoleto.nfseNumber || linkedRes?.numeroNfse)))
-      : findExistingInvoiceForReservation(db, { reservation: linkedRes, reservationId: firstBoleto.reservationId, reservationCode: firstBoleto.reservationCode })
-  ) || null;
+      ? (db.invoices || []).find(i => _isActiveInv(i) && (
+          Number(i.id) === Number(firstBoleto.invoiceId || linkedRes?.invoiceId) ||
+          (firstBoleto.nfseNumber && String(i.numeroNfse) === String(firstBoleto.nfseNumber)) ||
+          (linkedRes?.numeroNfse && String(i.numeroNfse) === String(linkedRes.numeroNfse))
+        ))
+      : null
+  ) || (typeof findExistingInvoiceForReservation === "function"
+    ? findExistingInvoiceForReservation(db, {
+        reservation: linkedRes,
+        reservationId: firstBoleto.reservationId,
+        reservationCode: firstBoleto.packageId || firstBoleto.reservationCode
+      })
+    : null) || null;
+
+  // Regra obrigatória: Boleto Faturado de hospedagem SEMPRE deve ir acompanhado da Nota Fiscal (NFS-e).
+  // Se o boleto já existia sem nota fiscal vinculada (ex.: reenvio manual ou lembrete), emite a NFS-e automaticamente antes de enviar.
+  if (shouldIncludeNfse && !linkedInvoice && !_skipNfseCatchup && linkedRes && typeof emitCheckoutFaturadoPackage === "function") {
+    try {
+      const catchupPkgId = firstBoleto.packageId || linkedRes.packageCode || linkedRes.packageId || null;
+      const catchupRes = await emitCheckoutFaturadoPackage(linkedRes, {
+        ...(catchupPkgId ? { packageId: catchupPkgId, consolidatePackage: true } : {}),
+        emitNfse: true,
+        autoDispatch: false,
+        forceReissue: false,
+        triggerSource: "checkout_auto"
+      });
+      if (catchupRes?.invoice) {
+        linkedInvoice = catchupRes.invoice;
+        for (const bol of validBoletos) {
+          if (bol.billingScope !== "consumption_only") {
+            bol.invoiceId = linkedInvoice.id;
+            bol.nfseNumber = linkedInvoice.numeroNfse;
+            const dbBolRef = (db.boletos || []).find(x => x && Number(x.id) === Number(bol.id));
+            if (dbBolRef) {
+              dbBolRef.invoiceId = linkedInvoice.id;
+              dbBolRef.nfseNumber = linkedInvoice.numeroNfse;
+            }
+          }
+        }
+      }
+    } catch (catchupErr) {
+      console.warn("[Faturado Dispatch NFS-e Catchup] Aviso ao emitir NFS-e faltante:", catchupErr?.message || catchupErr);
+    }
+  }
 
   const pkgSibsForDispatch = (linkedRes && (linkedRes.packageCode || linkedRes.packageId) && typeof getPackageReservations === "function")
     ? getPackageReservations(db, linkedRes.packageCode || linkedRes.packageId).filter(x => typeof isPackageItemActive !== "function" || isPackageItemActive(x))
@@ -92340,6 +94732,18 @@ async function dispatchFaturadoBillingPackage({
 
     const hostBase = (process.env.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/+$/, "");
 
+    const recHubSpec = resolveFinancialHubSpecForReservationAndRecipient(effectiveResForRecipients, {
+      role: rec.role,
+      email: rec.email,
+      phone: safeRecPhoneForResult,
+      name: rec.name,
+      companyId: linkedRes?.companyId || firstBoleto.companyId || null,
+      agencyId: linkedRes?.agencyId || firstBoleto.agencyId || null,
+      guestId: isGuestRecipient ? (linkedRes?.guestId || firstBoleto.guestId || null) : null
+    }, db);
+    const recHubUrl = recHubSpec ? resolveFinancialHubUrlForEntity(db, recHubSpec, hostBase).url : "";
+    recResult.financialHubUrl = recHubUrl || null;
+
     // 1. Disparo por E-mail com PDFs anexados
     const recEmailList = parseEmailList(rec.email).filter(e => !sentEmailsSet.has(e));
     if (flags.sendEmail !== false && recEmailList.length > 0) {
@@ -92407,6 +94811,17 @@ async function dispatchFaturadoBillingPackage({
             </p>
             ${nfseHtmlBlock}
             ${boletosHtmlBlocks}
+            ${recHubUrl ? `
+            <div style="background:#F8FAFC;border:1px solid #CBD5E1;border-radius:10px;padding:12px 14px;margin-top:14px;">
+              <div style="font-size:12.5px;color:#0F172A;font-weight:700;margin-bottom:6px;">
+                📊 Acompanhe todos os seus Boletos e Notas Fiscais em um só lugar
+              </div>
+              <div style="font-size:12px;color:#475569;margin-bottom:10px;">
+                Consulte status atualizado (Pago, Vence Hoje, Pendente, Em Atraso), baixe 2ª via de PDFs e notas fiscais emitidas sempre que precisar:
+              </div>
+              <a href="${recHubUrl}" target="_blank" style="display:inline-block;background:#0F3D4C;color:#FFFFFF;font-size:12px;font-weight:700;text-decoration:none;padding:9px 15px;border-radius:8px;">📊 Acessar Painel Financeiro (Boletos e Notas)</a>
+            </div>
+            ` : ""}
             <p style="font-size:12px;color:#64748B;margin-top:14px;">
               Os arquivos em formato <strong>PDF</strong> do(s) Boleto(s)${includeNfseForRec ? " e da Nota Fiscal" : ""} seguem anexados a este e-mail.
             </p>
@@ -92493,15 +94908,26 @@ async function dispatchFaturadoBillingPackage({
               url: `${hostBase}/copiar-boleto/${bolRef}?mode=pix`
             });
           }
+          if (idx === 0 && recHubUrl && boletoButtons.length < 3) {
+            boletoButtons.push({
+              id: `btn_financial_hub_${bol.id || idx + 1}`,
+              type: "URL",
+              label: "📊 Boletos e Notas",
+              url: recHubUrl
+            });
+          }
 
           const copyTargetLabel = bol.linhaDigitavel && bol.pixCopiaECola
             ? "o código do boleto ou o código PIX"
             : bol.linhaDigitavel
             ? "o código do boleto"
             : "o código PIX";
+          const hubTextLine = idx === 0 && recHubUrl
+            ? `\n📊 *Painel com todos os seus Boletos e Notas:* ${recHubUrl}`
+            : "";
           const footerHint = boletoButtons.length > 0
-            ? `\n\n👇 *Toque ${boletoButtons.length > 1 ? "nos botões abaixo" : "no botão abaixo"} para copiar ${copyTargetLabel} com 1 clique.*\n📎 _O arquivo PDF segue logo abaixo._`
-            : `\n\n📎 *${includeNfseForRec ? "Os arquivos PDF do Boleto e da Nota Fiscal estão sendo enviados" : "O arquivo PDF do Boleto está sendo enviado"} logo abaixo.*`;
+            ? `\n\n👇 *Toque ${boletoButtons.length > 1 ? "nos botões abaixo" : "no botão abaixo"} para copiar ${copyTargetLabel} com 1 clique.*${hubTextLine}\n📎 _${includeNfseForRec ? "Os arquivos PDF do Boleto e da Nota Fiscal seguem logo abaixo." : "O arquivo PDF segue logo abaixo."}_`
+            : `${hubTextLine}\n\n📎 *${includeNfseForRec ? "Os arquivos PDF do Boleto e da Nota Fiscal estão sendo enviados" : "O arquivo PDF do Boleto está sendo enviado"} logo abaixo.*`;
 
           const waMsg = introBlock + bolCardText + footerHint;
 
@@ -92530,23 +94956,36 @@ async function dispatchFaturadoBillingPackage({
                 document: b64Doc,
                 fileName: `Boleto-Inter-${bol.code}.pdf`,
                 caption: `🏦 Boleto Banco Inter #${bol.code} - Vencimento ${formatBrDate(bol.dueDate)} (R$ ${formatBrl(bol.amount)})`,
+                channelId: "ai_agent",
+                recipientRole: rec.role === "guest" ? "guest" : "company",
+                triggerEvent: isReminder ? "boleto_reminder_whatsapp" : "boleto_faturado_whatsapp",
                 bypassTestMode: true,
                 db
-              }).catch(() => {});
+              }).catch(docErr => {
+                console.warn(`[Faturado Dispatch WhatsApp Boleto PDF Error] (${cleanRecPhone}):`, docErr?.message || docErr);
+              });
             }
           }
         }
 
-        if (typeof sendZapiDocument === "function" && nfsePdfBuf && includeNfseForRec && !isReminder) {
+        if (typeof sendZapiDocument === "function" && nfsePdfBuf && includeNfseForRec) {
+          if (process.env.NODE_ENV !== "test") {
+            await new Promise(resolve => setTimeout(resolve, 400));
+          }
           const b64Nf = `data:application/pdf;base64,${nfsePdfBuf.toString("base64")}`;
           await sendZapiDocument(db.zapiConfig, {
             phone: cleanRecPhone,
             document: b64Nf,
             fileName: `NFSe-${linkedInvoice.numeroNfse}.pdf`,
             caption: `🧾 NFS-e Hospedagem Nº ${linkedInvoice.numeroNfse} (R$ ${formatBrl(linkedInvoice.valorServico)})`,
+            channelId: "ai_agent",
+            recipientRole: rec.role === "guest" ? "guest" : "company",
+            triggerEvent: isReminder ? "boleto_reminder_whatsapp" : "boleto_faturado_whatsapp",
             bypassTestMode: true,
             db
-          }).catch(() => {});
+          }).catch(nfDocErr => {
+            console.warn(`[Faturado Dispatch WhatsApp NFSe PDF Error] (${cleanRecPhone}):`, nfDocErr?.message || nfDocErr);
+          });
         }
 
         recResult.whatsappSent = true;
@@ -92790,7 +95229,8 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
               ? (consolidatedPackageItems[consolidatedPackageItems.length - 1]?.checkoutDate || r.checkoutDate)
               : (isConsolidatedRmNf ? (rmSummaryFat.finalCheckoutDate || r.checkoutDate) : r.checkoutDate),
             nfHideFromGuest: resolvedFatNfHide,
-            skipAutoWhatsapp: true
+            skipAutoWhatsapp: true,
+            skipAutoEmail: options.autoDispatch !== false
           });
           if (nfResult?.invoice) {
             invoice = nfResult.invoice;
@@ -92896,6 +95336,14 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
   }
 
   if (existingActiveBoletosSkip) {
+    if (invoice?.id) {
+      for (const eb of existingActiveBoletosSkip) {
+        if (eb && eb.billingScope !== "consumption_only") {
+          eb.invoiceId = invoice.id;
+          eb.nfseNumber = invoice.numeroNfse;
+        }
+      }
+    }
     saveDatabase("checkout_faturado_nfse_catchup");
     return {
       alreadyEmitted: true,
@@ -93304,7 +95752,7 @@ async function processAutomaticBoletoReminders({ force = false, checkRemote = tr
         boletos: [bol],
         isReminder: true,
         reminderType: "due_today",
-        includeNfse: false
+        includeNfse: true
       });
       if (!disp?.skippedAlreadySettled) {
         bol.lastDueTodayReminderDate = todayStr;
@@ -93315,7 +95763,7 @@ async function processAutomaticBoletoReminders({ force = false, checkRemote = tr
         boletos: [bol],
         isReminder: true,
         reminderType: "overdue",
-        includeNfse: false
+        includeNfse: true
       });
       if (!disp?.skippedAlreadySettled) {
         bol.lastOverdueReminderDate = todayStr;
@@ -93722,7 +96170,7 @@ const handleUpdateBoleto = async (req, res) => {
         boletos: [bol],
         recipientsOverride: bol.billingRecipients,
         financialResponsibleOverride: bol.financialResponsible,
-        includeNfse: Boolean(b.includeNfse)
+        includeNfse: b.includeNfse !== false
       });
     }
 
@@ -93900,7 +96348,7 @@ app.post("/api/boletos/:id/dispatch", async (req, res) => {
       financialResponsibleOverride: b.financialResponsible || bol.financialResponsible,
       isReminder: Boolean(b.isReminder),
       reminderType: b.reminderType || null,
-      includeNfse: Boolean(b.includeNfse)
+      includeNfse: b.includeNfse !== false
     });
 
     saveDatabase("boleto_dispatched_" + bol.id);
@@ -94284,7 +96732,7 @@ export function resolveSpaOpenGraphMetadata(req, dbRef = db) {
   let resCode = String(query.res || query.code || query.r || query.reserva || "").trim();
   if (!resCode) {
     const match = String(req.path || "").match(
-      /(?:credenciamento-hospede|credenciamento|identificar-reserva|identificar|cadastro-hospede|pre-checkin|checkin|minha-reserva|portal-hospede|guest-portal|portal|cafe-da-manha|cafe|breakfast|checkout|check-out|saida|copiar-pix|pix)\/([a-zA-Z0-9_\-]+)/i
+      /(?:credenciamento-hospede|credenciamento|identificar-reserva|identificar|cadastro-hospede|chegada|localizar-reserva|checkin-portaria|meu-checkin|pre-checkin|checkin|minha-reserva|portal-hospede|guest-portal|portal|cafe-da-manha|cafe|breakfast|checkout|check-out|saida|copiar-pix|pix)\/([a-zA-Z0-9_\-]+)/i
     );
     const reservedSegments = new Set([
       "cafe", "cafe-da-manha", "breakfast", "room-service", "frigobar", "minibar",
@@ -94389,7 +96837,10 @@ export function resolveSpaOpenGraphMetadata(req, dbRef = db) {
 
   const isPreCheckin =
     rawPath.startsWith("/pre-checkin") ||
-    rawPath.startsWith("/checkin");
+    rawPath.startsWith("/checkin") ||
+    rawPath.startsWith("/chegada") ||
+    rawPath.startsWith("/localizar-reserva") ||
+    rawPath.startsWith("/meu-checkin");
 
   const isPortal =
     rawPath.startsWith("/minha-reserva") ||
@@ -103151,15 +105602,19 @@ function settleMinibarOrder(order, paymentDetails = {}) {
 
   // 4. Cria notificação operacional
   if (typeof createNotification === "function") {
+    const isNfDispensed =
+      order.invoice?.status === "dispensada" ||
+      order.invoice?.status === "nao_aplicavel" ||
+      order.fiscalPreferences?.wantsInvoice === false;
     createNotification({
       category: "checkout",
       title: `🧊 Frigobar Pago: R$ ${Number(order.totalAmount || 0).toFixed(2)} (Flat ${order.flatNumber})`,
       message: `Pedido ${order.id} pago por ${order.guestName} (${
         isManualAdmin ? "Baixa Manual" : order.paymentMethod === "pix" ? "PIX" : "Cartão"
-      }). Disponível na Fila de Notas Fiscais da Anserve.`,
+      }). ${isNfDispensed ? "Hóspede optou por não solicitar Nota Fiscal." : "Nota Fiscal solicitada — disponível na Fila de Notas Fiscais."}`,
       severity: "success",
-      metadata: { orderId: order.id, flatNumber: order.flatNumber, amount: order.totalAmount, isDiscrepancyOrder },
-      targetUrl: `/anserve`
+      metadata: { orderId: order.id, flatNumber: order.flatNumber, amount: order.totalAmount, isDiscrepancyOrder, wantsInvoice: !isNfDispensed },
+      targetUrl: isNfDispensed ? `/frigobar` : `/frigobar-notas`
     });
   }
 
@@ -104782,21 +107237,46 @@ app.get("/api/minibar/reservation-context/:code", (req, res) => {
       statement.dailyLaunches.some(dl => (dl.items || []).some(i => i.isCourtesy)) ||
       (Array.isArray(statement.consumedCourtesyItems) && statement.consumedCourtesyItems.length > 0);
 
-    const paidOrdersHistory = paidOrders.map(ord => ({
-      id: ord.id,
-      guestName: ord.guestName || reservation.guestName,
-      guestIndex: ord.guestIndex || 1,
-      partialMode: ord.partialMode || "full",
-      totalAmount: ord.totalAmount,
-      paidAt: ord.paidAt || ord.createdAt,
-      paymentMethod: ord.paymentMethod,
-      items: ord.items || [],
-      invoice: sanitizeMinibarInvoiceForResponse(ord.invoice),
-      invoiceFileUrl: ord.invoice?.invoiceFileUrl || ord.invoice?.fileUrl || null,
-      invoiceFileName: ord.invoice?.invoiceFileName || null,
-      invoiceNumber: ord.invoice?.invoiceNumber || null,
-      invoiceStatus: ord.invoice?.status || null
-    }));
+    const nowMsForCtx = Date.now();
+    const paidOrdersHistory = paidOrders.map(ord => {
+      const invStatus =
+        ord.invoice?.status ||
+        (ord.fiscalPreferences?.wantsInvoice === false ? "dispensada" : "pendente");
+      const paidRefMs = getMinibarOrderPaidRefMs(ord);
+      const within30Days = paidRefMs > 0 ? nowMsForCtx - paidRefMs <= MINIBAR_INVOICE_RETENTION_MS : true;
+      const hasAttachedFile = Boolean(ord.invoice?.invoiceFileUrl || ord.invoice?.fileUrl);
+      const canRequestInvoiceNow =
+        !hasAttachedFile &&
+        Number(ord.totalAmount || 0) > 0 &&
+        invStatus === "dispensada" &&
+        within30Days;
+
+      return {
+        id: ord.id,
+        guestName: ord.guestName || reservation.guestName,
+        guestIndex: ord.guestIndex || 1,
+        partialMode: ord.partialMode || "full",
+        totalAmount: ord.totalAmount,
+        paidAt: ord.paidAt || ord.createdAt,
+        paymentMethod: ord.paymentMethod,
+        items: ord.items || [],
+        wantsInvoice:
+          invStatus === "anexada"
+            ? true
+            : invStatus === "dispensada"
+            ? false
+            : ord.fiscalPreferences?.wantsInvoice !== false,
+        invoiceDescriptionType: ord.fiscalPreferences?.invoiceDescriptionType || "detailed",
+        documentNumber: ord.fiscalPreferences?.documentNumber || ord.guestDocument || "",
+        canRequestInvoiceNow,
+        within30Days,
+        invoice: sanitizeMinibarInvoiceForResponse(ord.invoice),
+        invoiceFileUrl: ord.invoice?.invoiceFileUrl || ord.invoice?.fileUrl || null,
+        invoiceFileName: ord.invoice?.invoiceFileName || null,
+        invoiceNumber: ord.invoice?.invoiceNumber || null,
+        invoiceStatus: invStatus
+      };
+    });
 
     // Gabarito padrão do flat
     const defaultTemplate = db.minibarDefaultStock?.flatOverrides?.[flatStr] || db.minibarDefaultStock?.globalTemplate || [];
@@ -105298,6 +107778,7 @@ app.post("/api/minibar/orders", async (req, res) => {
       customAmount,
       requireCheckout,
       paymentMethod,
+      wantsInvoice,
       invoicePreference,
       document,
       documentType,
@@ -105806,15 +108287,49 @@ app.post("/api/minibar/orders", async (req, res) => {
     const cleanDoc = finalGuestDoc;
     const cleanEmail = finalGuestEmail;
 
+    const explicitOptOut = wantsInvoice === false || wantsInvoice === "false";
+    const explicitOptIn = wantsInvoice === true || wantsInvoice === "true";
+
+    if (totalAmount > 0 && explicitOptIn && cleanDoc.length !== 11 && cleanDoc.length !== 14) {
+      return res.status(400).json({
+        success: false,
+        code: "INVALID_FISCAL_DOCUMENT",
+        error: "Para emissão de Nota Fiscal, informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido."
+      });
+    }
+
+    const nowIsoForInvoice = new Date().toISOString();
+    const validPrefType =
+      invoicePreference === "water" || invoicePreference === "minibar_consumption" || invoicePreference === "detailed"
+        ? invoicePreference
+        : "detailed";
+
     const fiscalPreferences = {
-      invoiceDescriptionType: invoicePreference || "detailed",
+      wantsInvoice: !explicitOptOut,
+      invoiceDescriptionType: explicitOptOut ? "not_requested" : validPrefType,
       documentType: documentType || (cleanDoc.length === 14 ? "cnpj" : "cpf"),
       documentNumber: cleanDoc,
-      companyName: companyName || "",
+      companyName: explicitOptOut ? "" : (companyName || ""),
       email: cleanEmail,
       phone: finalGuestPhone,
       payerName: finalGuestName
     };
+
+    const targetInvoiceRecord =
+      existingOrder?.invoice?.status === "anexada"
+        ? existingOrder.invoice
+        : explicitOptOut
+        ? {
+            status: "dispensada",
+            dispensedAt: nowIsoForInvoice,
+            dispensedBy: "hospede",
+            dispensedReason: "guest_opted_out"
+          }
+        : {
+            status: "pendente",
+            requestedAt: nowIsoForInvoice,
+            requestedBy: explicitOptIn ? "hospede" : "sistema"
+          };
 
     // Caso de Cortesia Gratuita (total 0)
     if (totalAmount <= 0) {
@@ -105907,6 +108422,7 @@ app.post("/api/minibar/orders", async (req, res) => {
         existingOrder.mpPreferenceId = pref?.id || `pref_${orderId}`;
         existingOrder.mpInitPoint = initPoint;
         existingOrder.fiscalPreferences = fiscalPreferences;
+        existingOrder.invoice = targetInvoiceRecord;
         if (settlesLaunchOrders) existingOrder.settlesLaunchOrders = true;
         if (recordedSelectedLaunchItems.length > 0) existingOrder.selectedLaunchItems = recordedSelectedLaunchItems;
         existingOrder.updatedAt = new Date().toISOString();
@@ -105948,7 +108464,7 @@ app.post("/api/minibar/orders", async (req, res) => {
         mpPreferenceId: pref?.id || `pref_${orderId}`,
         mpInitPoint: initPoint,
         fiscalPreferences,
-        invoice: { status: "pendente" },
+        invoice: targetInvoiceRecord,
         notes: notes || "",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -106115,6 +108631,7 @@ app.post("/api/minibar/orders", async (req, res) => {
       existingOrder.pixCopiaECola = copiaECola;
       existingOrder.pixExpiresAt = expiresAt;
       existingOrder.fiscalPreferences = fiscalPreferences;
+      existingOrder.invoice = targetInvoiceRecord;
       if (settlesLaunchOrders) existingOrder.settlesLaunchOrders = true;
       if (recordedSelectedLaunchItems.length > 0) existingOrder.selectedLaunchItems = recordedSelectedLaunchItems;
       existingOrder.updatedAt = new Date().toISOString();
@@ -106163,7 +108680,7 @@ app.post("/api/minibar/orders", async (req, res) => {
       pixCopiaECola: copiaECola,
       pixExpiresAt: expiresAt,
       fiscalPreferences,
-      invoice: { status: "pendente" },
+      invoice: targetInvoiceRecord,
       notes: notes || "",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -106358,6 +108875,14 @@ app.post("/api/minibar/orders/:id/invoice", async (req, res) => {
       invoiceFileUrl = fileDataStr;
     }
 
+    if (!order.fiscalPreferences || typeof order.fiscalPreferences !== "object") {
+      order.fiscalPreferences = {};
+    }
+    order.fiscalPreferences.wantsInvoice = true;
+    if (!order.fiscalPreferences.invoiceDescriptionType || order.fiscalPreferences.invoiceDescriptionType === "not_requested") {
+      order.fiscalPreferences.invoiceDescriptionType = "detailed";
+    }
+
     order.invoice = {
       status: "anexada",
       invoiceFileUrl,
@@ -106478,6 +109003,196 @@ app.get("/api/minibar/invoices/delivery-monitor", (req, res) => {
       failedCount: failedDeliveries.length,
       failedOrders: failedDeliveries,
       failedInvoices: failedDeliveries
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── F08.2: Solicitação Tardia de Nota Fiscal (pelo Hóspede em até 30 dias ou Equipe Fiscal) ──
+app.post("/api/minibar/orders/:id/request-invoice", (req, res) => {
+  try {
+    const user = getAuthUser(req);
+    const isStaff = isMinibarInvoiceIssuer(user);
+    const orderId = String(req.params.id || "").trim();
+    if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
+    const order = db.minibarOrders.find(o => o && o.id === orderId);
+
+    if (!order) {
+      return res.status(404).json({ success: false, error: "Pedido de frigobar não encontrado." });
+    }
+    if (order.paymentStatus !== "pago" || !(Number(order.totalAmount) > 0)) {
+      return res.status(400).json({
+        success: false,
+        error: "Apenas pagamentos confirmados com valor maior que R$ 0,00 podem solicitar Nota Fiscal."
+      });
+    }
+    if (order.invoice?.status === "anexada") {
+      return res.status(400).json({
+        success: false,
+        error: "A Nota Fiscal deste pagamento já foi emitida e anexada."
+      });
+    }
+
+    const {
+      reservationCode: bodyResCode,
+      invoicePreference,
+      document,
+      companyName,
+      email,
+      phone,
+      payerName
+    } = req.body || {};
+
+    if (!isStaff) {
+      const cleanReqCode = String(bodyResCode || "").trim().toUpperCase();
+      const orderCodeUpper = String(order.reservationCode || "").trim().toUpperCase();
+      const linkedRes = cleanReqCode
+        ? (db.reservations || []).find(
+            r =>
+              r &&
+              (String(r.code || "").trim().toUpperCase() === cleanReqCode ||
+                String(r.id) === cleanReqCode)
+          )
+        : null;
+      const matchesOrderRes =
+        Boolean(cleanReqCode) &&
+        (cleanReqCode === orderCodeUpper || (linkedRes && doesMinibarOrderMatchReservation(order, linkedRes)));
+
+      if (!matchesOrderRes) {
+        return res.status(403).json({
+          success: false,
+          error: "Informe o código da reserva correspondente para solicitar a Nota Fiscal."
+        });
+      }
+
+      const paidRefMs = getMinibarOrderPaidRefMs(order);
+      if (paidRefMs > 0 && Date.now() - paidRefMs > MINIBAR_INVOICE_RETENTION_MS) {
+        return res.status(400).json({
+          success: false,
+          code: "INVOICE_REQUEST_WINDOW_EXPIRED",
+          error:
+            "O prazo de 30 dias para solicitação online de Nota Fiscal deste consumo foi encerrado. Caso precise, fale com nossa recepção."
+        });
+      }
+    }
+
+    const validPref =
+      invoicePreference === "water" || invoicePreference === "minibar_consumption" || invoicePreference === "detailed"
+        ? invoicePreference
+        : "detailed";
+
+    const resolvedDoc = String(
+      document !== undefined
+        ? document
+        : order.fiscalPreferences?.documentNumber || order.guestDocument || ""
+    ).replace(/\D/g, "");
+
+    if ((!isStaff || document !== undefined) && resolvedDoc.length !== 11 && resolvedDoc.length !== 14) {
+      return res.status(400).json({
+        success: false,
+        code: "INVALID_FISCAL_DOCUMENT",
+        error: "Informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido para emissão da Nota Fiscal."
+      });
+    }
+
+    const cleanEmail = email !== undefined ? String(email || "").trim() : (order.fiscalPreferences?.email || order.guestEmail || "");
+    const cleanPhone = phone !== undefined ? String(phone || "").trim() : (order.fiscalPreferences?.phone || order.guestPhone || "");
+    const cleanCompany = companyName !== undefined ? String(companyName || "").trim() : (order.fiscalPreferences?.companyName || "");
+    const cleanPayerName = payerName ? String(payerName).trim() : (order.fiscalPreferences?.payerName || order.guestName || "Hóspede CorpFlats");
+    const nowIso = new Date().toISOString();
+
+    order.fiscalPreferences = {
+      ...(order.fiscalPreferences || {}),
+      wantsInvoice: true,
+      invoiceDescriptionType: validPref,
+      documentType: resolvedDoc.length === 14 ? "cnpj" : "cpf",
+      documentNumber: resolvedDoc,
+      companyName: cleanCompany,
+      email: cleanEmail,
+      phone: cleanPhone,
+      payerName: cleanPayerName
+    };
+    if (resolvedDoc) order.guestDocument = resolvedDoc;
+    if (cleanEmail) order.guestEmail = cleanEmail;
+    if (cleanPhone) order.guestPhone = cleanPhone;
+
+    order.invoice = {
+      ...(order.invoice || {}),
+      status: "pendente",
+      requestedAt: nowIso,
+      requestedBy: isStaff ? (user?.name || user?.username || "Faturamento") : "hospede_pos_pagamento",
+      dispensedAt: null,
+      dispensedBy: null,
+      dispensedReason: null
+    };
+    order.updatedAt = nowIso;
+
+    if (!isStaff && typeof createNotification === "function") {
+      createNotification({
+        category: "checkout",
+        title: `🧾 NF de Frigobar Solicitada Pós-Pagamento (Flat ${order.flatNumber})`,
+        message: `${cleanPayerName} solicitou emissão de Nota Fiscal (R$ ${Number(order.totalAmount || 0).toFixed(2)}) para o pedido ${order.id}.`,
+        severity: "info",
+        metadata: { orderId: order.id, flatNumber: order.flatNumber, amount: order.totalAmount },
+        targetUrl: `/frigobar-notas`
+      });
+    }
+
+    saveDatabase("minibar_invoice_requested");
+    res.json({
+      success: true,
+      order: enrichMinibarOrderForInvoiceScreen(order)
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── F08.3: Dispensar Nota Fiscal Manualmente (Equipe Fiscal / Admin) ──
+app.post("/api/minibar/orders/:id/dispense-invoice", (req, res) => {
+  try {
+    const user = getAuthUser(req);
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+    if (!isTestBypass && !isMinibarInvoiceIssuer(user)) {
+      return res.status(403).json({
+        success: false,
+        error: "Acesso restrito ao faturamento, supervisão e administração."
+      });
+    }
+
+    const orderId = String(req.params.id || "").trim();
+    if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
+    const order = db.minibarOrders.find(o => o && o.id === orderId);
+    if (!order) {
+      return res.status(404).json({ success: false, error: "Pedido de frigobar não encontrado." });
+    }
+    if (order.invoice?.status === "anexada") {
+      return res.status(400).json({
+        success: false,
+        error: "Não é possível dispensar uma Nota Fiscal que já foi emitida e anexada."
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    const reason = String(req.body?.reason || "manual_staff_dispense").trim();
+    order.fiscalPreferences = {
+      ...(order.fiscalPreferences || {}),
+      wantsInvoice: false
+    };
+    order.invoice = {
+      ...(order.invoice || {}),
+      status: "dispensada",
+      dispensedAt: nowIso,
+      dispensedBy: user?.name || user?.username || "Faturamento",
+      dispensedReason: reason
+    };
+    order.updatedAt = nowIso;
+
+    saveDatabase("minibar_invoice_dispensed");
+    res.json({
+      success: true,
+      order: enrichMinibarOrderForInvoiceScreen(order)
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -108603,10 +111318,19 @@ function enrichMinibarOrderForInvoiceScreen(order) {
   const consumptionDatesBr = Array.from(consumptionDatesSet);
 
   // Dados fiscais prontos para emissão / colagem
-  const prefType = order.fiscalPreferences?.invoiceDescriptionType || "detailed";
+  const rawWantsInvoice =
+    order.invoice?.status === "anexada"
+      ? true
+      : order.invoice?.status === "dispensada"
+      ? false
+      : order.fiscalPreferences?.wantsInvoice !== false;
+  const prefType =
+    order.fiscalPreferences?.invoiceDescriptionType ||
+    (rawWantsInvoice ? "detailed" : "not_requested");
   let prefLabel = "1. Discriminar todos os itens consumidos";
   if (prefType === "water") prefLabel = "2. Lançar tudo como 'Água'";
   else if (prefType === "minibar_consumption") prefLabel = "3. Lançar tudo como 'Consumo de Frigobar'";
+  else if (prefType === "not_requested") prefLabel = "Sem NF solicitada pelo hóspede";
 
   const amountBr = Number(order.totalAmount || 0).toFixed(2).replace(".", ",");
   const paidItemsDesc = (order.items || [])
@@ -108623,6 +111347,11 @@ function enrichMinibarOrderForInvoiceScreen(order) {
     readyToPasteDescription = `Consumo de Frigobar Flat ${flatStr} (${resCode || "Hospedagem"}) — Datas: ${consumptionDatesBr.join(", ")} — Itens: ${paidItemsDesc || "Consumo de Frigobar"} — Valor Total: R$ ${amountBr}`;
   }
 
+  const paidRefMs = getMinibarOrderPaidRefMs(order);
+  const ageMs = paidRefMs > 0 ? Math.max(0, Date.now() - paidRefMs) : 0;
+  const invoiceAgeDays = Math.floor(ageMs / 86400000);
+  const isOlderThan30Days = paidRefMs > 0 ? ageMs > MINIBAR_INVOICE_RETENTION_MS : false;
+
   const docRaw = String(
     order.fiscalPreferences?.documentNumber || order.guestDocument || reservation?.guestDocument || ""
   ).replace(/\D/g, "");
@@ -108635,6 +111364,9 @@ function enrichMinibarOrderForInvoiceScreen(order) {
 
   return {
     ...order,
+    wantsInvoice: rawWantsInvoice,
+    invoiceAgeDays,
+    isOlderThan30Days,
     invoice: sanitizeMinibarInvoiceForResponse(order.invoice),
     flatNumber: flatStr,
     reservationCode: resCode,
@@ -108664,6 +111396,7 @@ function enrichMinibarOrderForInvoiceScreen(order) {
       siblingOrders: siblingOrdersSummary
     },
     fiscalSummary: {
+      wantsInvoice: rawWantsInvoice,
       payerName,
       documentType: docType,
       documentNumber: docRaw,
@@ -108683,13 +111416,18 @@ app.get("/api/minibar/invoices/pending", (req, res) => {
       return res.status(403).json({ success: false, error: "Acesso restrito ao faturamento, supervisão e administração." });
     }
 
+    const reconciled = migrateAndReconcileMinibarInvoices(db);
+    if (reconciled.changed) {
+      saveDatabase("minibar_invoices_auto_reconciled");
+    }
+
     const pending = (db.minibarOrders || [])
       .filter(
         o =>
           o &&
           o.paymentStatus === "pago" &&
           Number(o.totalAmount) > 0 &&
-          (!o.invoice || o.invoice.status !== "anexada")
+          (!o.invoice || o.invoice.status === "pendente")
       )
       .map(enrichMinibarOrderForInvoiceScreen)
       .sort((a, b) => String(b.paidAt || b.createdAt || "").localeCompare(String(a.paidAt || a.createdAt || "")));
@@ -108724,13 +111462,27 @@ app.get("/api/minibar/invoices/hub", (req, res) => {
       return res.status(403).json({ success: false, error: "Acesso restrito ao faturamento, supervisão e administração." });
     }
 
+    const reconciled = migrateAndReconcileMinibarInvoices(db);
+    if (reconciled.changed) {
+      saveDatabase("minibar_invoices_auto_reconciled");
+    }
+
+    const includeArchivedDispensed =
+      req.query?.includeArchivedDispensed === "1" ||
+      req.query?.includeArchivedDispensed === "true";
+
     const allPaidOrders = (db.minibarOrders || [])
       .filter(o => o && o.paymentStatus === "pago" && Number(o.totalAmount) > 0)
       .map(enrichMinibarOrderForInvoiceScreen)
       .sort((a, b) => String(b.paidAt || b.createdAt || "").localeCompare(String(a.paidAt || a.createdAt || "")));
 
-    const pendingInvoices = allPaidOrders.filter(o => !o.invoice || o.invoice.status !== "anexada");
+    const pendingInvoices = allPaidOrders.filter(o => !o.invoice || o.invoice.status === "pendente");
     const issuedInvoices = allPaidOrders.filter(o => o.invoice && o.invoice.status === "anexada");
+    const allDispensedOrders = allPaidOrders.filter(o => o.invoice && o.invoice.status === "dispensada");
+    const activeDispensedOrders = allDispensedOrders.filter(o => !o.isOlderThan30Days);
+    const archivedDispensedCount = allDispensedOrders.length - activeDispensedOrders.length;
+    const dispensedInvoices = includeArchivedDispensed ? allDispensedOrders : activeDispensedOrders;
+
     const separatePaymentsPendingCount = pendingInvoices.filter(o => o.splitPaymentInfo?.isSeparatePayment).length;
     const preConfiguredCheckoutSplits = filterCanonicalVisibleMinibarOrders(db.minibarOrders || [], db.minibarOrders || [])
       .filter(
@@ -108765,6 +111517,11 @@ app.get("/api/minibar/invoices/hub", (req, res) => {
         ),
         separatePaymentsPendingCount,
         preConfiguredSplitsCount: preConfiguredCheckoutSplits.length,
+        dispensedCount: activeDispensedOrders.length,
+        dispensedTotalAmount: Number(
+          activeDispensedOrders.reduce((s, o) => s + Number(o.totalAmount || 0), 0).toFixed(2)
+        ),
+        archivedDispensedCount,
         issuedCount: issuedInvoices.length,
         issuedTotalAmount: Number(
           issuedInvoices.reduce((s, o) => s + Number(o.totalAmount || 0), 0).toFixed(2)
@@ -108773,6 +111530,7 @@ app.get("/api/minibar/invoices/hub", (req, res) => {
       },
       invoices: [...pendingInvoices, ...preConfiguredCheckoutSplits, ...issuedInvoices],
       pendingInvoices,
+      dispensedInvoices,
       issuedInvoices,
       preConfiguredCheckoutSplits,
       failedDeliveries
@@ -111554,16 +114312,22 @@ app.get("/api/minibar/analytics/insights-360", (req, res) => {
         channelMap[chName].discrepancies += 1;
       }
 
-      // 3. Preferências Fiscais (Corporativo vs Lazer)
+      // 3. Preferências Fiscais (Corporativo vs Lazer — apenas pedidos que solicitaram NF)
+      const orderRequestedNf =
+        ord.invoice?.status === "anexada" ||
+        (ord.invoice?.status !== "dispensada" && ord.fiscalPreferences?.wantsInvoice !== false);
       const prefKey = String(ord.fiscalPreferences?.invoiceDescriptionType || "detailed").toLowerCase();
-      const targetPref =
-        prefKey === "water" || prefKey === "water_only"
-          ? fiscalPrefStats.water
-          : prefKey === "minibar_consumption" || prefKey === "generic_minibar"
-            ? fiscalPrefStats.minibar_consumption
-            : fiscalPrefStats.detailed;
-      targetPref.count += 1;
-      targetPref.revenue += amt;
+      const targetPref = !orderRequestedNf
+        ? null
+        : prefKey === "water" || prefKey === "water_only"
+        ? fiscalPrefStats.water
+        : prefKey === "minibar_consumption" || prefKey === "generic_minibar"
+        ? fiscalPrefStats.minibar_consumption
+        : fiscalPrefStats.detailed;
+      if (targetPref) {
+        targetPref.count += 1;
+        targetPref.revenue += amt;
+      }
 
       const docDigitLen = String(ord.fiscalPreferences?.documentNumber || cleanDoc).replace(/\D/g, "").length;
       const isCnpj = ord.fiscalPreferences?.documentType === "cnpj" || docDigitLen === 14 || Boolean(ord.fiscalPreferences?.companyName);
@@ -111655,7 +114419,9 @@ app.get("/api/minibar/analytics/insights-360", (req, res) => {
         channelMap[chName].units += qty;
         channelMap[chName].categories[cat] = (channelMap[chName].categories[cat] || 0) + qty;
 
-        targetPref.topRealProducts[pName] = (targetPref.topRealProducts[pName] || 0) + qty;
+        if (targetPref) {
+          targetPref.topRealProducts[pName] = (targetPref.topRealProducts[pName] || 0) + qty;
+        }
 
         dayBucket.units += qty;
         dayBucket.categories[cat] = (dayBucket.categories[cat] || 0) + qty;
@@ -111918,7 +114684,8 @@ app.get("/api/minibar/analytics/insights-360", (req, res) => {
     }
 
     const maskedNfCount = fiscalPrefStats.water.count + fiscalPrefStats.minibar_consumption.count;
-    const maskedNfPct = paidOrders.length > 0 ? Number(((maskedNfCount / paidOrders.length) * 100).toFixed(1)) : 0;
+    const requestedNfCount = maskedNfCount + fiscalPrefStats.detailed.count;
+    const maskedNfPct = requestedNfCount > 0 ? Number(((maskedNfCount / requestedNfCount) * 100).toFixed(1)) : 0;
     curiosities.push({
       id: "corp_reimbursement",
       icon: "💼",
@@ -112286,5 +115053,8 @@ export {
   computeMinibarCanSplitBill,
   formatMinibarCourtesyItemsNaturalList,
   buildMinibarCourtesyOnlyCheckoutMessage,
-  dispatchMinibarCourtesyOnlyCheckoutWhatsApp
+  dispatchMinibarCourtesyOnlyCheckoutWhatsApp,
+  migrateAndReconcileMinibarInvoices,
+  dispatchNfseInvoiceWhatsApp,
+  dispatchFaturadoBillingPackage
 };

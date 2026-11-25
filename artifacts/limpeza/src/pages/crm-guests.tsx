@@ -26,6 +26,7 @@ import {
 import { AccessDenied } from "@/components/access-denied"
 import { PdfViewerDialog } from "@/components/pdf-preview"
 import { DuplicateReservationModal } from "@/components/duplicate-reservation-modal"
+import { AdminFinancialHubLinkActions } from "@/components/admin-financial-hub-link-actions"
 import type { DuplicateHandoffDraft } from "@/lib/duplicate-reservation"
 import { useToast } from "@/hooks/use-toast"
 import { useBackLayer, useBackTabState } from "@/lib/back-navigation"
@@ -3260,22 +3261,33 @@ export default function CrmGuests() {
 
                 {/* Histórico de Boletos Bancários & Faturado a Prazo */}
                 <div className="space-y-2">
-                  <div className="font-bold text-foreground flex items-center justify-between">
+                  <div className="font-bold text-foreground flex items-center justify-between flex-wrap gap-2">
                     <div className="flex items-center gap-1.5">
                       <Building2 className="w-4 h-4 text-indigo-600" />
                       <span>🏦 Boletos Bancários & Faturado a Prazo ({activeGuest.boletos?.length || 0})</span>
                     </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        setDetailModalOpen(false)
-                        setLocation("/pagamentos?tab=boletos")
-                      }}
-                      className="h-6 px-2 text-[10px] font-bold rounded-lg text-indigo-600 border-indigo-500/30"
-                    >
-                      Gerenciar Boletos
-                    </Button>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <AdminFinancialHubLinkActions
+                        kind="guest"
+                        guestId={activeGuest.id}
+                        label={activeGuest.fullName || activeGuest.name}
+                        email={activeGuest.financialResponsible?.email || activeGuest.email || ""}
+                        phone={activeGuest.financialResponsible?.phone || activeGuest.phone || ""}
+                        document={activeGuest.documentNumber || activeGuest.document || ""}
+                        compact
+                      />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setDetailModalOpen(false)
+                          setLocation("/pagamentos?tab=boletos")
+                        }}
+                        className="h-6 px-2 text-[10px] font-bold rounded-lg text-indigo-600 border-indigo-500/30"
+                      >
+                        Gerenciar Boletos
+                      </Button>
+                    </div>
                   </div>
                   {(!activeGuest.boletos || activeGuest.boletos.length === 0) ? (
                     <div className="p-4 text-center text-muted-foreground bg-muted/20 rounded-2xl text-xs">
@@ -4423,6 +4435,14 @@ export default function CrmGuests() {
                         <Edit2 className="w-3.5 h-3.5" />
                         <span>Editar Agência</span>
                       </Button>
+                      <AdminFinancialHubLinkActions
+                        kind="agency"
+                        agencyId={activeAgencyDetail.id}
+                        label={activeAgencyDetail.tradeName || activeAgencyDetail.corporateName}
+                        email={activeAgencyDetail.financialResponsible?.email || activeAgencyDetail.financialEmail || activeAgencyDetail.email || ""}
+                        phone={activeAgencyDetail.financialResponsible?.phone || activeAgencyDetail.phone || activeAgencyDetail.telefone || ""}
+                        document={activeAgencyDetail.cnpj || ""}
+                      />
                       <Button
                         size="sm"
                         onClick={() => {
@@ -4714,18 +4734,28 @@ export default function CrmGuests() {
                   <span>Visão 360º da Empresa • {activeCompanyDetail?.tradeName || activeCompanyDetail?.corporateName || "Empresa PJ"}</span>
                 </div>
                 {activeCompanyDetail && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setCompanyDetailModalOpen(false)
-                      handleEditCompany(activeCompanyDetail)
-                    }}
-                    className="h-8 px-3 text-xs font-bold rounded-xl gap-1"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                    <span>Editar Cadastro / Prazo</span>
-                  </Button>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <AdminFinancialHubLinkActions
+                      kind="company"
+                      companyId={activeCompanyDetail.id}
+                      label={activeCompanyDetail.tradeName || activeCompanyDetail.corporateName}
+                      email={activeCompanyDetail.financialResponsible?.email || activeCompanyDetail.financialEmail || activeCompanyDetail.emailFinanceiro || activeCompanyDetail.email || ""}
+                      phone={activeCompanyDetail.financialResponsible?.phone || activeCompanyDetail.phone || activeCompanyDetail.telefone || ""}
+                      document={activeCompanyDetail.cnpj || ""}
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setCompanyDetailModalOpen(false)
+                        handleEditCompany(activeCompanyDetail)
+                      }}
+                      className="h-8 px-3 text-xs font-bold rounded-xl gap-1"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                      <span>Editar Cadastro / Prazo</span>
+                    </Button>
+                  </div>
                 )}
               </DialogTitle>
               <DialogDescription className="text-xs">

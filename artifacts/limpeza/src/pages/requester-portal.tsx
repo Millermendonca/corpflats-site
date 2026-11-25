@@ -56,6 +56,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { CorpFlatsIcon, CorpFlatsSplashScreen, CorpFlatsWordmark } from "@/components/brand-logo"
+import { FinancialDocumentsSection } from "@/components/financial-documents-section"
 import { useToast } from "@/hooks/use-toast"
 import { formatPassport, formatPhoneForWhatsAppCheck, formatSmartPhone } from "@/lib/phone-mask"
 import { getPrimaryEmail, parseEmailList, validateEmailList } from "@/lib/email-utils"
@@ -513,7 +514,34 @@ export default function RequesterPortal() {
   }, [rawCode])
 
   const requester = data?.requester || {}
-  const summary = data?.packageSummary || null
+  const summary = useMemo(() => {
+    if (data?.packageSummary) return data.packageSummary
+    const r = data?.reservation
+    if (!r) return null
+    const stLower = String(r.status || "").toLowerCase()
+    return {
+      packageCode: r.code,
+      requesterName: data?.requester?.name || "",
+      requesterEmail: data?.requester?.email || "",
+      requesterPhone: data?.requester?.phone || "",
+      requesterDocument: data?.requester?.document || "",
+      totalAmount: r.totalAmount || 0,
+      paidAmount: r.paidAmount || 0,
+      pendingAmount: r.pendingAmount ?? Math.max(0, (Number(r.totalAmount) || 0) - (Number(r.paidAmount) || 0)),
+      cardTotalAmount: r.cardTotalAmount || computeCardAmount(r.totalAmount || 0),
+      cardPendingAmount: r.cardPendingAmount || computeCardAmount(r.pendingAmount || 0),
+      isPaid: Boolean(r.isPaid),
+      isFaturadoBoleto: Boolean(r.isFaturadoBoleto),
+      isAllCancelled: stLower === "cancelada" || stLower === "cancelled",
+      isAllExpired: stLower === "expirada",
+      paymentMethod: r.paymentMethod || "pix",
+      pixCopiaECola: r.pixCopiaECola || null,
+      pixTxId: r.pixTxId || null,
+      mpInitPoint: r.mpInitPoint || null,
+      expiresAt: r.expiresAt || null,
+      items: [r],
+    }
+  }, [data?.packageSummary, data?.reservation, data?.requester])
   const isPackage = Boolean(data?.isPackage ?? (Array.isArray(summary?.items) && summary.items.length > 1))
   const locatorCode = String(data?.locatorCode || summary?.packageCode || code || "").trim()
   const requesterName = String(requester?.name || summary?.requesterName || "Solicitante").trim()
@@ -1701,6 +1729,27 @@ export default function RequesterPortal() {
             </div>
           )}
 
+          {/* Atalho direto para o Painel Completo do Solicitante (Todas as Reservas + Aba Financeiro) */}
+          {data?.financialHubUrl && (
+            <div className="pt-2 border-t border-white/15 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs text-white/90">
+                <span className="font-bold text-[#E5C98B] block">Central do Solicitante • Boletos, Notas e Histórico</span>
+                <span className="text-[11px] text-white/75">
+                  Consulte todas as suas reservas, boletos (Pago, Pendente, Em Atraso) e NFS-e em um só lugar.
+                </span>
+              </div>
+              <Button
+                type="button"
+                onClick={() => setLocation(data.financialHubUrl)}
+                className="bg-white hover:bg-slate-100 text-[#091E26] font-black text-xs rounded-xl h-9 px-4 gap-1.5 shadow-md shrink-0"
+              >
+                <Receipt className="w-3.5 h-3.5 text-[#0F3D4C]" />
+                <span>Ver Todas as Reservas &amp; Financeiro</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          )}
+
           {/* Atalho direto caso o próprio solicitante seja Hóspede 1 em algum flat */}
           {myGuestFlats.length > 0 && (
             <div className="pt-2 border-t border-white/15 flex flex-wrap items-center justify-between gap-3">
@@ -1994,6 +2043,14 @@ export default function RequesterPortal() {
                 )}
               </div>
             )}
+
+            {/* Boletos Faturados, Pré-Boletos & NFS-e Emitidas */}
+            <FinancialDocumentsSection
+              boletos={Array.isArray(data?.boletos) ? data.boletos : []}
+              preBoletos={Array.isArray(data?.preBoletos) ? data.preBoletos : []}
+              nfseInvoices={Array.isArray(data?.nfseInvoices) ? data.nfseInvoices : []}
+              title="Boletos & Notas Fiscais (NFS-e) desta Contratação"
+            />
 
             {/* Ações Pós-Confirmação: Recibo Unificado & NFS-e Consolidada */}
             {(isPaid || paidAmount > 0 || isFaturadoBoleto) && (

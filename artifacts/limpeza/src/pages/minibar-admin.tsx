@@ -1283,12 +1283,20 @@ export default function MinibarAdminPage() {
       o.reservationCode || "-",
       o.guestName || "-",
       o.documentNumber || "-",
-      o.invoiceDescriptionType === "water"
+      o.invoiceDescriptionType === "not_requested" || o.invoiceStatus === "dispensada"
+        ? "Sem NF Solicitada"
+        : o.invoiceDescriptionType === "water"
         ? "Água"
         : o.invoiceDescriptionType === "minibar_consumption"
         ? "Consumo de Frigobar"
         : "Itens Discriminados",
-      o.invoiceStatus === "anexada" ? `Emitida (${o.invoiceNumber || "OK"})` : "Pendente",
+      o.invoiceStatus === "anexada"
+        ? `Emitida (${o.invoiceNumber || "OK"})`
+        : o.invoiceStatus === "dispensada"
+        ? "Sem NF Solicitada"
+        : o.invoiceStatus === "nao_aplicavel"
+        ? "N/A"
+        : "Pendente",
       o.paymentMethod === "pix" ? "PIX" : o.paymentMethod === "credit_card" ? "Cartão de Crédito" : "Pendente",
       o.paymentStatus === "pago" ? "Pago" : "Pendente",
       o.unitsCount || 0,

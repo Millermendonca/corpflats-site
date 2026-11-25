@@ -31,7 +31,9 @@ import {
   Phone,
   CreditCard,
   QrCode,
-  Layers
+  Layers,
+  Archive,
+  RotateCcw
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -64,6 +66,9 @@ export interface SiblingOrderSummary {
 
 export interface EnrichedInvoiceOrder {
   id: string;
+  wantsInvoice?: boolean;
+  invoiceAgeDays?: number;
+  isOlderThan30Days?: boolean;
   flatNumber: string;
   reservationCode: string;
   guestName: string;
@@ -192,19 +197,24 @@ export default function MinibarInvoicesPage() {
 
   const [loading, setLoading] = useState(true);
   const [pendingInvoices, setPendingInvoices] = useState<EnrichedInvoiceOrder[]>([]);
+  const [dispensedInvoices, setDispensedInvoices] = useState<EnrichedInvoiceOrder[]>([]);
   const [issuedInvoices, setIssuedInvoices] = useState<EnrichedInvoiceOrder[]>([]);
   const [failedDeliveries, setFailedDeliveries] = useState<EnrichedInvoiceOrder[]>([]);
+  const [includeArchivedDispensed, setIncludeArchivedDispensed] = useState(false);
   const [stats, setStats] = useState({
     pendingCount: 0,
     pendingTotalAmount: 0,
     separatePaymentsPendingCount: 0,
+    dispensedCount: 0,
+    dispensedTotalAmount: 0,
+    archivedDispensedCount: 0,
     issuedCount: 0,
     issuedTotalAmount: 0,
     failedDeliveriesCount: 0
   });
 
   // Filtros
-  const [activeTab, setActiveTab] = useState<"pending" | "issued" | "failed">("pending");
+  const [activeTab, setActiveTab] = useState<"pending" | "dispensed" | "issued" | "failed">("pending");
   useBackTabState(activeTab, setActiveTab, { id: "minibar-invoices-tabs" });
   const [flatFilter, setFlatFilter] = useState<string>("todos");
   const [splitFilter, setSplitFilter] = useState<"todos" | "separate" | "single">("todos");
@@ -221,6 +231,13 @@ export default function MinibarInvoicesPage() {
   const [selectedFileBase64, setSelectedFileBase64] = useState("");
   const [uploadingInvoice, setUploadingInvoice] = useState(false);
 
+  // Modal de Solicitar / Mover p/ Fila de Emissão
+  const [queueModalOpen, setQueueModalOpen] = useState(false);
+  const [queueTargetOrder, setQueueTargetOrder] = useState<EnrichedInvoiceOrder | null>(null);
+  const [queuePref, setQueuePref] = useState<"detailed" | "water" | "minibar_consumption">("detailed");
+  const [queueDocInput, setQueueDocInput] = useState("");
+  const [processingQueueAction, setProcessingQueueAction] = useState<string | null>(null);
+
   // Modal de Reenvio / Correção de Contato
   const [retryModalOpen, setRetryModalOpen] = useState(false);
   const [retryOrder, setRetryOrder] = useState<EnrichedInvoiceOrder | null>(null);
@@ -228,16 +245,19 @@ export default function MinibarInvoicesPage() {
   const [retryEmail, setRetryEmail] = useState("");
   const [retryingSend, setRetryingSend] = useState(false);
 
-  const fetchHubData = async () => {
+  const fetchHubData = async (overrideIncludeArchived?: boolean) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/minibar/invoices/hub", { credentials: "include" });
+      const showArch = overrideIncludeArchived ?? includeArchivedDispensed;
+      const query = showArch ? "?includeArchivedDispensed=1" : "";
+      const res = await fetch(`/api/minibar/invoices/hub${query}`, { credentials: "include" });
       if (res.ok) {
         const data = await res.json();
         setPendingInvoices(Array.isArray(data.pendingInvoices) ? data.pendingInvoices : []);
+        setDispensedInvoices(Array.isArray(data.dispensedInvoices) ? data.dispensedInvoices : []);
         setIssuedInvoices(Array.isArray(data.issuedInvoices) ? data.issuedInvoices : []);
         setFailedDeliveries(Array.isArray(data.failedDeliveries) ? data.failedDeliveries : []);
-        if (data.stats) setStats(data.stats);
+        if (data.stats) setStats(prev => ({ ...prev, ...data.stats }));
       }
     } catch (err) {
       console.error("Erro ao carregar central de notas fiscais:", err);
@@ -248,7 +268,7 @@ export default function MinibarInvoicesPage() {
 
   useEffect(() => {
     fetchHubData();
-  }, []);
+  }, [includeArchivedDispensed]);
 
   const handleCopy = (text: string, key: string, label: string) => {
     if (!text) return;
@@ -263,16 +283,18 @@ export default function MinibarInvoicesPage() {
 
   const allAvailableFlats = useMemo(() => {
     const s = new Set<string>();
-    for (const o of [...pendingInvoices, ...issuedInvoices]) {
+    for (const o of [...pendingInvoices, ...dispensedInvoices, ...issuedInvoices]) {
       if (o.flatNumber) s.add(String(o.flatNumber));
     }
     return Array.from(s).sort((a, b) => Number(a) - Number(b));
-  }, [pendingInvoices, issuedInvoices]);
+  }, [pendingInvoices, dispensedInvoices, issuedInvoices]);
 
   const currentList = useMemo(() => {
     const source =
       activeTab === "pending"
         ? pendingInvoices
+        : activeTab === "dispensed"
+        ? dispensedInvoices
         : activeTab === "issued"
         ? issuedInvoices
         : failedDeliveries;
@@ -294,7 +316,85 @@ export default function MinibarInvoicesPage() {
       }
       return true;
     });
-  }, [activeTab, pendingInvoices, issuedInvoices, failedDeliveries, flatFilter, splitFilter, searchQuery]);
+  }, [activeTab, pendingInvoices, dispensedInvoices, issuedInvoices, failedDeliveries, flatFilter, splitFilter, searchQuery]);
+
+  const handleDispenseInvoice = async (order: EnrichedInvoiceOrder) => {
+    if (!confirm(`Dispensar emissão de Nota Fiscal para o Flat ${order.flatNumber} (${order.fiscalSummary?.payerName || order.guestName})?\n\nO pedido irá para a aba "Sem NF Solicitada".`)) {
+      return;
+    }
+    setProcessingQueueAction(order.id);
+    try {
+      const res = await fetch(`/api/minibar/orders/${encodeURIComponent(order.id)}/dispense-invoice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ reason: "manual_staff_dispense" })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Não foi possível dispensar a Nota Fiscal.");
+      }
+      toast({
+        title: "Nota Fiscal dispensada",
+        description: `Movida para a aba "Sem NF Solicitada" (Flat ${order.flatNumber}).`
+      });
+      await fetchHubData();
+    } catch (err: any) {
+      toast({
+        title: "Erro ao dispensar NF",
+        description: err.message,
+        variant: "destructive"
+      });
+    } finally {
+      setProcessingQueueAction(null);
+    }
+  };
+
+  const openQueueModal = (order: EnrichedInvoiceOrder) => {
+    setQueueTargetOrder(order);
+    const curPref = order.fiscalSummary?.invoiceDescriptionType;
+    setQueuePref(
+      curPref === "water" || curPref === "minibar_consumption" ? curPref : "detailed"
+    );
+    setQueueDocInput(order.fiscalSummary?.documentNumber || order.guestDocument || "");
+    setQueueModalOpen(true);
+  };
+
+  const handleMoveToPendingQueue = async () => {
+    if (!queueTargetOrder) return;
+    setProcessingQueueAction(queueTargetOrder.id);
+    try {
+      const cleanDoc = queueDocInput.replace(/\D/g, "");
+      const res = await fetch(`/api/minibar/orders/${encodeURIComponent(queueTargetOrder.id)}/request-invoice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          invoicePreference: queuePref,
+          ...(cleanDoc ? { document: cleanDoc } : {})
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Falha ao mover para a fila de emissão.");
+      }
+      toast({
+        title: "📋 Movida para Pendentes de Emissão!",
+        description: `O pedido do Flat ${queueTargetOrder.flatNumber} entrou na fila para emissão da NF.`
+      });
+      setQueueModalOpen(false);
+      setActiveTab("pending");
+      await fetchHubData();
+    } catch (err: any) {
+      toast({
+        title: "Erro ao solicitar NF",
+        description: err.message,
+        variant: "destructive"
+      });
+    } finally {
+      setProcessingQueueAction(null);
+    }
+  };
 
   const openUploadModal = (order: EnrichedInvoiceOrder) => {
     setSelectedOrder(order);
@@ -433,7 +533,7 @@ export default function MinibarInvoicesPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={fetchHubData}
+              onClick={() => fetchHubData()}
               disabled={loading}
               className="bg-white/10 text-white border-white/20 hover:bg-white/20"
             >
@@ -577,6 +677,15 @@ export default function MinibarInvoicesPage() {
                   Pendentes de Emissão ({pendingInvoices.length})
                 </Button>
                 <Button
+                  variant={activeTab === "dispensed" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setActiveTab("dispensed")}
+                  className={activeTab === "dispensed" ? "bg-slate-700 hover:bg-slate-800 text-white" : ""}
+                >
+                  <Archive className="w-4 h-4 mr-1.5" />
+                  Sem NF Solicitada ({dispensedInvoices.length})
+                </Button>
+                <Button
                   variant={activeTab === "issued" ? "default" : "outline"}
                   size="sm"
                   onClick={() => setActiveTab("issued")}
@@ -634,6 +743,28 @@ export default function MinibarInvoicesPage() {
                 </select>
               </div>
             </div>
+
+            {activeTab === "dispensed" && (
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-600 dark:text-slate-400">
+                <span>
+                  Exibindo pagamentos em que o hóspede marcou <strong>Não preciso de Nota Fiscal</strong> (retidos automaticamente por <strong>30 dias</strong> caso solicite depois).
+                </span>
+                {(stats.archivedDispensedCount > 0 || includeArchivedDispensed) && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <input
+                      type="checkbox"
+                      id="toggle-archived-dispensed"
+                      checked={includeArchivedDispensed}
+                      onChange={e => setIncludeArchivedDispensed(e.target.checked)}
+                      className="rounded border-slate-300 accent-indigo-600"
+                    />
+                    <label htmlFor="toggle-archived-dispensed" className="cursor-pointer font-semibold text-slate-700 dark:text-slate-300">
+                      Mostrar também arquivadas com +30 dias ({stats.archivedDispensedCount})
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -654,12 +785,16 @@ export default function MinibarInvoicesPage() {
               <h3 className="text-base font-bold text-slate-800 dark:text-slate-100">
                 {activeTab === "pending"
                   ? "Nenhuma Nota Fiscal pendente de emissão!"
+                  : activeTab === "dispensed"
+                  ? "Nenhum pagamento sem NF solicitada nos últimos 30 dias."
                   : activeTab === "issued"
                   ? "Nenhuma Nota Fiscal anexada para este filtro."
                   : "Nenhuma falha de envio pendente!"}
               </h3>
               <p className="text-xs text-slate-500">
-                Assim que um hóspede realizar o pagamento do frigobar (integral ou separado), os dados completos para emissão da Nota Fiscal aparecerão automaticamente aqui.
+                {activeTab === "dispensed"
+                  ? "Pagamentos em que o hóspede opta por não emitir NF ficam disponíveis aqui por 30 dias e são arquivados automaticamente após esse período."
+                  : "Quando um hóspede realizar o pagamento marcando que deseja Nota Fiscal, os dados completos para emissão aparecerão automaticamente aqui."}
               </p>
             </div>
           </Card>
@@ -669,6 +804,7 @@ export default function MinibarInvoicesPage() {
               const split = order.splitPaymentInfo;
               const fiscal = order.fiscalSummary;
               const isIssued = order.invoice?.status === "anexada";
+              const isDispensed = order.invoice?.status === "dispensada";
               const monitor = order.invoice?.deliveryMonitor;
 
               return (
@@ -677,6 +813,8 @@ export default function MinibarInvoicesPage() {
                   className={`overflow-hidden border-2 transition-all shadow-sm ${
                     isIssued
                       ? "border-emerald-200 dark:border-emerald-900/50"
+                      : isDispensed
+                      ? "border-slate-200 dark:border-slate-800"
                       : split?.isSeparatePayment
                       ? "border-purple-300 dark:border-purple-800/70"
                       : "border-amber-300 dark:border-amber-800/70"
@@ -687,6 +825,8 @@ export default function MinibarInvoicesPage() {
                     className={`px-4 sm:px-6 py-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b ${
                       isIssued
                         ? "bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200/70"
+                        : isDispensed
+                        ? "bg-slate-100/80 dark:bg-slate-900/60 border-slate-200/80"
                         : split?.isSeparatePayment
                         ? "bg-purple-50/70 dark:bg-purple-950/30 border-purple-200/70"
                         : "bg-amber-50/70 dark:bg-amber-950/30 border-amber-200/70"
@@ -1010,7 +1150,9 @@ export default function MinibarInvoicesPage() {
                               </span>
                               <Badge
                                 className={
-                                  fiscal?.invoiceDescriptionType === "water"
+                                  fiscal?.invoiceDescriptionType === "not_requested"
+                                    ? "bg-slate-600 text-white text-xs"
+                                    : fiscal?.invoiceDescriptionType === "water"
                                     ? "bg-sky-600 text-white text-xs"
                                     : fiscal?.invoiceDescriptionType === "minibar_consumption"
                                     ? "bg-amber-600 text-white text-xs"
@@ -1055,7 +1197,42 @@ export default function MinibarInvoicesPage() {
 
                       {/* COLUNA 3 (3 cols): Anexar Nota Fiscal e Monitor de Entrega */}
                       <div className="lg:col-span-3 flex flex-col justify-between gap-3 bg-slate-50 dark:bg-slate-900/60 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
-                        {!isIssued ? (
+                        {!isIssued && isDispensed ? (
+                          <div className="space-y-3 my-auto text-center">
+                            <div className="w-11 h-11 rounded-2xl bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center mx-auto">
+                              <Archive className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <Badge variant="outline" className="bg-slate-100 text-slate-700 border-slate-300 text-[11px] mb-1">
+                                Sem NF Solicitada
+                              </Badge>
+                              <p className="text-xs text-slate-500 mt-1">
+                                {order.isOlderThan30Days
+                                  ? "Registro arquivado (+30 dias do pagamento)."
+                                  : `Retido por até 30 dias (${Math.max(0, 30 - Number(order.invoiceAgeDays || 0))}d restantes) caso o hóspede peça depois.`}
+                              </p>
+                            </div>
+                            <div className="flex flex-col gap-2 pt-1">
+                              <Button
+                                onClick={() => openUploadModal(order)}
+                                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-sm text-xs"
+                              >
+                                <Upload className="w-3.5 h-3.5 mr-1.5" />
+                                Anexar NF Agora
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => openQueueModal(order)}
+                                disabled={processingQueueAction === order.id}
+                                className="w-full text-xs border-amber-300 text-amber-800 hover:bg-amber-50"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                                Mover p/ Fila de Emissão
+                              </Button>
+                            </div>
+                          </div>
+                        ) : !isIssued ? (
                           <div className="space-y-3 my-auto text-center">
                             <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto">
                               <Upload className="w-6 h-6" />
@@ -1065,16 +1242,28 @@ export default function MinibarInvoicesPage() {
                                 Aguardando Emissão da NF
                               </p>
                               <p className="text-xs text-slate-500 mt-0.5">
-                                Anexe o PDF ou foto da Nota Fiscal emitida. O sistema envia na hora para o WhatsApp e E-mail do hóspede!
+                                Hóspede solicitou Nota Fiscal. Anexe o PDF ou imagem para envio imediato no WhatsApp e E-mail!
                               </p>
                             </div>
-                            <Button
-                              onClick={() => openUploadModal(order)}
-                              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-sm"
-                            >
-                              <Upload className="w-4 h-4 mr-2" />
-                              Anexar Nota Fiscal
-                            </Button>
+                            <div className="flex flex-col gap-2">
+                              <Button
+                                onClick={() => openUploadModal(order)}
+                                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-sm"
+                              >
+                                <Upload className="w-4 h-4 mr-2" />
+                                Anexar Nota Fiscal
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDispenseInvoice(order)}
+                                disabled={processingQueueAction === order.id}
+                                className="w-full text-xs text-slate-500 hover:text-slate-800"
+                              >
+                                <Archive className="w-3.5 h-3.5 mr-1.5" />
+                                Dispensar NF
+                              </Button>
+                            </div>
                           </div>
                         ) : (
                           <div className="space-y-3">
@@ -1268,6 +1457,84 @@ export default function MinibarInvoicesPage() {
                   Anexar e Enviar ao Hóspede
                 </>
               )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal para Mover p/ Fila de Emissão (Solicitação Posterior via Equipe) */}
+      <Dialog open={queueModalOpen} onOpenChange={setQueueModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Mover para Fila de Emissão — Flat {queueTargetOrder?.flatNumber}</DialogTitle>
+            <DialogDescription>
+              Defina como o hóspede deseja os itens na Nota Fiscal para incluir o pedido na fila de pendências.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <fieldset className="space-y-2">
+              <legend className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                Descrição na Nota Fiscal
+              </legend>
+              <div className="grid grid-cols-1 gap-2 pt-1">
+                {[
+                  { id: "detailed", label: "1. Discriminar itens exatamente como consumido" },
+                  { id: "water", label: '2. Lançar tudo como "Água Mineral"' },
+                  { id: "minibar_consumption", label: '3. Lançar tudo como "Consumo de Frigobar"' }
+                ].map(opt => {
+                  const active = queuePref === opt.id;
+                  const radioId = `queue-pref-${opt.id}`;
+                  return (
+                    <div key={opt.id} className="relative">
+                      <input
+                        type="radio"
+                        id={radioId}
+                        name="queuePref"
+                        value={opt.id}
+                        checked={active}
+                        onChange={() => setQueuePref(opt.id as any)}
+                        className="sr-only peer"
+                      />
+                      <label
+                        htmlFor={radioId}
+                        className={`block cursor-pointer p-2.5 rounded-lg border text-xs font-semibold transition-all peer-focus-visible:ring-2 peer-focus-visible:ring-indigo-500 ${
+                          active
+                            ? "bg-indigo-600 text-white border-indigo-600"
+                            : "bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800"
+                        }`}
+                      >
+                        {opt.label}
+                      </label>
+                    </div>
+                  );
+                })}
+              </div>
+            </fieldset>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="queue-doc-input">CPF ou CNPJ do Tomador (opcional atualizar)</Label>
+              <Input
+                id="queue-doc-input"
+                type="text"
+                inputMode="numeric"
+                value={queueDocInput}
+                onChange={e => setQueueDocInput(e.target.value)}
+                placeholder="CPF ou CNPJ"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setQueueModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleMoveToPendingQueue}
+              disabled={Boolean(processingQueueAction)}
+              className="bg-amber-600 hover:bg-amber-700 text-white font-bold"
+            >
+              Incluir em Pendentes de Emissão
             </Button>
           </DialogFooter>
         </DialogContent>

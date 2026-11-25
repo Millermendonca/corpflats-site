@@ -265,6 +265,7 @@ export default function GuestMinibar() {
   const [manualError, setManualError] = useState<string | null>(null);
 
   // Formulário Fiscal & Contato Automático (WhatsApp + E-mail já cadastrados)
+  const [wantsInvoice, setWantsInvoice] = useState<boolean | null>(null);
   const [invoicePreference, setInvoicePreference] = useState<InvoicePreference>("detailed");
   const [docChoice, setDocChoice] = useState<"cadastrado" | "personalizado">("cadastrado");
   const [customDocument, setCustomDocument] = useState("");
@@ -272,6 +273,18 @@ export default function GuestMinibar() {
   const [invoiceEmail, setInvoiceEmail] = useState("");
   const [invoicePhone, setInvoicePhone] = useState("");
   const [isEditingContact, setIsEditingContact] = useState(false);
+
+  // Solicitação tardia de Nota Fiscal (pós-pagamento, até 30 dias)
+  const [lateRequestOrderId, setLateRequestOrderId] = useState<string | null>(null);
+  const [lateRequestPref, setLateRequestPref] = useState<InvoicePreference>("detailed");
+  const [lateRequestDoc, setLateRequestDoc] = useState<string>("");
+  const [lateRequestCompany, setLateRequestCompany] = useState<string>("");
+  const [isSubmittingLateRequest, setIsSubmittingLateRequest] = useState<boolean>(false);
+  const [lateRequestFeedback, setLateRequestFeedback] = useState<{
+    orderId?: string;
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
 
   // Pagamento
   const [paymentMethod, setPaymentMethod] = useState<"pix" | "credit_card">("pix");
@@ -1064,9 +1077,79 @@ export default function GuestMinibar() {
       setSelectedGuestIndex(guestIndex);
     }
     setPartialMode("configured_split");
+    setWantsInvoice(null);
+    setInvoicePreference("detailed");
     setOrderError(null);
     setPixUnavailableError(null);
     setStep("checkout");
+  };
+
+  // Abrir formulário inline de solicitação tardia de NF em um pagamento já quitado
+  const handleOpenLateInvoiceRequest = (ord: any) => {
+    const existingDoc = String(
+      ord?.documentNumber || activeConsumerGuest.cpf || activeConsumerGuest.document || reservation?.document || ""
+    ).replace(/\D/g, "");
+    setLateRequestOrderId(ord.id);
+    setLateRequestPref("detailed");
+    setLateRequestDoc(existingDoc ? formatDocMask(existingDoc) : "");
+    setLateRequestCompany("");
+    setLateRequestFeedback(null);
+  };
+
+  const handleSubmitLateInvoiceRequest = async (ord: any) => {
+    const cleanDoc = lateRequestDoc.replace(/\D/g, "");
+    if (cleanDoc.length !== 11 && cleanDoc.length !== 14) {
+      setLateRequestFeedback({
+        orderId: ord.id,
+        type: "error",
+        text: "Informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido para solicitar a Nota Fiscal."
+      });
+      document.getElementById(`late-nf-doc-${ord.id}`)?.focus();
+      return;
+    }
+
+    setIsSubmittingLateRequest(true);
+    setLateRequestFeedback(null);
+    try {
+      const res = await fetch(`/api/minibar/orders/${encodeURIComponent(ord.id)}/request-invoice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reservationCode: reservation?.reservationCode || codeFromUrl,
+          invoicePreference: lateRequestPref,
+          document: cleanDoc,
+          companyName: cleanDoc.length === 14 ? lateRequestCompany.trim() : "",
+          email: (invoiceEmail || activeConsumerGuest.email || reservation?.email || "").trim(),
+          phone: (invoicePhone || activeConsumerGuest.phone || reservation?.phone || "").trim(),
+          payerName: ord.guestName || activeConsumerGuest.name
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) {
+        setLateRequestFeedback({
+          orderId: ord.id,
+          type: "error",
+          text: data?.error || "Não foi possível registrar a solicitação de Nota Fiscal."
+        });
+        return;
+      }
+
+      setLateRequestOrderId(null);
+      setLateRequestFeedback({
+        orderId: ord.id,
+        type: "success",
+        text: "Solicitação de Nota Fiscal registrada! Assim que emitida, será enviada para seu WhatsApp e e-mail."
+      });
+      await refreshCurrentContextSilently();
+    } catch {
+      setLateRequestFeedback({
+        orderId: ord.id,
+        type: "error",
+        text: "Erro de conexão ao solicitar Nota Fiscal. Tente novamente."
+      });
+    } finally {
+      setIsSubmittingLateRequest(false);
+    }
   };
 
   // Submissão do Pagamento no Checkout
@@ -1085,14 +1168,27 @@ export default function GuestMinibar() {
       return;
     }
 
-    setIsSubmittingOrder(true);
-    setOrderError(null);
-    setPixUnavailableError(null);
+    if (wantsInvoice === null) {
+      setOrderError("Selecione se você deseja ou não a emissão de Nota Fiscal antes de finalizar o pagamento.");
+      document.getElementById("wants-invoice-yes")?.focus();
+      return;
+    }
 
     const docToSend =
       docChoice === "cadastrado"
         ? (activeConsumerGuest.cpf || activeConsumerGuest.document || reservation?.document || "").replace(/\D/g, "")
         : customDocument.replace(/\D/g, "");
+
+    if (wantsInvoice && docToSend.length !== 11 && docToSend.length !== 14) {
+      setOrderError("Informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido para emissão da Nota Fiscal.");
+      setIsEditingContact(true);
+      setTimeout(() => document.getElementById("checkout-fiscal-doc")?.focus(), 50);
+      return;
+    }
+
+    setIsSubmittingOrder(true);
+    setOrderError(null);
+    setPixUnavailableError(null);
 
     const emailToSend = (invoiceEmail || activeConsumerGuest.email || reservation?.email || "").trim();
     const phoneToSend = (invoicePhone || activeConsumerGuest.phone || reservation?.phone || "").trim();
@@ -1139,7 +1235,8 @@ export default function GuestMinibar() {
       splitParts: partialMode === "equal_split" ? splitParts : undefined,
       customAmount: partialMode === "custom_amount" ? paymentSelectionSummary.amountToPay : undefined,
       paymentMethod,
-      invoicePreference,
+      wantsInvoice,
+      invoicePreference: wantsInvoice ? invoicePreference : "not_requested",
       document: docToSend,
       documentType: docToSend.length === 14 ? "cnpj" : "cpf",
       email: emailToSend,
@@ -2042,59 +2139,209 @@ export default function GuestMinibar() {
                   ✓ Quitado
                 </Badge>
               </div>
-              <div className="space-y-2">
+
+              {lateRequestFeedback && lateRequestFeedback.type === "success" && (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/35 text-xs text-emerald-200 flex items-center gap-2 font-medium"
+                >
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{lateRequestFeedback.text}</span>
+                </div>
+              )}
+
+              <div className="space-y-2.5">
                 {paidOrdersHistory.map((ord: any) => {
                   const invoiceUrl = ord.invoice?.invoiceFileUrl || ord.invoice?.fileUrl || ord.invoiceFileUrl || "";
                   const invoiceName =
                     ord.invoice?.invoiceFileName || ord.invoiceFileName || "Nota_Fiscal_Frigobar.pdf";
                   const invoiceNum = ord.invoice?.invoiceNumber || ord.invoiceNumber || "";
+                  const invStatus = ord.invoiceStatus || ord.invoice?.status || "pendente";
+                  const isDispensed = invStatus === "dispensada" || ord.wantsInvoice === false;
+                  const canRequestLate =
+                    !invoiceUrl &&
+                    isDispensed &&
+                    ord.canRequestInvoiceNow !== false &&
+                    ord.within30Days !== false;
+                  const isOpenLateForm = lateRequestOrderId === ord.id;
+
                   return (
                     <div
                       key={ord.id}
-                      className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-slate-300 bg-slate-950/70 p-3 rounded-xl border border-slate-800"
+                      className="text-xs text-slate-300 bg-slate-950/70 p-3 rounded-xl border border-slate-800 space-y-2.5"
                     >
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span>
-                            Pago por <strong className="text-white">{ord.guestName}</strong>
-                          </span>
-                          <span className="text-emerald-400 font-black">
-                            ({formatBRL(ord.totalAmount)})
-                          </span>
-                          {invoiceNum && (
-                            <Badge className="bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 text-[10px]">
-                              NF #{invoiceNum}
-                            </Badge>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span>
+                              Pago por <strong className="text-white">{ord.guestName}</strong>
+                            </span>
+                            <span className="text-emerald-400 font-black">
+                              ({formatBRL(ord.totalAmount)})
+                            </span>
+                            {invoiceNum && (
+                              <Badge className="bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 text-[10px]">
+                                NF #{invoiceNum}
+                              </Badge>
+                            )}
+                          </div>
+                          {Array.isArray(ord.items) && ord.items.length > 0 && (
+                            <p className="text-[11px] text-slate-400">
+                              {ord.items
+                                .map((it: any) => `${it.quantity}x ${it.productName || it.name}`)
+                                .join(", ")}
+                            </p>
                           )}
                         </div>
-                        {Array.isArray(ord.items) && ord.items.length > 0 && (
-                          <p className="text-[11px] text-slate-400">
-                            {ord.items
-                              .map((it: any) => `${it.quantity}x ${it.productName || it.name}`)
-                              .join(", ")}
-                          </p>
+
+                        {invoiceUrl ? (
+                          <a
+                            href={invoiceUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            download={invoiceName}
+                            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-xs shadow-md shadow-cyan-500/20 transition-all shrink-0"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            <span>Baixar Nota Fiscal</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        ) : isDispensed ? (
+                          <div className="flex items-center gap-2 flex-wrap self-start sm:self-center shrink-0">
+                            <Badge
+                              variant="outline"
+                              className="bg-slate-900 text-slate-400 border-slate-700 text-[10px]"
+                            >
+                              Sem NF solicitada
+                            </Badge>
+                            {canRequestLate && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  isOpenLateForm ? setLateRequestOrderId(null) : handleOpenLateInvoiceRequest(ord)
+                                }
+                                className="h-7 px-2.5 text-[11px] font-bold border-cyan-700/70 bg-cyan-950/40 text-cyan-300 hover:bg-cyan-900/50 hover:text-white rounded-lg"
+                              >
+                                {isOpenLateForm ? "Cancelar" : "Solicitar Nota Fiscal"}
+                              </Button>
+                            )}
+                          </div>
+                        ) : (
+                          <Badge
+                            variant="outline"
+                            className="bg-amber-950/40 text-amber-300 border-amber-800/60 text-[10px] self-start sm:self-center shrink-0"
+                          >
+                            NF solicitada (em emissão)
+                          </Badge>
                         )}
                       </div>
 
-                      {invoiceUrl ? (
-                        <a
-                          href={invoiceUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          download={invoiceName}
-                          className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-xs shadow-md shadow-cyan-500/20 transition-all shrink-0"
-                        >
-                          <FileText className="w-3.5 h-3.5" />
-                          <span>Baixar Nota Fiscal</span>
-                          <ExternalLink className="w-3 h-3" />
-                        </a>
-                      ) : (
-                        <Badge
-                          variant="outline"
-                          className="bg-amber-950/40 text-amber-300 border-amber-800/60 text-[10px] self-start sm:self-center shrink-0"
-                        >
-                          NF em emissão
-                        </Badge>
+                      {isOpenLateForm && (
+                        <div className="pt-2.5 border-t border-slate-800 space-y-3">
+                          <fieldset className="space-y-1.5">
+                            <legend className="text-[11px] font-bold text-cyan-300">
+                              Como deseja a descrição na Nota Fiscal?
+                            </legend>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5 pt-1">
+                              {[
+                                { id: "detailed", label: "Itens como consumido" },
+                                { id: "water", label: 'Lançar como "Água"' },
+                                { id: "minibar_consumption", label: "Consumo de Frigobar" }
+                              ].map((opt) => {
+                                const active = lateRequestPref === opt.id;
+                                const radioId = `late-pref-${ord.id}-${opt.id}`;
+                                return (
+                                  <div key={opt.id} className="relative">
+                                    <input
+                                      type="radio"
+                                      id={radioId}
+                                      name={`late-pref-${ord.id}`}
+                                      value={opt.id}
+                                      checked={active}
+                                      onChange={() => setLateRequestPref(opt.id as InvoicePreference)}
+                                      className="sr-only peer"
+                                    />
+                                    <label
+                                      htmlFor={radioId}
+                                      className={`block cursor-pointer p-2 rounded-lg border text-center text-[11px] font-bold transition-all peer-focus-visible:ring-2 peer-focus-visible:ring-cyan-400 ${
+                                        active
+                                          ? "bg-cyan-600 text-slate-950 border-cyan-400"
+                                          : "bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-600"
+                                      }`}
+                                    >
+                                      {opt.label}
+                                    </label>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </fieldset>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div className="space-y-1">
+                              <Label htmlFor={`late-nf-doc-${ord.id}`} className="text-[11px] text-slate-300">
+                                CPF ou CNPJ na Nota *
+                              </Label>
+                              <Input
+                                id={`late-nf-doc-${ord.id}`}
+                                type="text"
+                                inputMode="numeric"
+                                autoComplete="off"
+                                spellCheck={false}
+                                placeholder="000.000.000-00"
+                                value={lateRequestDoc}
+                                onChange={(e) => {
+                                  setLateRequestDoc(formatDocMask(e.target.value));
+                                  if (lateRequestFeedback?.type === "error") setLateRequestFeedback(null);
+                                }}
+                                className="h-9 bg-slate-900 border-slate-700 text-white rounded-lg text-xs"
+                              />
+                            </div>
+                            {lateRequestDoc.replace(/\D/g, "").length === 14 && (
+                              <div className="space-y-1">
+                                <Label htmlFor={`late-nf-comp-${ord.id}`} className="text-[11px] text-slate-300">
+                                  Razão Social (opcional)
+                                </Label>
+                                <Input
+                                  id={`late-nf-comp-${ord.id}`}
+                                  type="text"
+                                  autoComplete="organization"
+                                  placeholder="Nome da empresa"
+                                  value={lateRequestCompany}
+                                  onChange={(e) => setLateRequestCompany(e.target.value)}
+                                  className="h-9 bg-slate-900 border-slate-700 text-white rounded-lg text-xs"
+                                />
+                              </div>
+                            )}
+                          </div>
+
+                          {lateRequestFeedback &&
+                            lateRequestFeedback.orderId === ord.id &&
+                            lateRequestFeedback.type === "error" && (
+                              <div
+                                role="alert"
+                                className="p-2 rounded-lg bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-300 flex items-center gap-1.5"
+                              >
+                                <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                                <span>{lateRequestFeedback.text}</span>
+                              </div>
+                            )}
+
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={isSubmittingLateRequest}
+                              onClick={() => handleSubmitLateInvoiceRequest(ord)}
+                              className="h-8 px-3.5 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold text-xs rounded-lg"
+                            >
+                              {isSubmittingLateRequest ? "Enviando..." : "Confirmar Solicitação de NF"}
+                            </Button>
+                          </div>
+                        </div>
                       )}
                     </div>
                   );
@@ -2444,7 +2691,13 @@ export default function GuestMinibar() {
             ) : (
               <Button
                 type="button"
-                onClick={() => setStep("checkout")}
+                onClick={() => {
+                  setWantsInvoice(null);
+                  setInvoicePreference("detailed");
+                  setOrderError(null);
+                  setPixUnavailableError(null);
+                  setStep("checkout");
+                }}
                 disabled={!canPayNow}
                 className={`h-12 px-6 rounded-2xl font-bold text-xs sm:text-sm shadow-xl flex items-center gap-2 transition-all ${
                   canPayNow
@@ -2463,13 +2716,17 @@ export default function GuestMinibar() {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 5. TELA: CHECKOUT & DADOS FISCAIS (Enxuta e Direta)
+  // 5. TELA: CHECKOUT & DADOS FISCAIS (Marcação Obrigatória de Necessidade de NF)
   // ─────────────────────────────────────────────────────────────────────────────
   if (step === "checkout") {
     const checkoutAmount = paymentSelectionSummary.amountToPay;
     const registeredCpfDigits = (activeConsumerGuest.cpf || activeConsumerGuest.document || "").replace(/\D/g, "");
-    const hasRegisteredCpf = registeredCpfDigits.length >= 11;
+    const hasRegisteredCpf = registeredCpfDigits.length === 11 || registeredCpfDigits.length === 14;
     const showCustomFiscalInputs = !hasRegisteredCpf || docChoice === "personalizado" || isEditingContact;
+    const effectiveDocDigits = (docChoice === "cadastrado" ? registeredCpfDigits : customDocument).replace(/\D/g, "");
+    const isInvoiceFormReady =
+      wantsInvoice === false ||
+      (wantsInvoice === true && (effectiveDocDigits.length === 11 || effectiveDocDigits.length === 14));
 
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 pb-28">
@@ -2519,118 +2776,264 @@ export default function GuestMinibar() {
             )}
           </Card>
 
-          {/* Nota Fiscal: 3 Pílulas Compactas + Confirmação Discreta de CPF */}
-          <Card className="bg-slate-900 border-slate-800 rounded-2xl p-4 space-y-3.5">
-            <div className="space-y-2">
-              <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                <FileText className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Descrição na Nota Fiscal</span>
-              </span>
+          {/* Nota Fiscal: Escolha Obrigatória (Sim / Não) + Preferência de Discriminação */}
+          <Card
+            className={`bg-slate-900 rounded-2xl p-4 space-y-4 transition-all border ${
+              wantsInvoice === null ? "border-amber-500/40" : "border-slate-800"
+            }`}
+          >
+            <fieldset className="space-y-2.5">
+              <legend className="w-full flex items-center justify-between gap-2 text-xs font-bold text-white">
+                <span className="flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                  <span>Deseja emissão de Nota Fiscal?</span>
+                </span>
+                <Badge
+                  variant="outline"
+                  className={
+                    wantsInvoice === null
+                      ? "bg-amber-950/60 text-amber-300 border-amber-700/70 text-[10px] font-bold"
+                      : "bg-emerald-950/60 text-emerald-300 border-emerald-700/70 text-[10px] font-bold"
+                  }
+                >
+                  {wantsInvoice === null ? "Obrigatório" : "✓ Selecionado"}
+                </Badge>
+              </legend>
 
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { id: "detailed", label: "Detalhar Itens" },
-                  { id: "water", label: 'Lançar como "Água"' },
-                  { id: "minibar_consumption", label: "Consumo de Frigobar" }
-                ].map((opt) => {
-                  const active = invoicePreference === opt.id;
-                  return (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      onClick={() => setInvoicePreference(opt.id as InvoicePreference)}
-                      className={`p-2.5 rounded-xl border text-center text-[11px] font-bold transition-all ${
-                        active
-                          ? "bg-cyan-600 text-slate-950 border-cyan-400 shadow-md shadow-cyan-600/20"
-                          : "bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700"
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="pt-2.5 border-t border-slate-800 space-y-2.5">
-              {!showCustomFiscalInputs ? (
-                <div className="flex items-center justify-between gap-2 text-xs">
-                  <span className="text-slate-300">
-                    CPF na Nota: <strong className="text-white">{formatDocMask(registeredCpfDigits)}</strong>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!customDocument && registeredCpfDigits) {
-                        setCustomDocument(formatDocMask(registeredCpfDigits));
-                      }
-                      setIsEditingContact(true);
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                <div className="relative">
+                  <input
+                    type="radio"
+                    id="wants-invoice-yes"
+                    name="wantsInvoice"
+                    value="yes"
+                    checked={wantsInvoice === true}
+                    onChange={() => {
+                      setWantsInvoice(true);
+                      setInvoicePreference("detailed");
+                      setOrderError(null);
                     }}
-                    className="text-[11px] font-bold text-cyan-400 hover:underline"
+                    className="sr-only peer"
+                  />
+                  <label
+                    htmlFor="wants-invoice-yes"
+                    className={`min-h-12 p-3 rounded-xl border cursor-pointer flex items-center justify-between gap-2 text-xs font-bold transition-all peer-focus-visible:ring-2 peer-focus-visible:ring-cyan-400 ${
+                      wantsInvoice === true
+                        ? "bg-cyan-600 text-slate-950 border-cyan-400 shadow-md shadow-cyan-600/20"
+                        : "bg-slate-950 text-slate-200 border-slate-800 hover:border-slate-700"
+                    }`}
                   >
-                    Usar outro CPF/CNPJ ou alterar contato
-                  </button>
+                    <span>Sim, preciso de Nota Fiscal</span>
+                    {wantsInvoice === true && <CheckCircle2 className="w-4 h-4 shrink-0" />}
+                  </label>
                 </div>
-              ) : (
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-200">
-                      Dados para emissão e envio da NF
-                    </span>
-                    {hasRegisteredCpf && (
+
+                <div className="relative">
+                  <input
+                    type="radio"
+                    id="wants-invoice-no"
+                    name="wantsInvoice"
+                    value="no"
+                    checked={wantsInvoice === false}
+                    onChange={() => {
+                      setWantsInvoice(false);
+                      setOrderError(null);
+                    }}
+                    className="sr-only peer"
+                  />
+                  <label
+                    htmlFor="wants-invoice-no"
+                    className={`min-h-12 p-3 rounded-xl border cursor-pointer flex items-center justify-between gap-2 text-xs font-bold transition-all peer-focus-visible:ring-2 peer-focus-visible:ring-cyan-400 ${
+                      wantsInvoice === false
+                        ? "bg-emerald-500 text-slate-950 border-emerald-400 shadow-md shadow-emerald-500/20"
+                        : "bg-slate-950 text-slate-200 border-slate-800 hover:border-slate-700"
+                    }`}
+                  >
+                    <span>Não preciso de Nota Fiscal</span>
+                    {wantsInvoice === false && <CheckCircle2 className="w-4 h-4 shrink-0" />}
+                  </label>
+                </div>
+              </div>
+            </fieldset>
+
+            {wantsInvoice === null && (
+              <p className="text-[11px] text-amber-300/90 font-medium">
+                Selecione uma opção acima para liberar a geração do PIX ou pagamento por Cartão.
+              </p>
+            )}
+
+            {wantsInvoice === false && (
+              <div className="p-2.5 rounded-xl bg-emerald-950/30 border border-emerald-800/50 text-[11px] text-emerald-300 flex items-center gap-2">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span>Pagamento rápido liberado sem emissão de Nota Fiscal.</span>
+              </div>
+            )}
+
+            {wantsInvoice === true && (
+              <div className="pt-3 border-t border-slate-800 space-y-3.5">
+                <fieldset className="space-y-2">
+                  <legend className="text-xs font-bold text-slate-200">
+                    Como deseja emitir os itens na Nota Fiscal?
+                  </legend>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                    {[
+                      { id: "detailed", label: "Itens como consumido" },
+                      { id: "water", label: 'Lançar como "Água"' },
+                      { id: "minibar_consumption", label: "Consumo de Frigobar" }
+                    ].map((opt) => {
+                      const active = invoicePreference === opt.id;
+                      const optId = `checkout-nf-pref-${opt.id}`;
+                      return (
+                        <div key={opt.id} className="relative">
+                          <input
+                            type="radio"
+                            id={optId}
+                            name="invoicePreference"
+                            value={opt.id}
+                            checked={active}
+                            onChange={() => setInvoicePreference(opt.id as InvoicePreference)}
+                            className="sr-only peer"
+                          />
+                          <label
+                            htmlFor={optId}
+                            className={`min-h-11 p-2.5 rounded-xl border cursor-pointer flex items-center justify-center text-center text-[11px] font-bold transition-all peer-focus-visible:ring-2 peer-focus-visible:ring-cyan-400 ${
+                              active
+                                ? "bg-cyan-600 text-slate-950 border-cyan-400 shadow-md shadow-cyan-600/20"
+                                : "bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700"
+                            }`}
+                          >
+                            {opt.label}
+                          </label>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </fieldset>
+
+                <div className="pt-2.5 border-t border-slate-800 space-y-2.5">
+                  {!showCustomFiscalInputs ? (
+                    <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
+                      <span className="text-slate-300">
+                        CPF/CNPJ na Nota: <strong className="text-white">{formatDocMask(registeredCpfDigits)}</strong>
+                      </span>
                       <button
                         type="button"
                         onClick={() => {
-                          setCustomDocument(formatDocMask(registeredCpfDigits));
-                          setInvoicePhone(activeConsumerGuest.phone || "");
-                          setInvoiceEmail(activeConsumerGuest.email || "");
-                          setDocChoice("cadastrado");
-                          setIsEditingContact(false);
+                          if (!customDocument && registeredCpfDigits) {
+                            setCustomDocument(formatDocMask(registeredCpfDigits));
+                          }
+                          setIsEditingContact(true);
                         }}
-                        className="text-[11px] text-slate-400 hover:text-white"
+                        className="text-[11px] font-bold text-cyan-400 hover:underline"
                       >
-                        Usar cadastro padrão
+                        Usar outro CPF/CNPJ ou alterar contato
                       </button>
-                    )}
-                  </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-200">
+                          Dados obrigatórios para emissão e envio da NF
+                        </span>
+                        {hasRegisteredCpf && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCustomDocument(formatDocMask(registeredCpfDigits));
+                              setInvoicePhone(activeConsumerGuest.phone || "");
+                              setInvoiceEmail(activeConsumerGuest.email || "");
+                              setDocChoice("cadastrado");
+                              setIsEditingContact(false);
+                              setOrderError(null);
+                            }}
+                            className="text-[11px] text-slate-400 hover:text-white"
+                          >
+                            Usar cadastro padrão
+                          </button>
+                        )}
+                      </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <Input
-                      placeholder="CPF ou CNPJ na Nota"
-                      value={customDocument}
-                      onChange={(e) => {
-                        setDocChoice("personalizado");
-                        setCustomDocument(formatDocMask(e.target.value));
-                      }}
-                      className="h-10 bg-slate-950 border-slate-800 text-white rounded-xl text-xs"
-                    />
-                    {customDocument.replace(/\D/g, "").length === 14 && (
-                      <Input
-                        placeholder="Razão Social (opcional)"
-                        value={customCompanyName}
-                        onChange={(e) => setCustomCompanyName(e.target.value)}
-                        className="h-10 bg-slate-950 border-slate-800 text-white rounded-xl text-xs"
-                      />
-                    )}
-                    <Input
-                      type="tel"
-                      inputMode="tel"
-                      placeholder="WhatsApp p/ receber NF"
-                      value={invoicePhone}
-                      onChange={(e) => setInvoicePhone(formatSmartPhone(e.target.value))}
-                      className="h-10 bg-slate-950 border-slate-800 text-white rounded-xl text-xs"
-                    />
-                    <Input
-                      type="email"
-                      placeholder="E-mail p/ receber NF"
-                      value={invoiceEmail}
-                      onChange={(e) => setInvoiceEmail(e.target.value)}
-                      className="h-10 bg-slate-950 border-slate-800 text-white rounded-xl text-xs"
-                    />
-                  </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div className="space-y-1">
+                          <Label htmlFor="checkout-fiscal-doc" className="text-[11px] text-slate-300">
+                            CPF ou CNPJ na Nota *
+                          </Label>
+                          <Input
+                            id="checkout-fiscal-doc"
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="off"
+                            spellCheck={false}
+                            required
+                            aria-invalid={
+                              wantsInvoice === true &&
+                              customDocument.length > 0 &&
+                              effectiveDocDigits.length !== 11 &&
+                              effectiveDocDigits.length !== 14
+                            }
+                            placeholder="000.000.000-00 ou CNPJ"
+                            value={customDocument}
+                            onChange={(e) => {
+                              setDocChoice("personalizado");
+                              setCustomDocument(formatDocMask(e.target.value));
+                              setOrderError(null);
+                            }}
+                            className="h-11 bg-slate-950 border-slate-800 text-white rounded-xl text-xs"
+                          />
+                        </div>
+                        {customDocument.replace(/\D/g, "").length === 14 && (
+                          <div className="space-y-1">
+                            <Label htmlFor="checkout-company-name" className="text-[11px] text-slate-300">
+                              Razão Social (opcional)
+                            </Label>
+                            <Input
+                              id="checkout-company-name"
+                              type="text"
+                              autoComplete="organization"
+                              placeholder="Razão Social da Empresa"
+                              value={customCompanyName}
+                              onChange={(e) => setCustomCompanyName(e.target.value)}
+                              className="h-11 bg-slate-950 border-slate-800 text-white rounded-xl text-xs"
+                            />
+                          </div>
+                        )}
+                        <div className="space-y-1">
+                          <Label htmlFor="checkout-fiscal-phone" className="text-[11px] text-slate-300">
+                            WhatsApp p/ receber NF
+                          </Label>
+                          <Input
+                            id="checkout-fiscal-phone"
+                            type="tel"
+                            inputMode="tel"
+                            autoComplete="tel"
+                            placeholder="(22) 99999-9999"
+                            value={invoicePhone}
+                            onChange={(e) => setInvoicePhone(formatSmartPhone(e.target.value))}
+                            className="h-11 bg-slate-950 border-slate-800 text-white rounded-xl text-xs"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label htmlFor="checkout-fiscal-email" className="text-[11px] text-slate-300">
+                            E-mail p/ receber NF
+                          </Label>
+                          <Input
+                            id="checkout-fiscal-email"
+                            type="email"
+                            autoComplete="email"
+                            autoCorrect="off"
+                            spellCheck={false}
+                            placeholder="voce@email.com"
+                            value={invoiceEmail}
+                            onChange={(e) => setInvoiceEmail(e.target.value)}
+                            className="h-11 bg-slate-950 border-slate-800 text-white rounded-xl text-xs"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </Card>
 
           {/* Seleção do Meio de Pagamento */}
@@ -2720,16 +3123,27 @@ export default function GuestMinibar() {
             </div>
           )}
 
-          {/* Botão de Finalização */}
+          {/* Botão de Finalização (Bloqueado visualmente e em JS até marcar Sim/Não na Nota Fiscal) */}
           <Button
+            type="button"
             onClick={handleCheckoutSubmit}
             disabled={isSubmittingOrder}
-            className="w-full h-12 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold rounded-2xl text-sm shadow-xl shadow-cyan-600/20 flex items-center justify-center gap-2 active:scale-[0.99] transition-all"
+            aria-disabled={!isInvoiceFormReady || isSubmittingOrder}
+            className={`w-full h-12 font-bold rounded-2xl text-sm flex items-center justify-center gap-2 transition-all ${
+              isInvoiceFormReady
+                ? "bg-cyan-600 hover:bg-cyan-500 text-slate-950 shadow-xl shadow-cyan-600/20 active:scale-[0.99]"
+                : "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed opacity-70"
+            }`}
           >
             {isSubmittingOrder ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
                 <span>Processando...</span>
+              </>
+            ) : wantsInvoice === null ? (
+              <>
+                <Lock className="w-4 h-4" />
+                <span>Marque acima se deseja Nota Fiscal</span>
               </>
             ) : paymentMethod === "pix" ? (
               <>
@@ -2850,6 +3264,14 @@ export default function GuestMinibar() {
   // 7. TELA: CONFIRMAÇÃO & SUCESSO (Limpa e Sem Metadados Técnicos)
   // ─────────────────────────────────────────────────────────────────────────────
   if (step === "success") {
+    const settledInvStatus = activeOrder?.order?.invoice?.status || "";
+    const orderRequestedInvoice =
+      settledInvStatus === "anexada" ||
+      (settledInvStatus !== "dispensada" &&
+        activeOrder?.order?.fiscalPreferences?.wantsInvoice !== false &&
+        wantsInvoice !== false);
+    const settledOrderId = activeOrder?.orderId || activeOrder?.order?.id || "";
+
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4 sm:p-6">
         <Card className="w-full max-w-md bg-slate-900 border-slate-800 shadow-2xl rounded-3xl p-6 sm:p-8 space-y-5 text-center">
@@ -2866,9 +3288,34 @@ export default function GuestMinibar() {
             </div>
           </div>
 
-          <p className="text-xs text-slate-300 leading-relaxed">
-            Sua Nota Fiscal será enviada automaticamente para o seu WhatsApp e e-mail cadastrados.
-          </p>
+          {orderRequestedInvoice ? (
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Sua solicitação de Nota Fiscal foi registrada e ela será enviada automaticamente para o seu WhatsApp e e-mail cadastrados assim que emitida.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Seu consumo de frigobar já consta como quitado! Conforme sua escolha, não abrimos solicitação de Nota Fiscal.
+              </p>
+              {settledOrderId && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await refreshCurrentContextSilently();
+                    handleOpenLateInvoiceRequest({
+                      id: settledOrderId,
+                      guestName: activeConsumerGuest.name,
+                      documentNumber: activeConsumerGuest.cpf || reservation?.document || ""
+                    });
+                    setStep("catalog");
+                  }}
+                  className="text-[11px] font-bold text-cyan-400 hover:underline"
+                >
+                  Mudou de ideia? Solicitar Nota Fiscal agora
+                </button>
+              )}
+            </div>
+          )}
 
           {(activeOrder?.invoice?.invoiceFileUrl || activeOrder?.invoice?.fileUrl || activeOrder?.invoiceFileUrl) && (
             <a

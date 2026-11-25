@@ -21,6 +21,7 @@ import { format, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { AccessDenied } from "@/components/access-denied"
 import { PaymentMethodsModal } from "@/components/payment-methods-modal"
+import { AdminFinancialHubLinkActions } from "@/components/admin-financial-hub-link-actions"
 import { useToast } from "@/hooks/use-toast"
 import { useBackTabState } from "@/lib/back-navigation"
 import { validateEmailList, formatEmailList } from "@/lib/email-utils"
@@ -592,16 +593,16 @@ export default function Payments() {
 
   const handleDispatchBoleto = async (b: any) => {
     try {
-      toast({ title: "Verificando e disparando...", description: `Conferindo liquidação e enviando Boleto #${b.code || b.id} aos destinatários.` })
+      toast({ title: "Verificando e disparando...", description: `Conferindo liquidação e enviando Boleto #${b.code || b.id} + Nota Fiscal aos destinatários.` })
       const resp = await fetch(`/api/boletos/${b.id}/dispatch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({})
+        body: JSON.stringify({ includeNfse: true })
       })
       const data = await resp.json()
       if (resp.ok && data.success) {
-        toast({ title: "Envios concluídos!", description: "PDF do boleto e botões de cópia enviados aos destinatários marcados." })
+        toast({ title: "Envios concluídos!", description: "PDFs do boleto e da Nota Fiscal enviados aos destinatários marcados." })
         fetchPayments()
       } else if (data.alreadyPaid || data.alreadyCancelled) {
         toast({
@@ -1755,6 +1756,18 @@ export default function Payments() {
                                     </Button>
                                   )}
 
+                                  <AdminFinancialHubLinkActions
+                                    kind={b.companyId ? "company" : b.agencyId ? "agency" : b.guestId ? "guest" : "requester"}
+                                    companyId={b.companyId || null}
+                                    agencyId={b.agencyId || null}
+                                    guestId={!b.companyId && !b.agencyId ? (b.guestId || null) : null}
+                                    label={b.companyName || b.agencyName || b.payerName || b.guestName || "Cliente"}
+                                    email={b.financialResponsible?.email || b.payer?.email || ""}
+                                    phone={b.financialResponsible?.phone || (b.payer?.telefone ? `${b.payer?.ddd || "22"}${b.payer.telefone}` : "")}
+                                    document={b.payerDocument || b.payer?.cpfCnpj || ""}
+                                    compact
+                                  />
+
                                   <Button
                                     size="sm"
                                     variant="outline"
@@ -2420,12 +2433,12 @@ export default function Payments() {
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between p-3 rounded-xl bg-muted/30 border border-border">
                   <div>
-                    <div className="font-bold text-foreground">Emitir também a NFS-e de Hospedagem junto?</div>
+                    <div className="font-bold text-foreground">Nota Fiscal de Hospedagem (NFS-e) inclusa no envio</div>
                     <div className="text-[11px] text-muted-foreground">
-                      {emitTargetPre.invoiceIssued ? `Já possui NFS-e #${emitTargetPre.nfseNumber} vinculada.` : "Gera a nota fiscal sobre o valor de hospedagem."}
+                      {emitTargetPre.invoiceIssued ? `NFS-e #${emitTargetPre.nfseNumber} já emitida — será enviada junto com o boleto.` : "Gera e envia automaticamente a NFS-e junto com o boleto."}
                     </div>
                   </div>
-                  <Switch checked={ebEmitNfseToo} onCheckedChange={setEbEmitNfseToo} disabled={Boolean(emitTargetPre.invoiceIssued)} />
+                  <Switch checked={emitTargetPre.invoiceIssued ? true : ebEmitNfseToo} onCheckedChange={setEbEmitNfseToo} disabled={Boolean(emitTargetPre.invoiceIssued)} />
                 </div>
 
                 <div className="flex items-center justify-between p-3 rounded-xl bg-muted/30 border border-border">

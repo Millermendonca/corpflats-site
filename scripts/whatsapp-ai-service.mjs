@@ -10894,12 +10894,25 @@ export function findExistingInvoiceForReservation(db, {
     return st !== "cancelada" && st !== "cancelled" && st !== "substituida" && st !== "rejeitada" && st !== "erro";
   });
 
+  const effPkgCode = String(
+    resObj?.packageCode ||
+    resObj?.packageId ||
+    (effResCode && /^PKG-/i.test(String(effResCode).trim()) ? effResCode : "") ||
+    ""
+  ).trim().toUpperCase();
+
   let found = null;
   if (resObj?.invoiceId) {
     found = activeInvoices.find(i => Number(i.id) === Number(resObj.invoiceId));
   }
   if (!found && resObj?.numeroNfse) {
     found = activeInvoices.find(i => String(i.numeroNfse) === String(resObj.numeroNfse));
+  }
+  if (!found && effPkgCode) {
+    found = activeInvoices.find(i =>
+      (i.packageId && String(i.packageId).trim().toUpperCase() === effPkgCode) ||
+      (i.reservationCode && String(i.reservationCode).trim().toUpperCase() === effPkgCode)
+    );
   }
   if (!found && groupResIds.size > 0) {
     found = activeInvoices.find(i =>

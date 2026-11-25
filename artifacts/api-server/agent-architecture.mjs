@@ -2522,25 +2522,62 @@ export const gerarLinkReservaTool = {
         const cleanPhone = normalizePhoneDigits(context.telefone_remetente);
         let guestRecord = null;
         if (!paraTerceiro) {
-          guestRecord = db.guests.find((g) => cleanPhone && phonesMatch(g.phone || '', cleanPhone));
-          if (!guestRecord) {
-            const nextGuestId = db.guests.length > 0 ? Math.max(...db.guests.map((g) => Number(g.id) || 0)) + 1 : 1;
-            guestRecord = {
-              id: nextGuestId,
-              name: nomeTitular,
-              phone: cleanPhone,
-              email: '',
-              document: '',
-              cpf: '',
-              notes: '',
-              totalStays: 1,
-              lastStay: checkin,
-              createdAt: nowIso,
-            };
-            db.guests.push(guestRecord);
-          } else if (nomeTitular) {
-            guestRecord.name = nomeTitular;
-            guestRecord.lastStay = checkin;
+          const existingByPhone = db.guests.find((g) => cleanPhone && phonesMatch(g.phone || '', cleanPhone));
+          const existingByPhoneName = String(existingByPhone?.fullName || existingByPhone?.name || '').trim();
+          const isPhoneOwnedByDifferentRequester = Boolean(
+            existingByPhone &&
+            existingByPhoneName &&
+            nomeTitular &&
+            existingByPhoneName.toLowerCase() !== nomeTitular.toLowerCase() &&
+            !existingByPhoneName.toLowerCase().includes(nomeTitular.toLowerCase().split(/\s+/)[0]) &&
+            !nomeTitular.toLowerCase().includes(existingByPhoneName.toLowerCase().split(/\s+/)[0])
+          );
+          if (isPhoneOwnedByDifferentRequester) {
+            guestRecord = db.guests.find(
+              (g) => g && g.name && String(g.name).trim().toLowerCase() === nomeTitular.toLowerCase()
+            ) || null;
+            if (!guestRecord) {
+              const nextGuestId = db.guests.length > 0 ? Math.max(...db.guests.map((g) => Number(g.id) || 0)) + 1 : 1;
+              guestRecord = {
+                id: nextGuestId,
+                name: nomeTitular,
+                fullName: nomeTitular,
+                phone: '',
+                email: '',
+                document: '',
+                cpf: '',
+                notes: '',
+                totalStays: 1,
+                lastStay: checkin,
+                createdAt: nowIso,
+              };
+              db.guests.push(guestRecord);
+            } else {
+              guestRecord.lastStay = checkin;
+            }
+          } else {
+            guestRecord = existingByPhone || null;
+            if (!guestRecord) {
+              const nextGuestId = db.guests.length > 0 ? Math.max(...db.guests.map((g) => Number(g.id) || 0)) + 1 : 1;
+              guestRecord = {
+                id: nextGuestId,
+                name: nomeTitular,
+                fullName: nomeTitular,
+                phone: cleanPhone,
+                email: '',
+                document: '',
+                cpf: '',
+                notes: '',
+                totalStays: 1,
+                lastStay: checkin,
+                createdAt: nowIso,
+              };
+              db.guests.push(guestRecord);
+            } else if (nomeTitular) {
+              guestRecord.name = nomeTitular;
+              if (!guestRecord.fullName) guestRecord.fullName = nomeTitular;
+              guestRecord.lastStay = checkin;
+            }
           }
         } else if (!hospedePendente && rawNomeHospede) {
           guestRecord = db.guests.find(

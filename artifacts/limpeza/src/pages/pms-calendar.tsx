@@ -10914,13 +10914,28 @@ export default function PmsCalendar(props?: {
           : formNfDeliveryEmails
       )
 
+      const g1TrimmedForGuard = pFlat.guest1.name.trim()
+      const safeCompContactForSave = (() => {
+        const cc = String(selectedComp?.contactPerson || "").trim()
+        if (!cc) return ""
+        if (!primaryPayloadFlat.requesterIsGuest1 && g1TrimmedForGuard && cc.toLowerCase() === g1TrimmedForGuard.toLowerCase()) return ""
+        return cc
+      })()
+      const safeFormReqNameForSave = (() => {
+        const fn = formRequesterName.trim()
+        if (!fn) return ""
+        if (!isGuestSelfRequester && !primaryPayloadFlat.requesterIsGuest1 && g1TrimmedForGuard && fn.toLowerCase() === g1TrimmedForGuard.toLowerCase() && resolvedReqType === "company") {
+          return safeCompContactForSave
+        }
+        return fn
+      })()
       const resolvedRequesterNameForPkg = isGuestSelfRequester
-        ? pFlat.guest1.name.trim()
+        ? g1TrimmedForGuard
         : (
-            formRequesterName.trim() ||
-            (resolvedReqType === "company" ? (selectedComp?.contactPerson || resolvedCompName) : "") ||
+            safeFormReqNameForSave ||
+            (resolvedReqType === "company" ? (safeCompContactForSave || resolvedCompName) : "") ||
             (isB2b ? (formAgencyAgentName.trim() || resolvedAgName) : "") ||
-            pFlat.guest1.name.trim()
+            (primaryPayloadFlat.requesterIsGuest1 ? g1TrimmedForGuard : "")
           )
       const resolvedRequesterPhoneForPkg = isGuestSelfRequester
         ? pFlat.guest1.phone.trim()
@@ -10928,14 +10943,14 @@ export default function PmsCalendar(props?: {
             formRequesterPhone.trim() ||
             (resolvedReqType === "company" ? (selectedComp?.phone || (selectedComp as any)?.telefone || inlineCompanyPayload?.phone || "") : "") ||
             (isB2b ? formAgencyAgentPhone.trim() : "") ||
-            pFlat.guest1.phone.trim()
+            (primaryPayloadFlat.requesterIsGuest1 ? pFlat.guest1.phone.trim() : "")
           )
       const resolvedRequesterEmailForPkg = isGuestSelfRequester
         ? formatEmailList(pFlat.guest1.email)
-        : (formattedReqEmail || (isB2b ? formatEmailList(formAgencyAgentEmail) : "") || formatEmailList(pFlat.guest1.email))
+        : (formattedReqEmail || (isB2b ? formatEmailList(formAgencyAgentEmail) : "") || (primaryPayloadFlat.requesterIsGuest1 ? formatEmailList(pFlat.guest1.email) : ""))
       const resolvedRequesterDocForPkg = isGuestSelfRequester
         ? pFlat.guest1.cpf.trim()
-        : (formRequesterCpf.trim() || pFlat.guest1.cpf.trim())
+        : (formRequesterCpf.trim() || (primaryPayloadFlat.requesterIsGuest1 ? pFlat.guest1.cpf.trim() : ""))
 
       const anyFlatHasCleaningInPkg = isMultiFlatSubmit && formFlats.some(fl => (fl.charges || []).some(c => c.type === "cleaning"))
       const normalizedPkgExtraCharges = (anyFlatHasCleaningInPkg
@@ -10957,7 +10972,7 @@ export default function PmsCalendar(props?: {
         requesterDocument: resolvedRequesterDocForPkg,
         requesterInfo: (resolvedReqType === "other_person" || resolvedReqType === "company") ? {
           guestId: resolvedRequesterGuestId,
-          name: formRequesterName.trim() || (resolvedReqType === "company" ? (selectedComp?.contactPerson || resolvedCompName) : ""),
+          name: safeFormReqNameForSave || (resolvedReqType === "company" ? (safeCompContactForSave || resolvedCompName) : ""),
           cpf: formRequesterCpf.trim(),
           phone: formRequesterPhone.trim() || (resolvedReqType === "company" ? (selectedComp?.phone || (selectedComp as any)?.telefone || inlineCompanyPayload?.phone || "") : ""),
           email: formattedReqEmail || (resolvedReqType === "company" ? (formatEmailList((selectedComp as any)?.email || selectedComp?.financialEmail || (selectedComp as any)?.emailFinanceiro || inlineCompanyPayload?.financialEmail || "")) : "")
@@ -11981,8 +11996,20 @@ export default function PmsCalendar(props?: {
     if (c) {
       setFormCompanyName(c.tradeName || c.corporateName)
       setFormCompanyCnpj(c.cnpj || "")
-      if (!formRequesterName.trim() && (c.contactPerson || c.tradeName || c.corporateName)) {
-        setFormRequesterName(c.contactPerson || c.tradeName || c.corporateName)
+      const g1CurName = primaryFlat.guest1.name.trim().toLowerCase()
+      const compNamesLower = [c.corporateName, c.razaoSocial, c.tradeName, c.nomeFantasia]
+        .map((x: any) => String(x || "").trim().toLowerCase())
+        .filter(Boolean)
+      const rawContact = String(c.contactPerson || "").trim()
+      const cleanCompContact = rawContact &&
+        (!g1CurName || primaryFlat.requesterIsGuest1 || rawContact.toLowerCase() !== g1CurName) &&
+        !compNamesLower.includes(rawContact.toLowerCase())
+        ? rawContact
+        : ""
+      const curReqTrim = formRequesterName.trim()
+      const curReqIsGuestLeak = Boolean(curReqTrim && g1CurName && !primaryFlat.requesterIsGuest1 && curReqTrim.toLowerCase() === g1CurName)
+      if (!curReqTrim || curReqIsGuestLeak) {
+        setFormRequesterName(cleanCompContact)
       }
       const cPhone = c.phone || c.telefone || ""
       if (!formRequesterPhone.trim() && cPhone) {
@@ -15064,6 +15091,9 @@ export default function PmsCalendar(props?: {
                           stableSelectChannel("whatsapp")
                         }
                         setFormRequesterType("other_person")
+                        if (!primaryFlat.requesterIsGuest1 && primaryFlat.guest1.name.trim() && formRequesterName.trim().toLowerCase() === primaryFlat.guest1.name.trim().toLowerCase()) {
+                          setFormRequesterName("")
+                        }
                         if (formInvoiceRecipientType === "agency") {
                           setFormInvoiceRecipientType("guest")
                         }
@@ -15084,6 +15114,9 @@ export default function PmsCalendar(props?: {
                           stableSelectChannel("whatsapp")
                         }
                         setFormRequesterType("company")
+                        if (!primaryFlat.requesterIsGuest1 && primaryFlat.guest1.name.trim() && formRequesterName.trim().toLowerCase() === primaryFlat.guest1.name.trim().toLowerCase()) {
+                          setFormRequesterName("")
+                        }
                         if (!selectedRes) {
                           setFormInvoiceRecipientType("company")
                         }

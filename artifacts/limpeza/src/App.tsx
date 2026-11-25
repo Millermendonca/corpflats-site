@@ -66,6 +66,7 @@ const WhatsappBroadcast = lazyWithRetry(() => import('@/pages/whatsapp-broadcast
 const WhatsappChat = lazyWithRetry(() => import('@/pages/whatsapp-chat'));
 const GuestPreCheckin = lazyWithRetry(() => import('@/pages/guest-pre-checkin'));
 const AgencyGuestCredential = lazyWithRetry(() => import('@/pages/agency-guest-credential'));
+const GuestLobbyCheckin = lazyWithRetry(() => import('@/pages/guest-lobby-checkin'));
 const VerifyFnrh = lazyWithRetry(() => import('@/pages/verify-fnrh'));
 const BookingEngine = lazyWithRetry(() => import('@/pages/booking-engine'));
 const GuestBreakfast = lazyWithRetry(() => import('@/pages/guest-breakfast'));
@@ -449,6 +450,8 @@ function Router() {
         <Route path="/minhaconta" component={MyAccount} />
         <Route path="/perfil" component={MyAccount} />
         <Route path="/my-account" component={MyAccount} />
+        <Route path="/painel-financeiro/:token" component={MyAccount} />
+        <Route path="/financeiro-cliente/:token" component={MyAccount} />
         <Route path="/minha-reserva/:code/cafe" component={GuestBreakfast} />
         <Route path="/minha-reserva/:code/room-service" component={GuestBreakfast} />
         <Route path="/portal-hospede/:code/cafe" component={GuestBreakfast} />
@@ -495,6 +498,14 @@ function Router() {
         <Route path="/identificar" component={AgencyGuestCredential} />
         <Route path="/cadastro-hospede/:code" component={AgencyGuestCredential} />
         <Route path="/cadastro-hospede" component={AgencyGuestCredential} />
+        <Route path="/chegada/:code" component={GuestLobbyCheckin} />
+        <Route path="/chegada" component={GuestLobbyCheckin} />
+        <Route path="/localizar-reserva/:code" component={GuestLobbyCheckin} />
+        <Route path="/localizar-reserva" component={GuestLobbyCheckin} />
+        <Route path="/checkin-portaria/:code" component={GuestLobbyCheckin} />
+        <Route path="/checkin-portaria" component={GuestLobbyCheckin} />
+        <Route path="/meu-checkin/:code" component={GuestLobbyCheckin} />
+        <Route path="/meu-checkin" component={GuestLobbyCheckin} />
         <Route path="/verificar-ficha/:uuid" component={VerifyFnrh} />
         <Route path="/verificar-ficha" component={VerifyFnrh} />
 
@@ -765,11 +776,20 @@ const PUBLIC_GUEST_PATH_PREFIXES = [
   "/estadia-longa-campos",
   "/pre-checkin",
   "/minha-conta",
+  "/painel-financeiro",
+  "/financeiro-cliente",
   "/minha-reserva",
   "/solicitante",
   "/checkout",
   "/cafe",
   "/credenciamento",
+  "/identificar",
+  "/identificar-reserva",
+  "/cadastro-hospede",
+  "/chegada",
+  "/localizar-reserva",
+  "/checkin-portaria",
+  "/meu-checkin",
   "/verificar-ficha",
   "/servico/",
 ];

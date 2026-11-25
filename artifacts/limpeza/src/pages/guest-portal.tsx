@@ -22,6 +22,7 @@ import { ptBR } from "date-fns/locale"
 import { AddToCalendar } from "@/components/add-to-calendar"
 import { CorpFlatsIcon, CorpFlatsWordmark, CorpFlatsSplashScreen } from "@/components/brand-logo"
 import { DirectBookingPerkCard } from "@/components/direct-booking-perk-card"
+import { FinancialDocumentsSection } from "@/components/financial-documents-section"
 import { generateLodgingJsonLd } from "@/lib/calendar-helper"
 import { calculateCancellationPolicy } from "@/lib/cancellation-helper"
 import { FrozenSlot, useStableCallback } from "@/lib/render-freeze"
@@ -4030,6 +4031,16 @@ export default function GuestPortal() {
                 <span>{waVoucherSent ? "✓ Enviado pro seu WhatsApp!" : (sendingWaVoucher ? "Enviando..." : "Receber no WhatsApp")}</span>
               </Button>
             </div>
+          )}
+
+          {/* Boletos Faturados & Notas Fiscais Emitidas (NFS-e) — Exibido apenas quando !hideFinancialForGuest */}
+          {!hideFinancialForGuest && (
+            <FinancialDocumentsSection
+              boletos={Array.isArray(data?.boletos) ? data.boletos : []}
+              preBoletos={Array.isArray(data?.preBoletos) ? data.preBoletos : []}
+              nfseInvoices={Array.isArray(data?.nfseInvoices) ? data.nfseInvoices : []}
+              title="Boletos & Notas Fiscais (NFS-e) desta Reserva"
+            />
           )}
 
           {isPaid && reservation?.expiredStayExtension && !reservation?.pendingStayExtension && !hideFinancialForGuest && (

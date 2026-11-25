@@ -3634,14 +3634,64 @@ export function getReservationRecipients(reservation = {}, db = {}) {
       );
     }
     if (companyObj) {
-      requesterName = (reservation.requesterInfo?.name || reservation.requesterName || companyObj.contactPerson || companyObj.tradeName || reservation.companyName || "Solicitante Corporativo").trim();
       requesterPhone = (reservation.validatedRequesterWhatsapp || reservation.requesterInfo?.whatsapp || reservation.requesterInfo?.phone || reservation.requesterPhone || reservation.companyData?.companyPhone || companyObj.whatsapp || companyObj.phone || companyObj.telefone || "").trim();
       requesterEmail = normalizeEmailList(reservation.requesterInfo?.email || reservation.requesterEmail || reservation.companyData?.companyEmail || companyObj.email || companyObj.financialEmail || companyObj.emailFinanceiro);
       requesterCompany = companyObj.tradeName || companyObj.corporateName || requesterCompany;
+      const _normCorpReq = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().replace(/\s+/g, " ");
+      const _reqPhDigits = String(requesterPhone).replace(/\D/g, "");
+      const _isPollutedStayGuestName = (cand) => {
+        const cn = _normCorpReq(cand);
+        if (!cn) return true;
+        if (reservation.requesterIsGuest1 === true) return false;
+        if (guestName && cn === _normCorpReq(guestName) && (!_reqPhDigits || !cleanGuestDigits || !matchClientPhone(_reqPhDigits, cleanGuestDigits))) {
+          return true;
+        }
+        if (Array.isArray(db?.reservations)) {
+          const matchesOtherCompanyStayGuest = db.reservations.some(cr =>
+            cr &&
+            cr.requesterIsGuest1 !== true &&
+            String(cr.companyId || "") === String(companyObj.id || "") &&
+            cr.guestName &&
+            _normCorpReq(cr.guestName) === cn &&
+            (!_reqPhDigits || !cr.guestPhone || !matchClientPhone(_reqPhDigits, String(cr.guestPhone).replace(/\D/g, "")))
+          );
+          if (matchesOtherCompanyStayGuest) return true;
+        }
+        return false;
+      };
+      const _compNamesSet = new Set([companyObj.corporateName, companyObj.razaoSocial, companyObj.tradeName, companyObj.nomeFantasia, reservation.companyName].map(_normCorpReq).filter(Boolean));
+      const _pickCorpReqName = () => {
+        if (!_isPollutedStayGuestName(companyObj.contactPerson) && !_compNamesSet.has(_normCorpReq(companyObj.contactPerson)) && (_isPollutedStayGuestName(reservation.requesterInfo?.name) || _compNamesSet.has(_normCorpReq(reservation.requesterInfo?.name)))) {
+          return String(companyObj.contactPerson).trim();
+        }
+        for (const c of [reservation.requesterInfo?.name, reservation.requesterName, companyObj.contactPerson]) {
+          if (c && !_isPollutedStayGuestName(c) && !_compNamesSet.has(_normCorpReq(c))) return String(c).trim();
+        }
+        if (_reqPhDigits.length >= 8 && Array.isArray(db?.guests)) {
+          const ownerGuest = db.guests.find(g =>
+            g && matchClientPhone(_reqPhDigits, String(g.phone || g.phoneNumber || g.whatsapp || "").replace(/\D/g, "")) && !_isPollutedStayGuestName(g.fullName || g.name)
+          );
+          if (ownerGuest) return String(ownerGuest.fullName || ownerGuest.name).trim();
+        }
+        if (_reqPhDigits.length >= 8 && Array.isArray(db?.whatsappConversations)) {
+          const ownerConv = db.whatsappConversations.find(cv => {
+            if (!cv || cv.isGroup) return false;
+            const cvPh = String(cv.phone || cv.guestPhone || cv.remoteJid || cv.id || "").replace(/@.*$/, "").replace(/\D/g, "");
+            if (!matchClientPhone(_reqPhDigits, cvPh)) return false;
+            const cvNm = cv.contactName || cv.pushName || cv.guestName || cv.name || "";
+            return cvNm && !_isPollutedStayGuestName(cvNm) && !_compNamesSet.has(_normCorpReq(cvNm));
+          });
+          if (ownerConv) return String(ownerConv.contactName || ownerConv.pushName || ownerConv.guestName || ownerConv.name).trim();
+        }
+        return (companyObj.tradeName || reservation.companyName || "Solicitante Corporativo").trim();
+      };
+      requesterName = _pickCorpReqName();
     } else {
-      requesterName = (reservation.requesterInfo?.name || reservation.requesterName || reservation.companyName || reservation.companyData?.companyName || "Solicitante Corporativo").trim();
       requesterPhone = (reservation.validatedRequesterWhatsapp || reservation.requesterInfo?.whatsapp || reservation.requesterInfo?.phone || reservation.requesterPhone || reservation.companyData?.companyPhone || "").trim();
       requesterEmail = normalizeEmailList(reservation.requesterInfo?.email || reservation.requesterEmail || reservation.companyData?.companyEmail);
+      const _candReqName = (reservation.requesterInfo?.name || reservation.requesterName || "").trim();
+      const _isSameAsGuestWhenNotGuest1 = reservation.requesterIsGuest1 !== true && _candReqName && guestName && _candReqName.toLowerCase() === guestName.toLowerCase();
+      requesterName = ((!_isSameAsGuestWhenNotGuest1 ? _candReqName : "") || reservation.companyName || reservation.companyData?.companyName || "Solicitante Corporativo").trim();
     }
   }
 
@@ -14206,9 +14256,20 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       const todayStr = brDate.toISOString().substring(0, 10);
 
       // 1. Processa itens da fila que atingiram o horário de disparo
-      const pendingItems = (db.whatsappQueue || []).filter(item => 
-        item.status === "scheduled" && item.scheduledFor <= nowIso
-      );
+      // Ordena cronologicamente e prioriza titular ("guest") antes de acompanhantes ("guest_2", "guest_3") no mesmo horário
+      const recipientOrderRank = (rt) => {
+        if (!rt || rt === "guest") return 0;
+        if (rt === "requester") return 1;
+        const m = /^guest_(\d+)$/.exec(String(rt));
+        return m ? 10 + Number(m[1]) : 50;
+      };
+      const pendingItems = (db.whatsappQueue || [])
+        .filter(item => item.status === "scheduled" && item.scheduledFor <= nowIso)
+        .sort((a, b) => {
+          const tDiff = String(a.scheduledFor || "").localeCompare(String(b.scheduledFor || ""));
+          if (tDiff !== 0) return tDiff;
+          return recipientOrderRank(a.recipientType) - recipientOrderRank(b.recipientType);
+        });
 
       for (const item of pendingItems) {
         // Validação de segurança: NUNCA disparar se a reserva terminou há mais de 3 dias ou se o agendamento está atrasado há mais de 2 horas
@@ -14301,18 +14362,38 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           }
         }
 
-        // Checagem dinâmica: se for lembrete de pré-checkin e todos os hóspedes já preencheram
-        // (para acompanhantes: se aquele acompanhante já preencheu a própria ficha)
+        // Checagem dinâmica: se for lembrete de pré-checkin, verifica individualmente se ESTE destinatário já concluiu a ficha
         if (item.triggerEvent === "pre_checkin_reminder") {
           const companionMatch = /^guest_(\d+)$/.exec(String(item.recipientType || ""));
-          const companionGuest = companionMatch && Array.isArray(resv?.guests)
-            ? resv.guests.find((g, idx) => (Number(g?.index) || idx + 1) === Number(companionMatch[1]))
-            : null;
-          const isCheckinDone = resv && (
-            resv.checkedInAt || 
-            (companionGuest && (companionGuest.hasCompletedCheckin || companionGuest.status === "CHECKED_IN")) ||
-            (Array.isArray(resv.guests) && resv.guests.length > 0 && resv.guests.every(g => g.hasCompletedCheckin))
-          );
+          let isCheckinDone = false;
+          if (resv) {
+            if (companionMatch) {
+              const targetIdx = Number(companionMatch[1]);
+              const companionGuest = Array.isArray(resv.guests)
+                ? resv.guests.find((g, idx) => (Number(g?.index) || idx + 1) === targetIdx)
+                : null;
+              isCheckinDone = Boolean(
+                companionGuest &&
+                (companionGuest.hasCompletedCheckin || companionGuest.status === "CHECKED_IN") &&
+                !companionGuest.needsReSignature &&
+                !resv.needsReSignature
+              );
+            } else if (Array.isArray(resv.guests) && resv.guests.length > 0) {
+              const titularGuest = resv.guests[0];
+              const titularDone = Boolean(
+                titularGuest &&
+                (titularGuest.hasCompletedCheckin || titularGuest.status === "CHECKED_IN") &&
+                !titularGuest.needsReSignature &&
+                !resv.needsReSignature
+              );
+              const allDone = resv.guests.every(
+                g => (g?.hasCompletedCheckin || g?.status === "CHECKED_IN") && !g?.needsReSignature
+              ) && !resv.needsReSignature;
+              isCheckinDone = titularDone || allDone;
+            } else {
+              isCheckinDone = Boolean((resv.checkedInAt || resv.fnhrCompleted) && !resv.needsReSignature);
+            }
+          }
           if (isCheckinDone) {
             console.log(`[Auto-WhatsApp] Descartando lembrete de pré-checkin para ${item.recipientName || item.guestName}: ficha já preenchida.`);
             item.status = "cancelled";
@@ -15521,7 +15602,7 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
   // Trava final para alerta de limpeza em andamento: nunca entregar via fila estática nem para quem já entrou ou flat já limpo
   if (item.triggerEvent === "checkin_cleaning_delay" || item.templateId === "tpl_checkin_cleaning_delay") {
     const { todayStr } = getBrasiliaDateParts(new Date());
-    if (!resv || hasReservationEnteredOrCompletedCheckin(db, resv, todayStr) || !isFlatStillBeingCleanedOnCheckinDay(db, resv, todayStr)) {
+    if (!resv || hasGuestPhysicallyCheckedIn(db, resv) || hasAnyRoomReadyBeenSentOrScheduled(db, resv, todayStr, { includeScheduled: true }) || !isFlatStillBeingCleanedOnCheckinDay(db, resv, todayStr)) {
       console.log(`[Auto-WhatsApp] Bloqueando entrega de 'checkin_cleaning_delay' na fila para ${item.recipientName || item.guestName}: hóspede já entrou ou flat já está limpo/pronto.`);
       item.status = "cancelled";
       item.error = "Cancelado: hóspede já realizou check-in/entrada ou flat já está limpo/pronto";
@@ -15548,9 +15629,13 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
       if (typeof saveDatabase === "function") saveDatabase();
       return { waResult: null, emailLog: null, success: false, cancelled: true };
     }
-    const isCompanionItem = Boolean(item.recipientType && item.recipientType !== "guest");
-    if (resv && !isCompanionItem && (hasGuestPhysicallyCheckedIn(db, resv) || hasRoomReadyBeenSentOrScheduled(db, resv, todayStr, { includeScheduled: false }))) {
-      console.log(`[Auto-WhatsApp] Cancelando agendamento de '${item.triggerEvent}' para ${item.recipientName || item.guestName}: hóspede já realizou check-in físico ou já recebeu aviso de quarto pronto.`);
+    const itemRoomReadyTarget = {
+      type: item.recipientType || "guest",
+      phone: item.guestPhone || item.phone || "",
+      email: item.guestEmail || ""
+    };
+    if (resv && (hasGuestPhysicallyCheckedIn(db, resv) || hasRecipientReceivedRoomReadyToday(db, resv, itemRoomReadyTarget, todayStr, { includeScheduled: false }))) {
+      console.log(`[Auto-WhatsApp] Cancelando agendamento de '${item.triggerEvent}' para ${item.recipientName || item.guestName} (${itemRoomReadyTarget.type}): hóspede já realizou check-in físico ou este destinatário já recebeu aviso de quarto pronto.`);
       item.status = "cancelled";
       item.error = "Cancelado: hóspede já realizou check-in ou já recebeu aviso de quarto liberado";
       item.updatedAt = new Date().toISOString();
@@ -15855,7 +15940,11 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
     }
     if (anySuccess && resv && ROOM_READY_GROUP_EVENTS.has(item.triggerEvent)) {
       const { todayStr } = getBrasiliaDateParts(new Date());
-      markReservationRoomReadySent(db, resv, todayStr, deliveredAtIso, item.triggerEvent);
+      markReservationRoomReadySent(db, resv, todayStr, deliveredAtIso, item.triggerEvent, {
+        recipientType: item.recipientType || "guest",
+        phone: item.guestPhone || item.phone || "",
+        email: item.guestEmail || ""
+      });
     }
     if (anySuccess && resv && (item.triggerEvent === "pre_reservation_expiring_soon" || item.templateId === "tpl_pre_reserva_lembrete")) {
       resv.preReservationReminderSentAt = deliveredAtIso;
@@ -16049,13 +16138,19 @@ export async function dispatchTemplateToTarget(db, saveDatabase, { tpl, eventNam
     (waResult?.success || emailLog) &&
     reservation &&
     (ROOM_READY_GROUP_EVENTS.has(eventName) ||
-      (eventName === "sameday_reservation" && /limpo e (liberado|pronto)|tudo pronto para sua chegada/i.test(String(renderedMessage || ""))))
+      (eventName === "sameday_reservation" &&
+        (getSameDayFlatReleaseState(db, reservation, reservation?._nowOverride instanceof Date ? reservation._nowOverride : (reservation?._nowOverride ? new Date(reservation._nowOverride) : new Date())).isFlatReadyNow ||
+          /limpo e (liberado|pronto)|tudo pronto para sua chegada/i.test(String(renderedMessage || "")))))
   ) {
     const refNow = reservation?._nowOverride instanceof Date
       ? reservation._nowOverride
       : (reservation?._nowOverride ? new Date(reservation._nowOverride) : new Date());
     const { todayStr } = getBrasiliaDateParts(refNow);
-    markReservationRoomReadySent(db, reservation, todayStr, refNow.toISOString(), eventName);
+    markReservationRoomReadySent(db, reservation, todayStr, refNow.toISOString(), eventName, {
+      recipientType: target.type || "guest",
+      phone: target.phone || "",
+      email: target.email || ""
+    });
   }
 
   return { waResult, emailLog, renderedMessage, renderedButtons };
@@ -16648,7 +16743,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     // Trava estrita para 'checkin_cleaning_delay': nunca disparar se o hóspede já realizou check-in/entrada
     // ou se o flat já está limpo/pronto.
     if (eventName === "checkin_cleaning_delay") {
-      if (hasReservationEnteredOrCompletedCheckin(db, reservation, todayStr)) {
+      if (hasGuestPhysicallyCheckedIn(db, reservation) || hasAnyRoomReadyBeenSentOrScheduled(db, reservation, todayStr, { includeScheduled: true })) {
         console.log(`[WhatsApp Trigger] Evento 'checkin_cleaning_delay' IGNORADO para ${reservation.code || reservation.id} (${reservation.guestName}): hóspede já entrou / marcou check-in como feito ou já recebeu aviso de quarto pronto.`);
         return;
       }
@@ -16800,10 +16895,9 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     if (eventName === "pre_checkin_completed" && Array.isArray(db?.whatsappQueue)) {
       const completedGuestIdx = Number(reservation._checkinGuestIndex) || 1;
       const completedRecipientType = completedGuestIdx > 1 ? `guest_${completedGuestIdx}` : "guest";
-      const allGuestsDone = Boolean(
-        reservation.fnhrCompleted ||
-        (Array.isArray(reservation.guests) && reservation.guests.length > 0 && reservation.guests.every(g => g.hasCompletedCheckin || g.status === "CHECKED_IN"))
-      );
+      const allGuestsDone = Array.isArray(reservation.guests) && reservation.guests.length > 0
+        ? reservation.guests.every(g => (g?.hasCompletedCheckin || g?.status === "CHECKED_IN") && !g?.needsReSignature) && !reservation.needsReSignature
+        : Boolean(reservation.fnhrCompleted && !reservation.needsReSignature);
       let queueCancelledCount = 0;
       const nowIso = new Date().toISOString();
       for (const qItem of db.whatsappQueue) {
@@ -16883,7 +16977,16 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       const nowIso = now.toISOString();
       const targetOnlyGuestIdx = Number(reservation._onlyGuestIndex) || 0;
       if (releaseState.isFlatReadyNow && targetOnlyGuestIdx <= 1) {
-        markReservationRoomReadySent(db, reservation, todayStr, nowIso, "sameday_reservation");
+        markReservationRoomReadySent(
+          db,
+          reservation,
+          todayStr,
+          nowIso,
+          "sameday_reservation",
+          targetOnlyGuestIdx === 1
+            ? { recipientType: "guest", phone: reservation.guestPhone || "", email: reservation.guestEmail || "" }
+            : null
+        );
       }
       if (Array.isArray(db?.whatsappQueue)) {
         for (const qItem of db.whatsappQueue) {
@@ -18133,13 +18236,38 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
         const targets = buildTemplateTargets(tplForEvent, getReservationRecipients(resv, db), { targetMode: "guest" });
         let added = false;
         for (const target of targets) {
-          const alreadyQueued = db.whatsappQueue.some(q =>
+          const existingQueued = db.whatsappQueue.find(q =>
             (q.reservationCode === resv.code || q.reservationId === resv.id) &&
             q.triggerEvent === eventName &&
             (q.recipientType || "guest") === target.type &&
             (q.status === "scheduled" || q.status === "sent")
           );
-          if (alreadyQueued) continue;
+          if (existingQueued) {
+            if (existingQueued.status === "scheduled") {
+              const phoneChanged = Boolean(target.phone && (!existingQueued.guestPhone || !matchClientPhone(existingQueued.guestPhone, target.phone)));
+              const emailChanged = Boolean(target.email && existingQueued.guestEmail !== target.email);
+              if (phoneChanged || emailChanged) {
+                const refreshed = buildQueueItemForTarget(db, {
+                  tpl: tplForEvent,
+                  resv,
+                  target,
+                  scheduledFor,
+                  channel: resvChannel,
+                  baseUrl: baseUrl || "https://corpflats.com.br",
+                  idPrefix,
+                  recipientTarget: "guest"
+                });
+                existingQueued.guestPhone = refreshed.guestPhone;
+                existingQueued.guestEmail = refreshed.guestEmail;
+                existingQueued.recipientName = refreshed.recipientName;
+                existingQueued.renderedMessage = refreshed.renderedMessage;
+                existingQueued.renderedButtons = refreshed.renderedButtons;
+                existingQueued.updatedAt = new Date().toISOString();
+                added = true;
+              }
+            }
+            continue;
+          }
           const queueItem = buildQueueItemForTarget(db, {
             tpl: tplForEvent,
             resv,
@@ -19487,12 +19615,33 @@ export function hasGuestPhysicallyCheckedIn(db, resv) {
 
 /**
  * Marca que a reserva recebeu aviso de "Quarto Liberado / Pronto" hoje,
+ * rastreando individualmente cada destinatário atendido (`roomReadySentByRecipient`),
  * sincronizando na reserva canônica do banco e persistindo log de auditoria no PostgreSQL.
  */
-export function markReservationRoomReadySent(db, reservation, todayStr, nowIso = new Date().toISOString(), triggerEvent = "room_ready") {
+export function markReservationRoomReadySent(db, reservation, todayStr, nowIso = new Date().toISOString(), triggerEvent = "room_ready", recipientInfo = null) {
   if (!reservation || !todayStr) return;
   reservation.roomReadySentDate = todayStr;
   reservation.roomReadySentAt = nowIso;
+
+  const recType = recipientInfo?.recipientType ? String(recipientInfo.recipientType).trim() : "";
+  const recNormPhone = recipientInfo?.phone ? normalizePhoneForDedup(recipientInfo.phone) : "";
+  const recNormEmail = recipientInfo?.email ? String(recipientInfo.email).trim().toLowerCase() : "";
+
+  const applyRecipientStamp = (targetObj) => {
+    if (!targetObj || (!recType && !recNormPhone && !recNormEmail)) return;
+    if (!targetObj.roomReadySentByRecipient || targetObj.roomReadySentByRecipient.date !== todayStr) {
+      targetObj.roomReadySentByRecipient = { date: todayStr, types: [], phones: [], emails: [] };
+    }
+    const tracker = targetObj.roomReadySentByRecipient;
+    if (!Array.isArray(tracker.types)) tracker.types = [];
+    if (!Array.isArray(tracker.phones)) tracker.phones = [];
+    if (!Array.isArray(tracker.emails)) tracker.emails = [];
+    if (recType && !tracker.types.includes(recType)) tracker.types.push(recType);
+    if (recNormPhone && !tracker.phones.includes(recNormPhone)) tracker.phones.push(recNormPhone);
+    if (recNormEmail && !tracker.emails.includes(recNormEmail)) tracker.emails.push(recNormEmail);
+  };
+
+  applyRecipientStamp(reservation);
 
   let canonicalRes = reservation;
   if (Array.isArray(db?.reservations)) {
@@ -19502,23 +19651,32 @@ export function markReservationRoomReadySent(db, reservation, todayStr, nowIso =
     if (dbRes) {
       dbRes.roomReadySentDate = todayStr;
       dbRes.roomReadySentAt = nowIso;
+      applyRecipientStamp(dbRes);
       canonicalRes = dbRes;
     }
   }
 
   const rCode = String(canonicalRes.code || canonicalRes.reservationCode || "").trim().toUpperCase();
   const rId = canonicalRes.id !== undefined && canonicalRes.id !== null ? String(canonicalRes.id) : "";
-  const alreadyLoggedAudit = canonicalRes._roomReadyAuditLoggedDate === todayStr || (db?.auditLogs || []).some(log => {
+  const auditRecKey = recType || "guest";
+  if (!canonicalRes._roomReadyAuditLoggedKeys || canonicalRes._roomReadyAuditLoggedDate !== todayStr) {
+    canonicalRes._roomReadyAuditLoggedKeys = [];
+  }
+  const alreadyLoggedAudit = canonicalRes._roomReadyAuditLoggedKeys.includes(auditRecKey) || (db?.auditLogs || []).some(log => {
     if (!log || log.action !== "WHATSAPP_ROOM_READY_SENT") return false;
     const d = log.details || {};
     const dCode = String(d.reservationCode || d.code || "").trim().toUpperCase();
     const dId = d.reservationId !== undefined && d.reservationId !== null ? String(d.reservationId) : "";
     const isSame = (rCode && dCode === rCode) || (rId && (dId === rId || dCode === rId));
-    return isSame && (d.roomReadySentDate === todayStr || String(log.timestamp || "").startsWith(todayStr));
+    if (!isSame) return false;
+    const sameDay = d.roomReadySentDate === todayStr || String(log.timestamp || "").startsWith(todayStr);
+    if (!sameDay) return false;
+    return (d.recipientType || "guest") === auditRecKey;
   });
 
   if (!alreadyLoggedAudit && typeof globalThis.__corpflatsLogAuditEvent === "function") {
     canonicalRes._roomReadyAuditLoggedDate = todayStr;
+    canonicalRes._roomReadyAuditLoggedKeys.push(auditRecKey);
     reservation._roomReadyAuditLoggedDate = todayStr;
     globalThis.__corpflatsLogAuditEvent({
       level: "info",
@@ -19531,7 +19689,8 @@ export function markReservationRoomReadySent(db, reservation, todayStr, nowIso =
         flatId: canonicalRes.flatId || null,
         flatNumber: canonicalRes.flatNumber || null,
         guestName: canonicalRes.guestName || null,
-        guestPhone: canonicalRes.guestPhone || null,
+        guestPhone: recipientInfo?.phone || canonicalRes.guestPhone || null,
+        recipientType: auditRecKey,
         roomReadySentDate: todayStr,
         roomReadySentAt: nowIso,
         triggerEvent
@@ -19541,9 +19700,10 @@ export function markReservationRoomReadySent(db, reservation, todayStr, nowIso =
 }
 
 /**
- * Verifica se a reserva já recebeu (ou já está agendada para receber) aviso de "Quarto Liberado / Pronto" hoje.
+ * Verifica se QUALQUER destinatário da reserva já recebeu (ou tem agendado) aviso de "Quarto Liberado / Pronto" hoje.
+ * Usado para suprimir alertas contraditórios (ex.: 'checkin_cleaning_delay' às 13:45) e fallback sem lista de alvos.
  */
-export function hasRoomReadyBeenSentOrScheduled(db, resv, todayStr = "", { includeScheduled = true } = {}) {
+export function hasAnyRoomReadyBeenSentOrScheduled(db, resv, todayStr = "", { includeScheduled = true } = {}) {
   if (!resv) return false;
   if (todayStr && resv.roomReadySentDate === todayStr) return true;
 
@@ -19558,12 +19718,15 @@ export function hasRoomReadyBeenSentOrScheduled(db, resv, todayStr = "", { inclu
     return (rCode && iCode === rCode) || (rId && (iId === rId || iCode === rId));
   };
 
-  const sentRoomReady = (db.whatsappHistory || []).some(h =>
-    matchesRes(h) &&
-    isWhatsappHistorySuccessStatus(h.status) &&
-    (ROOM_READY_GROUP_EVENTS.has(h.triggerEvent) ||
-      (h.triggerEvent === "sameday_reservation" && /limpo e (liberado|pronto)|tudo pronto para sua chegada/i.test(String(h.message || ""))))
-  );
+  const sentRoomReady = (db.whatsappHistory || []).some(h => {
+    if (!matchesRes(h) || !isWhatsappHistorySuccessStatus(h.status)) return false;
+    const hTs = h.sentAt || h.timestamp || h.createdAt;
+    if (todayStr && hTs && getBrasiliaDateStrFromIso(hTs) !== todayStr) return false;
+    return (
+      ROOM_READY_GROUP_EVENTS.has(h.triggerEvent) ||
+      (h.triggerEvent === "sameday_reservation" && /limpo e (liberado|pronto)|tudo pronto para sua chegada/i.test(String(h.message || "")))
+    );
+  });
   if (sentRoomReady) {
     if (todayStr) resv.roomReadySentDate = todayStr;
     return true;
@@ -19577,7 +19740,7 @@ export function hasRoomReadyBeenSentOrScheduled(db, resv, todayStr = "", { inclu
       return (c.messages || []).some(m => {
         if (!m || !m.fromMe || m.status === "failed") return false;
         const mTs = String(m.timestamp || m.createdAt || "");
-        if (todayStr && mTs && !mTs.startsWith(todayStr)) return false;
+        if (todayStr && mTs && !mTs.startsWith(todayStr) && getBrasiliaDateStrFromIso(mTs) !== todayStr) return false;
         if (m.reservationCode && rCode && String(m.reservationCode).trim().toUpperCase() !== rCode) return false;
         if (ROOM_READY_GROUP_EVENTS.has(m.triggerEvent)) return true;
         if (m.triggerEvent === "sameday_reservation" || !m.triggerEvent) {
@@ -19618,6 +19781,191 @@ export function hasRoomReadyBeenSentOrScheduled(db, resv, todayStr = "", { inclu
   }
 
   return false;
+}
+
+/**
+ * Verifica individualmente se UM destinatário específico (`guest`, `guest_2`, `guest_3`) já recebeu
+ * (ou, quando `includeScheduled = true`, já possui agendado na fila) o aviso de "Quarto Liberado / Pronto" hoje.
+ * Impede que o envio ao 2º hóspede cancele o envio ao titular (e vice-versa).
+ */
+export function hasRecipientReceivedRoomReadyToday(db, resv, target = {}, todayStr = "", { includeScheduled = false, treatLegacyCancelledAsHandled = false } = {}) {
+  if (!resv) return false;
+
+  const targetType = String(target?.type || "guest").trim() || "guest";
+  const rawPhone = String(target?.phone || "").trim();
+  const normPhone = normalizePhoneForDedup(rawPhone);
+  const normEmail = String(target?.email || "").trim().toLowerCase();
+
+  const tracker = resv.roomReadySentByRecipient;
+  const hasRecipientTrackerToday = Boolean(tracker && (!todayStr || tracker.date === todayStr));
+  if (hasRecipientTrackerToday) {
+    if (normPhone && Array.isArray(tracker.phones) && tracker.phones.some(p => matchClientPhone(p, rawPhone))) {
+      return true;
+    }
+    if (!normPhone && normEmail && Array.isArray(tracker.emails) && tracker.emails.includes(normEmail)) {
+      return true;
+    }
+    if (!normPhone && !normEmail && Array.isArray(tracker.types) && tracker.types.includes(targetType)) {
+      return true;
+    }
+  }
+
+  const rCode = String(resv.code || resv.reservationCode || "").trim().toUpperCase();
+  const rId = resv.id !== undefined && resv.id !== null ? String(resv.id) : "";
+  const matchesRes = (item) => {
+    if (!item) return false;
+    const iCode = String(item.reservationCode || "").trim().toUpperCase();
+    const iId = item.reservationId !== undefined && item.reservationId !== null ? String(item.reservationId) : "";
+    return (rCode && iCode === rCode) || (rId && (iId === rId || iCode === rId));
+  };
+
+  let anyHistoryForResToday = false;
+  if (db && (rCode || rId) && Array.isArray(db.whatsappHistory)) {
+    for (const h of db.whatsappHistory) {
+      if (!matchesRes(h) || !isWhatsappHistorySuccessStatus(h.status)) continue;
+      const hTs = h.sentAt || h.timestamp || h.createdAt;
+      if (todayStr && hTs && getBrasiliaDateStrFromIso(hTs) !== todayStr) continue;
+      const isRoomReadyOrSamedayReady =
+        ROOM_READY_GROUP_EVENTS.has(h.triggerEvent) ||
+        (h.triggerEvent === "sameday_reservation" && /limpo e (liberado|pronto)|tudo pronto para sua chegada/i.test(String(h.message || "")));
+      if (!isRoomReadyOrSamedayReady) continue;
+
+      anyHistoryForResToday = true;
+      const hPhone = String(h.guestPhone || h.phone || "").trim();
+      const hNormPhone = normalizePhoneForDedup(hPhone);
+      const hType = String(h.recipientType || "guest").trim() || "guest";
+      if (normPhone && hNormPhone) {
+        if (matchClientPhone(hPhone, rawPhone)) return true;
+      } else if (hType === targetType) {
+        return true;
+      }
+    }
+  }
+
+  if (normPhone && Array.isArray(db?.whatsappConversations)) {
+    const sentInConv = db.whatsappConversations.some(c => {
+      if (!c || !matchClientPhone(c.phone, rawPhone)) return false;
+      return (c.messages || []).some(m => {
+        if (!m || !m.fromMe || m.status === "failed") return false;
+        const mTs = String(m.timestamp || m.createdAt || "");
+        if (todayStr && mTs && !mTs.startsWith(todayStr) && getBrasiliaDateStrFromIso(mTs) !== todayStr) return false;
+        if (m.reservationCode && rCode && String(m.reservationCode).trim().toUpperCase() !== rCode) return false;
+        if (ROOM_READY_GROUP_EVENTS.has(m.triggerEvent)) return true;
+        if (m.triggerEvent === "sameday_reservation" || !m.triggerEvent) {
+          return /status do flat\s*:\s*limpo e liberado|seu flat\s*\d+\s*j[áa]\s*est[áa]\s*limpo e pronto|tudo pronto para sua chegada no flat/i.test(String(m.text || m.message || ""));
+        }
+        return false;
+      });
+    });
+    if (sentInConv) return true;
+  }
+
+  if (!normPhone && normEmail && Array.isArray(db?.reservationCommunications)) {
+    const sentMirrorEmail = db.reservationCommunications.some(c => {
+      if (!c || c.status === "failed" || c.metadata?.channel !== "whatsapp_mirror") return false;
+      const cResId = String(c.reservation_id || "").trim().toUpperCase();
+      const isSameRes = (rCode && cResId === rCode) || (rId && cResId === rId);
+      if (!isSameRes) return false;
+      const cTs = c.sent_at || c.created_at;
+      if (todayStr && cTs && getBrasiliaDateStrFromIso(cTs) !== todayStr) return false;
+      if (!ROOM_READY_GROUP_EVENTS.has(c.metadata?.trigger)) return false;
+      return String(c.recipient || "").trim().toLowerCase() === normEmail;
+    });
+    if (sentMirrorEmail) return true;
+  }
+
+  if (db && (rCode || rId) && Array.isArray(db.whatsappQueue)) {
+    for (const q of db.whatsappQueue) {
+      if (!matchesRes(q) || !ROOM_READY_GROUP_EVENTS.has(q.triggerEvent)) continue;
+      const qType = String(q.recipientType || "guest").trim() || "guest";
+      const qPhone = String(q.guestPhone || q.phone || "").trim();
+      const qNormPhone = normalizePhoneForDedup(qPhone);
+      if (q.status === "sent") {
+        const qTs = q.sentAt || q.scheduledFor || q.createdAt;
+        if (todayStr && qTs && getBrasiliaDateStrFromIso(qTs) !== todayStr) continue;
+        if (normPhone && qNormPhone) {
+          if (matchClientPhone(qPhone, rawPhone)) return true;
+        } else if (qType === targetType) {
+          return true;
+        }
+      } else if (includeScheduled && (q.status === "scheduled" || q.status === "pending")) {
+        if (qType !== targetType) continue;
+        if (normPhone && qNormPhone && !matchClientPhone(qPhone, rawPhone)) continue;
+        return true;
+      } else if (
+        treatLegacyCancelledAsHandled &&
+        !hasRecipientTrackerToday &&
+        q.status === "cancelled" &&
+        qType === targetType &&
+        (!normPhone || !qNormPhone || matchClientPhone(qPhone, rawPhone)) &&
+        /j[áa] recebeu aviso de quarto liberado/i.test(String(q.error || ""))
+      ) {
+        return true;
+      }
+    }
+  }
+
+  // Fallback legado / restauração de boot (quando roomReadySentDate foi gravado sem histórico detalhado por destinatário)
+  if (!hasRecipientTrackerToday && !anyHistoryForResToday && targetType === "guest") {
+    if (todayStr && resv.roomReadySentDate === todayStr) return true;
+    if (Array.isArray(db?.auditLogs)) {
+      const sentInAudit = db.auditLogs.some(log => {
+        if (!log || log.action !== "WHATSAPP_ROOM_READY_SENT") return false;
+        const d = log.details || {};
+        const dCode = String(d.reservationCode || d.code || "").trim().toUpperCase();
+        const dId = d.reservationId !== undefined && d.reservationId !== null ? String(d.reservationId) : "";
+        const isSame = (rCode && dCode === rCode) || (rId && (dId === rId || dCode === rId));
+        if (!isSame) return false;
+        return !todayStr || d.roomReadySentDate === todayStr || String(log.timestamp || "").startsWith(todayStr);
+      });
+      if (sentInAudit) return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Verifica se TODOS os destinatários elegíveis da reserva já receberam (ou já têm agendado)
+ * o aviso de "Quarto Liberado / Pronto" hoje.
+ * Se um 2º hóspede cadastrar o telefone posteriormente (antes da entrada física), retorna `false`
+ * para que o novo hóspede também receba o aviso (enquanto quem já recebeu é ignorado pelo anti-dup).
+ */
+export function hasRoomReadyBeenSentOrScheduled(db, resv, todayStr = "", { includeScheduled = true } = {}) {
+  if (!resv) return false;
+  if (!db) {
+    return Boolean(todayStr && resv.roomReadySentDate === todayStr);
+  }
+
+  const resvChannel = normalizeReservationChannel(resv.channel || resv.source || "site");
+  const isOtaChannel = resvChannel === "booking" || resvChannel === "airbnb" || resvChannel === "b2b";
+  const tplId = isOtaChannel ? "tpl_room_ready_ota" : "tpl_room_ready_direct";
+  const rrTpl = (db.whatsappTemplates || []).find(t => t && t.id === tplId) ||
+                DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === tplId) ||
+                { id: tplId, triggerEvent: isOtaChannel ? "room_ready_ota" : "room_ready", recipientTarget: "guest" };
+
+  const rawTargets = buildTemplateTargets(rrTpl, getReservationRecipients(resv, db), { targetMode: "guest" });
+  const emailMotorEnabled = db?.settings?.emailSettings?.enabled !== false && shouldMirrorTemplateToEmail(rrTpl);
+  const reachableTargets = rawTargets.filter(t => {
+    const phoneReachable = Boolean(t.phone) && (db?.zapiConfig?.testModeOnly === false || isPhoneAllowedInTestMode(t.phone, db?.zapiConfig));
+    const emailReachable = Boolean(t.email) && emailMotorEnabled;
+    return phoneReachable || emailReachable;
+  });
+
+  if (reachableTargets.length === 0) {
+    return hasAnyRoomReadyBeenSentOrScheduled(db, resv, todayStr, { includeScheduled });
+  }
+
+  const allHandled = reachableTargets.every(t =>
+    hasRecipientReceivedRoomReadyToday(db, resv, t, todayStr, {
+      includeScheduled,
+      treatLegacyCancelledAsHandled: true
+    })
+  );
+  if (allHandled && todayStr && !includeScheduled) {
+    resv.roomReadySentDate = todayStr;
+  }
+  return allHandled;
 }
 
 /**
@@ -20282,20 +20630,22 @@ export async function checkAndTriggerCleaningDelayAlerts(dbOrGetter, saveDatabas
       r.status !== "pendente" &&
       r.status !== "expirada" &&
       r.checkinDate === todayStr &&
-      r.guestPhone &&
+      reservationHasAnyContact(r, db) &&
       r.cleaningDelayAlertSentDate !== todayStr &&
       r.roomReadySentDate !== todayStr &&
-      !hasReservationEnteredOrCompletedCheckin(db, r, todayStr)
+      !hasGuestPhysicallyCheckedIn(db, r) &&
+      !hasAnyRoomReadyBeenSentOrScheduled(db, r, todayStr, { includeScheduled: true })
     );
 
     for (const resv of arrivingToday) {
       const flatNum = String(resv.flatNumber || "");
 
-      const delayElig = evaluateStayContactEligibility(resv, db, {
-        targetType: "guest",
-        candidatePhone: resv.guestPhone
-      });
-      if (!delayElig.phoneAllowedForStay) {
+      const rrDelay = getReservationRecipients(resv, db);
+      const candidateStayPhones = [
+        rrDelay.guest?.stayPhone,
+        ...(rrDelay.companions || []).map(c => c?.stayPhone)
+      ].filter(Boolean);
+      if (candidateStayPhones.length === 0) {
         continue;
       }
 
@@ -20310,9 +20660,9 @@ export async function checkAndTriggerCleaningDelayAlerts(dbOrGetter, saveDatabas
         continue;
       }
 
-      // Trava de Segurança: Modo de Teste / Sandbox
-      if (db?.zapiConfig?.testModeOnly !== false && !isPhoneAllowedInTestMode(resv.guestPhone, db?.zapiConfig)) {
-        console.log(`[Cleaning Delay Sandbox] Ignorando disparo para ${resv.guestPhone} (${resv.guestName}): Modo de Teste ativo.`);
+      // Trava de Segurança: Modo de Teste / Sandbox (só ignora se nenhum destinatário elegível estiver autorizado)
+      if (db?.zapiConfig?.testModeOnly !== false && !candidateStayPhones.some(p => isPhoneAllowedInTestMode(p, db?.zapiConfig))) {
+        console.log(`[Cleaning Delay Sandbox] Ignorando disparo para ${candidateStayPhones[0]} (${resv.guestName}): Modo de Teste ativo.`);
         resv.cleaningDelayAlertSentDate = todayStr;
         continue;
       }
