@@ -1249,8 +1249,16 @@ export default function GuestPortal() {
   )
   const hasPartialPendingBalance = Boolean(
     !isB2b &&
-    (reservation?.paymentStatus === "sinal_pago" || reservation?.paymentStatus === "parcial") &&
-    Number(reservation?.paidAmount || 0) > 0 &&
+    (
+      reservation?.pendingStayExtension?.status === "pending_payment" ||
+      reservation?.paymentStatus === "sinal_pago" ||
+      reservation?.paymentStatus === "parcial" ||
+      reservation?.paymentStatus === "pendente" ||
+      reservation?.paymentStatus === "aguardando_pix" ||
+      reservation?.paymentStatus === "aguardando_cartao" ||
+      reservation?.paymentStatus === "aguardando_pagamento"
+    ) &&
+    Number(reservation?.totalAmount || 0) > 0 &&
     Number(reservation?.paidAmount || 0) < Number(reservation?.totalAmount || 0) - 0.01
   )
   const isPaid = !isCancelled && !isExpiredPreReservation && !hasPartialPendingBalance && Boolean(
@@ -2607,7 +2615,8 @@ export default function GuestPortal() {
           packageSummary: json.packageSummary ?? prev.packageSummary,
           reservation: {
             ...prev.reservation,
-            ...json.reservation
+            ...json.reservation,
+            isPaid: Boolean(json.isPaid)
           }
         }) : null)
       }

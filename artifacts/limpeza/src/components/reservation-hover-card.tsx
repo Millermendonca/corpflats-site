@@ -850,7 +850,11 @@ export function ReservationHoverCard({
                   const isOta = chan.includes("booking") || chan.includes("airbnb");
                   const tot = Number(resItem.totalAmount) || 0;
                   const paid = Number(resItem.paidAmount) || 0;
-                  const isPaid = isOta || resItem.paymentStatus === "pago_total" || resItem.paymentStatus === "pago" || (paid >= tot && tot > 0);
+                  const hasPartialExt = Boolean(
+                    resItem.pendingStayExtension?.status === "pending_payment" ||
+                    (paid > 0 && tot > 0 && paid + 0.01 < tot)
+                  );
+                  const isPaid = !hasPartialExt && (isOta || resItem.paymentStatus === "pago_total" || resItem.paymentStatus === "pago" || (paid >= tot && tot > 0));
                   const isPartial = !isPaid && paid > 0;
                   return (
                     <Badge 

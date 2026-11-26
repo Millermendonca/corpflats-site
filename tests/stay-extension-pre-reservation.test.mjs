@@ -582,4 +582,114 @@ describe('Pré-Reserva de Diária Extra (Extensão Aguardando Pagamento)', () =>
       );
     }
   });
+
+  it('7. Anti-falso-positivo na Área do Cliente: alternar PIX/Cartão ou consultar status nunca marca extensão como paga sem compensação real', () => {
+    const freshServerSrc = fs.readFileSync(serverPath, 'utf8');
+    const freshPortalSrc = fs.readFileSync(portalPath, 'utf8');
+
+    const helperCode = [
+      extractFunction(freshServerSrc, 'hasPartialOrExtensionPending'),
+      extractFunction(freshServerSrc, 'buildReservationStaticPixTxId'),
+      extractFunction(freshServerSrc, 'isInterCobUnclaimedForReservation'),
+      `return { hasPartialOrExtensionPending, buildReservationStaticPixTxId, isInterCobUnclaimedForReservation };`,
+    ].join('\n');
+    const {
+      hasPartialOrExtensionPending,
+      buildReservationStaticPixTxId,
+      isInterCobUnclaimedForReservation,
+    } = new Function(helperCode)();
+
+    // 7a) Mesmo que paymentStatus seja "aguardando_pix" ou "aguardando_cartao" em reserva Airbnb/Booking,
+    // hasPartialOrExtensionPending retorna TRUE enquanto paidAmount < totalAmount!
+    for (const st of ['sinal_pago', 'parcial', 'pendente', 'aguardando_pix', 'aguardando_cartao', 'aguardando_pagamento']) {
+      assert.strictEqual(
+        hasPartialOrExtensionPending({
+          channel: 'airbnb',
+          totalAmount: 1780,
+          paidAmount: 1000,
+          paymentStatus: st,
+          pendingStayExtension: { status: 'pending_payment', amount: 780 },
+        }),
+        true,
+        `hasPartialOrExtensionPending deve ser true para status=${st}`
+      );
+    }
+    assert.strictEqual(
+      hasPartialOrExtensionPending({
+        channel: 'airbnb',
+        totalAmount: 1780,
+        paidAmount: 1780,
+        paymentStatus: 'pago_total',
+      }),
+      false
+    );
+
+    // 7b) Static PIX TxId para extensão não reaproveita o txid puro da reserva inicial
+    const extRes = {
+      code: 'RES-511-ROSANA',
+      totalAmount: 1780,
+      paidAmount: 1000,
+      payments: [{ id: 'p1', amount: 1000, method: 'pix', endToEndId: 'E_OLD_1000', txId: 'TX_OLD_1000' }],
+      pendingStayExtension: {
+        status: 'pending_payment',
+        amount: 780,
+        requestedAt: '2026-11-26T17:30:00.000Z',
+      },
+    };
+    const extTxId = buildReservationStaticPixTxId(extRes, 780);
+    assert.ok(extTxId.startsWith('EXT'), `TxId estático de extensão deve iniciar com EXT (recebido: ${extTxId})`);
+    assert.notStrictEqual(extTxId, 'RES511ROSANA');
+
+    // 7c) isInterCobUnclaimedForReservation bloqueia:
+    //  - endToEndId já contabilizado na estadia inicial
+    assert.strictEqual(
+      isInterCobUnclaimedForReservation(
+        extRes,
+        { status: 'CONCLUIDA', pix: [{ valor: '780.00', endToEndId: 'E_OLD_1000', horario: '2026-11-26T17:35:00.000Z' }] },
+        'TX_NEW',
+        780
+      ),
+      false,
+      'Não pode aceitar endToEndId já usado no pagamento inicial'
+    );
+    //  - cobrança paga ANTES da criação da extensão
+    assert.strictEqual(
+      isInterCobUnclaimedForReservation(
+        extRes,
+        { status: 'CONCLUIDA', pix: [{ valor: '780.00', endToEndId: 'E_BEFORE', horario: '2026-11-24T12:00:00.000Z' }] },
+        'TX_BEFORE',
+        780
+      ),
+      false,
+      'Não pode aceitar cobrança paga dias antes da extensão ser solicitada'
+    );
+    //  - cobrança de valor divergente (ex: R$ 1.000 da reserva inicial vs R$ 780 da extensão)
+    assert.strictEqual(
+      isInterCobUnclaimedForReservation(
+        extRes,
+        { status: 'CONCLUIDA', pix: [{ valor: '1000.00', endToEndId: 'E_DIFF_VAL', horario: '2026-11-26T17:35:00.000Z' }] },
+        'TX_DIFF',
+        780
+      ),
+      false,
+      'Não pode aceitar cobrança de R$ 1.000 para quitar extensão de R$ 780'
+    );
+    //  - aceita pagamento real e inédito de R$ 780 realizado APÓS a criação da extensão!
+    assert.strictEqual(
+      isInterCobUnclaimedForReservation(
+        extRes,
+        { status: 'CONCLUIDA', pix: [{ valor: '780.00', endToEndId: 'E_REAL_EXT_780', horario: '2026-11-26T17:35:00.000Z' }] },
+        'TX_REAL_780',
+        780
+      ),
+      true,
+      'Deve aceitar pagamento inédito de R$ 780 realizado após a solicitação da extensão'
+    );
+
+    // 7d) change-payment-method preserva sinal_pago quando há valor já pago e guest-portal reconhece aguardando_pix/aguardando_cartao
+    assert.match(freshServerSrc, /hasPriorPaidForMethod\s*\?\s*"sinal_pago"\s*:\s*"aguardando_pix"/);
+    assert.match(freshServerSrc, /hasPriorPaidForMethod\s*\?\s*"sinal_pago"\s*:\s*"aguardando_cartao"/);
+    assert.match(freshPortalSrc, /reservation\?\.paymentStatus === "aguardando_pix"/);
+    assert.match(freshPortalSrc, /reservation\?\.paymentStatus === "aguardando_cartao"/);
+  });
 });

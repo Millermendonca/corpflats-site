@@ -7124,12 +7124,23 @@ export function reconcileUniversalIntegrity(incomingState = null) {
       const rChanLower = String(r.channel || "").toLowerCase();
       const isB2bRec = rChanLower.includes("b2b") || Boolean(r.agencyId || r.b2bReservationNumber);
       const isOtaRec = rChanLower.includes("booking") || rChanLower.includes("airbnb");
-      const hasOtaPartialExtension = !isB2bRec && (r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial" || r.pendingStayExtension?.status === "pending_payment") && Number(r.paidAmount || 0) > 0 && Number(r.paidAmount || 0) < resTotalAmt - 0.01;
+      const rawRecPaySt = String(r.paymentStatus || "").toLowerCase();
+      if (
+        !isB2bRec &&
+        (rawRecPaySt === "aguardando_pix" || rawRecPaySt === "aguardando_cartao" || rawRecPaySt === "aguardando_pagamento") &&
+        Number(r.paidAmount || 0) > 0.01 &&
+        resTotalAmt > 0 &&
+        Number(r.paidAmount || 0) < resTotalAmt - 0.01
+      ) {
+        r.paymentStatus = "sinal_pago";
+        changed = true;
+      }
+      const hasOtaPartialExtension = !isB2bRec && hasPartialOrExtensionPending(r);
       const isResPaid = !isUnverifiedPreReservation(r) && !hasOtaPartialExtension && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || r.paymentStatus === "paid" || (Number(r.paidAmount) >= resTotalAmt && resTotalAmt > 0));
       const pendingAmt = Math.max(0, Math.round((resTotalAmt - (Number(r.paidAmount) || 0)) * 100) / 100);
       if (!isB2bRec && !isFaturadoBoletoReservation(r) && !(r.packageCode || r.packageId) && (!isOtaRec || hasOtaPartialExtension) && !isResPaid && pendingAmt > 0) {
         if (!r.pixCopiaECola || isPixPayloadStaleForAmount(r, pendingAmt)) {
-          const cleanTxId = String(r.code || `RES${r.id || ""}`).replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+          const cleanTxId = buildReservationStaticPixTxId(r, pendingAmt);
           r.pixTxId = cleanTxId || r.pixTxId;
           r.pixCopiaECola = generateStaticPixPayload({
             pixKey: db.settings?.interConfig?.pixKey || DEFAULT_INTER_CONFIG.pixKey || "47964813000165",
@@ -21475,9 +21486,7 @@ export function diffReservationFields(oldRes, newBody, flatsList = []) {
   const oldChanLower = String(oldRes?.channel || newBody?.channel || "").toLowerCase();
   const isOldOta = (oldChanLower.includes("booking") || oldChanLower.includes("airbnb")) &&
     oldRes?.paymentCollect !== "Property" && !oldRes?.collectAtCheckin;
-  const hasOldPartialPending = (oldRes?.paymentStatus === "sinal_pago" || oldRes?.paymentStatus === "parcial") &&
-    Number(oldRes?.paidAmount) > 0 &&
-    Number(oldRes?.paidAmount) < Number(oldRes?.totalAmount || 0) - 0.01;
+  const hasOldPartialPending = hasPartialOrExtensionPending(oldRes);
   const wasOldEffectivelyPaidTotal =
     (isOldOta && !hasOldPartialPending) ||
     oldRes?.paymentStatus === "pago_total" ||
@@ -40168,7 +40177,7 @@ app.get("/api/pms/calendar", (req, res) => {
 
     const rChanLower = String(r.channel || "").toLowerCase();
     const isOtaRes = rChanLower.includes("booking") || rChanLower.includes("airbnb");
-    const hasPendingPartialExtension = (r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial") && Number(r.paidAmount) > 0 && Number(r.paidAmount) < Number(r.totalAmount || 0) - 0.01;
+    const hasPendingPartialExtension = hasPartialOrExtensionPending(r);
     const isPaid = !hasPendingPartialExtension && (isOtaRes || r.paymentStatus === "pago_total" || r.paymentStatus === "pago");
     const sanitizedPaid = isPaid && Number(r.totalAmount) > 0 ? Number(r.totalAmount) : (Number(r.paidAmount) || 0);
 
@@ -40567,10 +40576,7 @@ app.get("/api/pms/reservations/central", (req, res) => {
         const totalAmount = Math.round((Number(r.totalAmount) || 0) * 100) / 100;
         const adr = nights > 0 ? Math.round((totalAmount / nights) * 100) / 100 : totalAmount;
 
-        const hasPendingPartialExtension =
-          (r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial") &&
-          Number(r.paidAmount) > 0 &&
-          Number(r.paidAmount) < totalAmount - 0.01;
+        const hasPendingPartialExtension = hasPartialOrExtensionPending(r);
         const isFaturado =
           r.paymentMethod === "faturado_b2b" ||
           r.paymentMethod === "boleto_faturado" ||
@@ -45656,9 +45662,8 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   const oldChanLowerInit = String(r.channel || "").toLowerCase();
   const oldIsOtaInit = oldChanLowerInit.includes("booking") || oldChanLowerInit.includes("airbnb");
   const oldWasAlreadyPaid = Boolean(
-    r.paymentStatus === "pago_total" ||
-    r.paymentStatus === "pago" ||
-    (oldIsOtaInit && r.paymentStatus !== "sinal_pago" && r.paymentStatus !== "parcial")
+    !hasPartialOrExtensionPending(r) &&
+    (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || oldIsOtaInit)
   );
   const oldPaidAmount = (oldWasAlreadyPaid && (!r.paidAmount || Number(r.paidAmount) <= 0) && oldTotalAmount > 0)
     ? oldTotalAmount
@@ -46834,7 +46839,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     );
     const alreadyHadPartialExtension = Boolean(
       !isFullyPaidOnPut &&
-      (r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial" || Boolean(priorActiveExt)) &&
+      (hasPartialOrExtensionPending(r) || Boolean(priorActiveExt)) &&
       Number(r.paidAmount || 0) > 0 &&
       Number(r.paidAmount || 0) < currentTot - 0.01 &&
       (hasDirectDailyRateInOta || hasAddedChargesOnOtaPut || addedOtaRatesSum === 0) &&
@@ -47051,7 +47056,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         r.pixCopiaECola = pixResult.pixCopiaECola;
         r.pixChargedAmount = updatedPendingAmt;
       } catch (pixUpdateErr) {
-        const cleanTxId = String(r.code || `RES${r.id}`).replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+        const cleanTxId = buildReservationStaticPixTxId(r, updatedPendingAmt);
         r.pixTxId = cleanTxId;
         r.pixCopiaECola = generateStaticPixPayload({
           pixKey: db.settings?.interConfig?.pixKey || DEFAULT_INTER_CONFIG.pixKey || "47964813000165",
@@ -47065,6 +47070,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       r.mpInitPoint = null;
       r.mpPreferenceId = null;
       r.mpChargedAmount = null;
+      r.mpExternalReference = null;
     } else if (updatedPendingAmt <= 0.01 || r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || isB2bEdit || isFaturadoEdit) {
       if ((isB2bEdit || isFaturadoEdit) && !r.pixEndToEndId) {
         r.pixTxId = null;
@@ -47074,6 +47080,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       r.mpInitPoint = null;
       r.mpPreferenceId = null;
       r.mpChargedAmount = null;
+      r.mpExternalReference = null;
     }
   }
 
@@ -48152,7 +48159,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
           newValue: "Confirmado / Pago (100%)"
         });
       }
-    } else if ((r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial") && pendingAmt > 0) {
+    } else if (hasPartialOrExtensionPending(r) && pendingAmt > 0) {
       const existingPayDiff = diffs.find(d => d.field === "paymentStatus");
       if (existingPayDiff) {
         existingPayDiff.newValue = "Pago Parcialmente (Saldo de diária adicional em aberto)";
@@ -48219,7 +48226,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         guestFacingDiffs.length > 0
       );
       if (preResModified && pendingAmt > 0) {
-        if (r.packageId || r.packageCode) {
+        if ((r.packageId || r.packageCode) && (!r.pendingStayExtension || r.pendingStayExtension.status !== "pending_payment")) {
           console.log(`[WhatsApp Trigger] Pré-reserva de pacote ${r.packageCode || r.packageId} (${r.code}) teve dados atualizados. Sincronizando PIX único e reenviando mensagem consolidada do pacote.`);
           (async () => {
             try {
@@ -49606,13 +49613,22 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const isUnpaidPre = isUnverifiedPreReservation(r) || isExpiredPreRes;
   const rmSummary = r.roomMoveGroupId ? computeRoomMoveConsolidatedSummary(db, r) : null;
   const hasRoomMoveGroup = Boolean(rmSummary && rmSummary.segments.length > 1);
+  const rawPortalPaySt = String(r.paymentStatus || "").toLowerCase();
+  if (
+    !isB2b &&
+    (rawPortalPaySt === "aguardando_pix" || rawPortalPaySt === "aguardando_cartao" || rawPortalPaySt === "aguardando_pagamento") &&
+    Number(r.paidAmount || 0) > 0.01 &&
+    Number(r.totalAmount || 0) > 0 &&
+    Number(r.paidAmount || 0) + 0.01 < Number(r.totalAmount || 0)
+  ) {
+    r.paymentStatus = "sinal_pago";
+    saveDatabase();
+  }
   const hasPartialPendingBalance = Boolean(
     !isB2b &&
     (hasRoomMoveGroup
       ? (rmSummary.paidAmount > 0 && rmSummary.pendingAmount > 0.01)
-      : ((r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial") &&
-         Number(r.paidAmount || 0) > 0 &&
-         Number(r.paidAmount || 0) < Number(r.totalAmount || 0) - 0.01))
+      : hasPartialOrExtensionPending(r))
   );
   let isPaid = !isCancelledRes && !isExpiredPreRes && !isUnpaidPre && !hasPartialPendingBalance && (isOta || (
     isFaturadoPortal
@@ -49633,17 +49649,20 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     : (Math.max(0, Math.round((expectedTotalForPoll - (Number(r.paidAmount) || 0)) * 100) / 100) || expectedTotalForPoll);
   if (!isCancelledRes && !isExpiredPreRes && !isPaid && !isB2b && !isFaturadoPortal && expectedTotalForPoll > 0) {
     const portalPkgSumPre = ((r.packageId || r.packageCode) && !r.pendingStayExtension) ? computePackageSummary(db, r.packageId || r.packageCode, { computeCardAmountFromPix }) : null;
-    const mpRefCode = portalPkgSumPre ? (r.packageCode || r.code) : r.code;
+    const mpRefCode = portalPkgSumPre ? (r.packageCode || r.code) : (r.mpExternalReference || r.code);
     const fallbackExpectedPix = portalPkgSumPre ? portalPkgSumPre.pendingAmount : expectedPendingForPoll;
     const fallbackExpectedCard = portalPkgSumPre ? portalPkgSumPre.cardPendingAmount : computeCardAmountFromPix(expectedPendingForPoll);
-    const effectivePixTxId = r.packagePixTxId || r.pixTxId;
+    const effectivePixTxId = (!portalPkgSumPre && r.pendingStayExtension) ? r.pixTxId : (r.packagePixTxId || r.pixTxId);
     const prefersCard = Boolean(
       req.query?.payment === "success" ||
       /cart[aã]o|card|credito|crédito|debito|débito|mercadopago/i.test(String(r.paymentMethod || ""))
     );
     if (prefersCard) {
       try {
-        const mpPayment = await checkMercadoPagoPaymentByRef(mpRefCode);
+        let mpPayment = await checkMercadoPagoPaymentByRef(mpRefCode, { reservation: portalPkgSumPre ? null : r, expectedAmount: fallbackExpectedCard });
+        if (!mpPayment && !portalPkgSumPre && mpRefCode !== r.code) {
+          mpPayment = await checkMercadoPagoPaymentByRef(r.code, { reservation: r, expectedAmount: fallbackExpectedCard });
+        }
         if (mpPayment && mpPayment.status === "approved") {
           const valorPago = Number(mpPayment.transaction_amount || mpPayment.total_paid_amount || fallbackExpectedCard);
           await confirmReservationPayment(r, {
@@ -49662,7 +49681,10 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     if (!isPaid && effectivePixTxId) {
       try {
         const cobData = await checkInterPixCobStatus(effectivePixTxId);
-        if (cobData && (cobData.status === "CONCLUIDA" || (Array.isArray(cobData.pix) && cobData.pix.length > 0))) {
+        if (portalPkgSumPre
+          ? Boolean(cobData && (cobData.status === "CONCLUIDA" || (Array.isArray(cobData.pix) && cobData.pix.length > 0)))
+          : isInterCobUnclaimedForReservation(r, cobData, effectivePixTxId, fallbackExpectedPix)
+        ) {
           const valorPago = Number(cobData.pix?.[0]?.valor || cobData.valor?.original || fallbackExpectedPix);
           await confirmReservationPayment(r, {
             amount: valorPago,
@@ -49697,7 +49719,10 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     }
     if (!isPaid && !prefersCard) {
       try {
-        const mpPayment = await checkMercadoPagoPaymentByRef(mpRefCode);
+        let mpPayment = await checkMercadoPagoPaymentByRef(mpRefCode, { reservation: portalPkgSumPre ? null : r, expectedAmount: fallbackExpectedCard });
+        if (!mpPayment && !portalPkgSumPre && mpRefCode !== r.code) {
+          mpPayment = await checkMercadoPagoPaymentByRef(r.code, { reservation: r, expectedAmount: fallbackExpectedCard });
+        }
         if (mpPayment && mpPayment.status === "approved") {
           const valorPago = Number(mpPayment.transaction_amount || mpPayment.total_paid_amount || fallbackExpectedCard);
           await confirmReservationPayment(r, {
@@ -89104,7 +89129,11 @@ app.post("/api/pms/inter/create-charge", async (req, res) => {
       } else {
         matchedRes.pixTxId = pixResult.txid;
         matchedRes.pixCopiaECola = pixResult.pixCopiaECola;
-        matchedRes.paymentStatus = "aguardando_pix";
+        const hasPartialPaidOnPixCreate =
+          Number(matchedRes.paidAmount || 0) > 0.01 &&
+          Number(matchedRes.totalAmount || 0) > 0 &&
+          Number(matchedRes.paidAmount || 0) + 0.01 < Number(matchedRes.totalAmount || 0);
+        matchedRes.paymentStatus = hasPartialPaidOnPixCreate ? "sinal_pago" : "aguardando_pix";
       }
       saveDatabase();
     }
@@ -89983,11 +90012,34 @@ async function checkInterPixCobStatus(txid) {
 }
 
 // 6.2.2 Consulta Ativa de Pagamento no Mercado Pago por External Reference
-async function checkMercadoPagoPaymentByRef(externalRef) {
+async function checkMercadoPagoPaymentByRef(externalRef, opts = {}) {
   if (!externalRef) return null;
   const cfg = db.settings?.mercadoPagoConfig || DEFAULT_MP_CONFIG;
   const accessToken = cfg.accessToken || process.env.MERCADOPAGO_ACCESS_TOKEN;
   if (!accessToken) return null;
+
+  const targetRes = opts && opts.reservation && typeof opts.reservation === "object" ? opts.reservation : null;
+  const expectedAmount = Number(opts?.expectedAmount || 0);
+  const claimedMpIds = new Set();
+  if (targetRes) {
+    if (targetRes.mpPaymentId) claimedMpIds.add(String(targetRes.mpPaymentId));
+    if (Array.isArray(targetRes.payments)) {
+      for (const pay of targetRes.payments) {
+        if (!pay) continue;
+        if (pay.mpPaymentId) claimedMpIds.add(String(pay.mpPaymentId));
+        if (pay.txId && /cart[aã]o|card|credito|crédito|mercadopago/i.test(String(pay.method || pay.notes || ""))) {
+          claimedMpIds.add(String(pay.txId));
+        }
+      }
+    }
+  }
+  const extStartMs = (() => {
+    if (!targetRes?.pendingStayExtension || targetRes.pendingStayExtension.status !== "pending_payment") return 0;
+    const rawIso = targetRes.pendingStayExtension.requestedAt || targetRes.pendingStayExtension.createdAt || "";
+    const ms = rawIso ? new Date(rawIso).getTime() : NaN;
+    return Number.isFinite(ms) ? ms : 0;
+  })();
+  const hasPriorPaid = Number(targetRes?.paidAmount || 0) > 0.01;
 
   return new Promise((resolve) => {
     const req = https.request(`https://api.mercadopago.com/v1/payments/search?external_reference=${encodeURIComponent(externalRef)}`, {
@@ -90002,7 +90054,24 @@ async function checkMercadoPagoPaymentByRef(externalRef) {
         try {
           const json = JSON.parse(raw);
           if (json && Array.isArray(json.results) && json.results.length > 0) {
-            const approved = json.results.find(p => p.status === "approved");
+            const approved = json.results.find(p => {
+              if (!p || p.status !== "approved") return false;
+              const pid = String(p.id || "");
+              if (pid && claimedMpIds.has(pid)) return false;
+              if (extStartMs > 0) {
+                const pDateMs = new Date(p.date_approved || p.date_created || "").getTime();
+                if (Number.isFinite(pDateMs) && pDateMs < extStartMs - 120000) {
+                  return false;
+                }
+              }
+              if (hasPriorPaid && expectedAmount > 0) {
+                const pAmt = Number(p.transaction_amount || p.total_paid_amount || 0);
+                if (pAmt > 0 && Math.abs(pAmt - expectedAmount) > Math.max(1.5, expectedAmount * 0.02)) {
+                  return false;
+                }
+              }
+              return true;
+            });
             if (approved) return resolve(approved);
           }
           resolve(null);
@@ -90332,6 +90401,16 @@ async function checkInterBankingExtratoPix(r) {
       ? Math.max(0, Number(pkgSumExtrato.pendingAmount || 0))
       : (hasRmExtrato ? Math.max(0, Number(rmSumExtrato.pendingAmount || 0)) : Math.max(0, expectedAmount - (Number(r.paidAmount) || 0)));
     const pendingAmount = basePendingAmt > 0 ? basePendingAmt : (Number(r.pendingStayExtension?.amount) || 0);
+    const hasPriorPaidExtrato = pkgSumExtrato
+      ? Number(pkgSumExtrato.paidAmount || 0) > 0.01
+      : (hasRmExtrato ? Number(rmSumExtrato.paidAmount || 0) > 0.01 : Number(r.paidAmount || 0) > 0.01);
+    const extStartIsoExtrato = (r.pendingStayExtension && r.pendingStayExtension.status === "pending_payment")
+      ? String(r.pendingStayExtension.requestedAt || r.pendingStayExtension.createdAt || "")
+      : "";
+    const extStartMsExtrato = extStartIsoExtrato ? new Date(extStartIsoExtrato).getTime() : NaN;
+    const extStartDateBrExtrato = Number.isFinite(extStartMsExtrato)
+      ? new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(extStartMsExtrato))
+      : "";
 
     for (const t of data.transacoes) {
       if (t.tipoTransacao !== "PIX" || t.tipoOperacao !== "C") continue;
@@ -90339,6 +90418,20 @@ async function checkInterBankingExtratoPix(r) {
       const txValor = Number(t.valor || 0);
       const txIdFromDetails = String(t.detalhes?.txId || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
       const endToEndId = t.detalhes?.endToEndId || t.idTransacao;
+
+      if (extStartDateBrExtrato) {
+        const rawTxTimeStr = String(t.dataInclusao || t.dataEntrada || t.dataTransacao || "").trim();
+        const txDateIsoOnly = rawTxTimeStr.slice(0, 10);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(txDateIsoOnly) && txDateIsoOnly < extStartDateBrExtrato) {
+          continue;
+        }
+        if (rawTxTimeStr.includes("T") && Number.isFinite(extStartMsExtrato)) {
+          const parsedTxMs = new Date(rawTxTimeStr).getTime();
+          if (Number.isFinite(parsedTxMs) && parsedTxMs < extStartMsExtrato - 120000) {
+            continue;
+          }
+        }
+      }
 
       // Impede re-vincular uma transação já contabilizada na própria reserva (ex: sinal antigo vs diária extra)
       const alreadyClaimedBySelf = Boolean(
@@ -90385,8 +90478,15 @@ async function checkInterBankingExtratoPix(r) {
         )
       );
 
-      // Critério 2: Valor correspondente exato
-      const amountMatched = Math.abs(txValor - expectedAmount) < 0.05 || (pendingAmount > 0 && Math.abs(txValor - pendingAmount) < 0.05);
+      // Critério 2: Valor correspondente exato (quando já há valor pago anteriormente, SÓ aceita o saldo pendente complementar, nunca o total antigo nem o sinal antigo!)
+      const amountMatched = hasPriorPaidExtrato
+        ? (pendingAmount > 0 && Math.abs(txValor - pendingAmount) < 0.50)
+        : (Math.abs(txValor - expectedAmount) < 0.05 || (pendingAmount > 0 && Math.abs(txValor - pendingAmount) < 0.05));
+
+      // Quando já há pagamento prévio na reserva (sinal/estadia inicial), mesmo se o txId bater com o código da reserva, o valor PRECISA bater com o saldo pendente atual!
+      if (hasPriorPaidExtrato && !amountMatched) {
+        continue;
+      }
 
       // Se a transação possui um txId explícito de outra reserva ou pacote, não vincula à reserva errada
       if ((txIdFromDetails.startsWith("RES") || txIdFromDetails.startsWith("PKG")) && !txIdMatched) {
@@ -90624,6 +90724,74 @@ function isConfirmationAlreadyDispatched(r) {
 // Pré-reserva (canal direto) só é considerada paga com evidência real de pagamento (PIX Inter / Mercado Pago).
 function hasRealPaymentEvidence(r) {
   return Boolean(r && (r.pixEndToEndId || r.mpPaymentId || r.paidAt));
+}
+
+function hasPartialOrExtensionPending(r) {
+  if (!r || typeof r !== "object") return false;
+  const tot = Number(r.totalAmount || 0);
+  const paid = Number(r.paidAmount || 0);
+  if (r.pendingStayExtension && r.pendingStayExtension.status === "pending_payment" && tot > 0 && paid + 0.01 < tot) {
+    return true;
+  }
+  const st = String(r.paymentStatus || "").toLowerCase();
+  if (
+    (st === "sinal_pago" || st === "parcial" || st === "pendente" || st === "aguardando_pix" || st === "aguardando_cartao" || st === "aguardando_pagamento") &&
+    paid > 0 &&
+    tot > 0 &&
+    paid + 0.01 < tot
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function buildReservationStaticPixTxId(r, pendingAmt = 0) {
+  const baseCode = String(r?.code || `RES${r?.id || ""}`).replace(/[^a-zA-Z0-9]/g, "");
+  const isExtOrPartial = Boolean(
+    (r?.pendingStayExtension && r.pendingStayExtension.status === "pending_payment") ||
+    (Number(r?.paidAmount || 0) > 0.01 && Number(pendingAmt) > 0.01)
+  );
+  if (isExtOrPartial) {
+    const centsTag = String(Math.max(1, Math.round(Number(pendingAmt || 0)))).slice(0, 6);
+    return `EXT${baseCode.slice(0, 22 - centsTag.length)}${centsTag}`.slice(0, 25);
+  }
+  return baseCode.slice(0, 25);
+}
+
+function isInterCobUnclaimedForReservation(r, cobData, txId, expectedPixAmount = 0) {
+  if (!cobData || !(cobData.status === "CONCLUIDA" || (Array.isArray(cobData.pix) && cobData.pix.length > 0))) {
+    return false;
+  }
+  if (!r || typeof r !== "object") return true;
+  const normA = (v) => String(v || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  const e2e = cobData.pix?.[0]?.endToEndId || "";
+  if (e2e) {
+    if (r.pixEndToEndId && String(r.pixEndToEndId) === String(e2e)) return false;
+    if (Array.isArray(r.payments) && r.payments.some(p => p && p.endToEndId && String(p.endToEndId) === String(e2e))) {
+      return false;
+    }
+  } else if (Number(r.paidAmount || 0) > 0.01 && txId && Array.isArray(r.payments)) {
+    const cleanTx = normA(txId);
+    if (cleanTx && r.payments.some(p => p && p.txId && normA(p.txId) === cleanTx)) {
+      return false;
+    }
+  }
+  if (r.pendingStayExtension && r.pendingStayExtension.status === "pending_payment") {
+    const extStartRaw = r.pendingStayExtension.requestedAt || r.pendingStayExtension.createdAt || "";
+    const extStartMs = extStartRaw ? new Date(extStartRaw).getTime() : NaN;
+    const cobHorario = cobData.pix?.[0]?.horario || "";
+    const cobPaidMs = cobHorario ? new Date(cobHorario).getTime() : NaN;
+    if (Number.isFinite(extStartMs) && Number.isFinite(cobPaidMs) && cobPaidMs < extStartMs - 120000) {
+      return false;
+    }
+  }
+  if (Number(r.paidAmount || 0) > 0.01 && Number(expectedPixAmount) > 0.01) {
+    const cobVal = Number(cobData.pix?.[0]?.valor || cobData.valor?.original || 0);
+    if (cobVal > 0 && Math.abs(cobVal - Number(expectedPixAmount)) > 1.0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function isUnverifiedPreReservation(r) {
@@ -91726,7 +91894,7 @@ async function confirmReservationPayment(r, {
   r.paidAmount = cumulativePaid;
   r.paidAt = paidAt || r.paidAt || new Date().toISOString();
 
-  if (r.pendingStayExtension) {
+  if (r.pendingStayExtension && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago")) {
     r.pendingStayExtension.status = "paid";
     r.pendingStayExtension.paidAt = r.paidAt;
     if (endToEndId) r.pendingStayExtension.pixEndToEndId = endToEndId;
@@ -91959,7 +92127,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
       };
     };
 
-    if (r.packageId || r.packageCode) {
+    if ((r.packageId || r.packageCode) && (!r.pendingStayExtension || r.pendingStayExtension.status !== "pending_payment")) {
       const baseUrlPkg = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
       let pkgSum = computePackageSummary(db, r.packageId || r.packageCode, { baseUrl: baseUrlPkg, computeCardAmountFromPix });
       if (pkgSum && pkgSum.isAllExpired) {
@@ -92132,11 +92300,19 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
     }
     const rmSummaryStatus = r.roomMoveGroupId ? computeRoomMoveConsolidatedSummary(db, r) : null;
     const hasRmGroupStatus = Boolean(rmSummaryStatus && rmSummaryStatus.segments.length > 1);
+    const rawPayStInStatus = String(r.paymentStatus || "").toLowerCase();
+    if (
+      (rawPayStInStatus === "aguardando_pix" || rawPayStInStatus === "aguardando_cartao" || rawPayStInStatus === "aguardando_pagamento") &&
+      Number(r.paidAmount || 0) > 0.01 &&
+      Number(r.totalAmount || 0) > 0 &&
+      Number(r.paidAmount || 0) + 0.01 < Number(r.totalAmount || 0)
+    ) {
+      r.paymentStatus = "sinal_pago";
+      saveDatabase();
+    }
     const hasPendingDirectBalance = hasRmGroupStatus
       ? rmSummaryStatus.pendingAmount > 0.01
-      : ((r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial" || r.paymentStatus === "pendente") &&
-          Number(r.totalAmount) > 0 &&
-          Number(r.paidAmount || 0) + 0.01 < Number(r.totalAmount));
+      : hasPartialOrExtensionPending(r);
 
     // Se já está marcado como pago ou canal OTA sem saldo direto pendente (Booking/Airbnb), retorna de imediato
     if (!isUnverifiedPreReservation(r) && !hasPendingDirectBalance && (isOta || (hasRmGroupStatus ? rmSummaryStatus.isFullyPaid : (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0))))) {
@@ -92178,14 +92354,20 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
       }));
     }
 
+    const expectedPendingInStatus = Math.max(0, Math.round(((Number(r.totalAmount) || 0) - (Number(r.paidAmount) || 0)) * 100) / 100) || Number(r.totalAmount) || 0;
+    const expectedCardPendingInStatus = computeCardAmountFromPix(expectedPendingInStatus);
+    const mpRefInStatus = r.mpExternalReference || r.code;
     const prefersCard = Boolean(
       /cart[aã]o|card|credito|crédito|debito|débito|mercadopago/i.test(String(r.paymentMethod || ""))
     );
 
     if (prefersCard) {
-      const mpPayment = await checkMercadoPagoPaymentByRef(r.code);
+      let mpPayment = await checkMercadoPagoPaymentByRef(mpRefInStatus, { reservation: r, expectedAmount: expectedCardPendingInStatus });
+      if (!mpPayment && mpRefInStatus !== r.code) {
+        mpPayment = await checkMercadoPagoPaymentByRef(r.code, { reservation: r, expectedAmount: expectedCardPendingInStatus });
+      }
       if (mpPayment && mpPayment.status === "approved") {
-        const valorPago = Number(mpPayment.transaction_amount || mpPayment.total_paid_amount || r.totalAmount);
+        const valorPago = Number(mpPayment.transaction_amount || mpPayment.total_paid_amount || expectedCardPendingInStatus);
         await confirmReservationPayment(r, {
           amount: valorPago,
           paidAt: mpPayment.date_approved,
@@ -92212,8 +92394,8 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
     // Se tem txid do Banco Inter, faz consulta ativa em tempo real na API do Banco Inter!
     if (r.pixTxId) {
       const cobData = await checkInterPixCobStatus(r.pixTxId);
-      if (cobData && (cobData.status === "CONCLUIDA" || (Array.isArray(cobData.pix) && cobData.pix.length > 0))) {
-        const valorPago = Number(cobData.pix?.[0]?.valor || cobData.valor?.original || r.totalAmount);
+      if (isInterCobUnclaimedForReservation(r, cobData, r.pixTxId, expectedPendingInStatus)) {
+        const valorPago = Number(cobData.pix?.[0]?.valor || cobData.valor?.original || expectedPendingInStatus);
         await confirmReservationPayment(r, {
           amount: valorPago,
           paidAt: cobData.pix?.[0]?.horario,
@@ -92265,9 +92447,12 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
 
     // Se não liquidou pelo Inter, verifica no Mercado Pago (Cartão de Crédito)
     if (!prefersCard) {
-      const mpPayment = await checkMercadoPagoPaymentByRef(r.code);
+      let mpPayment = await checkMercadoPagoPaymentByRef(mpRefInStatus, { reservation: r, expectedAmount: expectedCardPendingInStatus });
+      if (!mpPayment && mpRefInStatus !== r.code) {
+        mpPayment = await checkMercadoPagoPaymentByRef(r.code, { reservation: r, expectedAmount: expectedCardPendingInStatus });
+      }
       if (mpPayment && mpPayment.status === "approved") {
-        const valorPago = Number(mpPayment.transaction_amount || mpPayment.total_paid_amount || r.totalAmount);
+        const valorPago = Number(mpPayment.transaction_amount || mpPayment.total_paid_amount || expectedCardPendingInStatus);
         await confirmReservationPayment(r, {
           amount: valorPago,
           paidAt: mpPayment.date_approved,
@@ -92296,7 +92481,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
     const cardPendingAmt = computeCardAmountFromPix(pendingAmt);
     let syncedPayloads = false;
     if (pendingAmt > 0 && (!r.pixCopiaECola || isPixPayloadStaleForAmount(r, pendingAmt))) {
-      const cleanTxId = String(r.code || "").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+      const cleanTxId = buildReservationStaticPixTxId(r, pendingAmt);
       r.pixTxId = cleanTxId;
       r.pixCopiaECola = generateStaticPixPayload({
         pixKey: db.settings?.interConfig?.pixKey || DEFAULT_INTER_CONFIG.pixKey || "47964813000165",
@@ -92489,7 +92674,7 @@ app.post("/api/pms/reservations/:code/change-payment-method", async (req, res) =
     }
     ensureReservationCompositeTotal(r);
 
-    const isPaid = r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0);
+    const isPaid = !hasPartialOrExtensionPending(r) && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0));
     if (isPaid) {
       return res.json({
         success: true,
@@ -92501,10 +92686,14 @@ app.post("/api/pms/reservations/:code/change-payment-method", async (req, res) =
 
     const pendingAmt = Math.max(0, (Number(r.totalAmount) || 0) - (Number(r.paidAmount) || 0)) || Number(r.totalAmount) || 0;
     const cardPendingAmt = computeCardAmountFromPix(pendingAmt);
+    const hasPriorPaidForMethod =
+      Number(r.paidAmount || 0) > 0.01 &&
+      Number(r.totalAmount || 0) > 0 &&
+      Number(r.paidAmount || 0) + 0.01 < Number(r.totalAmount || 0);
 
     if (targetMethod === "pix") {
       r.paymentMethod = "pix";
-      r.paymentStatus = "aguardando_pix";
+      r.paymentStatus = hasPriorPaidForMethod ? "sinal_pago" : "aguardando_pix";
 
       // Se ainda não tem PIX emitido ou se o valor pendente mudou
       if (!r.pixCopiaECola || isPixPayloadStaleForAmount(r, pendingAmt)) {
@@ -92519,9 +92708,13 @@ app.post("/api/pms/reservations/:code/change-payment-method", async (req, res) =
           r.pixTxId = pixResult.txid;
           r.pixCopiaECola = pixResult.pixCopiaECola;
           r.pixChargedAmount = pendingAmt;
+          if (r.pendingStayExtension && r.pendingStayExtension.status === "pending_payment") {
+            r.pendingStayExtension.txid = r.pixTxId;
+            r.pendingStayExtension.pixCopiaECola = r.pixCopiaECola;
+          }
         } catch (pixErr) {
           console.warn("[Change Payment Method] Falha Inter, gerando PIX estático:", pixErr.message);
-          const cleanTxId = r.code.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+          const cleanTxId = buildReservationStaticPixTxId(r, pendingAmt);
           const staticPayload = generateStaticPixPayload({
             pixKey: DEFAULT_INTER_CONFIG.pixKey || "47964813000165",
             amount: pendingAmt,
@@ -92532,12 +92725,17 @@ app.post("/api/pms/reservations/:code/change-payment-method", async (req, res) =
           r.pixTxId = cleanTxId;
           r.pixCopiaECola = staticPayload;
           r.pixChargedAmount = pendingAmt;
+          if (r.pendingStayExtension && r.pendingStayExtension.status === "pending_payment") {
+            r.pendingStayExtension.txid = r.pixTxId;
+            r.pendingStayExtension.pixCopiaECola = r.pixCopiaECola;
+          }
         }
       }
 
       saveDatabase();
       return res.json({
         success: true,
+        isPaid: false,
         paymentMethod: "pix",
         pixAmount: pendingAmt,
         cardAmount: cardPendingAmt,
@@ -92549,14 +92747,24 @@ app.post("/api/pms/reservations/:code/change-payment-method", async (req, res) =
     } else {
       // Cartão de Crédito (Mercado Pago - Valor Normal +5%)
       r.paymentMethod = "cartao_credito";
-      r.paymentStatus = "aguardando_cartao";
+      r.paymentStatus = hasPriorPaidForMethod ? "sinal_pago" : "aguardando_cartao";
 
-      const isMpStale = !r.mpInitPoint || !r.mpChargedAmount || Math.abs(Number(r.mpChargedAmount) - cardPendingAmt) > 0.01;
+      const isExtCardCharge = Boolean(hasPriorPaidForMethod || (r.pendingStayExtension && r.pendingStayExtension.status === "pending_payment"));
+      const mpRefCodeForPref = isExtCardCharge
+        ? `EXT-${r.code}-${Math.round(cardPendingAmt * 100)}`
+        : r.code;
+      const isMpStale =
+        !r.mpInitPoint ||
+        !r.mpChargedAmount ||
+        Math.abs(Number(r.mpChargedAmount) - cardPendingAmt) > 0.01 ||
+        (isExtCardCharge && r.mpExternalReference !== mpRefCodeForPref);
       if (isMpStale) {
         try {
-          const nightsCount = Math.max(1, Math.round((new Date(r.checkoutDate).getTime() - new Date(r.checkinDate).getTime()) / (1000 * 60 * 60 * 24)));
+          const nightsCount = isExtCardCharge
+            ? Math.max(1, Number(r.pendingStayExtension?.extraNights) || 1)
+            : Math.max(1, Math.round((new Date(r.checkoutDate).getTime() - new Date(r.checkinDate).getTime()) / (1000 * 60 * 60 * 24)));
           const mpPreference = await createMercadoPagoPreference({
-            reservationCode: r.code,
+            reservationCode: mpRefCodeForPref,
             amount: cardPendingAmt,
             guestName: r.guestName,
             guestEmail: r.guestEmail,
@@ -92566,6 +92774,7 @@ app.post("/api/pms/reservations/:code/change-payment-method", async (req, res) =
           r.mpPreferenceId = mpPreference.id;
           r.mpInitPoint = mpPreference.initPoint;
           r.mpChargedAmount = cardPendingAmt;
+          r.mpExternalReference = mpRefCodeForPref;
         } catch (mpErr) {
           console.error("[Change Payment Method] Erro ao criar preferência Mercado Pago:", mpErr.message);
           return res.status(500).json({ error: `Falha ao gerar link Mercado Pago: ${mpErr.message}` });
@@ -92575,6 +92784,7 @@ app.post("/api/pms/reservations/:code/change-payment-method", async (req, res) =
       saveDatabase();
       return res.json({
         success: true,
+        isPaid: false,
         paymentMethod: "cartao_credito",
         cardAmount: cardPendingAmt,
         pixAmount: pendingAmt,
@@ -92789,7 +92999,7 @@ app.post("/api/pms/mercadopago/create-preference", async (req, res) => {
     let chargeAmount = Number(amount) || 0;
     let effectiveRefCode = reservationCode;
     if (r && !String(reservationCode || "").startsWith("MB-")) {
-      if (r.packageId || r.packageCode) {
+      if ((r.packageId || r.packageCode) && (!r.pendingStayExtension || r.pendingStayExtension.status !== "pending_payment")) {
         const pkgSum = computePackageSummary(db, r.packageId || r.packageCode, { computeCardAmountFromPix });
         if (pkgSum && pkgSum.cardPendingAmount > 0) {
           chargeAmount = pkgSum.cardPendingAmount;
@@ -92815,7 +93025,7 @@ app.post("/api/pms/mercadopago/create-preference", async (req, res) => {
     });
 
     if (r) {
-      if (r.packageId || r.packageCode) {
+      if ((r.packageId || r.packageCode) && (!r.pendingStayExtension || r.pendingStayExtension.status !== "pending_payment")) {
         for (const sib of getPackageReservations(db, r.packageId || r.packageCode)) {
           if (isPackageItemActive(sib)) {
             sib.mpPreferenceId = pref.id;
@@ -92916,11 +93126,15 @@ app.post("/api/pms/mercadopago/webhook", async (req, res) => {
           } else {
             const isModExternalRef = String(resCode || "").toUpperCase().startsWith("MOD-");
             const strippedModCode = isModExternalRef ? String(resCode).replace(/^MOD-/i, "").trim() : resCode;
+            const extRefMatch = /^EXT-(.+)-\d+$/i.exec(String(resCode || "").trim());
+            const strippedExtCode = extRefMatch ? extRefMatch[1] : "";
             const r = isPackageCode(resCode)
               ? getPrimaryPackageReservation(db, resCode)
               : (db.reservations || []).find(resItem =>
                   resItem.code === resCode ||
                   String(resItem.id) === resCode ||
+                  (resItem.mpExternalReference && resItem.mpExternalReference === resCode) ||
+                  (strippedExtCode && (resItem.code === strippedExtCode || String(resItem.id) === strippedExtCode)) ||
                   (isModExternalRef && (
                     resItem.code === strippedModCode ||
                     String(resItem.id) === strippedModCode ||
@@ -98331,7 +98545,7 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
         (x.code && x.code.toUpperCase() === rawCode.toUpperCase()) || 
         String(x.id) === rawCode
       );
-  const pkgCopySummary = r && (r.packageId || r.packageCode)
+  const pkgCopySummary = r && (r.packageId || r.packageCode) && (!r.pendingStayExtension || r.pendingStayExtension.status !== "pending_payment")
     ? computePackageSummary(db, r.packageId || r.packageCode, { computeCardAmountFromPix })
     : null;
 
@@ -98394,7 +98608,7 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
   const totalAmount = pkgCopySummary ? pkgCopySummary.totalAmount : (Number(r?.totalAmount) || 0);
   const paidAmount = pkgCopySummary ? pkgCopySummary.paidAmount : (Number(r?.paidAmount) || 0);
   const isExpiredPreRes = (!isSundayUpsell && Boolean(pkgCopySummary ? pkgCopySummary.isAllExpired : (r && r.status === "expirada"))) || isSundayUpsellExpired;
-  const isAlreadyPaid = isSundayUpsellPaid || (!isSundayUpsell && Boolean(pkgCopySummary ? pkgCopySummary.isPaid : (r && !isExpiredPreRes && !isUnverifiedPreReservation(r) && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (paidAmount >= totalAmount && totalAmount > 0)))));
+  const isAlreadyPaid = isSundayUpsellPaid || (!isSundayUpsell && Boolean(pkgCopySummary ? pkgCopySummary.isPaid : (r && !isExpiredPreRes && !isUnverifiedPreReservation(r) && !hasPartialOrExtensionPending(r) && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (paidAmount >= totalAmount && totalAmount > 0)))));
   const pendingAmount = isSundayUpsell
     ? (Number(r?.pendingSundayUpsell?.promotionalPrice || req.query.amount || 100) || 100)
     : ((isAlreadyPaid || isExpiredPreRes) ? 0 : (pkgCopySummary ? pkgCopySummary.pendingAmount : (Math.max(0, totalAmount - paidAmount) || totalAmount)));
@@ -98409,7 +98623,9 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
     : ((isAlreadyPaid || isExpiredPreRes) ? "" : (pkgCopySummary?.pixCopiaECola || r?.pixCopiaECola || ""));
 
   let formattedHoldExpiry = "";
-  const holdExpRaw = isSundayUpsell ? r?.pendingSundayUpsell?.expiresAt : (pkgCopySummary?.expiresAt || (r && r.status === "pre_reserva" ? r.expiresAt : null));
+  const holdExpRaw = isSundayUpsell
+    ? r?.pendingSundayUpsell?.expiresAt
+    : (pkgCopySummary?.expiresAt || (r && r.status === "pre_reserva" ? r.expiresAt : (r?.pendingStayExtension?.status === "pending_payment" ? r.pendingStayExtension.expiresAt : null)));
   if (holdExpRaw) {
     const expD = new Date(holdExpRaw);
     if (!isNaN(expD.getTime())) {
@@ -98425,7 +98641,7 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
   }
 
   if (pendingAmount > 0 && !isExpiredPreRes && !isAlreadyPaid && (!pixCode || (!isSundayUpsell && !pkgCopySummary && r && isPixPayloadStaleForAmount(r, pendingAmount)))) {
-    const cleanTxId = (rawCode || "").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+    const cleanTxId = r ? buildReservationStaticPixTxId(r, pendingAmount) : (rawCode || "").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
     pixCode = generateStaticPixPayload({
       pixKey: db.settings?.interConfig?.pixKey || db.settings?.pixKey || "47964813000165",
       amount: pendingAmount,
