@@ -16218,6 +16218,10 @@ export function reconcileAndMergeGuests(database, force = false) {
 
   // 1. Deduplica a base de hóspedes existente (filtrando cadastros fantasmas, de teste, internos e LIDs do WhatsApp)
   const deduplicated = [];
+  let runningSeedMaxId = currentDb.guests.reduce((mx, item) => {
+    const n = Number(item?.id);
+    return !isNaN(n) && n > mx ? n : mx;
+  }, 0);
   for (const g of currentDb.guests) {
     if (!g || isDeleted(g)) continue;
     const gRawName = g.fullName || g.name || "";
@@ -16230,7 +16234,12 @@ export function reconcileAndMergeGuests(database, force = false) {
 
     const existing = findMatchingGuest(g, deduplicated);
     if (!existing) {
-      deduplicated.push({ ...g });
+      const cloned = { ...g };
+      if (!cloned.id || isNaN(Number(cloned.id))) {
+        runningSeedMaxId += 1;
+        cloned.id = runningSeedMaxId;
+      }
+      deduplicated.push(cloned);
     } else {
       mergeGuestRecords(existing, g);
     }
@@ -16323,13 +16332,14 @@ export function reconcileAndMergeGuests(database, force = false) {
 
     if (Array.isArray(r.guests)) {
       for (const rg of r.guests) {
-        if (!rg || !rg.name || rg.name.startsWith("Hóspede ")) continue;
-        if (isPlaceholderOrEmptyGuestName(rg.name) || isForbiddenTestOrInternalGuestName(rg.name)) continue;
+        const rgRawName = String(rg?.name || rg?.fullName || "").trim();
+        if (!rg || !rgRawName || rgRawName.startsWith("Hóspede ")) continue;
+        if (isPlaceholderOrEmptyGuestName(rgRawName) || isForbiddenTestOrInternalGuestName(rgRawName)) continue;
         if (isInternalOrForbiddenGuestPhone(rg.phone)) rg.phone = "";
         const slotCand = {
           guestId: rg.guestId,
-          name: rg.name,
-          fullName: rg.name,
+          name: rgRawName,
+          fullName: rg.fullName || rgRawName,
           document: rg.cpf || rg.document,
           phone: rg.phone,
           email: rg.email,
@@ -16366,7 +16376,7 @@ export function reconcileAndMergeGuests(database, force = false) {
             id: nextId,
             guestCode: `HOSP-${String(nextId).padStart(5, "0")}`,
             name: slotCand.name,
-            fullName: slotCand.name,
+            fullName: slotCand.fullName || slotCand.name,
             createdAt: new Date().toISOString()
           };
           deduplicated.push(slotMatch);
@@ -16378,6 +16388,72 @@ export function reconcileAndMergeGuests(database, force = false) {
           rg.guestCode = slotMatch.guestCode;
         }
       }
+    }
+
+    // Reconcilia acompanhantes legados salvos diretamente nos campos planos da reserva (guest2Name / guest3Name)
+    for (const compIdx of [2, 3]) {
+      const flatCompName = String(compIdx === 2 ? (r.guest2Name || "") : (r.guest3Name || "")).trim();
+      if (!flatCompName || flatCompName.startsWith("Hóspede ")) continue;
+      if (isPlaceholderOrEmptyGuestName(flatCompName) || isForbiddenTestOrInternalGuestName(flatCompName)) continue;
+      const alreadyInSlots = Array.isArray(r.guests) && r.guests.some(rg => rg && areGuestNamesCompatible(rg.name || rg.fullName, flatCompName));
+      if (alreadyInSlots) continue;
+      const flatCompDoc = compIdx === 2 ? (r.guest2Document || r.guest2Cpf || "") : (r.guest3Document || r.guest3Cpf || "");
+      const flatCompPhoneRaw = compIdx === 2 ? (r.guest2Phone || "") : (r.guest3Phone || "");
+      const flatCompPhone = isInternalOrForbiddenGuestPhone(flatCompPhoneRaw) ? "" : flatCompPhoneRaw;
+      const flatCompEmail = compIdx === 2 ? (r.guest2Email || "") : (r.guest3Email || "");
+      const flatCompCand = {
+        guestId: compIdx === 2 ? r.guest2Id : r.guest3Id,
+        name: flatCompName,
+        fullName: flatCompName,
+        document: flatCompDoc,
+        phone: flatCompPhone,
+        email: flatCompEmail
+      };
+      if (isDeleted(flatCompCand)) continue;
+      let flatCompMatch = findMatchingGuest(flatCompCand, deduplicated);
+      if (!flatCompMatch) {
+        const nextId = deduplicated.length > 0 ? Math.max(...deduplicated.map(x => Number(x.id) || 0)) + 1 : 1;
+        flatCompMatch = {
+          id: nextId,
+          guestCode: `HOSP-${String(nextId).padStart(5, "0")}`,
+          name: flatCompName,
+          fullName: flatCompName,
+          createdAt: r.createdAt || new Date().toISOString()
+        };
+        deduplicated.push(flatCompMatch);
+      }
+      if (flatCompMatch) {
+        mergeGuestRecords(flatCompMatch, flatCompCand);
+        if (compIdx === 2) r.guest2Id = flatCompMatch.id;
+        else r.guest3Id = flatCompMatch.id;
+      }
+    }
+
+    // Caso r.guestName contenha nomes compostos (ex: "João Silva / Fabrícia Rodrigues"), garante cadastro individual de cada hóspede
+    const compositeParts = splitCompositeGuestNames(rGuestCand.name);
+    if (compositeParts.length > 1) {
+      const compIds = [];
+      for (const part of compositeParts) {
+        const cleanPart = String(part || "").trim();
+        if (!cleanPart || isPlaceholderOrEmptyGuestName(cleanPart) || isForbiddenTestOrInternalGuestName(cleanPart)) continue;
+        if (cleanPart.split(/\s+/).filter(Boolean).length < 2) continue;
+        const partCand = { name: cleanPart, fullName: cleanPart };
+        if (isDeleted(partCand)) continue;
+        let partMatch = findMatchingGuest(partCand, deduplicated);
+        if (!partMatch) {
+          const nextId = deduplicated.length > 0 ? Math.max(...deduplicated.map(x => Number(x.id) || 0)) + 1 : 1;
+          partMatch = {
+            id: nextId,
+            guestCode: `HOSP-${String(nextId).padStart(5, "0")}`,
+            name: cleanPart,
+            fullName: cleanPart,
+            createdAt: r.createdAt || new Date().toISOString()
+          };
+          deduplicated.push(partMatch);
+        }
+        if (partMatch?.id) compIds.push(Number(partMatch.id));
+      }
+      if (compIds.length > 0) r.compositeGuestIds = compIds;
     }
   }
 
@@ -16620,6 +16696,13 @@ export function reconcileAndMergeGuests(database, force = false) {
   for (const r of (currentDb.reservations || [])) {
     if (!r) continue;
     if (r.guestId) activeLinkedGuestIds.add(Number(r.guestId));
+    if (r.guest2Id) activeLinkedGuestIds.add(Number(r.guest2Id));
+    if (r.guest3Id) activeLinkedGuestIds.add(Number(r.guest3Id));
+    if (Array.isArray(r.compositeGuestIds)) {
+      for (const cid of r.compositeGuestIds) {
+        if (cid) activeLinkedGuestIds.add(Number(cid));
+      }
+    }
     if (Array.isArray(r.guests)) {
       for (const rg of r.guests) {
         if (rg?.guestId) activeLinkedGuestIds.add(Number(rg.guestId));
@@ -16765,6 +16848,17 @@ export function reconcileAndMergeGuests(database, force = false) {
   }
   if (typeof isGuestReconciliationDirty !== "undefined") isGuestReconciliationDirty = false;
   if (typeof lastGuestReconcileTimestamp !== "undefined") lastGuestReconcileTimestamp = Date.now();
+  if (currentDb) currentDb._guestReconcileNeeded = false;
+  if (typeof db !== "undefined" && currentDb === db) {
+    cachedGuestIndexes = null;
+    cachedGuestSource = null;
+    cachedGuestLength = -1;
+    cachedGuestTimestamp = 0;
+    cachedEnrichedGuests = null;
+    cachedEnrichedGuestsSource = null;
+    cachedEnrichedGuestsLength = -1;
+    cachedEnrichedGuestsTimestamp = 0;
+  }
   return didHeal;
 }
 
@@ -20003,6 +20097,7 @@ let cachedFlatsLength = -1;
 let cachedFlatsTimestamp = 0;
 
 export function invalidateGuestCache() {
+  if (typeof isGuestReconciliationDirty !== "undefined") isGuestReconciliationDirty = true;
   cachedGuestIndexes = null;
   cachedGuestSource = null;
   cachedGuestLength = -1;
@@ -21476,6 +21571,38 @@ export function diffReservationFields(oldRes, newBody, flatsList = []) {
     }
   }
 
+  // Detalhamento de taxas / adicionais (charges / cleaningFee)
+  const oldChargesArr = Array.isArray(oldRes.charges) ? oldRes.charges : [];
+  const newChargesArr = Array.isArray(newBody.charges) ? newBody.charges : null;
+  if (newChargesArr !== null) {
+    const summarizeCharges = (arr) =>
+      arr
+        .filter(c => c && Math.abs(Number(c.amount) || 0) > 0.009)
+        .map(c => `${c.title || (c.type === "cleaning" ? "Taxa de Limpeza" : "Taxa")}: R$ ${Number(c.amount || 0).toFixed(2).replace(".", ",")}`)
+        .join(", ");
+    const oldChSumm = summarizeCharges(oldChargesArr);
+    const newChSumm = summarizeCharges(newChargesArr);
+    if (oldChSumm !== newChSumm && (oldChSumm || newChSumm)) {
+      changes.push({
+        field: "charges",
+        label: "Taxas e Adicionais",
+        oldValue: oldChSumm || "Nenhuma",
+        newValue: newChSumm || "Nenhuma"
+      });
+    }
+  } else if (newBody.cleaningFee !== undefined) {
+    const oldCf = Number(oldRes.cleaningFee) || 0;
+    const newCf = Number(newBody.cleaningFee) || 0;
+    if (Math.abs(oldCf - newCf) > 0.01) {
+      changes.push({
+        field: "cleaningFee",
+        label: "Taxa de Limpeza",
+        oldValue: oldCf > 0 ? `R$ ${oldCf.toFixed(2).replace(".", ",")}` : "Isento",
+        newValue: newCf > 0 ? `R$ ${newCf.toFixed(2).replace(".", ",")}` : "Isento"
+      });
+    }
+  }
+
   // Detalhamento de pagamentos efetuados (payments)
   if (Array.isArray(newBody.payments)) {
     const oldPayments = Array.isArray(oldRes.payments) ? oldRes.payments : [];
@@ -21505,6 +21632,8 @@ export const GUEST_FACING_RESERVATION_FIELDS = new Set([
   "guestCount",
   "adults",
   "children",
+  "charges",
+  "cleaningFee",
   "totalAmount",
   "paidAmount",
   "paymentStatus",
@@ -40268,6 +40397,10 @@ app.get("/api/pms/calendar", (req, res) => {
     })
     .slice(0, 50);
 
+  if (!isLiteMode && !isSyncMode && (isGuestReconciliationDirty || db._guestReconcileNeeded)) {
+    try { reconcileAndMergeGuests(db, true); } catch (_) {}
+  }
+
   res.json({
     startDate: start,
     endDate: end,
@@ -44454,7 +44587,7 @@ app.post("/api/pms/reservations", async (req, res) => {
       console.warn("[PMS Reservation] Aviso ao agendar régua inicial de WhatsApp:", schedErr?.message || schedErr);
     }
     try {
-      reconcileAndMergeGuests(db);
+      reconcileAndMergeGuests(db, true);
       const syncedMainGuest = (db.guests || []).find(g => Number(g.id) === Number(newReservation.guestId));
       if (syncedMainGuest) triggerAutoGoogleContactSync(db, syncedMainGuest);
     } catch (_) {}
@@ -46378,7 +46511,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       const fallbackRate = (netAvgFromOldRates > 0 && rawDailyRate === oldTotalAmount && extraChargesSum > 0)
         ? netAvgFromOldRates
         : (rawDailyRate || netAvgFromOldRates || netOldTotalPerNight || 250);
-      const defaultChannel = r.channel || "whatsapp";
+      const defaultChannel = oldIsOtaInit ? "whatsapp" : (r.channel || "whatsapp");
       for (let i = 0; i < nights; i++) {
         const curDate = new Date(d1.getTime() + i * 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
         const exist = existingMap.get(curDate);
@@ -46386,10 +46519,12 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
           newRates.push(exist);
         } else {
           const prev = newRates.length > 0 ? newRates[newRates.length - 1] : null;
+          const prevChLow = String(prev?.channel || "").toLowerCase();
+          const prevIsOta = prevChLow.includes("booking") || prevChLow.includes("airbnb");
           newRates.push({
             date: curDate,
             rate: prev && Number(prev.rate) > 0 ? Number(prev.rate) : fallbackRate,
-            channel: prev && prev.channel ? prev.channel : defaultChannel
+            channel: prev && prev.channel && !(oldIsOtaInit && prevIsOta) ? prev.channel : defaultChannel
           });
         }
       }
@@ -46680,25 +46815,29 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   if (putIsOta) {
     const otaMethod = putChanLower.includes("booking") ? "booking" : "airbnb";
     const explicitPartialStatus = req.body.paymentStatus === "sinal_pago" || req.body.paymentStatus === "parcial";
-    const explicitPartialPaidAmt = req.body.paidAmount !== undefined && Number(req.body.paidAmount) > 0 && Number(req.body.paidAmount) < currentTot - 0.01 && (hasDirectDailyRateInOta || explicitPartialStatus || addedOtaRatesSum === 0);
-    const explicitPartialPaymentsList = explicitPaymentsSumOnPut !== null && explicitPaymentsSumOnPut > 0 && explicitPaymentsSumOnPut < currentTot - 0.01 && (hasDirectDailyRateInOta || explicitPartialStatus || (currentTot > oldTotalAmount + 0.01 && addedOtaRatesSum === 0));
+    const explicitExtHoldRequested = String(req.body.extensionHoldMode || "").trim().toLowerCase() === "pre_reserva";
+    const oldChargesSumOnPut = oldChargesBeforeEdit.length > 0
+      ? oldChargesBeforeEdit.reduce((acc, c) => acc + (Number(c?.amount) || 0), 0)
+      : oldCleaningFeeBeforeEdit;
+    const hasAddedChargesOnOtaPut = extraChargesSum > oldChargesSumOnPut + 0.01;
+    const explicitPartialPaidAmt = req.body.paidAmount !== undefined && Number(req.body.paidAmount) > 0 && Number(req.body.paidAmount) < currentTot - 0.01 && (hasDirectDailyRateInOta || hasAddedChargesOnOtaPut || explicitExtHoldRequested || explicitPartialStatus || addedOtaRatesSum === 0);
+    const explicitPartialPaymentsList = explicitPaymentsSumOnPut !== null && explicitPaymentsSumOnPut > 0 && explicitPaymentsSumOnPut < currentTot - 0.01 && (hasDirectDailyRateInOta || hasAddedChargesOnOtaPut || explicitExtHoldRequested || explicitPartialStatus || (currentTot > oldTotalAmount + 0.01 && addedOtaRatesSum === 0));
     const extendedStayWithoutFullPayment = Boolean(
       !isFullyPaidOnPut &&
-      nightsChangedOnEdit &&
-      newNightsCount > oldNightsCount &&
       oldPaidAmount > 0 &&
       currentTot > oldPaidAmount + addedOtaRatesSum + 0.01 &&
-      (hasDirectDailyRateInOta || addedDirectRatesSum > 0 || (!Array.isArray(req.body.dailyRates) && explicitPartialStatus)) &&
+      ((nightsChangedOnEdit && newNightsCount > oldNightsCount) || hasAddedChargesOnOtaPut || explicitExtHoldRequested) &&
+      (hasDirectDailyRateInOta || addedDirectRatesSum > 0 || hasAddedChargesOnOtaPut || explicitExtHoldRequested || (!Array.isArray(req.body.dailyRates) && explicitPartialStatus)) &&
       req.body.paymentStatus !== "pago_total" &&
       (req.body.paidAmount === undefined || Number(req.body.paidAmount) <= oldPaidAmount + addedOtaRatesSum + 0.01) &&
       (explicitPaymentsSumOnPut === null || explicitPaymentsSumOnPut <= oldPaidAmount + addedOtaRatesSum + 0.01)
     );
     const alreadyHadPartialExtension = Boolean(
       !isFullyPaidOnPut &&
-      (r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial") &&
+      (r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial" || Boolean(priorActiveExt)) &&
       Number(r.paidAmount || 0) > 0 &&
       Number(r.paidAmount || 0) < currentTot - 0.01 &&
-      (hasDirectDailyRateInOta || addedOtaRatesSum === 0) &&
+      (hasDirectDailyRateInOta || hasAddedChargesOnOtaPut || addedOtaRatesSum === 0) &&
       req.body.paymentStatus !== "pago_total"
     );
 
@@ -46872,7 +47011,14 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     const isFaturadoEdit = isFaturadoBoletoReservation(r);
     const allowPixGenerationOnEdit = !isB2bEdit && !isFaturadoEdit && (!isOtaEdit || hasOtaPartialPendingExtension);
 
-    if ((r.packageId || r.packageCode) && allowPixGenerationOnEdit && r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago") {
+    const isIndividualFlatExtensionOnEdit = Boolean(
+      priorActiveExt ||
+      r.pendingStayExtension?.status === "pending_payment" ||
+      req.body.extensionHoldMode !== undefined ||
+      (updatedPaidAmt > 0 && updatedPendingAmt > 0 && (r.checkoutDate > oldCheckout || (r.previousCheckoutDate && r.checkoutDate > r.previousCheckoutDate)))
+    );
+
+    if ((r.packageId || r.packageCode) && !isIndividualFlatExtensionOnEdit && allowPixGenerationOnEdit && r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago") {
       await syncPackagePixAndPaymentLinks(db, r.packageId || r.packageCode, {
         createInterPixCob,
         generateStaticPixPayload,
@@ -47826,25 +47972,56 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     const paidAmt = Number(r.paidAmount) || 0;
     const pendingAmt = Math.max(0, Math.round((totalAmt - paidAmt) * 100) / 100);
 
-    // Preserva linha de base original paga caso já houvesse pendingStayExtension ativo (ex.: ao alterar prazo ou adicionar mais 1 diária)
-    const baselineOldCheckin = priorActiveExt?.oldCheckinDate || oldCheckin;
-    const baselineOldCheckout = priorActiveExt?.oldCheckoutDate || oldCheckout;
+    // Preserva linha de base original paga caso já houvesse pendingStayExtension ativo (ou extensão prévia já gravada com saldo em aberto)
+    const hasInferredPrevExtension = Boolean(
+      !priorActiveExt &&
+      r.previousCheckoutDate &&
+      r.checkoutDate &&
+      r.checkoutDate > r.previousCheckoutDate &&
+      oldCheckout === r.checkoutDate &&
+      paidAmt > 0 &&
+      pendingAmt > 0.01
+    );
+    const baselineOldCheckin = priorActiveExt?.oldCheckinDate || (hasInferredPrevExtension ? (r.previousCheckinDate || oldCheckin) : oldCheckin);
+    const baselineOldCheckout = priorActiveExt?.oldCheckoutDate || (hasInferredPrevExtension ? r.previousCheckoutDate : oldCheckout);
     const baselineOldDailyRates = (Array.isArray(priorActiveExt?.oldDailyRates) && priorActiveExt.oldDailyRates.length > 0)
       ? priorActiveExt.oldDailyRates
-      : oldDailyRatesBeforeEdit;
+      : (hasInferredPrevExtension && oldDailyRatesBeforeEdit.length > 0
+          ? oldDailyRatesBeforeEdit.filter(d => d && d.date && d.date >= baselineOldCheckin && d.date < baselineOldCheckout)
+          : oldDailyRatesBeforeEdit);
     const baselineOldCharges = Array.isArray(priorActiveExt?.oldCharges)
       ? priorActiveExt.oldCharges
-      : oldChargesBeforeEdit;
+      : (hasInferredPrevExtension
+          ? (() => {
+              const baseRatesSumInf = baselineOldDailyRates.reduce((acc, d) => acc + (Number(d?.rate ?? d?.amount) || 0), 0);
+              const maxPaidChargesAmt = Math.max(0, Math.round((paidAmt - baseRatesSumInf) * 100) / 100);
+              if (maxPaidChargesAmt <= 0.01) return [];
+              const kept = [];
+              let accKept = 0;
+              for (const oc of oldChargesBeforeEdit) {
+                const cAmt = Number(oc?.amount) || 0;
+                if (cAmt > 0 && accKept + cAmt <= maxPaidChargesAmt + 0.02) {
+                  kept.push({ ...oc });
+                  accKept += cAmt;
+                }
+              }
+              return kept;
+            })()
+          : oldChargesBeforeEdit);
     const baselineOldCleaningFee = priorActiveExt?.oldCleaningFee !== undefined
       ? Number(priorActiveExt.oldCleaningFee)
-      : oldCleaningFeeBeforeEdit;
+      : (hasInferredPrevExtension
+          ? baselineOldCharges
+              .filter(c => c && (c.type === "cleaning" || /limpeza/i.test(String(c.title || ""))))
+              .reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+          : oldCleaningFeeBeforeEdit);
     const baselineOldTotal = priorActiveExt?.oldTotalAmount !== undefined
       ? Number(priorActiveExt.oldTotalAmount)
-      : oldTotalAmount;
+      : (hasInferredPrevExtension ? paidAmt : oldTotalAmount);
     const baselineOldPaid = priorActiveExt?.oldPaidAmount !== undefined
       ? Number(priorActiveExt.oldPaidAmount)
-      : oldPaidAmount;
-    const baselineOldPaymentStatus = priorActiveExt?.oldPaymentStatus || oldPaymentStatusNormalized;
+      : (hasInferredPrevExtension ? paidAmt : oldPaidAmount);
+    const baselineOldPaymentStatus = priorActiveExt?.oldPaymentStatus || (hasInferredPrevExtension ? "pago_total" : oldPaymentStatusNormalized);
 
     const baselineDatesSet = new Set();
     if (baselineOldDailyRates.length > 0) {
@@ -48130,10 +48307,12 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     } else if ((hasActiveOrNewExtraNightsWithPending || hadCheckoutExtensionWithPending || hadPendingIncrease) && !isPreReservationBlocked(r)) {
       const requestedExtHoldMode = String(req.body.extensionHoldMode || "").trim().toLowerCase();
       let useExtensionPreResHold = false;
-      if (hasActiveOrNewExtraNightsWithPending) {
-        if (requestedExtHoldMode === "confirmada_sem_prazo" || req.body.confirmExtensionWithoutHold === true) {
-          useExtensionPreResHold = false;
-        } else if (
+      if (requestedExtHoldMode === "confirmada_sem_prazo" || req.body.confirmExtensionWithoutHold === true) {
+        useExtensionPreResHold = false;
+      } else if (requestedExtHoldMode === "pre_reserva") {
+        useExtensionPreResHold = true;
+      } else if (hasActiveOrNewExtraNightsWithPending || Boolean(priorActiveExt?.isPreReservationHold)) {
+        if (
           priorActiveExt &&
           priorActiveExt.isPreReservationHold === false &&
           !requestedExtHoldMode &&
@@ -48236,6 +48415,79 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         }
       }
 
+      const addedRatesTotalVsBaseline = Math.round(
+        addedDailyRatesVsBaseline.reduce((acc, d) => acc + (Number(d?.rate ?? d?.amount) || 0), 0) * 100
+      ) / 100;
+      const baselineChargeById = new Map();
+      baselineOldCharges.forEach((oc, idx) => {
+        if (!oc) return;
+        const cid = oc.id ? String(oc.id) : `idx_${idx}`;
+        baselineChargeById.set(cid, Number(oc.amount) || 0);
+      });
+      const addedChargesVsBaseline = [];
+      if (Array.isArray(r.charges)) {
+        r.charges.forEach((cc, idx) => {
+          if (!cc) return;
+          const cid = cc.id ? String(cc.id) : `cur_${idx}`;
+          const curAmt = Number(cc.amount) || 0;
+          if (baselineChargeById.has(cid)) {
+            const oldAmt = baselineChargeById.get(cid) || 0;
+            const deltaAmt = Math.round((curAmt - oldAmt) * 100) / 100;
+            if (Math.abs(deltaAmt) > 0.01) {
+              addedChargesVsBaseline.push({
+                id: cid,
+                type: cc.type || "other",
+                title: cc.title || (cc.type === "cleaning" ? "Taxa de Limpeza" : "Taxa Adicional"),
+                amount: deltaAmt
+              });
+            }
+          } else if (Math.abs(curAmt) > 0.01) {
+            addedChargesVsBaseline.push({
+              id: cid,
+              type: cc.type || "other",
+              title: cc.title || (cc.type === "cleaning" ? "Taxa de Limpeza" : "Taxa Adicional"),
+              amount: curAmt
+            });
+          }
+        });
+      }
+      const baselineOldChargesSum = Math.round(
+        (baselineOldCharges.length > 0
+          ? baselineOldCharges.reduce((acc, c) => acc + (Number(c?.amount) || 0), 0)
+          : (Number(baselineOldCleaningFee) || 0)) * 100
+      ) / 100;
+      const currentChargesSumNow = Math.round(
+        (Array.isArray(r.charges) && r.charges.length > 0
+          ? r.charges.reduce((acc, c) => acc + (Number(c?.amount) || 0), 0)
+          : (Number(r.cleaningFee) || 0)) * 100
+      ) / 100;
+      const addedChargesTotalVsBaseline = Math.round((currentChargesSumNow - baselineOldChargesSum) * 100) / 100;
+      const addedCleaningFeeVsBaseline = Math.max(
+        0,
+        Math.round(((Number(r.cleaningFee) || 0) - (Number(baselineOldCleaningFee) || 0)) * 100) / 100
+      );
+
+      const baselineSnapshotForDiffs = {
+        ...oldResSnapshot,
+        checkinDate: baselineOldCheckin,
+        checkoutDate: baselineOldCheckout || oldResSnapshot.checkoutDate,
+        dailyRates: baselineOldDailyRates,
+        charges: baselineOldCharges,
+        cleaningFee: baselineOldCleaningFee,
+        totalAmount: baselineOldTotal,
+        paidAmount: baselineOldPaid,
+        paymentStatus: baselineOldPaymentStatus
+      };
+      const baselineDiffsAll = diffReservationFields(baselineSnapshotForDiffs, {
+        ...normalizedDiffPayload,
+        charges: r.charges,
+        cleaningFee: r.cleaningFee
+      }, db.flats || []);
+      const baselineGuestDiffs = filterGuestFacingDiffs(baselineDiffsAll);
+      const effectiveExtensionChanges = baselineGuestDiffs.length > 0
+        ? baselineGuestDiffs
+        : (guestFacingDiffs.length > 0 ? guestFacingDiffs : (baselineDiffsAll.length > 0 ? baselineDiffsAll : diffs));
+
       r.pendingStayExtension = {
         txid: r.pixTxId || null,
         pixCopiaECola: r.pixCopiaECola || "",
@@ -48247,6 +48499,10 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
               : 1),
         addedDates: addedDatesVsBaseline,
         addedDailyRates: addedDailyRatesVsBaseline.map(d => ({ ...d })),
+        addedRatesTotal: addedRatesTotalVsBaseline,
+        addedCharges: addedChargesVsBaseline,
+        addedChargesTotal: addedChargesTotalVsBaseline,
+        addedCleaningFee: addedCleaningFeeVsBaseline,
         oldCheckinDate: baselineOldCheckin,
         oldCheckoutDate: baselineOldCheckout || r.previousCheckoutDate || r.checkinDate,
         newCheckinDate: r.checkinDate,
@@ -48275,8 +48531,8 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
           ? Boolean(priorActiveExt?.requiresDeferredReSignature ?? hadCheckinBeforeEdit)
           : false,
         fnrhAlreadyInvalidated: !shouldDeferFnrhInvalidation && Boolean(priorActiveExt?.fnrhAlreadyInvalidated || isDatesOrFlatChanged),
-        changes: (guestFacingDiffs.length > 0 ? guestFacingDiffs : diffs).length > 0
-          ? (guestFacingDiffs.length > 0 ? guestFacingDiffs : diffs)
+        changes: effectiveExtensionChanges.length > 0
+          ? effectiveExtensionChanges
           : (priorActiveExt?.changes || []),
         requestedAt: priorActiveExt?.requestedAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -48314,6 +48570,11 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         }
       }
 
+      const recipsForExtTok = getReservationRecipients(r, db);
+      if (recipsForExtTok.requester?.isDifferentFromGuest) {
+        ensureLocalRequesterPortalToken(db, r);
+      }
+
       saveDatabase();
 
       const shouldSendExtensionPendingWa = Boolean(
@@ -48323,16 +48584,15 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         Math.abs(pendingAmt - oldPendingAmount) > 0.01 ||
         Math.abs(totalAmt - oldTotalAmount) > 0.01 ||
         wasGuestPhoneJustAdded ||
-        (priorActiveExt.isPreReservationHold !== useExtensionPreResHold)
+        (priorActiveExt.isPreReservationHold !== useExtensionPreResHold) ||
+        req.body.extensionHoldMode !== undefined
       );
 
       if (shouldSendExtensionPendingWa) {
         console.log(`[WhatsApp Trigger] Extensão de diárias ou saldo pendente (${useExtensionPreResHold ? `Pré-Reserva até ${extHoldInfo?.expiresAt}` : "Sem prazo"}) na reserva ${r.code}. Disparando additional_daily_pending.`);
         const resvWithPendingChanges = {
           ...r,
-          _changesContext: (guestFacingDiffs.length > 0 ? guestFacingDiffs : diffs).length > 0
-            ? (guestFacingDiffs.length > 0 ? guestFacingDiffs : diffs)
-            : (r.pendingStayExtension?.changes || [])
+          _changesContext: r.pendingStayExtension.changes || []
         };
         triggerImmediateWhatsApp(db, saveDatabase, "additional_daily_pending", resvWithPendingChanges, editBaseUrl).catch(err => {
           console.warn("[WhatsApp Trigger] Erro ao disparar additional_daily_pending:", err.message);
@@ -48524,7 +48784,8 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       }
     }
     try {
-      reconcileAndMergeGuests(db);
+      invalidateGuestCache();
+      reconcileAndMergeGuests(db, true);
       const syncedMainGuest = (db.guests || []).find(g => Number(g.id) === Number(r.guestId));
       if (syncedMainGuest) triggerAutoGoogleContactSync(db, syncedMainGuest);
     } catch (_) {}
@@ -49367,10 +49628,12 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
 
   // Se a reserva ainda não consta como paga e NÃO está cancelada nem expirada (e não é B2B nem Boleto Faturado a prazo), verifica ativamente no Mercado Pago / Extrato do Banco Inter
   const expectedTotalForPoll = hasRoomMoveGroup ? Number(rmSummary.totalAmount || 0) : Number(r.totalAmount || 0);
-  const expectedPendingForPoll = hasRoomMoveGroup ? Number(rmSummary.pendingAmount || 0) : expectedTotalForPoll;
+  const expectedPendingForPoll = hasRoomMoveGroup
+    ? Number(rmSummary.pendingAmount || 0)
+    : (Math.max(0, Math.round((expectedTotalForPoll - (Number(r.paidAmount) || 0)) * 100) / 100) || expectedTotalForPoll);
   if (!isCancelledRes && !isExpiredPreRes && !isPaid && !isB2b && !isFaturadoPortal && expectedTotalForPoll > 0) {
-    const portalPkgSumPre = (r.packageId || r.packageCode) ? computePackageSummary(db, r.packageId || r.packageCode, { computeCardAmountFromPix }) : null;
-    const mpRefCode = r.packageCode || r.code;
+    const portalPkgSumPre = ((r.packageId || r.packageCode) && !r.pendingStayExtension) ? computePackageSummary(db, r.packageId || r.packageCode, { computeCardAmountFromPix }) : null;
+    const mpRefCode = portalPkgSumPre ? (r.packageCode || r.code) : r.code;
     const fallbackExpectedPix = portalPkgSumPre ? portalPkgSumPre.pendingAmount : expectedPendingForPoll;
     const fallbackExpectedCard = portalPkgSumPre ? portalPkgSumPre.cardPendingAmount : computeCardAmountFromPix(expectedPendingForPoll);
     const effectivePixTxId = r.packagePixTxId || r.pixTxId;
@@ -49508,7 +49771,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
 
   // Se pertence a um pacote multi-flat, sincroniza o PIX único pelo saldo do pacote (nunca sobrescreve pelo valor de 1 único flat!)
   let pkgPortalSummary = null;
-  if (hasPkgPortal) {
+  if (hasPkgPortal && !(r.pendingStayExtension && r.pendingStayExtension.status === "pending_payment")) {
     if (!isCancelledRes && !isExpiredPreRes && !isPaid && !isB2b && !isFaturadoPortal) {
       pkgPortalSummary = await syncPackagePixAndPaymentLinks(db, r.packageId || r.packageCode, {
         baseUrl: portalBaseUrl,
@@ -51559,6 +51822,8 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
     }
 
     r.guestPhoneUpdatedAt = new Date().toISOString();
+    invalidateGuestCache();
+    try { reconcileAndMergeGuests(db, true); } catch (_) {}
     saveDatabase("b2b_agency_guest_credential_completed");
 
     try {
@@ -55458,8 +55723,15 @@ function formatPhoneDisplay(phone) {
   return String(phone);
 }
 
-async function notifyLostItemGuest({ item, db, saveDatabase, bypassTestMode = false }) {
+async function notifyLostItemGuest({ item, photoBase64 = "", db, saveDatabase, bypassTestMode = false }) {
   if (!item) return { success: false, reason: "invalid_item" };
+
+  const customTpl = (db?.whatsappTemplates || []).find(
+    t => t && (t.id === "tpl_lost_item_registered" || t.triggerEvent === "lost_item_registered")
+  );
+  if (customTpl && customTpl.enabled === false && !bypassTestMode) {
+    return { success: false, reason: "template_disabled" };
+  }
 
   // 1. Identifica ou recupera o telefone do hóspede
   let guestPhone = item.lastGuestPhone;
@@ -55538,31 +55810,33 @@ async function notifyLostItemGuest({ item, db, saveDatabase, bypassTestMode = fa
     ? item.lastGuestName.split(" ")[0]
     : "Hóspede";
 
-  // 3. Monta a mensagem para o cliente
+  const hotelName = db?.settings?.hotelName || db?.siteConfig?.branding?.hotelName || "CorpFlats Soho Residence";
+
+  // 3. Monta a mensagem limpa (sem links poluindo o texto; a foto real vai no cabeçalho da msg e o contato da camareira vai no botão interativo)
   let msg = `Olá, *${guestFirstName}*! Tudo bem?\n\n` +
-    `A equipe de governança do *CorpFlats Soho Residence* identificou que foi esquecido um objeto no *Flat ${item.flatNumber}*` +
+    `A equipe de governança do *${hotelName}* identificou que foi esquecido um objeto no *Flat ${item.flatNumber}*` +
     `${item.locationInRoom ? ` (${item.locationInRoom})` : ""} após o seu check-out.\n\n` +
     `📦 *Item encontrado:* ${item.description}\n`;
 
-  if (item.photoUrl && (item.photoUrl.startsWith("http://") || item.photoUrl.startsWith("https://"))) {
-    msg += `📸 *Foto do item:* ${item.photoUrl}\n`;
-  }
-
   const buttons = [];
+  let webFallbackMsg = msg;
 
   if (cleanMaidPhone) {
     const cleanMaidWa = cleanMaidPhone.startsWith("55") ? cleanMaidPhone : `55${cleanMaidPhone}`;
-    const maidWaLink = `https://wa.me/${cleanMaidWa}?text=${encodeURIComponent(`Olá, ${maidName}! Sou ${guestFirstName} do Flat ${item.flatNumber}. Gostaria de combinar a retirada do meu item (${item.description}) esquecido no quarto.`)}`;
-    msg += `\n👩‍💼 *Encontrado e guardado por:* ${maidName}\n` +
-      `📱 *WhatsApp da Camareira:* ${formattedMaidPhone || cleanMaidPhone}\n` +
-      `💬 *Link direto:* ${maidWaLink}\n\n` +
-      `Por favor, entre em contato diretamente com a *${maidName}* pelo WhatsApp acima para combinar a retirada ou envio do seu objeto! ✨`;
+    const maidFirstName = maidName.trim().split(/\s+/)[0] || "Camareira";
+    const maidWaLink = `https://wa.me/${cleanMaidWa}?text=${encodeURIComponent(`Olá, ${maidFirstName}! Sou ${guestFirstName} do Flat ${item.flatNumber}. Gostaria de combinar a retirada do meu item (${item.description}) esquecido no quarto.`)}`;
+    msg += `👩‍💼 *Encontrado e guardado por:* ${maidName}\n\n` +
+      `Toque no botão abaixo para falar diretamente com *${maidFirstName}* no WhatsApp e combinar a retirada ou o envio do seu objeto! ✨`;
+
+    webFallbackMsg += `👩‍💼 *Encontrado e guardado por:* ${maidName}\n` +
+      `📱 *WhatsApp da Camareira:* ${formattedMaidPhone || cleanMaidPhone}\n\n` +
+      `Você pode falar diretamente com *${maidFirstName}* pelo número acima para combinar a retirada ou o envio do seu objeto! ✨`;
 
     buttons.push({
       id: "btn_contact_maid",
       type: "URL",
-      label: `Falar com ${maidName.split(" ")[0]}`,
-      url: `https://wa.me/${cleanMaidWa}`
+      label: `💬 Falar com ${maidFirstName}`.substring(0, 25),
+      url: maidWaLink
     });
   } else {
     const rawAdmin = db.settings?.receptionPhone || db.settings?.receptionWhatsApp || db.siteConfig?.branding?.whatsapp || db.settings?.adminWhatsApp || "5522997124021";
@@ -55570,27 +55844,39 @@ async function notifyLostItemGuest({ item, db, saveDatabase, bypassTestMode = fa
     const cleanAdminWa = cleanAdmin.startsWith("55") ? cleanAdmin : `55${cleanAdmin}`;
     const formattedAdmin = formatPhoneDisplay(rawAdmin);
     const adminWaLink = `https://wa.me/${cleanAdminWa}?text=${encodeURIComponent(`Olá! Sou ${guestFirstName} do Flat ${item.flatNumber}. Gostaria de informações sobre meu item (${item.description}) esquecido no quarto.`)}`;
-    msg += `\n👩‍💼 *Encontrado por:* ${maidName}\n` +
-      `📱 *WhatsApp da Governança / Recepção:* ${formattedAdmin || rawAdmin}\n` +
-      `💬 *Link direto:* ${adminWaLink}\n\n` +
-      `Por favor, entre em contato com a nossa equipe pelo WhatsApp acima para combinar a retirada do seu objeto! ✨`;
+    msg += `👩‍💼 *Encontrado por:* ${maidName}\n\n` +
+      `Toque no botão abaixo para falar com a nossa equipe no WhatsApp e combinar a retirada ou o envio do seu objeto! ✨`;
+
+    webFallbackMsg += `👩‍💼 *Encontrado por:* ${maidName}\n` +
+      `📱 *WhatsApp da Governança / Recepção:* ${formattedAdmin || rawAdmin}\n\n` +
+      `Entre em contato com a nossa equipe para combinar a retirada ou o envio do seu objeto! ✨`;
 
     buttons.push({
       id: "btn_contact_reception",
       type: "URL",
-      label: "Falar com Recepção",
-      url: `https://wa.me/${cleanAdminWa}`
+      label: "💬 Falar com Recepção",
+      url: adminWaLink
     });
   }
 
-  // 4. Disparo oficial via Z-API
+  const footerText = customTpl?.footer !== undefined ? customTpl.footer : "CorpFlats • Governança & Hospitalidade";
+  const itemImage = item.photoUrl || "";
+  const itemImageBase64 = (photoBase64 && typeof photoBase64 === "string" && photoBase64.startsWith("data:image/"))
+    ? photoBase64
+    : (typeof itemImage === "string" && itemImage.startsWith("data:image/") ? itemImage : "");
+
+  // 4. Disparo oficial via Z-API (foto real embutida na mensagem + botão interativo)
   let waResult = { success: true, simulated: true };
   try {
     if (typeof sendZapiMessage === "function") {
       waResult = await sendZapiMessage(db.zapiConfig, {
         phone: cleanGuestPhone,
         message: msg,
+        footer: footerText,
         buttons,
+        sendMode: "buttons",
+        image: itemImage,
+        imageBase64: itemImageBase64,
         channelId: "stay_operations",
         recipientRole: "guest",
         triggerEvent: "lost_item_registered",
@@ -55613,6 +55899,7 @@ async function notifyLostItemGuest({ item, db, saveDatabase, bypassTestMode = fa
     lostItemId: item.id,
     triggerEvent: "lost_item_registered",
     message: msg,
+    mediaUrl: itemImage || null,
     buttons,
     status: waResult.success ? "sent" : (waResult.blockedByTestMode ? "blocked_sandbox" : "failed"),
     method: waResult.simulated ? "mock" : (waResult.method || "api"),
@@ -55628,9 +55915,12 @@ async function notifyLostItemGuest({ item, db, saveDatabase, bypassTestMode = fa
       senderPhone: db?.zapiConfig?.instanceId || "",
       fromMe: true,
       text: msg,
-      type: "text",
+      type: (itemImage || itemImageBase64) ? "image" : "text",
+      mediaUrl: itemImage || itemImageBase64 || null,
+      buttons,
       triggerEvent: "lost_item_registered",
-      status: waResult.success ? "delivered" : "failed"
+      status: waResult.success ? "delivered" : "failed",
+      messageId: waResult.messageId || undefined
     });
   }
 
@@ -55644,7 +55934,7 @@ async function notifyLostItemGuest({ item, db, saveDatabase, bypassTestMode = fa
   if (saveDatabase) saveDatabase();
 
   const cleanWaTarget = cleanGuestPhone;
-  const whatsappUrl = `https://wa.me/${cleanWaTarget}?text=${encodeURIComponent(msg)}`;
+  const whatsappUrl = `https://wa.me/${cleanWaTarget}?text=${encodeURIComponent(webFallbackMsg)}`;
 
   return {
     success: waResult.success,
@@ -55652,6 +55942,8 @@ async function notifyLostItemGuest({ item, db, saveDatabase, bypassTestMode = fa
     whatsappUrl,
     result: waResult,
     message: msg,
+    buttons,
+    hasImage: Boolean(itemImage || itemImageBase64),
     recipient: cleanGuestPhone
   };
 }
@@ -55906,8 +56198,8 @@ app.post("/api/lost-and-found", async (req, res) => {
       targetUrl: "/achados-perdidos"
     });
 
-    // 7. Notificação Automática no WhatsApp do Cliente com Contato da Camareira
-    const notifyResult = await notifyLostItemGuest({ item: newItem, db, saveDatabase });
+    // 7. Notificação Automática no WhatsApp do Cliente com Foto Real + Botão da Camareira
+    const notifyResult = await notifyLostItemGuest({ item: newItem, photoBase64, db, saveDatabase });
     console.log(`[Lost and Found] Notificação WhatsApp para item #${newItem.id}:`, notifyResult.success ? "Enviada" : (notifyResult.reason || notifyResult.result?.error));
 
     res.status(201).json(newItem);
@@ -55962,7 +56254,7 @@ app.patch("/api/lost-and-found/:id", async (req, res) => {
   saveDatabase();
 
   if (req.body.notifyGuest === true) {
-    await notifyLostItemGuest({ item, db, saveDatabase, bypassTestMode: true });
+    await notifyLostItemGuest({ item, photoBase64: req.body.photoBase64 || "", db, saveDatabase, bypassTestMode: true });
   }
 
   logAuditEvent({
@@ -56840,7 +57132,14 @@ app.get("/api/pms/guests", (req, res) => {
   if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "reception" && userAuth.role !== "recepcao")) {
     return res.status(403).json({ error: "Acesso negado. Apenas administradores e recepção têm acesso à base de hóspedes." });
   }
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   if (!db.guests) db.guests = [];
+  const hasUnlinkedResGuest = Array.isArray(db.reservations) && db.reservations.some(
+    r => r && !r.guestId && r.guestName && !isPlaceholderOrEmptyGuestName(r.guestName) && !isForbiddenTestOrInternalGuestName(r.guestName)
+  );
+  if (isGuestReconciliationDirty || db._guestReconcileNeeded || hasUnlinkedResGuest) {
+    try { reconcileAndMergeGuests(db, true); } catch (_) {}
+  }
   const now = Date.now();
   if (
     cachedEnrichedGuests &&
@@ -56849,11 +57148,6 @@ app.get("/api/pms/guests", (req, res) => {
     now - cachedEnrichedGuestsTimestamp < 15000
   ) {
     return res.json(cachedEnrichedGuests);
-  }
-  if (isGuestReconciliationDirty && (now - lastGuestReconcileTimestamp >= GUEST_RECONCILE_COOLDOWN_MS)) {
-    setImmediate(() => {
-      try { reconcileAndMergeGuests(db); } catch (_) {}
-    });
   }
   const reservations = db.reservations || [];
   const invoices = db.invoices || [];
@@ -60040,11 +60334,13 @@ app.post("/api/pms/guests", async (req, res) => {
     preferences: preferences || {},
     tags: tags || [],
     defaultBoletoConsumptionMode: "not_billed",
+    createdManually: true,
     createdAt: new Date().toISOString()
   };
   applyCrmBillingConfigFields(newGuest, req.body);
   db.guests.unshift(newGuest);
   syncBidirectionalGuestProfile(db, newGuest, { ...req.body, guestId: newGuest.id });
+  invalidateGuestCache();
   saveDatabase();
   res.status(201).json(newGuest);
 });
@@ -66734,6 +67030,59 @@ app.post("/api/pms/pre-checkin/:code/whatsapp-otp", async (req, res) => {
           db
         });
       }
+
+      if (sendResult?.success) {
+        const otpButtonsLog = [
+          {
+            id: "btn_otp_copy",
+            type: "COPY",
+            label: "📋 Copiar Código",
+            copyCode: otpCode
+          },
+          {
+            id: "btn_otp_confirm",
+            type: "URL",
+            label: "✅ Preencher na Tela",
+            url: confirmTapUrl
+          }
+        ];
+        const otpSentIso = new Date().toISOString();
+        if (!Array.isArray(db.whatsappHistory)) db.whatsappHistory = [];
+        db.whatsappHistory.push({
+          id: `otp_hist_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          reservationCode: r.code || code,
+          reservationId: r.id || null,
+          title: "Check-in Digital • Código de Segurança (OTP)",
+          guestName: r.guestName || guestName,
+          guestPhone: cleanPhone,
+          recipientType: Number(guestIndex) > 1 ? `guest_${guestIndex}` : "guest",
+          recipientName: req.body.fullName || targetGuest?.name || r.guestName || guestName,
+          triggerEvent: "whatsapp_otp",
+          message: otpMessage,
+          buttons: otpButtonsLog,
+          documentUrl: null,
+          documentName: null,
+          status: "sent",
+          method: sendResult.method || "button_actions_otp",
+          error: null,
+          sentAt: otpSentIso
+        });
+        appendMessageToConversation(db, {
+          phone: cleanPhone,
+          senderName: "CorpFlats",
+          senderPhone: db?.zapiConfig?.instanceId || "",
+          fromMe: true,
+          text: otpMessage,
+          type: "text",
+          buttons: otpButtonsLog,
+          triggerEvent: "whatsapp_otp",
+          reservationCode: r.code || code,
+          status: "read",
+          timestamp: otpSentIso,
+          messageId: sendResult.messageId || `msg_otp_${Date.now()}`
+        });
+        saveDatabase("manual_otp");
+      }
     } catch (err) {
       console.warn("[WhatsApp OTP] Erro no envio Z-API:", err.message);
       sendResult = { success: true, simulated: true, warning: err.message };
@@ -67927,7 +68276,8 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     } catch (_) {}
   }
 
-  reconcileAndMergeGuests(db);
+  reconcileAndMergeGuests(db, true);
+  invalidateGuestCache();
   saveDatabase();
 
   res.json({
@@ -88530,6 +88880,8 @@ app.post("/api/pms/reservations/:code/guest-data", (req, res) => {
       }
     }
 
+    invalidateGuestCache();
+    try { reconcileAndMergeGuests(db, true); } catch (_) {}
     saveDatabase();
 
     res.json({

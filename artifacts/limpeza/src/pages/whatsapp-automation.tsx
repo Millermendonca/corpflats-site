@@ -6615,12 +6615,20 @@ export default function WhatsappAutomation() {
                           
                           {(() => {
                             const tplTrigger = String(currentTemplate?.triggerEvent || "").toLowerCase()
+                            if (tplTrigger === "lost_item_registered") {
+                              return (
+                                <div className="mb-2 -mx-1 -mt-1 rounded-xl overflow-hidden border border-emerald-500/20 bg-neutral-900/90 text-white p-4 flex flex-col items-center justify-center gap-1 text-center">
+                                  <span className="text-lg">📸</span>
+                                  <span className="text-[11px] font-bold">Foto Real do Objeto Encontrado</span>
+                                  <span className="text-[9px] text-neutral-300">Enviada diretamente na mensagem do WhatsApp</span>
+                                </div>
+                              )
+                            }
                             if (
                               tplTrigger === "nps_approved" ||
                               tplTrigger === "reservation_cancelled" ||
                               tplTrigger === "pre_reservation_expired" ||
                               tplTrigger === "additional_daily_expired" ||
-                              tplTrigger === "lost_item_registered" ||
                               tplTrigger === "nps_satisfaction_check" ||
                               tplTrigger.startsWith("nps_score_") ||
                               tplTrigger === "nps_feedback_thanks" ||

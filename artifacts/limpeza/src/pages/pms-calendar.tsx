@@ -93,6 +93,11 @@ import {
   validateSimplifiedReservationSubmit,
   shouldKeepPhoneOnCrmUnlink,
 } from "@/lib/simplified-reservation-helpers"
+import {
+  buildIndexedCrmGuests,
+  searchIndexedCrmList,
+  getBestCrmGuestDisplayName,
+} from "@/lib/crm-guest-search"
 
 const DEFAULT_CLIENT_PAYMENT_METHODS: PaymentMethod[] = [
   { id: "booking", name: "Booking.com", gatewayFeeRate: 0, commissionRate: 0, active: true, isSystem: true },
@@ -144,12 +149,12 @@ const MemoCrmGuestSelect = memo(function MemoCrmGuestSelect({
       guests.map((g: any) =>
         compact ? (
           <SelectItem key={g.id} value={String(g.id)} className="text-xs">
-            {g.name || g.fullName}
+            {getBestCrmGuestDisplayName(g)}
             {g.phone ? ` • ${g.phone}` : ""}
           </SelectItem>
         ) : (
           <SelectItem key={g.id} value={String(g.id)}>
-            <span className="font-semibold">{g.name || g.fullName}</span>
+            <span className="font-semibold">{getBestCrmGuestDisplayName(g)}</span>
             {g.documentNumber || g.document ? ` • CPF: ${g.documentNumber || g.document}` : ""}
             {g.phone ? ` • Tel: ${g.phone}` : ""}
             {g.companyName ? ` • (${g.companyName})` : ""}
@@ -346,7 +351,7 @@ const CrmGuestFieldsBlock = memo(function CrmGuestFieldsBlock({
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="text-xs font-bold text-foreground truncate">
-                          {g.name || g.fullName}
+                          {getBestCrmGuestDisplayName(g)}
                         </div>
                         <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
                           {g.documentNumber || g.document ? <span>CPF: {g.documentNumber || g.document}</span> : null}
@@ -714,7 +719,8 @@ export function buildReservationDailyRates(
   checkoutStr: string,
   defaultRate: number,
   defaultChannel: string,
-  existingRates: DailyRateItem[] = []
+  existingRates: DailyRateItem[] = [],
+  options?: { newDatesChannel?: string }
 ): DailyRateItem[] {
   if (!checkinStr || !checkoutStr) return [];
   try {
@@ -749,6 +755,8 @@ export function buildReservationDailyRates(
       });
     }
 
+    const normDefaultChan = normalizeCalendarChannel(defaultChannel);
+    const explicitNewChan = options?.newDatesChannel ? normalizeCalendarChannel(options.newDatesChannel) : "";
     const result: DailyRateItem[] = [];
     for (let i = 0; i < nights; i++) {
       const dateStr = format(addDays(d1, i), "yyyy-MM-dd");
@@ -764,10 +772,16 @@ export function buildReservationDailyRates(
         });
       } else {
         const prev = result.length > 0 ? result[result.length - 1] : null;
+        const prevNormChan = prev?.channel ? normalizeCalendarChannel(prev.channel) : "";
+        const resolvedNewChan = explicitNewChan
+          ? explicitNewChan
+          : ((prevNormChan === "booking" || prevNormChan === "airbnb") && normDefaultChan && normDefaultChan !== prevNormChan
+              ? normDefaultChan
+              : normalizeCalendarChannel(prev && prev.channel ? prev.channel : defaultChannel));
         result.push({
           date: dateStr,
           rate: prev && Number(prev.rate) >= 0 ? Number(prev.rate) : defaultRate,
-          channel: normalizeCalendarChannel(prev && prev.channel ? prev.channel : defaultChannel)
+          channel: resolvedNewChan
         });
       }
     }
@@ -3225,6 +3239,82 @@ export default function PmsCalendar(props?: {
   const [isReactivatingExt, setIsReactivatingExt] = useState(false)
   const [cancellingPendingExt, setCancellingPendingExt] = useState(false)
 
+  const getSelectedResExtensionBaseline = (resObj: any, liveTotals?: { paid?: number; total?: number }) => {
+    if (!resObj) {
+      return {
+        baseCin: "",
+        baseCout: "",
+        baseDailyRates: [] as any[],
+        baseCharges: [] as any[],
+        baseTotal: 0,
+        basePaid: 0,
+        hasActivePendingExt: false
+      }
+    }
+    const activeExt = resObj.pendingStayExtension?.status === "pending_payment" ? resObj.pendingStayExtension : null
+    if (activeExt) {
+      return {
+        baseCin: activeExt.oldCheckinDate || resObj.checkinDate || "",
+        baseCout: activeExt.oldCheckoutDate || resObj.previousCheckoutDate || resObj.checkoutDate || "",
+        baseDailyRates: Array.isArray(activeExt.oldDailyRates) && activeExt.oldDailyRates.length > 0
+          ? activeExt.oldDailyRates
+          : (Array.isArray(resObj.dailyRates)
+              ? resObj.dailyRates.filter((d: any) => d?.date && d.date < (activeExt.oldCheckoutDate || resObj.checkoutDate))
+              : []),
+        baseCharges: Array.isArray(activeExt.oldCharges) ? activeExt.oldCharges : [],
+        baseTotal: activeExt.oldTotalAmount !== undefined ? Number(activeExt.oldTotalAmount) || 0 : Number(resObj.paidAmount || 0),
+        basePaid: activeExt.oldPaidAmount !== undefined ? Number(activeExt.oldPaidAmount) || 0 : Number(resObj.paidAmount || 0),
+        hasActivePendingExt: true
+      }
+    }
+    const resPaid = Number(resObj.paidAmount || 0)
+    const resTot = Number(resObj.totalAmount || 0)
+    const effectivePaid = liveTotals?.paid !== undefined ? Number(liveTotals.paid) || 0 : resPaid
+    const effectiveTot = liveTotals?.total !== undefined ? Number(liveTotals.total) || 0 : resTot
+    const hasPartialPendingNow = (resPaid > 0 && resPaid < resTot - 0.01) || (effectivePaid > 0 && effectivePaid < effectiveTot - 0.01)
+    if (
+      resObj.previousCheckoutDate &&
+      resObj.checkoutDate &&
+      resObj.checkoutDate > resObj.previousCheckoutDate &&
+      hasPartialPendingNow
+    ) {
+      const pCin = resObj.previousCheckinDate || resObj.checkinDate || ""
+      const pCout = resObj.previousCheckoutDate
+      const baseDailyRatesInf = Array.isArray(resObj.dailyRates)
+        ? resObj.dailyRates.filter((d: any) => d?.date && d.date >= pCin && d.date < pCout)
+        : []
+      const baseRatesSumInf = baseDailyRatesInf.reduce((acc: number, d: any) => acc + (Number(d?.rate ?? d?.amount) || 0), 0)
+      const maxPaidChargesInf = Math.max(0, Math.round((effectivePaid - baseRatesSumInf) * 100) / 100)
+      const keptChargesInf: any[] = []
+      let accKeptInf = 0
+      for (const oc of (Array.isArray(resObj.charges) ? resObj.charges : [])) {
+        const cAmt = Number(oc?.amount) || 0
+        if (cAmt > 0 && accKeptInf + cAmt <= maxPaidChargesInf + 0.02) {
+          keptChargesInf.push(oc)
+          accKeptInf += cAmt
+        }
+      }
+      return {
+        baseCin: pCin,
+        baseCout: pCout,
+        baseDailyRates: baseDailyRatesInf,
+        baseCharges: keptChargesInf,
+        baseTotal: effectivePaid,
+        basePaid: effectivePaid,
+        hasActivePendingExt: false
+      }
+    }
+    return {
+      baseCin: resObj.checkinDate || "",
+      baseCout: resObj.checkoutDate || "",
+      baseDailyRates: Array.isArray(resObj.dailyRates) ? resObj.dailyRates : [],
+      baseCharges: Array.isArray(resObj.charges) ? resObj.charges : [],
+      baseTotal: resTot,
+      basePaid: resPaid,
+      hasActivePendingExt: false
+    }
+  }
+
   const getDefaultHoldPresetForCheckin = (cinStr: string): "2h" | "until_2359" => {
     const todayS = format(new Date(), "yyyy-MM-dd")
     return cinStr && cinStr > todayS ? "until_2359" : "2h"
@@ -3265,14 +3355,9 @@ export default function PmsCalendar(props?: {
   useEffect(() => {
     if (!formHoldManuallyChosen) {
       if (selectedRes && formStatus !== "pre_reserva") {
-        const baseCout = selectedRes.pendingStayExtension?.isPreReservationHold
-          ? (selectedRes.pendingStayExtension.oldCheckoutDate || selectedRes.checkoutDate)
-          : selectedRes.checkoutDate
-        const baseCin = selectedRes.pendingStayExtension?.isPreReservationHold
-          ? (selectedRes.pendingStayExtension.oldCheckinDate || selectedRes.checkinDate)
-          : selectedRes.checkinDate
+        const { baseCin, baseCout } = getSelectedResExtensionBaseline(selectedRes)
         const extStart = formCheckin < baseCin ? formCheckin : baseCout
-        if (formCheckout > baseCout || formCheckin < baseCin) {
+        if ((baseCout && formCheckout > baseCout) || (baseCin && formCheckin < baseCin)) {
           setFormHoldPreset(getDefaultHoldPresetForExtension(extStart))
           return
         }
@@ -3865,7 +3950,7 @@ export default function PmsCalendar(props?: {
   useEffect(() => {
     if (!resModalOpen) return
     const now = Date.now()
-    if (now - lastModalAuxFetchRef.current > 60000) {
+    if (crmGuests.length === 0 || now - lastModalAuxFetchRef.current > 15000) {
       lastModalAuxFetchRef.current = now
       fetchCrmGuests()
       fetchCompanies()
@@ -5648,7 +5733,7 @@ export default function PmsCalendar(props?: {
 
   const fetchCrmGuests = async () => {
     try {
-      const res = await fetch("/api/pms/guests", { credentials: "include" })
+      const res = await fetch(`/api/pms/guests?_t=${Date.now()}`, { cache: "no-store", credentials: "include" })
       const json = await res.json()
       if (Array.isArray(json)) setCrmGuests(json)
     } catch {}
@@ -6922,12 +7007,15 @@ export default function PmsCalendar(props?: {
     const isGatewayPaid = Boolean(resItem.pixEndToEndId || resItem.mpPaymentId || (!isFatResEarly && resItem.paidAt));
     const isUnpaidPreReserva = (resItem.status === "pre_reserva" && !isOtaRes && !isGatewayPaid) ||
       (isFatResEarly && !isGatewayPaid && !hasNonSyntheticFaturadoPay);
+    const hasActivePendingExtOnOpen = Boolean(resItem.pendingStayExtension?.status === "pending_payment");
     const hasOtaPartialExtension = isOtaRes && (
+      hasActivePendingExtOnOpen ||
       resItem.paymentStatus === "sinal_pago" ||
       resItem.paymentStatus === "parcial" ||
-      (Array.isArray(resItem.dailyRates) && resItem.dailyRates.some((d: any) => d.channel && d.channel !== "booking" && d.channel !== "airbnb" && d.channel !== "b2b") && Number(resItem.paidAmount || 0) > 0 && Number(resItem.paidAmount || 0) < Number(resItem.totalAmount) - 0.01)
+      (Number(resItem.paidAmount || 0) > 0 && Number(resItem.paidAmount || 0) < Number(resItem.totalAmount) - 0.01) ||
+      (Array.isArray(resItem.dailyRates) && resItem.dailyRates.some((d: any) => d.channel && d.channel !== "booking" && d.channel !== "airbnb" && d.channel !== "b2b") && Number(resItem.paidAmount || 0) < Number(resItem.totalAmount) - 0.01)
     );
-    const hasPendingBalance = hasOtaPartialExtension || (!isOtaRes && Number(resItem.totalAmount) > 0 && Number(resItem.paidAmount || 0) < Number(resItem.totalAmount) && resItem.paymentStatus !== "pago_total" && resItem.paymentStatus !== "pago");
+    const hasPendingBalance = hasActivePendingExtOnOpen || hasOtaPartialExtension || (!isOtaRes && Number(resItem.totalAmount) > 0 && Number(resItem.paidAmount || 0) < Number(resItem.totalAmount) - 0.01 && resItem.paymentStatus !== "pago_total" && resItem.paymentStatus !== "pago");
     const isResCurrentlyPaid = !isUnpaidPreReserva && !hasPendingBalance && (
       isOtaRes ||
       isGatewayPaid ||
@@ -7006,7 +7094,7 @@ export default function PmsCalendar(props?: {
     const initialChargesSum = loadedCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
     const baseDailyRate = avgFromExistingRates > 0
       ? avgFromExistingRates
-      : (Number(resItem.dailyRate || 0) || (nights > 0 && Number(resItem.totalAmount) > 0 ? Math.round(Math.max(0, Number(resItem.totalAmount) - initialChargesSum) / nights) : 250));
+      : (Number(resItem.dailyRate || 0) || (nights > 0 && Number(resItem.totalAmount) > 0 ? Math.round((Math.max(0, Number(resItem.totalAmount) - initialChargesSum) / nights) * 100) / 100 : 250));
     const loadedDailyRates = buildReservationDailyRates(
       resItem.checkinDate,
       resItem.checkoutDate,
@@ -7726,7 +7814,13 @@ export default function PmsCalendar(props?: {
         (targetIdx === 0 && selectedRes?.guestName && (g.name || g.fullName || "").trim().toLowerCase() === selectedRes.guestName.trim().toLowerCase())
       )
     const crmCpf = (g.documentNumber || g.document || g.cpf || "").trim()
-    const crmPhone = (g.phone || "").trim()
+    const crmPhone = (
+      g.phone ||
+      g.whatsapp ||
+      g.phoneNumber ||
+      (Array.isArray(g.additionalPhones) && g.additionalPhones[0] ? g.additionalPhones[0] : "") ||
+      ""
+    ).trim()
     const crmEmail = (g.email || "").trim()
     const crmFullName = pickBestCompatibleGuestNameUI(g.fullName, g.name)
     const nextGuestObj: FlatGuestFormFields = {
@@ -7945,37 +8039,13 @@ export default function PmsCalendar(props?: {
   }
 
   const indexedCrmGuests = useMemo(
-    () =>
-      crmGuests.map(g => ({
-        raw: g,
-        nameLower: String(g.name || g.fullName || "").toLowerCase(),
-        docDigits: String(g.documentNumber || g.document || "").replace(/\D/g, ""),
-        phoneDigits: String(g.phone || "").replace(/\D/g, ""),
-        compLower: String(g.companyName || "").toLowerCase(),
-      })),
+    () => buildIndexedCrmGuests(crmGuests),
     [crmGuests]
   )
 
   const searchIndexedCrm = useCallback(
-    (rawQuery: string, includeCompany: boolean, limit?: number) => {
-      const q = (rawQuery || "").toLowerCase().trim()
-      if (!q) return []
-      const cleanQ = q.replace(/\D/g, "")
-      const out: any[] = []
-      for (let i = 0; i < indexedCrmGuests.length; i++) {
-        const item = indexedCrmGuests[i]
-        if (
-          item.nameLower.includes(q) ||
-          (cleanQ && item.docDigits.includes(cleanQ)) ||
-          (cleanQ && item.phoneDigits.includes(cleanQ)) ||
-          (includeCompany && item.compLower.includes(q))
-        ) {
-          out.push(item.raw)
-          if (limit && out.length >= limit) break
-        }
-      }
-      return out
-    },
+    (rawQuery: string, includeCompany: boolean, limit?: number) =>
+      searchIndexedCrmList(indexedCrmGuests, rawQuery, includeCompany, limit, true),
     [indexedCrmGuests]
   )
 
@@ -8705,12 +8775,19 @@ export default function PmsCalendar(props?: {
     }
 
     const sumPay = round2(overridePayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0));
-    const isResPaid = !formIsFaturadoBoleto && (overridePaymentStatus === "pago_total" || overridePaymentStatus === "pago");
+    const rawExplicitPaid = sumPay > 0 ? sumPay : (Number(overridePaidAmount) || 0);
+    const hasPartialPaymentsOnEdit = Boolean(
+      selectedRes &&
+      overrideStatus !== "pre_reserva" &&
+      rawExplicitPaid > 0 &&
+      curTot > rawExplicitPaid + 0.01
+    );
+    const isResPaid = !formIsFaturadoBoleto && !hasPartialPaymentsOnEdit && (overridePaymentStatus === "pago_total" || overridePaymentStatus === "pago");
     const curPaid = overrideStatus === "pre_reserva"
       ? 0
       : (isResPaid
-          ? Math.max(curTot, sumPay || Number(overridePaidAmount) || 0)
-          : (sumPay > 0 ? sumPay : (Number(overridePaidAmount) || 0)));
+          ? Math.max(curTot, rawExplicitPaid)
+          : rawExplicitPaid);
     const remaining = formIsFaturadoBoleto ? 0 : (isResPaid ? 0 : Math.max(0, round2(curTot - curPaid)));
     const cardRemaining = round2(remaining * 1.05);
     return { curTot, rawSum, flat1Sub, extraFlatsSub, pkgChargesSub, curPaid, remaining, cardRemaining, isResPaid };
@@ -8762,10 +8839,10 @@ export default function PmsCalendar(props?: {
       rmLower === "faturado_b2b"
     );
 
-    if (isBooking) {
+    if (!selectedRes && isBooking) {
       setFormPaymentMethod("booking");
       setFormPaymentStatus("pago_total");
-    } else if (targetChannel === "airbnb") {
+    } else if (!selectedRes && targetChannel === "airbnb") {
       setFormPaymentMethod("airbnb");
       setFormPaymentStatus("pago_total");
     } else if (isB2b || isFaturadoSync) {
@@ -8854,14 +8931,16 @@ export default function PmsCalendar(props?: {
       return newTot;
     }
 
-    // Modo Edição: preserva o valor recebido para diárias diretas e soma novas diárias OTA automaticamente
+    // Modo Edição: preserva estritamente o valor já pago na linha de base (seja Direta ou OTA) e gera saldo pendente para novas diárias diretas e/ou taxas adicionais!
     const f1Rates = nextFlats[0]?.dailyRates || [];
+    const f1Charges = nextFlats[0]?.charges || [];
+    const baselineMeta = getSelectedResExtensionBaseline(selectedRes);
     const origDates = new Set<string>();
-    if (Array.isArray(selectedRes.dailyRates) && selectedRes.dailyRates.length > 0) {
-      selectedRes.dailyRates.forEach((od: any) => { if (od?.date) origDates.add(String(od.date)); });
-    } else if (selectedRes.checkinDate && selectedRes.checkoutDate) {
-      const d1 = new Date(selectedRes.checkinDate + "T12:00:00");
-      const d2 = new Date(selectedRes.checkoutDate + "T12:00:00");
+    if (baselineMeta.baseDailyRates.length > 0) {
+      baselineMeta.baseDailyRates.forEach((od: any) => { if (od?.date) origDates.add(String(od.date)); });
+    } else if (baselineMeta.baseCin && baselineMeta.baseCout) {
+      const d1 = new Date(baselineMeta.baseCin + "T12:00:00");
+      const d2 = new Date(baselineMeta.baseCout + "T12:00:00");
       const n = Math.max(1, differenceInDays(d2, d1));
       for (let i = 0; i < n; i++) {
         origDates.add(format(addDays(d1, i), "yyyy-MM-dd"));
@@ -8871,14 +8950,25 @@ export default function PmsCalendar(props?: {
     const addedOtaRates = addedRates.filter(d => d.channel === "booking" || d.channel === "airbnb");
     const addedOtaSum = Number(addedOtaRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0).toFixed(2));
     const hasAnyDirectNight = f1Rates.some(d => d.channel && d.channel !== "booking" && d.channel !== "airbnb" && d.channel !== "b2b");
-    const hasOtaDirectExtension = isOtaTarget && Boolean(
+    const baseChargesSum = round2(
+      baselineMeta.baseCharges.length > 0
+        ? baselineMeta.baseCharges.reduce((s: number, c: any) => s + (Number(c?.amount) || 0), 0)
+        : (Number(selectedRes.cleaningFee) || 0)
+    );
+    const curChargesSum = round2(f1Charges.reduce((s, c) => s + (Number(c?.amount) || 0), 0));
+    const hasAddedCharges = curChargesSum > baseChargesSum + 0.01;
+    const manualPayments = formPayments.filter(p => p.id !== "pay_auto_ota_ext");
+    const manualPaidSum = round2(manualPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0));
+    const hasOtaDirectExtension = isOtaTarget && !opts?.forceResetSyntheticPayment && Boolean(
       hasAnyDirectNight ||
-      ((selectedRes.paymentStatus === "sinal_pago" || selectedRes.paymentStatus === "parcial") && hasAnyDirectNight)
+      hasAddedCharges ||
+      baselineMeta.hasActivePendingExt ||
+      selectedRes.paymentStatus === "sinal_pago" ||
+      selectedRes.paymentStatus === "parcial" ||
+      (manualPaidSum > 0 && newTot > manualPaidSum + addedOtaSum + 0.01 && addedOtaRates.length === 0)
     );
 
     if ((!isOtaTarget && !isB2b) || hasOtaDirectExtension) {
-      const manualPayments = formPayments.filter(p => p.id !== "pay_auto_ota_ext");
-      const manualPaidSum = manualPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
       const currentPaidSum = Number((manualPaidSum + addedOtaSum).toFixed(2));
       if (addedOtaSum > 0) {
         const otaExtMethod = addedOtaRates.some(d => d.channel === "booking") ? "booking" : "airbnb";
@@ -8898,12 +8988,27 @@ export default function PmsCalendar(props?: {
         setFormPayments(manualPayments);
       }
       setFormPaidAmount(String(currentPaidSum));
-      if (currentPaidSum >= newTot && newTot > 0) setFormPaymentStatus("pago_total");
-      else if (currentPaidSum > 0) setFormPaymentStatus("sinal_pago");
-      else setFormPaymentStatus("pendente");
+      if (currentPaidSum >= newTot - 0.01 && newTot > 0) {
+        setFormPaymentStatus("pago_total");
+        if (isOtaTarget) setFormPaymentMethod(targetChannel);
+      } else if (currentPaidSum > 0) {
+        setFormPaymentStatus("sinal_pago");
+        if (isOtaTarget && (formPaymentMethod === "booking" || formPaymentMethod === "airbnb")) {
+          setFormPaymentMethod("pix");
+        }
+      } else {
+        setFormPaymentStatus("pendente");
+        if (isOtaTarget && (formPaymentMethod === "booking" || formPaymentMethod === "airbnb")) {
+          setFormPaymentMethod("pix");
+        }
+      }
       return newTot;
     }
 
+    if (isOtaTarget) {
+      setFormPaymentMethod(targetChannel);
+      setFormPaymentStatus("pago_total");
+    }
     setFormPaidAmount(String(newTot));
     setFormPayments(prev => {
       if (prev.length <= 1) {
@@ -9175,6 +9280,7 @@ export default function PmsCalendar(props?: {
     const dCin = safeParseDate(newCin);
     const dCout = safeParseDate(newCout);
     const validRange = Boolean(dCin && dCout && dCin < dCout);
+    const isEditingOtaRes = Boolean(selectedRes && (formChannel === "booking" || formChannel === "airbnb"));
 
     let nextFlats = formFlats.map((fl, idx) => {
       if (fl.uid === uid) {
@@ -9184,7 +9290,14 @@ export default function PmsCalendar(props?: {
           ? parsedRate
           : (!selectedRes && resCreateMode === "simple" && !formChannel ? 0 : 250);
         const nextRates = validRange
-          ? buildReservationDailyRates(newCin, newCout, rNum, formChannel || "whatsapp", fl.dailyRates)
+          ? buildReservationDailyRates(
+              newCin,
+              newCout,
+              rNum,
+              isEditingOtaRes ? "whatsapp" : (formChannel || "whatsapp"),
+              fl.dailyRates,
+              isEditingOtaRes ? { newDatesChannel: "whatsapp" } : undefined
+            )
           : fl.dailyRates;
         return { ...fl, checkinDate: newCin, checkoutDate: newCout, dailyRates: nextRates };
       }
@@ -10110,18 +10223,45 @@ export default function PmsCalendar(props?: {
     }
   };
 
-  // ── Regra oficial de Status x Pagamento (canais diretos) ──
+  // ── Regra oficial de Status x Pagamento (canais diretos e extensões) ──
   const handleSelectPreReserva = () => {
     const isOta = formChannel === "booking" || formChannel === "airbnb"
+    if (selectedRes && formChannel !== "b2b" && !formIsFaturadoBoleto) {
+      const curTot = calculateTotal()
+      const paidSum = round2(formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0))
+      const { baseCin, baseCout, hasActivePendingExt } = getSelectedResExtensionBaseline(selectedRes, { paid: paidSum, total: curTot })
+      const hasExtensionOrExtraBalance = Boolean(
+        paidSum > 0 &&
+        curTot > paidSum + 0.01
+      )
+      if (hasExtensionOrExtraBalance) {
+        const extPendingAmt = round2(curTot - paidSum)
+        setFormStatus("confirmada")
+        setFormExtensionHoldMode("pre_reserva")
+        setFormPaymentStatus("sinal_pago")
+        if (isOta && (formPaymentMethod === "booking" || formPaymentMethod === "airbnb")) {
+          setFormPaymentMethod("pix")
+        }
+        if (!formHoldManuallyChosen) {
+          const extStart = (formCheckin < baseCin ? formCheckin : (formCheckout > baseCout || hasActivePendingExt ? baseCout : formCheckout))
+          setFormHoldPreset(getDefaultHoldPresetForExtension(extStart))
+        }
+        toast({
+          title: "⏳ Pré-Reserva da Extensão Ativada!",
+          description: `A estadia original já paga (R$ ${paidSum.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}) permanece confirmada e apenas o saldo adicional de R$ ${extPendingAmt.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} ficará em Pré-Reserva aguardando pagamento.`
+        })
+        return
+      }
+    }
     if (isOta) {
       toast({
         title: "Reserva de OTA",
-        description: "Reservas Booking/Airbnb são sempre confirmadas e pagas pela plataforma."
+        description: "Reservas Booking/Airbnb são sempre confirmadas pela plataforma. Para criar uma Pré-Reserva de Extensão, adicione as novas diárias/taxas acima!"
       })
       return
     }
     const hasManualPayments = Boolean(selectedRes) && formPayments.some(p => Number(p.amount) > 0)
-    if (hasManualPayments && !confirm("Pré-reserva não pode ter valor pago.\n\nOs pagamentos lançados nesta reserva serão removidos. Deseja continuar?")) {
+    if (hasManualPayments && !confirm("Pré-reserva integral da reserva não pode ter valor pago.\n\nOs pagamentos lançados nesta reserva serão removidos. Deseja continuar?")) {
       return
     }
     setFormStatus("pre_reserva")
@@ -10609,11 +10749,10 @@ export default function PmsCalendar(props?: {
     setSavingRes(true)
     try {
       const calcTot = calculateTotal(pFlat)
-      const { ratesSum: nightsSubInSave, chargesSum: chargesSubInSave } = getFlatSubtotals(pFlat)
       const rawFormTot = Number(formTotalAmount) || 0
-      const flat1TotalAmount = (!selectedRes?.earlyCheckout && chargesSubInSave !== 0 && Math.abs(rawFormTot - nightsSubInSave) < 0.05)
-        ? calcTot
-        : (rawFormTot > 0 ? rawFormTot : calcTot)
+      const flat1TotalAmount = (selectedRes?.earlyCheckout && calcTot === 0 && rawFormTot > 0)
+        ? rawFormTot
+        : calcTot
       const unifiedTotals = computeUnifiedReservationTotals()
       const totalAmount = isMultiFlatSubmit ? unifiedTotals.curTot : flat1TotalAmount
       const isOta = formChannel === "booking" || formChannel === "airbnb"
@@ -10636,6 +10775,7 @@ export default function PmsCalendar(props?: {
 
       const hasOtaPartialExtensionInForm = !isMultiFlatSubmit && isOta && Boolean(
         sumPaidFromList > 0 && sumPaidFromList < totalAmount - 0.01 && (
+          Boolean(selectedRes) ||
           formPaymentStatus === "sinal_pago" ||
           formPaymentStatus === "parcial" ||
           pFlat.dailyRates.some(d => d.channel && d.channel !== "booking" && d.channel !== "airbnb" && d.channel !== "b2b")
@@ -10883,27 +11023,26 @@ export default function PmsCalendar(props?: {
       const primaryPayloadFlat = serializedFlats[0]
 
       const holdInfoForSave = statusToSave === "pre_reserva" ? computeHoldExpirationInfo() : null
-      const baseExtCinForSave = selectedRes
-        ? (selectedRes.pendingStayExtension?.isPreReservationHold
-            ? (selectedRes.pendingStayExtension.oldCheckinDate || selectedRes.checkinDate)
-            : selectedRes.checkinDate)
-        : ""
-      const baseExtCoutForSave = selectedRes
-        ? (selectedRes.pendingStayExtension?.isPreReservationHold
-            ? (selectedRes.pendingStayExtension.oldCheckoutDate || selectedRes.checkoutDate)
-            : selectedRes.checkoutDate)
-        : ""
+      const saveBaselineMeta = getSelectedResExtensionBaseline(selectedRes, { paid: resolvedPaidAmount, total: totalAmount })
+      const baseExtCinForSave = saveBaselineMeta.baseCin
+      const baseExtCoutForSave = saveBaselineMeta.baseCout
       const hasAddedDirectNightForSave = Boolean(
         selectedRes &&
         statusToSave !== "pre_reserva" &&
         !formIsFaturadoBoleto &&
         !isB2b &&
         resolvedPaidAmount < totalAmount - 0.01 &&
-        pFlat.dailyRates.some(d => {
-          const ch = String(d.channel || "").toLowerCase()
-          const isPaidOtaOrB2bChan = ch.includes("booking") || ch.includes("airbnb") || ch.includes("b2b")
-          return !isPaidOtaOrB2bChan && (d.date < baseExtCinForSave || d.date >= baseExtCoutForSave)
-        })
+        (
+          saveBaselineMeta.hasActivePendingExt ||
+          formExtensionHoldMode === "pre_reserva" ||
+          (baseExtCoutForSave && pFlat.checkoutDate > baseExtCoutForSave) ||
+          (baseExtCinForSave && pFlat.checkinDate < baseExtCinForSave) ||
+          pFlat.dailyRates.some(d => {
+            const ch = String(d.channel || "").toLowerCase()
+            const isPaidOtaOrB2bChan = ch.includes("booking") || ch.includes("airbnb") || ch.includes("b2b")
+            return !isPaidOtaOrB2bChan && (d.date < baseExtCinForSave || d.date >= baseExtCoutForSave)
+          })
+        )
       )
       const extHoldInfoForSave =
         hasAddedDirectNightForSave && formExtensionHoldMode === "pre_reserva"
@@ -15846,6 +15985,7 @@ export default function PmsCalendar(props?: {
                                       <button
                                         key={g.id}
                                         type="button"
+                                        onMouseDown={(e) => e.preventDefault()}
                                         onClick={() => {
                                           handleSelectRequester(String(g.id))
                                           setShowRequesterSuggestions(false)
@@ -15857,7 +15997,7 @@ export default function PmsCalendar(props?: {
                                         </div>
                                         <div className="flex-1 min-w-0">
                                           <div className="text-xs font-bold text-foreground truncate">
-                                            {g.name || g.fullName}
+                                            {getBestCrmGuestDisplayName(g)}
                                           </div>
                                           <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
                                             {g.documentNumber || g.document ? <span>CPF: {g.documentNumber || g.document}</span> : null}
@@ -17693,27 +17833,39 @@ export default function PmsCalendar(props?: {
                   })()}
                 </div>
 
-                {/* Painel Dedicado: Pré-Reserva da Diária Extra (Quando diária adicional está com saldo pendente em reserva já confirmada) */}
+                {/* Painel Dedicado: Pré-Reserva da Diária Extra (Quando diária adicional/extensão está com saldo pendente em reserva já confirmada) */}
                 {selectedRes && formStatus !== "pre_reserva" && !formIsFaturadoBoleto && formChannel !== "b2b" && (() => {
-                  const baseCin = selectedRes.pendingStayExtension?.isPreReservationHold
-                    ? (selectedRes.pendingStayExtension.oldCheckinDate || selectedRes.checkinDate)
-                    : selectedRes.checkinDate
-                  const baseCout = selectedRes.pendingStayExtension?.isPreReservationHold
-                    ? (selectedRes.pendingStayExtension.oldCheckoutDate || selectedRes.checkoutDate)
-                    : selectedRes.checkoutDate
+                  const curTot = calculateTotal()
+                  const sumPay = round2(formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0))
+                  const rawPaidVal = sumPay > 0 ? sumPay : (Number(formPaidAmount) || 0)
+                  const isPaidFullNow = (formPaymentStatus === "pago_total" || formPaymentStatus === "pago") && !(rawPaidVal > 0 && curTot > rawPaidVal + 0.01)
+                  const curPaid = isPaidFullNow ? Math.max(curTot, rawPaidVal) : rawPaidVal
+                  const extBaseMeta = getSelectedResExtensionBaseline(selectedRes, { paid: curPaid, total: curTot })
+                  const baseCin = extBaseMeta.baseCin
+                  const baseCout = extBaseMeta.baseCout
                   const addedDirectRates = formDailyRates.filter(d => {
                     const ch = String(d.channel || "").toLowerCase()
                     const isPaidOtaOrB2bChan = ch.includes("booking") || ch.includes("airbnb") || ch.includes("b2b")
                     return !isPaidOtaOrB2bChan && (d.date < baseCin || d.date >= baseCout)
                   })
-                  const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal()
-                  const sumPay = formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
-                  const isPaidFullNow = formPaymentStatus === "pago_total" || formPaymentStatus === "pago"
-                  const curPaid = isPaidFullNow ? Math.max(curTot, sumPay || Number(formPaidAmount) || 0) : (sumPay > 0 ? sumPay : (Number(formPaidAmount) || 0))
                   const pendingExtBalance = Math.max(0, Math.round((curTot - curPaid) * 100) / 100)
-                  const hasActiveServerPendingExt = selectedRes.pendingStayExtension?.status === "pending_payment"
+                  const hasActiveServerPendingExt = extBaseMeta.hasActivePendingExt
+                  const hasDateExtensionInForm = Boolean((baseCout && formCheckout > baseCout) || (baseCin && formCheckin < baseCin))
+                  const addedNightsCountInUi = addedDirectRates.length > 0
+                    ? addedDirectRates.length
+                    : (hasDateExtensionInForm && baseCout && formCheckout > baseCout
+                        ? Math.max(1, differenceInDays(parseISO(formCheckout), parseISO(baseCout)))
+                        : (Number(selectedRes.pendingStayExtension?.extraNights) || 0))
+                  const addedRatesSumInUi = round2(addedDirectRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0))
+                  const baseChargesSumInUi = round2(
+                    extBaseMeta.baseCharges.length > 0
+                      ? extBaseMeta.baseCharges.reduce((acc: number, c: any) => acc + (Number(c?.amount) || 0), 0)
+                      : (Number(selectedRes.cleaningFee) || 0)
+                  )
+                  const curChargesSumInUi = round2(formCharges.reduce((acc, c) => acc + (Number(c?.amount) || 0), 0))
+                  const addedChargesDiffInUi = Math.max(0, round2(curChargesSumInUi - baseChargesSumInUi))
 
-                  if ((addedDirectRates.length === 0 || pendingExtBalance <= 0.01 || isPaidFullNow) && !hasActiveServerPendingExt) {
+                  if (((addedNightsCountInUi === 0 && !hasDateExtensionInForm) || pendingExtBalance <= 0.01 || isPaidFullNow) && !hasActiveServerPendingExt) {
                     return null
                   }
 
@@ -17735,11 +17887,11 @@ export default function PmsCalendar(props?: {
                           <div className="flex items-center gap-1.5 text-xs font-black text-amber-950 dark:text-amber-100">
                             <Clock className="w-4 h-4 text-amber-600 shrink-0" />
                             <span>
-                              ⏳ Modo da(s) +{Math.max(1, addedDirectRates.length || selectedRes.pendingStayExtension?.extraNights || 1)} Diária(s) Extra(s) sem Pagamento (R$ {pendingExtBalance.toLocaleString("pt-BR", { minimumFractionDigits: 2 })})
+                              ⏳ Pré-Reserva de Extensão (+{Math.max(1, addedNightsCountInUi || 1)} {Math.max(1, addedNightsCountInUi || 1) === 1 ? "Diária" : "Diárias"}{addedChargesDiffInUi > 0 ? ` + Taxas` : ""} • Saldo: R$ {pendingExtBalance.toLocaleString("pt-BR", { minimumFractionDigits: 2 })})
                             </span>
                           </div>
                           <p className="text-[11px] text-amber-900/90 dark:text-amber-300 leading-snug">
-                            A reserva original (<strong>{baseCin?.split("-").reverse().join("/")}</strong> a <strong>{baseCout?.split("-").reverse().join("/")}</strong>) permanece 100% confirmada e quitada. Apenas o período adicional entra aguardando pagamento.
+                            A estadia original (<strong>{baseCin?.split("-").reverse().join("/")}</strong> a <strong>{baseCout?.split("-").reverse().join("/")}</strong> • Já pago: <strong>R$ {curPaid.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>) permanece 100% confirmada. Ao salvar, a hóspede recebe cobrança do saldo da extensão (<strong>R$ {pendingExtBalance.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>{addedRatesSumInUi > 0 && addedChargesDiffInUi > 0 ? ` = R$ ${addedRatesSumInUi.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} diárias + R$ ${addedChargesDiffInUi.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} taxa(s)` : ""}) para confirmar a extensão ao pagar.
                           </p>
                         </div>
 

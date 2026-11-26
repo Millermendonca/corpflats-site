@@ -496,7 +496,7 @@ Na recepção do prédio, você apenas se identifica para pegar a chave do flat 
     sendEmail: true,
     message: `Olá, *{{nome_destinatario}}*! Tudo bem? 👋
 
-Confirmamos com muita satisfação a reserva *#{{numero_reserva_b2b}}* para o(a) hóspede *{{nome_hospede}}* no *Edifício Soho Residence Service* (*Flat {{quarto}}*), de *{{data_checkin}} a {{data_checkout}}*.
+Confirmamos a reserva *#{{numero_reserva_b2b}}* para *{{nome_hospede}}* no *Edifício Soho Residence Service* (*Flat {{quarto}}*):
 
 📋 *Resumo da Reserva:*
 • Código: *#{{numero_reserva_b2b}}*
@@ -505,12 +505,11 @@ Confirmamos com muita satisfação a reserva *#{{numero_reserva_b2b}}* para o(a)
 • Total de Hóspedes: *{{num_hospedes}}*
 • Canal da Reserva: *{{canal_reserva}}*
 
-⚠️ *Importante — Dados do Hóspede para Liberação na Recepção:*
-Como ainda não temos o contato direto do hóspede na reserva, pedimos que preencha antecipadamente pelo menos o *Nome Completo e o WhatsApp* dele(a) pelo nosso link seguro (CPF e E-mail opcionais), para gerarmos a liberação e enviarmos diretamente ao hóspede as instruções de acesso e o Pré-Check-in:
-
+⚠️ *Dados do Hóspede para Liberação na Recepção:*
+Preencha antecipadamente pelo menos o *Nome Completo e o WhatsApp* do hóspede pelo link seguro (CPF e E-mail opcionais) para liberarmos a portaria e enviarmos o Pré-Check-in:
 👉 {{link_credenciamento_agencia}}
 
-Ressaltamos gentilmente que *não é possível informar esses dados apenas na hora no balcão*, pois sem o cadastro prévio pelo link a recepção não conseguirá localizar a reserva nem liberar a entrada.`,
+*Não é possível informar esses dados apenas na hora no balcão* — sem o cadastro prévio a recepção não consegue liberar a entrada.`,
     footer: "CorpFlats • Edifício Soho Residence",
     buttons: [
       { id: "btn_b2b_cred", type: "URL", label: "🔐 Preencher Dados do Hóspede", url: "{{link_credenciamento_agencia}}" }
@@ -686,12 +685,11 @@ Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 {{instrucao_saldo}}
 
 🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*
-Lembramos que o nosso check-in oficial é *a partir das {{horario_checkin}}*. Como você reservou diretamente conosco, oferecemos o check-in antecipado a partir das 10:00 como uma *cortesia ESTRITAMENTE MEDIANTE DISPONIBILIDADE* — não é uma regra fixa, pois depende da desocupação do hóspede anterior e da conclusão da limpeza. Assim que o flat estiver pronto pela governança, você receberá a notificação por aqui!
+Check-in oficial *a partir das {{horario_checkin}}*. Reservas diretas contam com entrada antecipada às 10:00 como *cortesia ESTRITAMENTE MEDIANTE DISPONIBILIDADE* (após saída anterior e limpeza; avisaremos por aqui!).
 
-📍 *Endereço:*
-{{endereco_hotel}}
+📍 *Endereço:* {{endereco_hotel}}
 
-Para agilizar sua entrada na portaria, realize com antecedência o seu *Pré-Check-in Digital* pelo botão abaixo:`,
+Adiante seu *Pré-Check-in Digital* pelo botão abaixo para agilizar a portaria:`,
     footer: "CorpFlats • Hospedagem Contemporânea",
     buttons: [
       { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "{{link_checkin_digital}}" },
@@ -914,16 +912,13 @@ Para que a portaria libere sua entrada com agilidade na chegada, acesse o link s
     offsetUnit: "minutes",
     fixedTime: "",
     message: `Olá, *{{primeiro_nome}}*! ✅🎉
-Seu *Check-in Online* foi concluído com sucesso e já está *tudo pronto* para a sua chegada!
+Seu *Check-in Online* foi concluído e já está *tudo pronto* para sua chegada!
 
-🏨 *Como funciona na Recepção 24h:*
-Ao chegar no edifício, basta seguir estas orientações simples na recepção:
-• Identifique-se na recepção;
-• Diga que já fez o *Check-in Online*;
-• Informe que fez a reserva pela *CorpFlats*;
-• Informe o seu nome (*{{nome_destinatario}}*) ou o número do *Flat {{quarto}}*.
+🏨 *Na Recepção 24h:*
+• Identifique-se dizendo que já fez o *Check-in Online* pela *CorpFlats*;
+• Informe seu nome (*{{nome_destinatario}}*) ou o *Flat {{quarto}}*.
 
-📋 *Resumo da sua Hospedagem:*
+📋 *Resumo da Hospedagem:*
 • Acomodação: *Flat {{quarto}}*
 • Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*
 • Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
@@ -938,11 +933,11 @@ Ao chegar no edifício, basta seguir estas orientações simples na recepção:
 
 {{aviso_acompanhante_pendente_pos_checkin}}
 
-Desejamos uma excelente viagem e uma ótima estadia! Qualquer dúvida, estamos à disposição.`,
+Excelente viagem e ótima estadia! Qualquer dúvida, estamos à disposição.`,
     footer: "CorpFlats • Check-in Online Confirmado",
     buttons: [
       { id: "btn_portal", type: "URL", label: "🏨 Portal do Hóspede", url: "{{link_portal_hospede}}" },
-      { id: "btn_maps", type: "URL", label: "📍 Abrir no Google Maps", url: "{{link_maps}}" }
+      { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
     ]
   },
   {
@@ -1320,8 +1315,8 @@ Para garantir sua acomodação antes que as datas sejam liberadas, efetue o paga
   {
     id: "tpl_additional_daily_pending",
     triggerEvent: "additional_daily_pending",
-    title: "Diária Extra / Alteração • Cobrança Pendente",
-    description: "Disparado quando uma reserva de qualquer canal (inclusive Booking/Airbnb) solicita acréscimo de diária ou serviço adicional e fica com saldo pendente a quitar.",
+    title: "Pré-Reserva de Extensão / Diária Extra • Cobrança Pendente",
+    description: "Disparado quando uma reserva de qualquer canal (inclusive Booking/Airbnb) solicita extensão de estadia, diária extra ou serviço adicional e fica aguardando pagamento para confirmar.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "requester",
@@ -1329,10 +1324,10 @@ Para garantir sua acomodação antes que as datas sejam liberadas, efetue o paga
     offsetValue: 0,
     offsetUnit: "minutes",
     fixedTime: "",
-    message: `Olá, *{{nome_destinatario}}*! 🔄✨
-Confirmamos a solicitação de alteração/extensão da sua estadia no *{{nome_hotel}}* (*Flat {{quarto}}*)!
+    message: `Olá, *{{nome_destinatario}}*! {{icone_cabecalho_extensao}}
+{{introducao_extensao}}
 
-📋 *Alterações Realizadas:*
+{{bloco_detalhamento_extensao}}📋 *Alterações Realizadas:*
 {{resumo_alteracoes}}
 
 📋 *Resumo Atualizado da Hospedagem:*
@@ -1345,16 +1340,16 @@ Confirmamos a solicitação de alteração/extensão da sua estadia no *{{nome_h
 • Valor Já Pago: *{{valor_pago}}*
 • Situação do Pagamento: *{{status_pagamento}}*
 
-💰 *Saldo Pendente da Diária Adicional / Alteração:*
-• Valor no Cartão de Crédito: *{{quanto_falta_cartao}}*
-• Valor com Desconto no PIX (-5%): *{{quanto_falta}}*
+💰 *Saldo Pendente da Diária Adicional / Extensão:*
+• Valor no PIX (à vista): *{{quanto_falta}}*
+• Valor no Cartão de Crédito (+5%): *{{quanto_falta_cartao}}*
 
-📋 *PIX Copia e Cola (5% de desconto):*
+📋 *PIX Copia e Cola (confirmação automática ao pagar):*
 {{pix_copia_e_cola}}
 
-Você também pode consultar o extrato detalhado e efetuar o pagamento via PIX (com desconto) ou Cartão de Crédito em seu portal seguro para confirmar o acréscimo:
+Você também pode consultar o extrato detalhado e efetuar o pagamento via PIX ou Cartão de Crédito em seu portal seguro para confirmar o acréscimo:
 👉 {{link_portal_hospede}}{{aviso_validade_pre_reserva}}`,
-    footer: "CorpFlats • Alteração Confirmada",
+    footer: "CorpFlats • Pagamento Seguro",
     buttons: [
       { id: "btn_pagar", type: "URL", label: "💳 Ver Detalhes & Pagar", url: "{{link_portal_hospede}}" },
       { id: "btn_pix", type: "COPY", label: "📋 Copiar Código PIX", copyCode: "{{pix_copia_e_cola}}", url: "{{link_copiar_pix}}" },
@@ -1459,10 +1454,9 @@ Sua reserva no *{{nome_hotel}}* está *Garantida & Confirmada*!
 
 {{early_checkin_beneficio}}
 
-📍 *Endereço:*
-{{endereco_hotel}}
+📍 *Endereço:* {{endereco_hotel}}
 
-Para agilizar sua entrada na portaria na chegada, realize com antecedência o seu *Pré-Check-in Digital*:`,
+Adiante seu *Pré-Check-in Digital* para agilizar a portaria:`,
     footer: "CorpFlats • Pagamento Aprovado",
     buttons: [
       { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "{{link_checkin_digital}}" },
@@ -1503,7 +1497,7 @@ Sua reserva no *{{nome_hotel}}* para *HOJE* está *Confirmada*!
 
 📍 *Endereço:* {{endereco_hotel}}
 🗺️ *Localização no Maps:* {{link_maps}}
-🚪 *Portaria:* 24 horas (basta se identificar com seu nome e o número do Flat *{{quarto}}*)
+🚪 *Portaria:* 24h (identifique-se com seu nome e Flat *{{quarto}}*)
 
 📶 *Wi-Fi do Flat:*
 • Rede: *{{wifi_rede}}*
@@ -1523,7 +1517,7 @@ Sua reserva no *{{nome_hotel}}* para *HOJE* está *Confirmada*!
     id: "tpl_lost_item_registered",
     triggerEvent: "lost_item_registered",
     title: "Achados & Perdidos • Objeto Encontrado no Quarto",
-    description: "Enviado automaticamente ao hóspede quando um item esquecido é registrado no Achados & Perdidos, contendo a descrição, foto e o WhatsApp da camareira que o encontrou para combinar a retirada.",
+    description: "Enviado automaticamente ao hóspede quando um item esquecido é registrado no Achados & Perdidos, com a foto real do objeto na mensagem e botão interativo para falar diretamente com a camareira que o encontrou.",
     enabled: true,
     channels: ["all"],
     recipientTarget: "guest",
@@ -1531,20 +1525,17 @@ Sua reserva no *{{nome_hotel}}* para *HOJE* está *Confirmada*!
     offsetValue: 0,
     offsetUnit: "minutes",
     fixedTime: "",
-    message: `Olá, *{{nome_hospede}}*! Tudo bem?
+    message: `Olá, *{{primeiro_nome}}*! Tudo bem?
 
 A equipe de governança do *{{nome_hotel}}* identificou que foi esquecido um objeto no *Flat {{quarto}}*{{local_no_quarto}} após o seu check-out.
 
 📦 *Item encontrado:* {{descricao_item}}
-{{foto_item}}
 👩‍💼 *Encontrado e guardado por:* {{nome_camareira}}
-📱 *WhatsApp da Camareira:* {{whatsapp_camareira}}
-💬 *Link direto:* {{link_whatsapp_camareira}}
 
-Por favor, entre em contato diretamente com a *{{nome_camareira}}* pelo WhatsApp acima para combinar a retirada ou envio do seu objeto! ✨`,
+Toque no botão abaixo para falar diretamente com *{{nome_camareira}}* no WhatsApp e combinar a retirada ou o envio do seu objeto! ✨`,
     footer: "CorpFlats • Governança & Hospitalidade",
     buttons: [
-      { id: "btn_contact_maid", type: "URL", label: "Falar com Camareira", url: "{{link_whatsapp_camareira}}" }
+      { id: "btn_contact_maid", type: "URL", label: "💬 Falar com Camareira", url: "{{link_whatsapp_camareira}}" }
     ]
   },
   {
@@ -2828,6 +2819,8 @@ export function formatWhatsAppChangesSummary(changes = [], options = {}) {
     if (c.field === "prefersHighFloor") label = "Andar Alto";
     if (c.field === "guestName") label = "Hóspede Titular";
     if (c.field === "vehiclePlate") label = "Veículo / Garagem";
+    if (c.field === "charges") label = "Taxas e Adicionais";
+    if (c.field === "cleaningFee") label = "Taxa de Limpeza";
 
     // Formata datas YYYY-MM-DD -> DD/MM/YYYY
     if (typeof oldV === "string" && /^\d{4}-\d{2}-\d{2}$/.test(oldV.trim())) {
@@ -3546,13 +3539,34 @@ export function getReservationRecipients(reservation = {}, db = {}) {
       requesterType = "agency";
     } else if (reservation.companyId || reservation.companyName) {
       requesterType = "company";
-    } else if (
-      (reservation.requesterInfo && (reservation.requesterInfo.name || reservation.requesterInfo.phone || reservation.requesterInfo.email)) ||
-      reservation.requesterName ||
-      reservation.requesterPhone ||
-      reservation.requesterEmail
-    ) {
-      requesterType = "other_person";
+    } else {
+      const explicitRequesterName = (reservation.requesterInfo?.name || reservation.requesterName || "").trim();
+      const rawExplicitReqPhone = (
+        reservation.validatedRequesterWhatsapp ||
+        reservation.requesterInfo?.whatsapp ||
+        reservation.requesterInfo?.phone ||
+        reservation.requesterPhone ||
+        ""
+      ).trim();
+      const rawExplicitReqEmail = normalizeEmailAddress(
+        reservation.requesterInfo?.email || reservation.requesterEmail || ""
+      );
+      const hasAnyExplicitRequesterField = Boolean(
+        explicitRequesterName || rawExplicitReqPhone || rawExplicitReqEmail
+      );
+      if (hasAnyExplicitRequesterField) {
+        const shouldTreatAsSeparateOtherPerson = Boolean(
+          reservation.requesterIsGuest1 === false ||
+          (Boolean(getPackageGroupKeyForStayGuard(reservation)) && reservation.requesterIsGuest1 !== true) ||
+          isPendingGuestName(rawName) ||
+          (explicitRequesterName && rawName && !areGuestNamesCompatibleInline(explicitRequesterName, rawName)) ||
+          (rawExplicitReqPhone && rawGuestPhone && !matchClientPhone(rawExplicitReqPhone, rawGuestPhone)) ||
+          (rawExplicitReqEmail && guestEmail && rawExplicitReqEmail !== guestEmail)
+        );
+        if (shouldTreatAsSeparateOtherPerson) {
+          requesterType = "other_person";
+        }
+      }
     }
   }
   let requesterCompany = "";
@@ -4408,8 +4422,28 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
 
   const recipientIsRequester = targetRecipient === "requester" || (targetRecipient && typeof targetRecipient === "object" && targetRecipient.type === "requester");
   const suppressStayOpsForRequester = Boolean(recipientIsRequester && (requester.isDifferentFromGuest || reservation.requesterIsGuest1 === false));
-  const isB2b = String(reservation.channel || "").toLowerCase().includes("b2b") || Boolean(reservation.agencyId || reservation.hideFinancialForGuest);
-  const hideFinancialForGuest = Boolean((isB2b || requester.isDifferentFromGuest) && !recipientIsRequester);
+  const normChanForFin = normalizeReservationChannel(reservation.channel || reservation.source || "");
+  const isOtaChannelForFin = normChanForFin === "booking" || normChanForFin === "airbnb";
+  const isB2b = normChanForFin === "b2b" || String(reservation.channel || "").toLowerCase().includes("b2b") || Boolean(reservation.agencyId || reservation.hideFinancialForGuest || reservation.nfHideFromGuest);
+  const isExtensionOrBillingContextForFin = Boolean(
+    templateId === "tpl_additional_daily_pending" ||
+    templateId === "tpl_additional_daily_expiring_soon" ||
+    templateId === "tpl_additional_daily_expired" ||
+    triggerEvent === "additional_daily_pending" ||
+    triggerEvent === "additional_daily_expiring_soon" ||
+    triggerEvent === "additional_daily_expired" ||
+    reservation?._isExtensionPaymentConfirmed ||
+    reservation?.pendingStayExtension?.status === "pending_payment" ||
+    (typeof text === "string" && (
+      text.includes("Saldo Pendente da Diária Adicional") ||
+      text.includes("introducao_extensao") ||
+      text.includes("alteração/extensão")
+    ))
+  );
+  const hideFinancialForGuest = Boolean(
+    (isB2b || (!isExtensionOrBillingContextForFin && isOtaChannelForFin) || requester.isDifferentFromGuest) &&
+    !recipientIsRequester
+  );
   const primaryRecipientName = companion ? companion.name : (recipientIsRequester ? requester.name : guest.name);
   const primaryRecipientFirstName = companion ? companion.firstName : (recipientIsRequester ? requester.firstName : guest.firstName);
   const primaryRecipientPhone = companion ? companion.phone : (recipientIsRequester ? requester.phone : guest.phone);
@@ -4457,6 +4491,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     triggerEvent === "additional_daily_pending" ||
     (typeof text === "string" && (
       text.includes("alteração/extensão") ||
+      text.includes("introducao_extensao") ||
       text.includes("Saldo Pendente da Diária Adicional")
     ))
   );
@@ -4533,10 +4568,18 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     reservation.packageId ||
     (/^PKG-[A-Z0-9]{4,12}$/i.test(String(resCode || "").trim()) ? resCode : "")
   ).trim().toUpperCase();
+  const hasIndividualPendingStayExtension = Boolean(
+    reservation?.pendingStayExtension && reservation.pendingStayExtension.status === "pending_payment"
+  );
   const usePackageSolicitantePortal = Boolean(
     pkgCodeForLinks &&
+    !hasIndividualPendingStayExtension &&
     (recipientIsRequester || isUnpaidPreReservaTag || /^PKG-[A-Z0-9]{4,12}$/i.test(String(resCode || "").trim()))
   );
+  const singleRequesterTokParam = String(reservation.requesterPortalToken || "").trim();
+  const singleRequesterQuery = singleRequesterTokParam
+    ? `?requester=1&t=${encodeURIComponent(singleRequesterTokParam)}`
+    : `?requester=1`;
   const pkgPortalTokenForLinks = usePackageSolicitantePortal
     ? (
         String(reservation.requesterPortalToken || "").trim() ||
@@ -4561,14 +4604,14 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const linkPortalHospede = usePackageSolicitantePortal
     ? pkgSolicitantePortalUrl
     : ((recipientIsRequester && requester.isDifferentFromGuest)
-        ? `${appOrigin}/minha-reserva/${resCode}?requester=1`
+        ? `${appOrigin}/minha-reserva/${resCode}${singleRequesterQuery}`
         : (recipientGuestIndex && Number(recipientGuestIndex) > 1 
             ? `${appOrigin}/minha-reserva/${resCode}?guest=${recipientGuestIndex}` 
             : `${appOrigin}/minha-reserva/${resCode}`));
   const linkPagamento = usePackageSolicitantePortal
     ? pkgSolicitantePortalUrl
     : ((recipientIsRequester && requester.isDifferentFromGuest)
-        ? `${appOrigin}/minha-reserva/${resCode}?requester=1`
+        ? `${appOrigin}/minha-reserva/${resCode}${singleRequesterQuery}`
         : `${appOrigin}/minha-reserva/${resCode}`);
   const linkCafeManha = (!suppressStayOpsForRequester && (hasBreakfast || isBreakfastExplicitTemplate) && !isCancelled && !isUnpaidPreReservaTag) ? `${appOrigin}/cafe/${resCode}` : "";
   const linkCheckout = suppressStayOpsForRequester ? "" : `${appOrigin}/checkout/${resCode}`;
@@ -4667,9 +4710,83 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     ? `+${extNightsCount} diária(s) (${extTagMeta.addedDates.map(d => fmtBrDateTag(d)).join(", ")})`
     : `+${extNightsCount} diária(s)`;
 
-  const tplHasExplicitValidityTag = typeof templateText === "string" && (
-    templateText.includes("{{aviso_validade_pre_reserva}}") ||
-    templateText.includes("{{validade_pre_reserva}}")
+  const hotelName = db.siteConfig?.branding?.brandName || "CorpFlats";
+  const pendingExtActive = reservation?.pendingStayExtension?.status === "pending_payment" ? reservation.pendingStayExtension : null;
+  let iconeCabecalhoExtensao = "🔄✨";
+  let introducaoExtensao = `Confirmamos a alteração/extensão da sua estadia no *${hotelName}* (*Flat ${flatNumber}*)!`;
+  let blocoDetalhamentoExtensao = "";
+
+  if (pendingAmount > 0.01) {
+    if (activeExtHold) {
+      iconeCabecalhoExtensao = "⏳✨";
+      const origStayNote = dataCheckinOriginal && dataCheckoutOriginal && dataCheckoutOriginal !== checkoutBr
+        ? `\n\n✅ Sua estadia atual (*${dataCheckinOriginal} até ${dataCheckoutOriginal}*${!hideFinancialForGuest && paidAmount > 0 ? ` • *${formatCurrency(paidAmount)}* já quitado` : ""}) permanece 100% confirmada. O período adicional abaixo está em *Pré-Reserva* e *será confirmado automaticamente assim que o pagamento for concluído*:`
+        : `\n\n⏳ O período adicional está em *Pré-Reserva* e *será confirmado automaticamente assim que o pagamento do saldo abaixo for concluído*:`;
+      introducaoExtensao = `Registramos a *Pré-Reserva de Extensão da sua Estadia* no *${hotelName}* (*Flat ${flatNumber}*)!${origStayNote}`;
+    } else {
+      iconeCabecalhoExtensao = "🔄✨";
+      introducaoExtensao = `Registramos a extensão/alteração da sua estadia no *${hotelName}* (*Flat ${flatNumber}*), aguardando a quitação do saldo abaixo para confirmação:`;
+    }
+
+    if (pendingExtActive && !hideFinancialForGuest) {
+      const extLines = [];
+      const extStartBr = dataCheckoutOriginal && dataCheckoutOriginal !== checkoutBr ? dataCheckoutOriginal : "";
+      if (extStartBr) {
+        extLines.push(`• Período Adicional: *${extStartBr} até ${checkoutBr}* (*+${extNightsCount} ${extNightsCount === 1 ? "diária" : "diárias"}*)`);
+      }
+      const addedRatesArr = Array.isArray(pendingExtActive.addedDailyRates) ? pendingExtActive.addedDailyRates : [];
+      const computedAddedRatesTotal = pendingExtActive.addedRatesTotal !== undefined
+        ? Number(pendingExtActive.addedRatesTotal) || 0
+        : Math.round(addedRatesArr.reduce((acc, d) => acc + (Number(d?.rate ?? d?.amount) || 0), 0) * 100) / 100;
+      const addedChargesArr = Array.isArray(pendingExtActive.addedCharges)
+        ? pendingExtActive.addedCharges
+        : (() => {
+            const oldCh = Array.isArray(pendingExtActive.oldCharges) ? pendingExtActive.oldCharges : [];
+            const curCh = Array.isArray(reservation.charges) ? reservation.charges : [];
+            if (curCh.length === 0) return [];
+            const oldIds = new Map(oldCh.map((c, idx) => [String(c?.id || `old_${idx}`), Number(c?.amount) || 0]));
+            const resList = [];
+            curCh.forEach((c, idx) => {
+              if (!c) return;
+              const k = String(c.id || `cur_${idx}`);
+              const amt = Number(c.amount) || 0;
+              if (oldIds.has(k)) {
+                const diffAmt = Math.round((amt - (oldIds.get(k) || 0)) * 100) / 100;
+                if (Math.abs(diffAmt) > 0.01) {
+                  resList.push({ title: c.title || (c.type === "cleaning" ? "Taxa de Limpeza" : "Taxa Adicional"), amount: diffAmt });
+                }
+              } else if (Math.abs(amt) > 0.01) {
+                resList.push({ title: c.title || (c.type === "cleaning" ? "Taxa de Limpeza" : "Taxa Adicional"), amount: amt });
+              }
+            });
+            return resList;
+          })();
+      if (computedAddedRatesTotal > 0.01) {
+        extLines.push(`• Diárias Adicionais (${extNightsCount}x): *${formatCurrency(computedAddedRatesTotal)}*`);
+      }
+      for (const ac of addedChargesArr) {
+        const acAmt = Number(ac?.amount) || 0;
+        if (Math.abs(acAmt) <= 0.01) continue;
+        const acTitle = ac.title || ac.label || (ac.type === "cleaning" ? "Taxa de Limpeza" : "Taxa Adicional");
+        extLines.push(`• ${acTitle}${acAmt > 0 && /limpeza/i.test(acTitle) && Number(pendingExtActive.oldCleaningFee) > 0 ? " Adicional" : ""}: *${acAmt < 0 ? `-${formatCurrency(Math.abs(acAmt))}` : formatCurrency(acAmt)}*`);
+      }
+      if (addedChargesArr.length === 0 && Number(pendingExtActive.addedCleaningFee) > 0.01) {
+        const cleanFeeDelta = Number(pendingExtActive.addedCleaningFee);
+        extLines.push(`• Taxa de Limpeza${Number(pendingExtActive.oldCleaningFee) > 0 ? " Adicional" : ""}: *${formatCurrency(cleanFeeDelta)}*`);
+      }
+      extLines.push(`• *Total da Extensão (no PIX): ${formatCurrency(pendingAmount)}*`);
+      if (extLines.length > 1) {
+        blocoDetalhamentoExtensao = `🧾 *Composição do Valor da Extensão:*\n${extLines.join("\n")}\n\n`;
+      }
+    }
+  } else {
+    iconeCabecalhoExtensao = "✅🎉";
+    introducaoExtensao = `Confirmamos a alteração/extensão da sua estadia no *${hotelName}* (*Flat ${flatNumber}*)!`;
+  }
+
+  const tplHasExplicitValidityTag = typeof text === "string" && (
+    text.includes("{{aviso_validade_pre_reserva}}") ||
+    text.includes("{{validade_pre_reserva}}")
   );
   const inlineValidityFallback = (!tplHasExplicitValidityTag && avisoValidadePreReserva && (resStatus === "pre_reserva" || triggerEvent === "pre_reservation_created"))
     ? avisoValidadePreReserva
@@ -4707,7 +4824,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
 
   let instrucaoSaldo = "";
   if (!isFaturadoBoletoRes && !isPaidStatusOnly && !isPaid && pendingAmount > 0) {
-    instrucaoSaldo = `ℹ️ *Aviso de Pagamento:* Resta o saldo de *${formatCurrency(cardPendingAmount)}* no Cartão de Crédito ou *${formatCurrency(pendingAmount)}* com Desconto no PIX (-5%), que poderá ser quitado pelo link seguro do seu portal:\n👉 ${linkPortalHospede}`;
+    instrucaoSaldo = `ℹ️ *Saldo a Quitar:* *${formatCurrency(cardPendingAmount)}* no Cartão ou *${formatCurrency(pendingAmount)}* no PIX (-5%):\n👉 ${linkPortalHospede}`;
   } else {
     instrucaoSaldo = "";
   }
@@ -4748,8 +4865,6 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     : "";
 
   const statusConfirmacao = reservation.status === "confirmada" ? "Confirmada" : "Pré-Reserva";
-  
-  const hotelName = db.siteConfig?.branding?.brandName || "CorpFlats";
   const hotelAddress = db.settings?.hotelAddress || "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ";
   const mapsUrl = db.settings?.googleMapsUrl || "https://share.google/LHu3541d5lhkdvbL2";
   
@@ -4777,7 +4892,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     const isSameDayCheckin = checkinDate === todayStr;
     const isFutureCheckin = checkinDate > todayStr;
 
-    const earlyCheckinText = `🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*\nLembramos que o nosso check-in oficial é *a partir das ${checkinTime}*. Como você reservou diretamente conosco, oferecemos o check-in antecipado a partir das 10:00 como uma *cortesia ESTRITAMENTE MEDIANTE DISPONIBILIDADE* — não é uma regra fixa, pois depende da desocupação do hóspede anterior e da conclusão da limpeza. Assim que o flat estiver pronto pela governança, você receberá a notificação por aqui!`;
+    const earlyCheckinText = `🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*\nCheck-in oficial *a partir das ${checkinTime}*. Reservas diretas contam com entrada antecipada às 10:00 como *cortesia ESTRITAMENTE MEDIANTE DISPONIBILIDADE* (após saída anterior e limpeza; avisaremos por aqui!).`;
 
     if (isFutureCheckin) {
       earlyCheckinBeneficio = earlyCheckinText;
@@ -4833,38 +4948,29 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   let statusLiberacaoFlatHoje = "";
   if (!suppressStayOpsForRequester) {
     if (sameDayReleaseState.isFlatReadyNow) {
-      statusLiberacaoFlatHoje = `✨ *Status do Flat ${flatNumber}:* *Limpo e Liberado para Entrada Imediata!* 🔑\nSua acomodação já está 100% pronta e higienizada esperando por você.`;
+      statusLiberacaoFlatHoje = `✨ *Status do Flat ${flatNumber}:* *Limpo e Liberado para Entrada Imediata!* 🔑\nSua acomodação já está 100% pronta esperando por você.`;
     } else if (!sameDayReleaseState.isFlatClean) {
-      statusLiberacaoFlatHoje = `🧹 *Status do Flat ${flatNumber}:* *Em Preparação pela Governança*\nNossa equipe está preparando e higienizando sua acomodação neste momento. Assim que o flat estiver 100% pronto, enviaremos uma notificação aqui no WhatsApp liberando sua entrada!`;
+      statusLiberacaoFlatHoje = `🧹 *Status do Flat ${flatNumber}:* *Em Preparação pela Governança*\nAssim que o flat estiver 100% pronto, avisaremos aqui no WhatsApp liberando sua entrada!`;
       if (isBeforeStandardCheckin) {
         const normChan = normalizeReservationChannel(reservation.channel || reservation.source || "site");
         const isOtaOrB2bChan = normChan === "booking" || normChan === "airbnb" || normChan === "b2b";
         if (!isOtaOrB2bChan) {
-          statusLiberacaoFlatHoje += `\n\n🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*\nLembramos que o nosso check-in oficial é *a partir das ${checkinTime}*. Como você reservou diretamente conosco, oferecemos o check-in antecipado a partir das 10:00 como uma *cortesia ESTRITAMENTE MEDIANTE DISPONIBILIDADE* — não é uma regra fixa, pois depende da desocupação do hóspede anterior, da conclusão da limpeza e da conferência de frigobar. Assim que o flat estiver pronto, você receberá a notificação por aqui!`;
+          statusLiberacaoFlatHoje += `\n\n🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*\nCheck-in oficial às *${checkinTime}*; entrada às 10:00 é *cortesia ESTRITAMENTE MEDIANTE DISPONIBILIDADE* (após saída anterior, limpeza e frigobar).`;
         } else {
-          statusLiberacaoFlatHoje += `\n\n🔑 *Cortesia de Early Check-in (a partir das 12:00):*\nLembramos que o nosso check-in oficial é *a partir das ${checkinTime}*, e o check-in antecipado a partir das 12:00 é uma *cortesia mediante disponibilidade* (não é uma regra fixa, pois depende da saída do hóspede anterior, da conclusão da limpeza e da conferência de frigobar). Assim que o flat estiver pronto, avisaremos por aqui!`;
+          statusLiberacaoFlatHoje += `\n\n🔑 *Cortesia de Early Check-in (a partir das 12:00):*\nCheck-in oficial às *${checkinTime}*; entrada às 12:00 é *cortesia mediante disponibilidade* (após limpeza e frigobar).`;
         }
       }
     } else if (sameDayReleaseState.isMinibarPendingForEarlyCheckin) {
-      statusLiberacaoFlatHoje = `🧊 *Status do Flat ${flatNumber}:* *Em Conferência Final (Frigobar)*\nSua acomodação já foi higienizada e aguarda a conferência de frigobar pela equipe de abastecimento para liberação antecipada. Assim que concluída (ou no horário oficial das ${checkinTime}), enviaremos uma notificação aqui no WhatsApp liberando sua entrada!`;
-      if (isBeforeStandardCheckin) {
-        const normChan = normalizeReservationChannel(reservation.channel || reservation.source || "site");
-        const isOtaOrB2bChan = normChan === "booking" || normChan === "airbnb" || normChan === "b2b";
-        if (!isOtaOrB2bChan) {
-          statusLiberacaoFlatHoje += `\n\n🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*\nLembramos que o nosso check-in oficial é *a partir das ${checkinTime}*. O check-in antecipado a partir das 10:00 é uma *cortesia ESTRITAMENTE MEDIANTE DISPONIBILIDADE* após a conclusão da limpeza e da conferência de frigobar.`;
-        } else {
-          statusLiberacaoFlatHoje += `\n\n🔑 *Cortesia de Early Check-in (a partir das 12:00):*\nLembramos que o nosso check-in oficial é *a partir das ${checkinTime}*, e o check-in antecipado a partir das 12:00 é uma *cortesia mediante disponibilidade* após a conclusão da limpeza e da conferência de frigobar.`;
-        }
-      }
+      statusLiberacaoFlatHoje = `🧊 *Status do Flat ${flatNumber}:* *Em Conferência Final (Frigobar)*\nFlat higienizado, aguardando conferência de frigobar para liberação antecipada (ou às ${checkinTime}). Avisaremos por aqui!`;
     } else {
-      statusLiberacaoFlatHoje = `🕙 *Status do Flat ${flatNumber}:* *Liberação programada a partir das ${horarioLiberacaoHoje} (Cortesia Early Check-in)*\nO horário padrão de check-in é às ${checkinTime}, mas como sua acomodação já está higienizada e conferida, sua entrada antecipada está programada como cortesia a partir das ${horarioLiberacaoHoje}! Enviaremos a confirmação de liberação da sua acomodação aqui no WhatsApp no horário de entrada!`;
+      statusLiberacaoFlatHoje = `🕙 *Status do Flat ${flatNumber}:* *Liberação programada a partir das ${horarioLiberacaoHoje} (Cortesia Early Check-in)*\nCheck-in oficial às ${checkinTime}; como já está pronto, sua entrada antecipada será liberada às ${horarioLiberacaoHoje} por aqui!`;
     }
   }
 
   // Tag: {{status_cafe}}, {{mensagem_cafe_incluso}} e {{aviso_cafe_exclusivo_flat}}
   const statusCafe = isCancelled ? "Cancelado" : (hasBreakfast ? "Incluso" : "Não incluso");
   const mensagemCafeIncluso = (!suppressStayOpsForRequester && hasBreakfast && !isCancelled && !isUnpaidPreReservaTag)
-    ? `🥐 *Café da Manhã Incluso:*\nSua diária inclui nosso café da manhã servido exclusivamente no seu flat!`
+    ? `🥐 *Café Incluso:* Servido exclusivamente no seu flat!`
     : "";
   const avisoCafeExclusivoFlat = (!suppressStayOpsForRequester && hasBreakfast && !isCancelled)
     ? `\n\n🥐 *Sobre o seu Café da Manhã:* Como sua reserva inclui café da manhã, informamos também que ele é servido *exclusivamente no flat* (diretamente na sua acomodação).`
@@ -4897,24 +5003,24 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   // Tag: {{instrucao_checkin_ou_chegada}}
   const selfCheckinEligForTag = evaluateSelfCheckinEligibility(db, reservation, refNowForTags);
   const isSamedayContextForTag = templateId === "tpl_sameday_reservation_instructions" || triggerEvent === "sameday_reservation";
-  const lembreteCheckinCortesia = `⏰ *Lembrete Importante:* O nosso check-in oficial é *a partir das ${checkinTime}*. O check-in antecipado é uma *cortesia mediante disponibilidade* — não é uma regra fixa, pois dependemos da desocupação do hóspede anterior e da conclusão da limpeza. Assim que a camareira finalizar a preparação do seu flat, avisaremos você imediatamente por aqui!`;
+  const lembreteCheckinCortesia = `⏰ *Lembrete:* Check-in oficial *a partir das ${checkinTime}*. Entrada antecipada é *cortesia mediante disponibilidade* (após saída anterior e limpeza; avisaremos por aqui!).`;
 
   let instrucaoCheckinOuChegada = "";
   if (hasEnteredFlat) {
-    instrucaoCheckinOuChegada = `🏡 *Check-in Concluído:* Sua entrada já foi confirmada! Acesse todos os detalhes da sua estadia pelo botão abaixo:`;
+    instrucaoCheckinOuChegada = `🏡 *Check-in Concluído:* Entrada confirmada! Acesse os detalhes pelo botão abaixo:`;
   } else if (isPreCheckinDone) {
     if (selfCheckinEligForTag.allowed) {
-      instrucaoCheckinOuChegada = `✅ *Pré-Check-in Concluído:* Seus dados já foram enviados à portaria! Ao chegar no condomínio, clique no botão abaixo para autodeclarar sua entrada no flat:`;
+      instrucaoCheckinOuChegada = `✅ *Pré-Check-in Concluído:* Dados enviados à portaria! Ao chegar, toque no botão abaixo para confirmar entrada:`;
     } else if (isSamedayContextForTag) {
-      instrucaoCheckinOuChegada = `✅ *Pré-Check-in Concluído:* Seus dados já foram enviados à portaria! Assim que enviarmos a confirmação de que o flat está limpo e liberado, sua entrada estará autorizada na recepção.`;
+      instrucaoCheckinOuChegada = `✅ *Pré-Check-in Concluído:* Dados enviados à portaria! Assim que o flat estiver liberado, avisaremos por aqui.`;
     } else {
-      instrucaoCheckinOuChegada = `✅ *Pré-Check-in Concluído:* Seus dados já foram enviados à portaria!\n\n${lembreteCheckinCortesia}`;
+      instrucaoCheckinOuChegada = `✅ *Pré-Check-in Concluído:* Dados enviados à portaria!\n\n${lembreteCheckinCortesia}`;
     }
   } else {
     if (isSamedayContextForTag || selfCheckinEligForTag.allowed) {
-      instrucaoCheckinOuChegada = `👉 *Pré-Check-in Digital Obrigatório:*\nPara liberação imediata na portaria do condomínio, preencha sua ficha rápida pelo botão abaixo:`;
+      instrucaoCheckinOuChegada = `👉 *Pré-Check-in Digital Obrigatório:* Preencha pelo botão abaixo para liberar sua entrada na portaria:`;
     } else {
-      instrucaoCheckinOuChegada = `👉 *Pré-Check-in Digital Obrigatório:*\nPara liberação na portaria do condomínio, preencha sua ficha rápida pelo botão abaixo.\n\n${lembreteCheckinCortesia}`;
+      instrucaoCheckinOuChegada = `👉 *Pré-Check-in Digital Obrigatório:* Preencha pelo botão abaixo para liberar sua entrada na portaria.\n\n${lembreteCheckinCortesia}`;
     }
   }
 
@@ -4949,7 +5055,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     const pendingCompanions = (reservation.guests || []).filter(g => Number(g.index) > 1 && !g.hasCompletedCheckin && g.status !== "CHECKED_IN");
     const nextPendingIdx = pendingCompanions.length > 0 ? Number(pendingCompanions[0].index) : 2;
     const linkCheckinDigitalNextPending = getCheckinUrlSync(reservation, nextPendingIdx, appOrigin, db);
-    avisoAcompanhantePendentePosCheckin = `👥 *Acompanhante Pendente (${nextPendingIdx}º Hóspede):*\nNotamos que sua reserva possui acompanhante que ainda não preencheu a ficha individual. Para que a entrada dele(a) também já fique liberada na recepção, envie o link abaixo para preenchimento:\n👉 ${linkCheckinDigitalNextPending}\n\n💡 _Caso vá se hospedar sozinho(a), você pode atualizar para 1 hóspede diretamente no Portal do Hóspede._`;
+    avisoAcompanhantePendentePosCheckin = `👥 *Acompanhante Pendente (${nextPendingIdx}º Hóspede):*\nEnvie este link para liberar a entrada dele(a) na recepção:\n👉 ${linkCheckinDigitalNextPending}\n_(Se for se hospedar sozinho(a), atualize para 1 hóspede no Portal.)_`;
   }
 
   // Tags condicionais de Quarto Pronto / Liberado ({{instrucao_acesso_quarto_pronto*}}):
@@ -4960,10 +5066,10 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     : "";
 
   const blocoProcedimentoCheckinOnlineObrigatorio =
-    `⚠️ *Importante — Faça seu Check-in Online antes de ir à recepção:*\n` +
-    `O seu quarto já está limpo e pronto, *estando apenas no aguardo de você realizar o seu Check-in Online*! A entrada na recepção/portaria 24h *ainda não está liberada apenas informando o nome* — é necessário concluir primeiro esse procedimento online pelo link abaixo:\n` +
-    `👉 ${linkCheckinDigital}\n\n` +
-    `Assim que finalizar o Check-in Online, seus dados serão liberados imediatamente na recepção e aí sim bastará chegar, informar seu nome e entrar no *Flat ${flatNumber}*!`;
+    `⚠️ *Faça seu Check-in Online antes de ir à recepção:*\n` +
+    `Seu quarto já está limpo e pronto, mas a entrada na portaria 24h *ainda não está liberada apenas informando o nome*. Conclua primeiro pelo link:\n` +
+    `👉 ${linkCheckinDigital}\n` +
+    `Ao finalizar o Check-in Online, sua entrada no *Flat ${flatNumber}* é liberada na hora!`;
 
   const instrucaoAcessoQuartoProntoDirect = isPreCheckinDone
     ? `Como você reservou diretamente conosco, pode fazer o *Early Check-in agora mesmo*, sem precisar esperar as ${checkinTime}! 🚀\n\n📍 Ao chegar, basta se identificar na portaria 24h com seu nome e o número *${flatNumber}*.${companionSuffixWhenTitularDone}`
@@ -5048,6 +5154,9 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{data_checkout_original}}": dataCheckoutOriginal,
     "{{data_checkout_solicitado}}": dataCheckoutSolicitado,
     "{{diarias_extras_expiradas}}": diariasExtrasExpiradas,
+    "{{icone_cabecalho_extensao}}": iconeCabecalhoExtensao,
+    "{{introducao_extensao}}": introducaoExtensao,
+    "{{bloco_detalhamento_extensao}}": blocoDetalhamentoExtensao,
     "{{instrucao_pagamento}}": hideFinancialForGuest ? "" : instrucaoPagamento,
     "{{instrucao_saldo}}": hideFinancialForGuest ? "" : instrucaoSaldo,
     "{{status_confirmacao}}": statusConfirmacao,
@@ -5099,7 +5208,8 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{whatsapp_camareira}}": reservation.maidPhone || "",
     "{{link_whatsapp_camareira}}": reservation.maidWhatsAppUrl || (reservation.maidPhone ? `https://wa.me/55${String(reservation.maidPhone).replace(/\D/g, "").replace(/^55/, "")}` : ""),
     "{{descricao_item}}": reservation.description || reservation.itemDescription || "",
-    "{{foto_item}}": (reservation.photoUrl && (reservation.photoUrl.startsWith("http://") || reservation.photoUrl.startsWith("https://"))) ? `📸 *Foto do item:* ${reservation.photoUrl}\n` : "",
+    "{{local_no_quarto}}": reservation.locationInRoom ? ` (${reservation.locationInRoom})` : "",
+    "{{foto_item}}": "",
     "{{valor_promocional}}": reservation.pendingSundayUpsell ? formatCurrency(reservation.pendingSundayUpsell.promotionalPrice) : (reservation._upsellPromotionalPrice ? formatCurrency(reservation._upsellPromotionalPrice) : ""),
     "{{valor_normal}}": reservation.pendingSundayUpsell ? formatCurrency(reservation.pendingSundayUpsell.normalDailyRate) : (reservation._upsellNormalDailyRate ? formatCurrency(reservation._upsellNormalDailyRate) : ""),
     "{{economia}}": formatCurrency(Math.max(0, (reservation.pendingSundayUpsell?.normalDailyRate || reservation._upsellNormalDailyRate || 0) - (reservation.pendingSundayUpsell?.promotionalPrice || reservation._upsellPromotionalPrice || 0)))
@@ -5202,7 +5312,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   }
 
   if (hideFinancialForGuest) {
-    rendered = rendered.replace(/^[ \t]*•[^:\n]+:[ \t]*(\*\*[ \t]*)?(\([ \t]*\))?[ \t]*\n?/gm, "");
+    rendered = rendered.replace(/^[ \t]*•[^:\n]+:[ \t]*(?:\*\*[ \t]*)?(?:\([ \t]*\))?[ \t]*$(?:\r?\n)?/gm, "");
   }
 
   const stayClosedForTags = Boolean(
@@ -5472,9 +5582,20 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     : true;
   const isReservationUpdatedTpl = templateId === "tpl_reservation_updated" || triggerEvent === "reservation_updated";
   const isAdditionalDailyTpl = templateId === "tpl_additional_daily_pending" || triggerEvent === "additional_daily_pending";
+  const earlyTotalBtn = Number(reservation?.totalAmount !== undefined ? reservation?.totalAmount : reservation?.totalPrice) || 0;
+  const earlyPaysSumBtn = Array.isArray(reservation?.payments) && reservation.payments.length > 0
+    ? reservation.payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+    : 0;
+  const earlyPaidBtn = Math.round(Math.max(Number(reservation?.paidAmount) || 0, Number(reservation?.amountPaid) || 0, earlyPaysSumBtn) * 100) / 100;
+  const earlyPendingBtn = Math.max(0, Math.round((earlyTotalBtn - earlyPaidBtn) * 100) / 100);
+  const isUnpaidAdditionalDailyBtn = Boolean(
+    isAdditionalDailyTpl &&
+    (earlyPendingBtn > 0.01 || reservation?.pendingStayExtension?.status === "pending_payment")
+  );
   const needsReSign = Boolean(
     !stayClosedBtn &&
     !bareB2bCredBtn &&
+    !isUnpaidAdditionalDailyBtn &&
     (isReservationUpdatedTpl || isAdditionalDailyTpl
       ? (hadFnrhOrNeedsReSignBtn && isDatesOrFlatChangeInContext)
       : (targetGuestForBtn && typeof targetGuestForBtn.needsReSignature === "boolean"
@@ -5503,8 +5624,10 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
   const hasSeparateRequester = Boolean(recipientsForBtn.requester?.isDifferentFromGuest);
   const stripStayBtnsForRequester = Boolean(isRequesterBtnTarget && (hasSeparateRequester || reservation?.requesterIsGuest1 === false));
   const targetGuestIdx = companionTarget ? companionTarget.index : (targetRecipient?.guestIndex || targetRecipient?.index);
+  const btnRequesterTok = String(reservation?.requesterPortalToken || "").trim();
+  const btnRequesterQuery = btnRequesterTok ? `?requester=1&t=${encodeURIComponent(btnRequesterTok)}` : `?requester=1`;
   const linkPortalHospede = (isRequesterBtnTarget && hasSeparateRequester)
-    ? `${appOrigin}/minha-reserva/${resCode}?requester=1`
+    ? `${appOrigin}/minha-reserva/${resCode}${btnRequesterQuery}`
     : (targetGuestIdx && Number(targetGuestIdx) > 1 
         ? `${appOrigin}/minha-reserva/${resCode}?guest=${targetGuestIdx}` 
         : `${appOrigin}/minha-reserva/${resCode}`);
@@ -5543,6 +5666,7 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
       resStatus === "pendente" ||
       resStatus === "pending_payment" ||
       resStatus === "expirada" ||
+      isUnpaidAdditionalDailyBtn ||
       templateId === "tpl_pre_reserva" ||
       templateId === "tpl_pre_reserva_lembrete" ||
       templateId === "tpl_pre_reserva_expirada" ||
@@ -6199,6 +6323,202 @@ export async function sendZapiDocument(config, {
   }
 }
 
+// ── Disparo Oficial de Imagem / Foto via Z-API (/send-image) ──────────────────
+async function resolveZapiImageInput(rawImage, rawImageBase64 = "", effectiveConfig = {}) {
+  if (rawImageBase64 && typeof rawImageBase64 === "string" && /^data:image\//i.test(rawImageBase64.trim())) {
+    return rawImageBase64.trim();
+  }
+  const candidate = String(rawImage || "").trim();
+  if (!candidate) return "";
+  if (/^data:image\//i.test(candidate)) {
+    return candidate;
+  }
+  if (candidate.startsWith("/api/storage/files/")) {
+    const relPath = candidate.replace(/^\/api\/storage\/files\//, "");
+    const fullPath = path.join(UPLOADS_DIR, relPath);
+    if (fs.existsSync(fullPath)) {
+      try {
+        const fileBuf = fs.readFileSync(fullPath);
+        const ext = (path.extname(fullPath) || "").replace(/^\./, "").toLowerCase();
+        const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : ext === "gif" ? "image/gif" : "image/jpeg";
+        return `data:${mime};base64,${fileBuf.toString("base64")}`;
+      } catch {}
+    }
+    const pubBase = effectiveConfig?.publicOrigin || "https://corpflats.com.br";
+    return `${pubBase.replace(/\/+$/, "")}/${candidate.replace(/^\/+/, "")}`;
+  }
+  if (candidate.startsWith("/")) {
+    const pubBase = effectiveConfig?.publicOrigin || "https://corpflats.com.br";
+    return `${pubBase.replace(/\/+$/, "")}${candidate}`;
+  }
+  if (/^https?:\/\//i.test(candidate)) {
+    const safeUrl = ensureHttpsPublicUrl(candidate);
+    if (/\.r2\.dev\//i.test(safeUrl) || /\.r2\.cloudflarestorage\.com\//i.test(safeUrl)) {
+      try {
+        const imgRes = await fetch(safeUrl, { signal: AbortSignal.timeout(6000) });
+        if (imgRes.ok) {
+          const ct = String(imgRes.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+          const mime = ct.startsWith("image/")
+            ? ct
+            : (safeUrl.endsWith(".png") ? "image/png" : safeUrl.endsWith(".webp") ? "image/webp" : "image/jpeg");
+          const arrBuf = await imgRes.arrayBuffer();
+          if (arrBuf && arrBuf.byteLength > 0 && arrBuf.byteLength <= 6 * 1024 * 1024) {
+            return `data:${mime};base64,${Buffer.from(arrBuf).toString("base64")}`;
+          }
+        }
+      } catch {}
+    }
+    return safeUrl;
+  }
+  return candidate;
+}
+
+export async function sendZapiImage(config, {
+  phone,
+  image = "",
+  imageBase64 = "",
+  caption = "",
+  bypassTestMode = false,
+  recipientRole = "",
+  channelId = "",
+  triggerEvent = "",
+  delayMessage = 0,
+  db = null
+} = {}) {
+  const cleanPhone = cleanWhatsAppPhone(phone);
+  if (!cleanPhone) {
+    return { success: false, error: "Número de WhatsApp do destinatário inválido ou ausente." };
+  }
+
+  const activeDb = db || (typeof globalDbGetter === "function" ? globalDbGetter() : null);
+  const effectiveConfig = resolveEffectiveZapiConfig(config, activeDb);
+
+  const policy = evaluateZapiChannelPolicy(effectiveConfig, {
+    phone: cleanPhone,
+    channelId,
+    recipientRole,
+    triggerEvent,
+    db: activeDb,
+    bypassTestMode
+  });
+
+  if (!policy.allowed) {
+    console.warn(`[Z-API Channel Policy] Imagem para ${cleanPhone} BLOQUEADA pelo canal ${policy.channelId}. Motivo: ${policy.reason}`);
+    return {
+      success: false,
+      blockedByChannelPause: Boolean(policy.blockedByChannelPause),
+      blockedByBlacklist: Boolean(policy.blockedByBlacklist),
+      blockedByWhitelist: Boolean(policy.blockedByWhitelist),
+      blockedByTestMode: Boolean(policy.blockedByWhitelist || policy.blockedByTestMode),
+      channelId: policy.channelId,
+      error: policy.reason || "Disparo bloqueado pela governança de canais Z-API."
+    };
+  }
+
+  let targetPhone = cleanPhone;
+  let finalCaption = upgradePublicHttpLinksInText(caption);
+
+  if (policy.redirected) {
+    targetPhone = policy.targetPhone;
+    const header = policy.redirectHeader || "";
+    finalCaption = finalCaption ? `${header}${finalCaption}` : header.trim();
+  }
+
+  const realInstanceConfigured = Boolean(effectiveConfig?.instanceId?.trim() && effectiveConfig?.token?.trim() && effectiveConfig.instanceId !== "test-instance");
+  if (isOwnHotelWhatsAppPhone(targetPhone, activeDb, effectiveConfig?.connectedPhone)) {
+    if (String(recipientRole || "").toLowerCase() === "developer") {
+      targetPhone = "5522998505276";
+    } else if (realInstanceConfigured && process.env.NODE_ENV !== "test") {
+      return {
+        success: false,
+        blockedSelfSend: true,
+        channelId: policy.channelId,
+        error: "Envio bloqueado preventivamente: destinatário é o próprio número Z-API do hotel."
+      };
+    }
+  }
+
+  const instanceId = effectiveConfig?.instanceId?.trim();
+  const token = effectiveConfig?.token?.trim();
+  const clientToken = effectiveConfig?.clientToken?.trim();
+
+  if (!instanceId || !token) {
+    const mockId = `mock_img_${Date.now()}`;
+    if (finalCaption) {
+      recordBotSentMessage({ messageId: mockId, phone: targetPhone, text: finalCaption });
+    }
+    return {
+      success: true,
+      simulated: true,
+      method: "send_image",
+      hasImage: true,
+      messageId: mockId,
+      phone: targetPhone,
+      originalPhone: cleanPhone,
+      redirected: Boolean(policy.redirected),
+      channelId: policy.channelId
+    };
+  }
+
+  const finalImage = await resolveZapiImageInput(image, imageBase64, effectiveConfig);
+  if (!finalImage) {
+    return { success: false, error: "Imagem não especificada." };
+  }
+
+  const baseUrl = effectiveConfig.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
+  const imgUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-image`;
+  const headers = { "Content-Type": "application/json" };
+  if (clientToken) headers["Client-Token"] = clientToken;
+
+  const payload = {
+    phone: targetPhone,
+    image: finalImage,
+    ...(finalCaption ? { caption: finalCaption } : {}),
+    ...(delayMessage && Number(delayMessage) > 0 ? { delayMessage: Math.min(15, Math.max(1, Math.round(Number(delayMessage)))) } : {})
+  };
+
+  try {
+    console.log(`[Z-API] Enviando imagem para ${targetPhone}...`);
+    const res = await fetch(imgUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(25000)
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (res.ok && !data.error && (data.zaapId || data.id || data.messageId || data.value)) {
+      const msgId = data.zaapId || data.id || data.messageId || `img_${Date.now()}`;
+      console.log(`[Z-API ✓] Imagem entregue para ${targetPhone}. ID: ${msgId}`);
+      if (finalCaption) {
+        recordBotSentMessage({ messageId: msgId, phone: targetPhone, text: finalCaption });
+      }
+      return {
+        success: true,
+        method: "send_image",
+        hasImage: true,
+        messageId: msgId,
+        phone: targetPhone,
+        originalPhone: cleanPhone,
+        redirected: Boolean(policy.redirected),
+        channelId: policy.channelId,
+        data
+      };
+    }
+
+    console.warn(`[Z-API] Falha ao enviar imagem (HTTP ${res.status}):`, data);
+    return {
+      success: false,
+      ...(isZapiNoWhatsAppAccountError(res.status, data) ? { noWhatsAppAccount: true } : {}),
+      error: data.message || data.error || `Erro HTTP ${res.status} ao enviar imagem via Z-API`,
+      data
+    };
+  } catch (err) {
+    console.error(`[Z-API] Exceção ao enviar imagem:`, err.message);
+    return { success: false, error: err.message };
+  }
+}
+
 // ── Resolução Inteligente de Preview Visual Nativo na Z-API (/send-button-actions image + /send-link LARGE) ──
 export const OUTBOUND_PREVIEW_IMAGES = {
   credential: "https://corpflats.com.br/previews/v3/credenciamento-preview.jpg",
@@ -6693,6 +7013,237 @@ export function resolveZapiOutboundPreview({
   return selected;
 }
 
+// Limite seguro para body.text em mensagens interativas com botões (/send-button-actions + Header.imageMessage):
+// O WhatsApp Multi-Device descarta silenciosamente stanzas interativas > 1.024 unidades UTF-16 mesmo quando a Z-API retorna HTTP 200.
+export const WHATSAPP_INTERACTIVE_BODY_SAFE_LIMIT = 980;
+
+function sliceCodePointsSafe(str = "", maxUnits = 25) {
+  const s = String(str || "").trim();
+  if (s.length <= maxUnits) return s;
+  let out = "";
+  for (const ch of s) {
+    if (out.length + ch.length > maxUnits) break;
+    out += ch;
+  }
+  return out.trim();
+}
+
+export function splitWhatsAppInteractiveOverflow(text = "", maxUnits = WHATSAPP_INTERACTIVE_BODY_SAFE_LIMIT) {
+  const clean = String(text || "").trim();
+  if (clean.length <= maxUnits) {
+    return { needsSplit: false, headText: "", buttonBodyText: clean };
+  }
+  const paragraphs = clean.split(/\n\n+/);
+  if (paragraphs.length >= 2) {
+    let tail = paragraphs[paragraphs.length - 1];
+    let splitIdx = paragraphs.length - 1;
+    for (let i = paragraphs.length - 2; i >= 1; i--) {
+      const candidate = `${paragraphs[i]}\n\n${tail}`;
+      if (candidate.length <= Math.min(maxUnits, 760)) {
+        tail = candidate;
+        splitIdx = i;
+      } else {
+        break;
+      }
+    }
+    if (tail.length <= maxUnits) {
+      const head = paragraphs.slice(0, splitIdx).join("\n\n").trim();
+      if (head) {
+        return { needsSplit: true, headText: head, buttonBodyText: tail.trim() };
+      }
+    }
+  }
+  const cutTarget = Math.max(200, clean.length - Math.min(maxUnits, 700));
+  let idx = clean.indexOf("\n", cutTarget);
+  if (idx < 0 || clean.length - idx - 1 > maxUnits) {
+    idx = clean.lastIndexOf("\n", clean.length - 200);
+  }
+  if (idx > 0 && clean.length - idx - 1 <= maxUnits) {
+    return {
+      needsSplit: true,
+      headText: clean.slice(0, idx).trim(),
+      buttonBodyText: clean.slice(idx + 1).trim()
+    };
+  }
+  const safeTail = sliceCodePointsSafe(clean.slice(-maxUnits), maxUnits);
+  const safeHead = clean.slice(0, Math.max(0, clean.length - safeTail.length)).trim();
+  return {
+    needsSplit: Boolean(safeHead),
+    headText: safeHead,
+    buttonBodyText: safeTail || "👇 *Acesse pelos botões abaixo:*"
+  };
+}
+
+function isUnsafeHydratedButtonUrl(urlStr) {
+  if (!urlStr) return false;
+  try {
+    const parsed = new URL(String(urlStr).trim());
+    const host = String(parsed.hostname || "").toLowerCase();
+    const pathname = String(parsed.pathname || "/");
+    if (
+      host === "share.google" ||
+      host.endsWith(".share.google") ||
+      host === "maps.app.goo.gl" ||
+      host === "goo.gl" ||
+      host.endsWith(".goo.gl") ||
+      host.startsWith("maps.google.") ||
+      (host.includes("google.") && pathname.startsWith("/maps")) ||
+      host === "bit.ly" ||
+      host === "tinyurl.com" ||
+      host === "t.co" ||
+      host === "cutt.ly" ||
+      host === "is.gd" ||
+      host === "rebrand.ly" ||
+      host === "shorturl.at"
+    ) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+function getHydratedButtonHostKey(urlStr) {
+  if (!urlStr) return "";
+  try {
+    const parsed = new URL(String(urlStr).trim());
+    const host = String(parsed.hostname || "").toLowerCase().replace(/^www\./, "");
+    if (host === "whatsapp.com" && String(parsed.pathname || "").startsWith("/otp")) {
+      return "__whatsapp_native_otp__";
+    }
+    return host;
+  } catch {
+    return "";
+  }
+}
+
+export function sanitizeButtonsForHydratedTemplate(validButtons = [], options = {}) {
+  const config = options?.config || null;
+  const hostBase = String(
+    options?.hostBase ||
+    (typeof process !== "undefined" && process.env?.SERVER_BASE_URL ? process.env.SERVER_BASE_URL : "https://corpflats.com.br")
+  ).replace(/\/+$/, "");
+
+  const list = (validButtons || []).filter(
+    b => b && b.label && (b.url || b.phone || b.copyCode || b.code || b.type === "COPY" || b.type === "REPLY")
+  );
+  const hasCallOrUrl = list.some(b => b.type === "CALL" || b.type === "URL" || b.type === "COPY" || b.copyCode || b.phone);
+  const hasReply = list.some(b => b.type === "REPLY");
+  const filteredButtons = (hasCallOrUrl && hasReply) ? list.filter(b => b.type !== "REPLY") : list;
+
+  const formattedActions = [];
+  const demotedUrlButtons = [];
+  let urlActionCount = 0;
+  let callActionCount = 0;
+  let primaryUrlHost = "";
+
+  for (let idx = 0; idx < filteredButtons.length; idx++) {
+    const b = filteredButtons[idx];
+    const labelClean = String(b.label || "Acessar").trim();
+    const safeLabel = sliceCodePointsSafe(labelClean, 25) || "Acessar";
+
+    if (b.type === "REPLY") {
+      if (formattedActions.length < 3) {
+        formattedActions.push({
+          id: String(b.id || `btn_${formattedActions.length + 1}`),
+          type: "REPLY",
+          label: safeLabel
+        });
+      }
+      continue;
+    }
+
+    const isCall = b.type === "CALL" || Boolean(b.phone && !b.url && b.type !== "URL" && b.type !== "COPY");
+    if (isCall) {
+      // No protocolo HydratedFourRowTemplate do WhatsApp, o total de botões CTA (URL + CALL) não pode ultrapassar 2
+      // (2 URL + 1 CALL retorna HTTP 200 na Z-API mas é descartado silenciosamente pelo aparelho WhatsApp).
+      if (callActionCount >= 1 || (urlActionCount + callActionCount) >= 2 || formattedActions.length >= 3) {
+        continue;
+      }
+      callActionCount++;
+      formattedActions.push({
+        id: String(b.id || `btn_${formattedActions.length + 1}`),
+        type: "CALL",
+        label: safeLabel,
+        phone: cleanWhatsAppPhone(b.phone || config?.adminWhatsApp || "5522997124021")
+      });
+      continue;
+    }
+
+    let rawUrl = String(b.url || "").trim();
+    const codeToCopy = b.copyCode || b.code || (b.type === "COPY" && rawUrl && !rawUrl.startsWith("http") ? rawUrl : "");
+    const isPixBtn =
+      b.id === "btn_pix" ||
+      /pix/i.test(labelClean) ||
+      (codeToCopy && String(codeToCopy).startsWith("000201")) ||
+      rawUrl.startsWith("000201") ||
+      rawUrl.includes("code=000201");
+    const cleanCopyDigits = String(codeToCopy || "").replace(/\D/g, "");
+    const isBoletoBtn =
+      /boleto|linha\s*digit/i.test(labelClean) ||
+      rawUrl.includes("/copiar-boleto") ||
+      (cleanCopyDigits.length >= 44 && cleanCopyDigits.length <= 48);
+    const hasExplicitHttpUrl = /^https?:\/\//i.test(rawUrl) && !rawUrl.includes("whatsapp.com/otp") && !rawUrl.startsWith("000201");
+    const isShortOtpCode = Boolean(codeToCopy && String(codeToCopy).trim().length <= 20);
+
+    if (hasExplicitHttpUrl) {
+      // Mantém rawUrl intacta
+    } else if (!isPixBtn && !isBoletoBtn && (isShortOtpCode || rawUrl.includes("whatsapp.com/otp"))) {
+      rawUrl = rawUrl.includes("whatsapp.com/otp")
+        ? rawUrl
+        : `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(String(codeToCopy).trim())}`;
+    } else if (isBoletoBtn && !rawUrl) {
+      rawUrl = codeToCopy
+        ? `${hostBase}/copiar-boleto?mode=boleto&linha=${encodeURIComponent(String(codeToCopy).trim())}`
+        : `${hostBase}/copiar-boleto`;
+    } else if (!rawUrl || (isPixBtn && (rawUrl.startsWith("000201") || rawUrl.includes("whatsapp.com/otp")))) {
+      rawUrl = `${hostBase}/copiar-pix`;
+    } else if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
+      rawUrl = "https://" + rawUrl;
+    }
+
+    const resolvedUrl = ensureHttpsPublicUrl(rawUrl);
+    const hostKey = getHydratedButtonHostKey(resolvedUrl);
+    const isUnsafeShortener = isUnsafeHydratedButtonUrl(resolvedUrl);
+    const isCrossDomainSecondUrl = Boolean(
+      urlActionCount >= 1 &&
+      primaryUrlHost &&
+      hostKey &&
+      hostKey !== "__whatsapp_native_otp__" &&
+      primaryUrlHost !== "__whatsapp_native_otp__" &&
+      hostKey !== primaryUrlHost
+    );
+    const exceedsCtaCap = urlActionCount >= 2 || (urlActionCount + callActionCount) >= 2 || formattedActions.length >= 3;
+
+    // Botões de encurtadores externos / Google Maps (ex: share.google) ou 2º URL de domínio distinto
+    // causam descarte silencioso do HydratedFourRowTemplate no WhatsApp; movemos o link para o texto!
+    if (isUnsafeShortener || isCrossDomainSecondUrl || exceedsCtaCap) {
+      if (resolvedUrl && !resolvedUrl.includes("whatsapp.com/otp")) {
+        demotedUrlButtons.push({ id: b.id, label: labelClean, url: resolvedUrl });
+      }
+      continue;
+    }
+
+    if (!primaryUrlHost && hostKey && hostKey !== "__whatsapp_native_otp__") {
+      primaryUrlHost = hostKey;
+    }
+    urlActionCount++;
+    formattedActions.push({
+      id: String(b.id || `btn_${formattedActions.length + 1}`),
+      type: "URL",
+      label: safeLabel,
+      url: resolvedUrl
+    });
+  }
+
+  return {
+    filteredButtons,
+    formattedActions,
+    demotedUrlButtons
+  };
+}
+
 // ── Disparo Oficial Z-API ──────────────────────────────────────────────────────
 export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thirdOpts = {}) {
   let config = configOrPhone;
@@ -6716,6 +7267,9 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
     footer = "",
     buttons = [],
     sendMode = "auto",
+    image = "",
+    imageUrl = "",
+    imageBase64 = "",
     documentUrl = "",
     documentName = "",
     documentCaption = "",
@@ -6796,6 +7350,26 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
   }
 
   const hasDoc = Boolean(documentUrl || fileBase64);
+  const hasExplicitImage = Boolean(
+    (imageBase64 && String(imageBase64).trim()) ||
+    (image && String(image).trim()) ||
+    (imageUrl && String(imageUrl).trim())
+  );
+
+  // Se não há texto na mensagem mas há imagem explícita (sem botões), envia diretamente a imagem
+  if (!finalMessage && hasExplicitImage && (!Array.isArray(buttons) || buttons.length === 0)) {
+    return await sendZapiImage(config, {
+      phone: cleanPhone,
+      image: image || imageUrl,
+      imageBase64,
+      caption: "",
+      bypassTestMode,
+      recipientRole,
+      channelId,
+      triggerEvent,
+      db: activeDb
+    });
+  }
 
   // Se não há texto na mensagem mas há documento, envia diretamente o documento
   if (!finalMessage && hasDoc) {
@@ -6834,7 +7408,8 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
       originalPhone: cleanPhone,
       redirected: Boolean(policy.redirected),
       message: finalMessage,
-      channelId: policy.channelId
+      channelId: policy.channelId,
+      ...(hasExplicitImage ? { hasImage: true } : {})
     };
     if (finalMessage) {
       recordBotSentMessage({ messageId: mockResult.messageId, phone: targetPhone, text: finalMessage });
@@ -6859,7 +7434,14 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
     headers["Client-Token"] = clientToken;
   }
 
+  const explicitZapiImage = hasExplicitImage
+    ? await resolveZapiImageInput(image || imageUrl, imageBase64, config)
+    : "";
+
   const validButtons = (buttons || []).filter(b => b && b.label && (b.url || b.phone || b.copyCode || b.code || b.type === "COPY" || b.type === "REPLY"));
+
+  const hydratedSanitized = sanitizeButtonsForHydratedTemplate(validButtons, { config });
+  const { filteredButtons, formattedActions, demotedUrlButtons } = hydratedSanitized;
 
   const reviewUrlRegex = /https?:\/\/[^\s]*(?:writereview\?placeid=[^\s]+|g\.page\/r\/[^\s]+|corpflats\.com\.br\/avaliar[^\s]*)/i;
   const isGoogleReviewMsg =
@@ -6870,11 +7452,20 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
   const shouldSendText = isGoogleReviewMsg ||
                          sendMode === "text" || 
                          (sendMode !== "buttons" && configuredDeliveryMode === "text_links") || 
-                         validButtons.length === 0;
+                         validButtons.length === 0 ||
+                         formattedActions.length === 0;
+
+  if (!shouldSendText && demotedUrlButtons.length > 0) {
+    for (const demoted of demotedUrlButtons) {
+      if (demoted.url && !String(finalMessage || "").includes(demoted.url)) {
+        finalMessage = `${String(finalMessage || "").trim()}\n\n${demoted.label}: ${demoted.url}`;
+      }
+    }
+  }
 
   let primaryResult = null;
 
-  // 1. Envio Direto via Link Rico (/send-link LARGE) ou Texto Simples (/send-text)
+  // 1. Envio Direto via Imagem (/send-image), Link Rico (/send-link LARGE) ou Texto Simples (/send-text)
   if (shouldSendText) {
     let textWithLinks = formatMessageWithLinks(
       finalMessage,
@@ -6887,7 +7478,56 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
       textWithLinks = `${textWithLinks.trim()}\n\n${btnReviewUrl}`;
     }
 
-    const textPreview = resolveZapiOutboundPreview({
+    if (explicitZapiImage) {
+      try {
+        const sendImageUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-image`;
+        const imgPayload = {
+          phone: targetPhone,
+          image: explicitZapiImage,
+          caption: textWithLinks
+        };
+        console.log(`[Z-API] Enviando imagem com legenda para ${targetPhone}...`);
+        const imgRes = await fetch(sendImageUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(imgPayload),
+          signal: AbortSignal.timeout(25000)
+        });
+        const imgData = await imgRes.json().catch(() => ({}));
+        if (imgRes.ok && !imgData.error && (imgData.zaapId || imgData.id || imgData.messageId || imgData.value)) {
+          const msgId = imgData.zaapId || imgData.id || imgData.messageId || "ok";
+          primaryResult = {
+            success: true,
+            method: "send_image",
+            hasImage: true,
+            messageId: msgId,
+            phone: targetPhone,
+            originalPhone: cleanPhone,
+            redirected: Boolean(policy.redirected),
+            channelId: policy.channelId,
+            data: imgData
+          };
+          recordBotSentMessage({ messageId: primaryResult.messageId, phone: targetPhone, text: finalMessage });
+        } else if (isZapiNoWhatsAppAccountError(imgRes.status, imgData)) {
+          primaryResult = {
+            success: false,
+            noWhatsAppAccount: true,
+            phone: targetPhone,
+            originalPhone: cleanPhone,
+            redirected: Boolean(policy.redirected),
+            channelId: policy.channelId,
+            error: imgData.message || imgData.error || "Número não possui conta ativa no WhatsApp.",
+            data: imgData
+          };
+        } else {
+          console.warn(`[Z-API] /send-image recusado (HTTP ${imgRes.status}), aplicando fallback para texto:`, imgData);
+        }
+      } catch (imgErr) {
+        console.warn(`[Z-API] Exceção em /send-image (${imgErr.message}), aplicando fallback para texto...`);
+      }
+    }
+
+    const textPreview = !primaryResult ? resolveZapiOutboundPreview({
       message: textWithLinks,
       buttons: [],
       rawButtons: isGoogleReviewMsg ? [] : validButtons,
@@ -6895,7 +7535,7 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
       config,
       db: activeDb,
       disableLinkPreview: Boolean(rawOpts.disableLinkPreview || rawOpts.isAdminAlert)
-    });
+    }) : null;
 
     if (textPreview && textPreview.linkUrl && textPreview.publicImageUrl) {
       const sendLinkUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-link`;
@@ -7003,87 +7643,9 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
     }
   } else {
     // 2. Tentativa com Botões Interativos + Header Visual Contextual (/send-button-actions)
+    // Os botões em formattedActions já foram higienizados por sanitizeButtonsForHydratedTemplate
+    // (máx. 2 botões CTA totais, mesmo domínio base, sem encurtadores externos como share.google).
     const buttonActionsUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-actions`;
-
-    const hasCallOrUrl = validButtons.some(b => b.type === "CALL" || b.type === "URL" || b.type === "COPY" || b.copyCode);
-    const hasReply = validButtons.some(b => b.type === "REPLY");
-
-    let filteredButtons = validButtons;
-    if (hasCallOrUrl && hasReply) {
-      filteredButtons = validButtons.filter(b => b.type !== "REPLY");
-    }
-
-    // Trava estrita do protocolo oficial do WhatsApp: máximo de 2 botões URL + 1 botão CALL (total máx. 3).
-    // Impede que 3 botões URL sejam aceitos pela Z-API com HTTP 200 mas descartados silenciosamente pelo WhatsApp no celular do cliente.
-    let urlActionCount = 0;
-    let callActionCount = 0;
-    const protocolSafeButtons = [];
-    for (const btnCandidate of filteredButtons) {
-      if (btnCandidate.type === "REPLY") {
-        protocolSafeButtons.push(btnCandidate);
-      } else if (btnCandidate.type === "CALL" || Boolean(btnCandidate.phone)) {
-        if (callActionCount >= 1) continue;
-        callActionCount++;
-        protocolSafeButtons.push(btnCandidate);
-      } else {
-        if (urlActionCount >= 2) continue;
-        urlActionCount++;
-        protocolSafeButtons.push(btnCandidate);
-      }
-      if (protocolSafeButtons.length >= 3) break;
-    }
-
-    const formattedActions = protocolSafeButtons.map((b, idx) => {
-      const isCall = b.type === "CALL" || Boolean(b.phone);
-      const type = isCall ? "CALL" : "URL";
-      const action = {
-        id: String(b.id || `btn_${idx + 1}`),
-        type,
-        label: String(b.label || "Acessar").trim().substring(0, 25)
-      };
-
-      if (type === "URL") {
-        let rawUrl = String(b.url || "").trim();
-        const codeToCopy = b.copyCode || b.code || (b.type === "COPY" && rawUrl && !rawUrl.startsWith("http") ? rawUrl : "");
-        const isPixBtn =
-          b.id === "btn_pix" ||
-          /pix/i.test(String(b.label || "")) ||
-          (codeToCopy && String(codeToCopy).startsWith("000201")) ||
-          rawUrl.startsWith("000201") ||
-          rawUrl.includes("code=000201");
-        const cleanCopyDigits = String(codeToCopy || "").replace(/\D/g, "");
-        const isBoletoBtn =
-          /boleto|linha\s*digit/i.test(String(b.label || "")) ||
-          rawUrl.includes("/copiar-boleto") ||
-          (cleanCopyDigits.length >= 44 && cleanCopyDigits.length <= 48);
-        const hasExplicitHttpUrl = /^https?:\/\//i.test(rawUrl) && !rawUrl.includes("whatsapp.com/otp") && !rawUrl.startsWith("000201");
-        const isShortOtpCode = Boolean(codeToCopy && String(codeToCopy).trim().length <= 20);
-        const hostBase = (typeof process !== "undefined" && process.env?.SERVER_BASE_URL ? process.env.SERVER_BASE_URL : "https://corpflats.com.br").replace(/\/+$/, "");
-
-        // Preserva URLs explícitas (ex: /copiar-boleto/:code?mode=boleto|pix, /copiar-pix/:code, portais)
-        if (hasExplicitHttpUrl) {
-          // Mantém rawUrl intacta
-        } else if (!isPixBtn && !isBoletoBtn && (isShortOtpCode || rawUrl.includes("whatsapp.com/otp"))) {
-          // Apenas códigos curtos OTP (<= 20 caracteres) usam o link nativo whatsapp.com/otp/code
-          rawUrl = rawUrl.includes("whatsapp.com/otp")
-            ? rawUrl
-            : `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(String(codeToCopy).trim())}`;
-        } else if (isBoletoBtn && !rawUrl) {
-          rawUrl = codeToCopy
-            ? `${hostBase}/copiar-boleto?mode=boleto&linha=${encodeURIComponent(String(codeToCopy).trim())}`
-            : `${hostBase}/copiar-boleto`;
-        } else if (!rawUrl || (isPixBtn && (rawUrl.startsWith("000201") || rawUrl.includes("whatsapp.com/otp")))) {
-          rawUrl = `${hostBase}/copiar-pix`;
-        } else if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
-          rawUrl = "https://" + rawUrl;
-        }
-        action.url = ensureHttpsPublicUrl(rawUrl);
-      } else if (type === "CALL") {
-        action.phone = cleanWhatsAppPhone(b.phone || config.adminWhatsApp || "5522997124021");
-      }
-
-      return action;
-    });
 
     const buttonPreview = resolveZapiOutboundPreview({
       message: finalMessage,
@@ -7095,17 +7657,108 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
       disableLinkPreview: Boolean(rawOpts.disableLinkPreview || rawOpts.isAdminAlert)
     });
 
+    const headerImageForButtons = explicitZapiImage || buttonPreview?.buttonHeaderImage || "";
+    const safeFooter = footer ? sliceCodePointsSafe(footer, 60) : "";
+
+    // Blindagem estrita contra descarte silencioso do WhatsApp (> 1.024 UTF-16 no /send-button-actions):
+    const overflowSplit = splitWhatsAppInteractiveOverflow(finalMessage, WHATSAPP_INTERACTIVE_BODY_SAFE_LIMIT);
+    let effectiveButtonBodyText = finalMessage;
+    let effectiveHeaderImageForButtons = headerImageForButtons;
+    let headDeliveredBeforeButtons = false;
+    let abortDueToNoWhatsApp = null;
+
+    if (overflowSplit.needsSplit && overflowSplit.headText) {
+      try {
+        console.log(`[Z-API Overflow Guard] Corpo de botões com ${finalMessage.length} chars (> ${WHATSAPP_INTERACTIVE_BODY_SAFE_LIMIT}); enviando parte 1 (${overflowSplit.headText.length} chars) antes do card de botões (${overflowSplit.buttonBodyText.length} chars)...`);
+        let headSent = false;
+        let headUsedImage = false;
+        if (headerImageForButtons && overflowSplit.headText.length <= WHATSAPP_INTERACTIVE_BODY_SAFE_LIMIT) {
+          try {
+            const sendImageUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-image`;
+            const headImgRes = await fetch(sendImageUrl, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                phone: targetPhone,
+                image: headerImageForButtons,
+                caption: overflowSplit.headText
+              }),
+              signal: AbortSignal.timeout(25000)
+            });
+            const headImgData = await headImgRes.json().catch(() => ({}));
+            if (headImgRes.ok && !headImgData.error && (headImgData.zaapId || headImgData.id || headImgData.messageId || headImgData.value)) {
+              headSent = true;
+              headUsedImage = true;
+              recordBotSentMessage({ messageId: headImgData.zaapId || headImgData.id || "ok", phone: targetPhone, text: overflowSplit.headText });
+            } else if (isZapiNoWhatsAppAccountError(headImgRes.status, headImgData)) {
+              abortDueToNoWhatsApp = {
+                success: false,
+                noWhatsAppAccount: true,
+                phone: targetPhone,
+                originalPhone: cleanPhone,
+                redirected: Boolean(policy.redirected),
+                channelId: policy.channelId,
+                error: headImgData.message || headImgData.error || "Número não possui conta ativa no WhatsApp.",
+                data: headImgData
+              };
+            }
+          } catch {}
+        }
+
+        if (!headSent && !abortDueToNoWhatsApp) {
+          const textUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-text`;
+          const headTxtRes = await fetch(textUrl, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ phone: targetPhone, message: overflowSplit.headText }),
+            signal: AbortSignal.timeout(25000)
+          });
+          const headTxtData = await headTxtRes.json().catch(() => ({}));
+          if (headTxtRes.ok && !headTxtData.error && (headTxtData.zaapId || headTxtData.id || headTxtData.messageId)) {
+            headSent = true;
+            recordBotSentMessage({ messageId: headTxtData.zaapId || headTxtData.id || "ok", phone: targetPhone, text: overflowSplit.headText });
+          } else if (isZapiNoWhatsAppAccountError(headTxtRes.status, headTxtData)) {
+            abortDueToNoWhatsApp = {
+              success: false,
+              noWhatsAppAccount: true,
+              phone: targetPhone,
+              originalPhone: cleanPhone,
+              redirected: Boolean(policy.redirected),
+              channelId: policy.channelId,
+              error: headTxtData.message || headTxtData.error || "Número não possui conta ativa no WhatsApp.",
+              data: headTxtData
+            };
+          }
+        }
+
+        if (headSent) {
+          headDeliveredBeforeButtons = true;
+          effectiveButtonBodyText = overflowSplit.buttonBodyText;
+          if (headUsedImage) {
+            effectiveHeaderImageForButtons = "";
+          }
+          await new Promise(r => setTimeout(r, 600));
+        }
+      } catch (headErr) {
+        console.warn(`[Z-API Overflow Guard] Aviso ao enviar parte 1 antes dos botões:`, headErr.message);
+      }
+    }
+
+    if (abortDueToNoWhatsApp) {
+      primaryResult = abortDueToNoWhatsApp;
+    } else {
+
     const buttonActionsPayload = {
       phone: targetPhone,
-      message: finalMessage,
+      message: effectiveButtonBodyText,
       // Omitido 'title' para que a mensagem inicie direto com a saudação, sem cabeçalho com o nome interno do template
-      ...(footer ? { footer } : {}),
-      ...(buttonPreview?.buttonHeaderImage ? { image: buttonPreview.buttonHeaderImage } : {}),
+      ...(safeFooter ? { footer: safeFooter } : {}),
+      ...(effectiveHeaderImageForButtons ? { image: effectiveHeaderImageForButtons } : {}),
       buttonActions: formattedActions
     };
 
     try {
-      console.log(`[Z-API] Enviando mensagem com botões${buttonPreview?.slot ? ` + foto (${buttonPreview.slot})` : ""} para ${targetPhone}...`);
+      console.log(`[Z-API] Enviando mensagem com botões${explicitZapiImage ? " + foto anexada" : (buttonPreview?.slot ? ` + foto (${buttonPreview.slot})` : "")} para ${targetPhone}...`);
       let res = null;
       let data = {};
       let imageFallbackUsed = false;
@@ -7153,19 +7806,43 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
       }
 
       if (res.ok && !data.error && (data.zaapId || data.id || data.messageId || data.value)) {
-        console.log(`[Z-API ✓] Mensagem com botões aceita para ${targetPhone}. ID: ${data.zaapId || data.id}`);
+        const resolvedBtnMsgId = data.messageId || data.id || data.zaapId || "ok";
+        console.log(`[Z-API ✓] Mensagem com botões aceita para ${targetPhone}. ID: ${resolvedBtnMsgId}`);
         primaryResult = {
           success: true,
-          method: "buttons",
+          method: headDeliveredBeforeButtons ? "split_buttons" : "buttons",
+          hasImage: Boolean(headerImageForButtons && !imageFallbackUsed),
           previewSlot: imageFallbackUsed ? null : (buttonPreview?.slot || null),
-          messageId: data.zaapId || data.id || "ok",
+          messageId: resolvedBtnMsgId,
+          zaapId: data.zaapId || null,
           phone: targetPhone,
           originalPhone: cleanPhone,
           redirected: Boolean(policy.redirected),
           channelId: policy.channelId,
           data
         };
-        recordBotSentMessage({ messageId: primaryResult.messageId, phone: targetPhone, text: finalMessage });
+        recordBotSentMessage({ messageId: primaryResult.messageId, phone: targetPhone, text: effectiveButtonBodyText });
+
+        // Se uma foto explícita foi solicitada (ex: Achados e Perdidos) e o /send-button-actions precisou remover a foto no fallback,
+        // envia a foto real via /send-image para garantir que o cliente sempre receba a imagem na conversa
+        if (explicitZapiImage && imageFallbackUsed && effectiveHeaderImageForButtons) {
+          try {
+            const sendImageUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-image`;
+            const imgCompRes = await fetch(sendImageUrl, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({ phone: targetPhone, image: explicitZapiImage }),
+              signal: AbortSignal.timeout(25000)
+            });
+            const imgCompData = await imgCompRes.json().catch(() => ({}));
+            if (imgCompRes.ok && !imgCompData.error && (imgCompData.zaapId || imgCompData.id || imgCompData.messageId || imgCompData.value)) {
+              primaryResult.hasImage = true;
+              primaryResult.imageCompanionMessageId = imgCompData.zaapId || imgCompData.id || imgCompData.messageId || "ok";
+            }
+          } catch (imgCompErr) {
+            console.warn(`[Z-API] Falha ao enviar imagem complementar pós-botões:`, imgCompErr.message);
+          }
+        }
       } else if (isZapiNoWhatsAppAccountError(res.status, data)) {
         console.warn(`[Z-API] Conta WhatsApp inexistente para ${targetPhone} (HTTP ${res.status}); abortando fallbacks:`, data);
         primaryResult = {
@@ -7181,11 +7858,56 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
       } else {
         console.warn(`[Z-API] Falha ao enviar com botões (HTTP ${res.status}):`, data);
 
-        // Fallback para Link Rico (/send-link LARGE) ou texto formatado (/send-text) se configurado
+        // Fallback para Imagem com Legenda (/send-image), Link Rico (/send-link LARGE) ou texto formatado (/send-text) se configurado
         if (fallbackToText) {
           console.log(`[Z-API Fallback] Reenviando com links diretos para ${targetPhone}...`);
-          const textWithLinks = formatMessageWithLinks(finalMessage, footer, validButtons);
-          const fallbackPreview = resolveZapiOutboundPreview({
+          const textWithLinks = formatMessageWithLinks(headDeliveredBeforeButtons ? effectiveButtonBodyText : finalMessage, safeFooter, validButtons);
+
+          if (explicitZapiImage) {
+            try {
+              const sendImageUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-image`;
+              const imgFallbackRes = await fetch(sendImageUrl, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                  phone: targetPhone,
+                  image: explicitZapiImage,
+                  caption: textWithLinks
+                }),
+                signal: AbortSignal.timeout(25000)
+              });
+              const imgFallbackData = await imgFallbackRes.json().catch(() => ({}));
+              if (imgFallbackRes.ok && !imgFallbackData.error && (imgFallbackData.zaapId || imgFallbackData.id || imgFallbackData.messageId || imgFallbackData.value)) {
+                primaryResult = {
+                  success: true,
+                  method: "fallback_image",
+                  hasImage: true,
+                  warning: "Mensagem entregue com foto + legenda após recusa de botões pela Z-API.",
+                  buttonError: data.message || data.error || `Erro HTTP ${res.status}`,
+                  messageId: imgFallbackData.zaapId || imgFallbackData.id || imgFallbackData.messageId || "ok",
+                  phone: targetPhone,
+                  originalPhone: cleanPhone,
+                  redirected: Boolean(policy.redirected),
+                  channelId: policy.channelId,
+                  data: imgFallbackData
+                };
+                recordBotSentMessage({ messageId: primaryResult.messageId, phone: targetPhone, text: finalMessage });
+              } else if (isZapiNoWhatsAppAccountError(imgFallbackRes.status, imgFallbackData)) {
+                primaryResult = {
+                  success: false,
+                  noWhatsAppAccount: true,
+                  phone: targetPhone,
+                  originalPhone: cleanPhone,
+                  redirected: Boolean(policy.redirected),
+                  channelId: policy.channelId,
+                  error: imgFallbackData.message || imgFallbackData.error || "Número não possui conta ativa no WhatsApp.",
+                  data: imgFallbackData
+                };
+              }
+            } catch {}
+          }
+
+          const fallbackPreview = !primaryResult ? resolveZapiOutboundPreview({
             message: textWithLinks,
             buttons: [],
             rawButtons: validButtons,
@@ -7193,7 +7915,7 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
             config,
             db: activeDb,
             disableLinkPreview: Boolean(rawOpts.disableLinkPreview || rawOpts.isAdminAlert)
-          });
+          }) : null;
 
           if (fallbackPreview && fallbackPreview.linkUrl && fallbackPreview.publicImageUrl) {
             try {
@@ -7289,6 +8011,7 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
     } catch (err) {
       console.error(`[Z-API] Exceção no envio:`, err.message);
       primaryResult = { success: false, error: err.message };
+    }
     }
   }
 
@@ -8566,6 +9289,10 @@ export function extractIncomingMessageInfo(body) {
     text = body.text;
   } else if (body.text && typeof body.text.message === "string") {
     text = body.text.message;
+  } else if (body.hydratedTemplate && typeof body.hydratedTemplate.message === "string") {
+    text = body.hydratedTemplate.message;
+  } else if (body.buttonsMessage && typeof body.buttonsMessage.message === "string") {
+    text = body.buttonsMessage.message;
   } else if (body.message) {
     if (typeof body.message === "string") text = body.message;
     else if (body.message.conversation) text = body.message.conversation;
@@ -9491,12 +10218,24 @@ export function appendMessageToConversation(db, {
   // Se for callback eco da Z-API para mensagem recém-enviada pelo sistema (ex: msg_... ou svc_...), vincula o messageId real sem duplicar no histórico
   if (fromMe && text) {
     const nowCheckMs = new Date(nowIso).getTime();
+    const normIncomingText = String(text || "").trim();
     const recentSameFromMe = [...conv.messages].reverse().find(m => {
-      if (!m || !m.fromMe || String(m.text || "").trim() !== String(text || "").trim()) return false;
+      if (!m || !m.fromMe) return false;
       const mMs = new Date(m.timestamp || 0).getTime();
-      return !Number.isNaN(mMs) && !Number.isNaN(nowCheckMs) && Math.abs(nowCheckMs - mMs) <= 45000;
+      if (Number.isNaN(mMs) || Number.isNaN(nowCheckMs) || Math.abs(nowCheckMs - mMs) > 45000) return false;
+      const normStoredText = String(m.text || "").trim();
+      if (normStoredText === normIncomingText) return true;
+      if (
+        normStoredText.length >= 20 &&
+        normIncomingText.length >= 20 &&
+        (normStoredText.includes(normIncomingText) || normIncomingText.includes(normStoredText))
+      ) {
+        return true;
+      }
+      return false;
     });
     if (recentSameFromMe) {
+      recentSameFromMe.whatsappSentConfirmed = true;
       if (messageId && !String(messageId).startsWith("msg_")) {
         recentSameFromMe.zapiMessageId = messageId;
         if (String(recentSameFromMe.messageId || "").startsWith("msg_") || String(recentSameFromMe.messageId || "").startsWith("svc_")) {
@@ -9730,6 +10469,103 @@ export function syncWhatsappConversationsStore(db, force = false) {
   db.whatsappConversations.sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
   _lastWaSyncTs = Date.now();
   _lastWaSyncSig = `${(db.reservations || []).length}_${(db.whatsappHistory || []).length}_${db.whatsappConversations.length}`;
+}
+
+// ── Migração Idempotente de Boot (Apresentação CorpFlats 1ª Vez + Re-renderização da Fila) ──
+export function ensureCorpFlatsBootMigrations(db, saveDatabase = null) {
+  if (!db || typeof db !== "object") return false;
+  if (!db.zapiConfig || typeof db.zapiConfig !== "object") {
+    db.zapiConfig = {};
+  }
+
+  let changed = false;
+  const defIntro = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_corpflats_intro");
+
+  if (Array.isArray(db.whatsappTemplates) && defIntro) {
+    let introTpl = db.whatsappTemplates.find(
+      t => t && (t.id === "tpl_corpflats_intro" || t.triggerEvent === "corpflats_intro")
+    );
+    if (!introTpl && db.whatsappTemplates.length > 0) {
+      introTpl = JSON.parse(JSON.stringify(defIntro));
+      db.whatsappTemplates.unshift(introTpl);
+      changed = true;
+    }
+    if (introTpl) {
+      introTpl.id = "tpl_corpflats_intro";
+      introTpl.triggerEvent = "corpflats_intro";
+      introTpl.recipientTarget = "guest";
+      introTpl.triggerTiming = "immediate";
+      introTpl.channels = ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"];
+      introTpl.hasAttachment = false;
+      if (!introTpl.message || !introTpl.message.includes("CorpFlats") || !introTpl.message.includes("{{aviso_cafe_exclusivo_flat}}")) {
+        introTpl.title = defIntro.title;
+        introTpl.description = defIntro.description;
+        introTpl.message = defIntro.message;
+        introTpl.footer = defIntro.footer;
+        introTpl.buttons = [];
+        changed = true;
+      }
+      if (!db.zapiConfig.corpflatsIntroReactivated20261126 && introTpl.enabled !== true) {
+        introTpl.enabled = true;
+        changed = true;
+      }
+    }
+  }
+
+  const needsIntroMigration = !db.zapiConfig.corpflatsIntroReactivated20261126;
+  const needsButtonBodyMigration = !db.zapiConfig.whatsappButtonBodyLimit20261126;
+
+  if (needsButtonBodyMigration && Array.isArray(db.whatsappTemplates)) {
+    const CONCISE_SYNC_TEMPLATE_IDS = [
+      "tpl_b2b_agency_credential",
+      "tpl_new_reservation_direct",
+      "tpl_pre_checkin_completed",
+      "tpl_payment_confirmed",
+      "tpl_sameday_reservation_instructions"
+    ];
+    for (const syncId of CONCISE_SYNC_TEMPLATE_IDS) {
+      const defSync = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === syncId);
+      const dbSync = db.whatsappTemplates.find(t => t && t.id === syncId);
+      if (defSync && dbSync && dbSync.message !== defSync.message) {
+        dbSync.message = defSync.message;
+        changed = true;
+      }
+    }
+  }
+
+  if (needsIntroMigration || needsButtonBodyMigration) {
+    if (Array.isArray(db.whatsappQueue) && Array.isArray(db.reservations)) {
+      const appOriginForQueue = process.env.APP_BASE_URL || db?.settings?.baseUrl || "https://corpflats.com.br";
+      const nowIso = new Date().toISOString();
+      for (const qItem of db.whatsappQueue) {
+        if (!qItem || (qItem.status !== "scheduled" && qItem.status !== "pending")) continue;
+        const resv = db.reservations.find(
+          r => r && ((qItem.reservationId && r.id === qItem.reservationId) || (qItem.reservationCode && r.code === qItem.reservationCode))
+        );
+        if (!resv) continue;
+        const liveTpl =
+          (qItem.templateId && Array.isArray(db.whatsappTemplates) && db.whatsappTemplates.find(t => t && t.id === qItem.templateId)) ||
+          (qItem.triggerEvent && Array.isArray(db.whatsappTemplates) && db.whatsappTemplates.find(t => t && t.triggerEvent === qItem.triggerEvent)) ||
+          (qItem.templateId && DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === qItem.templateId)) ||
+          (qItem.triggerEvent && DEFAULT_WHATSAPP_TEMPLATES.find(t => t.triggerEvent === qItem.triggerEvent));
+        if (!liveTpl || !liveTpl.message) continue;
+        const targetTypeForRender = qItem.recipientType || "guest";
+        const tplForRender = { ...liveTpl, triggerEvent: qItem.triggerEvent || liveTpl.triggerEvent };
+        qItem.renderedMessage = resolveWhatsAppTags(tplForRender.message, resv, db, appOriginForQueue, targetTypeForRender, tplForRender);
+        qItem.renderedButtons = renderTemplateButtons(tplForRender.buttons, resv, db, appOriginForQueue, targetTypeForRender, tplForRender);
+        qItem.updatedAt = nowIso;
+      }
+    }
+    db.zapiConfig.corpflatsIntroReactivated20261126 = true;
+    db.zapiConfig.whatsappButtonBodyLimit20261126 = true;
+    changed = true;
+    if (typeof saveDatabase === "function") {
+      saveDatabase();
+    }
+    console.log("[Z-API Migration] Template 'tpl_corpflats_intro' ativo, textos sincronizados <= 980 chars (anti-drop WhatsApp) e fila re-renderizada com títulos íntegros.");
+  }
+
+  return changed;
 }
 
 // ── Gerenciador da Fila & Background Scheduler ────────────────────────────────
@@ -10221,12 +11057,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         }
         if (tpl.id === "tpl_additional_daily_pending") {
           tpl.recipientTarget = "requester";
-          if (!tpl.message.includes("{{status_pagamento}}") || !tpl.message.includes("{{aviso_validade_pre_reserva}}") || tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp")) || !tpl.message.includes("quanto_falta_cartao") || tpl.message.includes("12x") || !tpl.message.includes("{{resumo_alteracoes}}") || !tpl.message.includes("{{num_hospedes}}") || !tpl.message.includes("{{canal_reserva}}")) {
+          if (!tpl.message.includes("{{introducao_extensao}}") || !tpl.message.includes("{{bloco_detalhamento_extensao}}") || !tpl.message.includes("{{status_pagamento}}") || !tpl.message.includes("{{aviso_validade_pre_reserva}}") || tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || tpl.message.includes("Confirmamos a solicitação de alteração/extensão") || tpl.footer === "CorpFlats • Alteração Confirmada" || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp")) || !tpl.message.includes("quanto_falta_cartao") || tpl.message.includes("12x") || !tpl.message.includes("{{resumo_alteracoes}}") || !tpl.message.includes("{{num_hospedes}}") || !tpl.message.includes("{{canal_reserva}}")) {
             const defAdd = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_additional_daily_pending");
             if (defAdd) {
               tpl.title = defAdd.title;
               tpl.description = defAdd.description;
               tpl.message = defAdd.message;
+              tpl.footer = defAdd.footer;
               tpl.buttons = defAdd.buttons;
             }
           }
@@ -10311,8 +11148,35 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         }
         if (tpl.id === "tpl_pre_checkin_completed") {
           const defPreComp = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_checkin_completed");
-          if (defPreComp && (!tpl.message?.includes("{{num_hospedes}}") || !tpl.message?.includes("{{canal_reserva}}"))) {
-            tpl.message = defPreComp.message;
+          if (defPreComp) {
+            if (
+              !tpl.message?.includes("{{num_hospedes}}") ||
+              !tpl.message?.includes("{{canal_reserva}}") ||
+              !tpl.message?.includes("{{link_maps}}")
+            ) {
+              tpl.message = defPreComp.message;
+            }
+            const hasUnsafeMapsBtn = Array.isArray(tpl.buttons) && tpl.buttons.some(
+              b => b && (b.id === "btn_maps" || String(b.url || "").includes("{{link_maps}}") || String(b.url || "").includes("share.google"))
+            );
+            if (hasUnsafeMapsBtn || !Array.isArray(tpl.buttons) || tpl.buttons.length === 0) {
+              tpl.buttons = JSON.parse(JSON.stringify(defPreComp.buttons));
+            }
+          }
+        }
+        if (tpl.id === "tpl_lost_item_registered" || tpl.triggerEvent === "lost_item_registered") {
+          const defLost = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_lost_item_registered");
+          if (
+            defLost &&
+            (tpl.message?.includes("{{foto_item}}") ||
+              tpl.message?.includes("{{link_whatsapp_camareira}}") ||
+              tpl.message?.includes("Link direto:") ||
+              tpl.message?.includes("Foto do item:"))
+          ) {
+            tpl.description = defLost.description;
+            tpl.message = defLost.message;
+            tpl.footer = defLost.footer;
+            tpl.buttons = defLost.buttons;
           }
         }
         if (tpl.id === "tpl_new_reservation_direct") {
@@ -10693,6 +11557,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         if (typeof saveDatabase === "function") saveDatabase();
       }
     }
+
+    ensureCorpFlatsBootMigrations(db, saveDatabase);
   }
 
   ensureDbDefaults();
@@ -11672,9 +12538,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       };
     }
 
-    // Se for um disparo financeiro/pré-reserva para um pacote multi-flat (ou busca explícita por PKG-...), consolida os flats e o valor total do pacote
+    // Se for um disparo financeiro/pré-reserva para um pacote multi-flat (ou busca explícita por PKG-...), consolida os flats e o valor total do pacote (exceto extensão individual de 1 flat!)
     const pkgKeyForDispatch = String(reservation.packageCode || reservation.packageId || "").trim();
-    if (pkgKeyForDispatch && (isPkgSearch || isPureBillingTemplateOrEvent(template))) {
+    const isSingleFlatStayExtensionDispatch = Boolean(
+      !isPkgSearch && reservation.pendingStayExtension?.status === "pending_payment"
+    );
+    if (pkgKeyForDispatch && !isSingleFlatStayExtensionDispatch && (isPkgSearch || isPureBillingTemplateOrEvent(template))) {
       const pkgSibs = (db?.reservations || []).filter(
         (s) =>
           s &&
@@ -16808,6 +17677,8 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       eventName === "b2b_agency_credential_request"
     );
 
+    ensureCorpFlatsBootMigrations(db, saveDatabase);
+
     let templates = (db.whatsappTemplates || []).filter(t => 
       t.enabled && 
       t.triggerEvent === eventName && 
@@ -16833,6 +17704,8 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       if (!hasExplicitlyDisabled) {
         const defIntro = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_corpflats_intro");
         if (defIntro) templates = [defIntro];
+      } else {
+        console.log(`[Z-API Intro Skip] Template 'tpl_corpflats_intro' está desativado (enabled=false) nas configurações — apresentação ignorada para ${reservation?.code || reservation?.id}.`);
       }
     } else if (templates.length === 0 && eventName === "b2b_agency_credential_request") {
       const defCred = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_b2b_agency_credential");

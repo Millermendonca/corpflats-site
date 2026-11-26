@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import {
   DEFAULT_WHATSAPP_TEMPLATES,
+  WHATSAPP_INTERACTIVE_BODY_SAFE_LIMIT,
+  splitWhatsAppInteractiveOverflow,
+  sendZapiMessage,
+  ensureCorpFlatsBootMigrations,
+  getReservationRecipients,
+  resolveWhatsAppTags,
   isInitialConfirmationInFlightOrSent,
   dispatchCatchUpGuestRulerMessages,
   triggerImmediateWhatsApp
@@ -373,7 +379,208 @@ async function run() {
     assert.match(String(ricardoHist[1].documentName || ricardoHist[1].documentUrl || ""), /Manual_do_Hospede/i, "Deve anexar o Manual em PDF");
   }
 
-  console.log("✅ Todos os cenários de troca de telefone da régua (509-1006 / 1304-0999), 905-1012 (Ricardo 1ª vez), pacotes multi-flat e edição mista passaram 100%!");
+  // ── CENÁRIO 5 (RES-114-1024 — Efraim / Airbnb Sameday + Títulos das Informações + Migração Produção tpl_corpflats_intro):
+  // 1) Reserva PMS com requesterType="guest" e requesterName/requesterPhone iguais ao Hóspede 1 NÃO pode virar "other_person".
+  // 2) Se db.whatsappTemplates veio do banco com tpl_corpflats_intro.enabled=false antes da migração 20261126, deve reativar e disparar a 1ª mensagem.
+  // 3) Em reservas com hideFinancialForGuest=true (ex.: Airbnb/Booking/B2B/Empresa), NENHUM título ("• Código da Reserva:", "• Acomodação:", etc.) pode ser apagado!
+  {
+    const db = baseDb();
+    db.flats.push({ id: 2, number: "114", colName: "114 Casal", status: "dirty" });
+
+    // Simula estado antigo persistido em produção: tpl_corpflats_intro desativado
+    const introInDb = db.whatsappTemplates.find(t => t.id === "tpl_corpflats_intro");
+    introInDb.enabled = false;
+
+    const res114 = {
+      id: 1024,
+      code: "RES-114-1024",
+      reservationCode: "RES-114-1024",
+      flatId: 2,
+      flatNumber: "114",
+      status: "confirmada",
+      paymentStatus: "pago_total",
+      channel: "airbnb",
+      checkinDate: "2026-11-26",
+      checkoutDate: "2026-11-28",
+      guestCount: 1,
+      includeBreakfast: false,
+      guestName: "Efraim",
+      guestPhone: "28999104600",
+      requesterType: "guest",
+      requesterIsGuest1: true,
+      requesterName: "Efraim",
+      requesterPhone: "28999104600",
+      guests: [{ index: 1, isMain: true, name: "Efraim", phone: "28999104600" }],
+      _nowOverride: new Date("2026-11-26T12:47:00.000Z"), // 09:47 BRT
+      _fastIntroDelay: true
+    };
+    db.reservations.push(res114);
+
+    // Simula item pré-agendado na fila que estava com títulos corrompidos antes da correção
+    db.whatsappQueue.push({
+      id: "q_corrupted_114",
+      reservationId: 1024,
+      reservationCode: "RES-114-1024",
+      templateId: "tpl_checkin_day_instructions",
+      triggerEvent: "checkin_day_instructions",
+      recipientType: "guest",
+      guestPhone: "5528999104600",
+      status: "scheduled",
+      scheduledFor: "2026-11-27T10:00:00.000Z",
+      renderedMessage: "Texto corrompido sem títulos"
+    });
+
+    const recips114 = getReservationRecipients(res114, db);
+    assert.equal(recips114.requester.type, "guest", "Auto-hóspede PMS com requesterName=guestName deve permanecer type='guest'");
+    assert.equal(recips114.requester.isDifferentFromGuest, false, "Auto-hóspede PMS não deve ser marcado como solicitante distinto");
+
+    // Garante que solicitante realmente distinto continua sendo detectado como other_person
+    const recipsThirdParty = getReservationRecipients({
+      ...res114,
+      requesterIsGuest1: false,
+      requesterName: "Secretária Empresa",
+      requesterPhone: "11977776666"
+    }, db);
+    assert.equal(recipsThirdParty.requester.type, "other_person");
+    assert.equal(recipsThirdParty.requester.isDifferentFromGuest, true);
+
+    await triggerImmediateWhatsApp(db, () => {}, "sameday_reservation", res114, "https://corpflats.com.br");
+
+    assert.equal(introInDb.enabled, true, "Migração deve reativar tpl_corpflats_intro automaticamente");
+    assert.equal(db.zapiConfig.corpflatsIntroReactivated20261126, true);
+
+    const efraimHist = db.whatsappHistory.filter(h => h.reservationCode === "RES-114-1024");
+    assert.equal(efraimHist.length, 2, `Efraim (RES-114-1024) deve receber 1ª msg CorpFlats + Sameday (com PDF)! Recebeu: ${JSON.stringify(efraimHist.map(h => h.triggerEvent))}`);
+    assert.equal(efraimHist[0].triggerEvent, "corpflats_intro");
+    assert.match(efraimHist[0].message, /Somos a \*?CorpFlats\*?/i);
+    assert.equal(efraimHist[1].triggerEvent, "sameday_reservation");
+    assert.match(String(efraimHist[1].documentName || efraimHist[1].documentUrl || ""), /Manual_do_Hospede/i);
+
+    const samedayBody = efraimHist[1].message;
+    assert.match(samedayBody, /• Código da Reserva:\s*\*RES-114-1024\*/);
+    assert.match(samedayBody, /• Acomodação:\s*\*Flat 114\*/);
+    assert.match(samedayBody, /• Entrada \(Check-in\):\s*\*Hoje a partir das 14:00\*/);
+    assert.match(samedayBody, /• Saída \(Check-out\):\s*\*28\/11\/2026 até às \d{2}:\d{2}\*/);
+    assert.match(samedayBody, /• Total de Hóspedes:\s*\*1\*/);
+    assert.match(samedayBody, /• Café da Manhã:\s*\*Não incluso\*/);
+    assert.match(samedayBody, /• Canal da Reserva:\s*\*Airbnb\*/);
+    assert.match(samedayBody, /• Rede:\s*\*/);
+    assert.match(samedayBody, /• Senha:\s*\*/);
+    assert.doesNotMatch(samedayBody, /• Pagamento:/i, "Linha financeira deve continuar oculta para Airbnb/OTA");
+
+    // Verifica também que o item agendado na fila foi re-renderizado com os títulos íntegros
+    const healedQueueMsg = db.whatsappQueue[0].renderedMessage;
+    assert.match(healedQueueMsg, /🔑 \*Seu Flat:\* 114/);
+    assert.match(healedQueueMsg, /• Rede:\s*\*apto 114\*/);
+    assert.match(healedQueueMsg, /• Senha:\s*\*/);
+
+    // Verifica também tpl_new_reservation_ota com hideFinancialForGuest
+    const defOta = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_new_reservation_ota");
+    const renderedOta = resolveWhatsAppTags(defOta.message, res114, db, "https://corpflats.com.br", "guest", defOta);
+    assert.match(renderedOta, /• Código da Reserva:\s*\*RES-114-1024\*/);
+    assert.match(renderedOta, /• Entrada \(Check-in\):\s*\*26\/11\/2026 a partir das 14:00\*/);
+    assert.match(renderedOta, /• Saída \(Check-out\):\s*\*28\/11\/2026 até às 12:00\*/);
+    assert.match(renderedOta, /• Total de Hóspedes:\s*\*1\*/);
+    assert.match(renderedOta, /• Canal da Reserva:\s*\*Airbnb\*/);
+  }
+
+  // ── CENÁRIO 6 (Fabrícia — Flat 212: Blindagem Anti-Descarte Silencioso WhatsApp > 1.024 UTF-16 no /send-button-actions):
+  // 1) Em reserva direta confirmada (tpl_new_reservation_direct), o corpo fica <= 980 chars (card único com botões + PDF).
+  // 2) Se qualquer mensagem com botões ultrapassar 980 chars (ex.: saldo pendente longo ou template customizado),
+  //    sendZapiMessage divide automaticamente antes do /send-button-actions para que NENHUM payload exceda 980 chars
+  //    e o hóspede receba 100% do texto principal + botões + PDF (nunca apenas o PDF!).
+  {
+    const db = baseDb();
+    db.flats.push({ id: 5, number: "212", colName: "212 Casal", status: "dirty" });
+
+    const resFabricia = {
+      id: 1025,
+      code: "RES-212-1025",
+      reservationCode: "RES-212-1025",
+      flatId: 5,
+      flatNumber: "212",
+      status: "confirmada",
+      paymentStatus: "pago_total",
+      totalAmount: 420,
+      paidAmount: 420,
+      channel: "whatsapp",
+      checkinDate: "2026-12-02",
+      checkoutDate: "2026-12-04",
+      includeBreakfast: false,
+      guestCount: 1,
+      guestName: "Fabrícia",
+      guestPhone: "22999443322",
+      requesterType: "guest",
+      requesterIsGuest1: true,
+      requesterName: "Fabrícia",
+      requesterPhone: "22999443322",
+      guests: [{ index: 1, isMain: true, name: "Fabrícia", phone: "22999443322" }]
+    };
+
+    const defDir = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_new_reservation_direct");
+    const renderedDir = resolveWhatsAppTags(defDir.message, resFabricia, db, "https://corpflats.com.br", "guest", defDir);
+    assert.ok(
+      renderedDir.length <= WHATSAPP_INTERACTIVE_BODY_SAFE_LIMIT,
+      `tpl_new_reservation_direct paga deve ter <= ${WHATSAPP_INTERACTIVE_BODY_SAFE_LIMIT} chars para card único sem descarte WhatsApp (obteve ${renderedDir.length})`
+    );
+    assert.match(renderedDir, /• Código da Reserva:\s*\*RES-212-1025\*/);
+    assert.match(renderedDir, /• Acomodação:\s*\*Flat 212\*/);
+
+    // Simula Z-API com fetch mockado (zero rede externa) para testar texto > 1.024 chars com botões + PDF
+    const capturedZapiCalls = [];
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const parsedBody = opts?.body ? JSON.parse(opts.body) : {};
+      capturedZapiCalls.push({ url: String(url), body: parsedBody });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ zaapId: `zaap_${capturedZapiCalls.length}`, id: `msg_${capturedZapiCalls.length}` })
+      };
+    };
+    try {
+      const longMessage =
+        `Olá, *Fabrícia*! 🌟\nSua reserva *RES-212-1025* no *Flat 212* está *Confirmada*!\n\n` +
+        `📋 *Resumo Detalhado:*\n` +
+        Array.from({ length: 14 }, (_, i) => `• Informação adicional ${i + 1}: detalhe completo da acomodação no Soho Residence Service`).join("\n") +
+        `\n\n📍 *Endereço:* Rua Conselheiro Otaviano, 209 - Centro\n\nAdiante seu *Pré-Check-in Digital* pelos botões abaixo:`;
+      assert.ok(longMessage.length > 1100, "Mensagem de teste deve exceder 1.100 chars");
+
+      const zapiRes = await sendZapiMessage(
+        { enabled: true, instanceId: "mock-live-inst", token: "mock-live-tok", testModeOnly: false, deliveryMode: "buttons" },
+        {
+          phone: "22999443322",
+          message: longMessage,
+          footer: "CorpFlats • Hospedagem Contemporânea",
+          buttons: [
+            { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "https://corpflats.com.br/pre-checkin/RES-212-1025" },
+            { id: "btn_portal", type: "URL", label: "🏨 Ver Detalhes da Reserva", url: "https://corpflats.com.br/minha-reserva/RES-212-1025" }
+          ],
+          documentUrl: "https://corpflats.com.br/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
+          documentName: "Manual_do_Hospede_CorpFlats.pdf",
+          channelId: "guest_schedule",
+          recipientRole: "guest",
+          triggerEvent: "reservation_created",
+          db
+        }
+      );
+
+      assert.equal(zapiRes.success, true);
+      assert.equal(zapiRes.method, "split_buttons");
+      const btnCall = capturedZapiCalls.find(c => c.url.includes("/send-button-actions"));
+      const docCall = capturedZapiCalls.find(c => c.url.includes("/send-document/"));
+      assert.ok(btnCall, "Deve ter enviado /send-button-actions");
+      assert.ok(
+        btnCall.body.message.length <= WHATSAPP_INTERACTIVE_BODY_SAFE_LIMIT,
+        `Payload do /send-button-actions NUNCA pode ultrapassar ${WHATSAPP_INTERACTIVE_BODY_SAFE_LIMIT} chars (obteve ${btnCall.body.message.length})`
+      );
+      assert.ok(docCall, "Deve ter enviado também o Manual em PDF");
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  }
+
+  console.log("✅ Todos os cenários de troca de telefone da régua (509-1006 / 1304-0999), 905-1012 (Ricardo), 114-1024 (Efraim + títulos), 212 (Fabrícia anti-descarte >1024 chars), pacotes multi-flat e edição mista passaram 100%!");
 }
 
 run().catch(err => {

@@ -33,6 +33,11 @@ import { useBackLayer, useBackTabState } from "@/lib/back-navigation"
 import { sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildDirectWaWebUrl } from "@/hooks/use-quick-messages"
 import { formatSmartPhone } from "@/lib/phone-mask"
 import { parseEmailList, validateEmailList, formatEmailList } from "@/lib/email-utils"
+import {
+  buildIndexedCrmGuests,
+  searchIndexedCrmList,
+  normalizeCrmSearchText,
+} from "@/lib/crm-guest-search"
 
 const PmsCalendarLazy = lazy(() => import("@/pages/pms-calendar"))
 
@@ -1406,22 +1411,16 @@ export default function CrmGuests() {
     window.open("/api/pms/guests/export/csv", "_blank")
   }
 
-  // Filtragem de Hóspedes
+  const indexedCrmGuests = useMemo(() => buildIndexedCrmGuests(guests), [guests])
+
+  // Filtragem de Hóspedes (insensível a acentos, suporta nomes do meio e múltiplos campos)
   const filteredGuests = useMemo(() => {
-    const term = search.toLowerCase()
-    return guests.filter(g => {
-      const matchesSearch = (
-        (g.fullName || g.name || "").toLowerCase().includes(term) ||
-        (g.phone || "").toLowerCase().includes(term) ||
-        (g.email || "").toLowerCase().includes(term) ||
-        (g.financialResponsible?.email || g.financialResponsibleEmail || "").toLowerCase().includes(term) ||
-        (g.documentNumber || g.document || "").includes(term) ||
-        (g.city || "").toLowerCase().includes(term) ||
-        (g.companyName || "").toLowerCase().includes(term)
-      )
+    const trimmedSearch = search.trim()
+    const baseCandidates = trimmedSearch
+      ? searchIndexedCrmList(indexedCrmGuests, trimmedSearch, true, undefined, true)
+      : guests
 
-      if (!matchesSearch) return false
-
+    return baseCandidates.filter(g => {
       if (selectedTagFilter === "all") return true
       if (selectedTagFilter === "ota_only") {
         const chs = Array.isArray(g.channelsUsed) ? g.channelsUsed.map((c: string) => String(c || "").toLowerCase()) : []
@@ -1440,38 +1439,50 @@ export default function CrmGuests() {
 
       return true
     })
-  }, [guests, search, selectedTagFilter])
+  }, [guests, indexedCrmGuests, search, selectedTagFilter])
 
   // Filtragem de Empresas
   const filteredCompanies = useMemo(() => {
-    const term = search.toLowerCase()
-    return companies.filter(c => (
-      (c.corporateName || "").toLowerCase().includes(term) ||
-      (c.razaoSocial || "").toLowerCase().includes(term) ||
-      (c.tradeName || "").toLowerCase().includes(term) ||
-      (c.nomeFantasia || "").toLowerCase().includes(term) ||
-      (c.cnpj || "").includes(term) ||
-      (c.contactPerson || "").toLowerCase().includes(term) ||
-      (c.financialEmail || c.emailFinanceiro || "").toLowerCase().includes(term) ||
-      (c.financialResponsible?.email || c.financialResponsibleEmail || "").toLowerCase().includes(term)
-    ))
+    const rawTrimmed = search.trim()
+    if (!rawTrimmed) return companies
+    const termNorm = normalizeCrmSearchText(rawTrimmed)
+    const tokens = termNorm ? termNorm.split(" ").filter(Boolean) : []
+    const digits = rawTrimmed.replace(/\D/g, "")
+    const rawLower = rawTrimmed.toLowerCase()
+    return companies.filter(c => {
+      const hayNorm = normalizeCrmSearchText(
+        `${c.corporateName || ""} ${c.razaoSocial || ""} ${c.tradeName || ""} ${c.nomeFantasia || ""} ${c.contactPerson || ""}`
+      )
+      const cnpjDigits = String(c.cnpj || "").replace(/\D/g, "")
+      const emailHay = `${c.financialEmail || c.emailFinanceiro || ""} ${c.financialResponsible?.email || c.financialResponsibleEmail || ""}`.toLowerCase()
+      return (
+        (termNorm && (hayNorm.includes(termNorm) || (tokens.length > 1 && tokens.every(t => hayNorm.includes(t))))) ||
+        (digits.length >= 2 && cnpjDigits.includes(digits)) ||
+        emailHay.includes(rawLower)
+      )
+    })
   }, [companies, search])
 
   // Filtragem de Agências B2B
   const filteredAgencies = useMemo(() => {
-    const term = search.toLowerCase()
+    const rawTrimmed = search.trim()
+    if (!rawTrimmed) return agencies
+    const termNorm = normalizeCrmSearchText(rawTrimmed)
+    const tokens = termNorm ? termNorm.split(" ").filter(Boolean) : []
+    const digits = rawTrimmed.replace(/\D/g, "")
+    const rawLower = rawTrimmed.toLowerCase()
     return agencies.filter(a => {
-      const posStr = (a.posUnits || []).map((u: any) => `${u.name || ""} ${u.email || ""}`).join(" ").toLowerCase()
-      const agentsStr = (a.agents || []).map((ag: any) => `${ag.name || ""} ${ag.email || ""}`).join(" ").toLowerCase()
+      const posStr = (a.posUnits || []).map((u: any) => `${u.name || ""} ${u.email || ""}`).join(" ")
+      const agentsStr = (a.agents || []).map((ag: any) => `${ag.name || ""} ${ag.email || ""}`).join(" ")
+      const hayNorm = normalizeCrmSearchText(
+        `${a.corporateName || ""} ${a.tradeName || ""} ${a.contactPerson || ""} ${posStr} ${agentsStr}`
+      )
+      const cnpjDigits = String(a.cnpj || "").replace(/\D/g, "")
+      const emailHay = `${a.financialEmail || ""} ${a.financialResponsible?.email || a.financialResponsibleEmail || ""} ${posStr} ${agentsStr}`.toLowerCase()
       return (
-        (a.corporateName || "").toLowerCase().includes(term) ||
-        (a.tradeName || "").toLowerCase().includes(term) ||
-        (a.cnpj || "").includes(term) ||
-        (a.financialEmail || "").toLowerCase().includes(term) ||
-        (a.financialResponsible?.email || a.financialResponsibleEmail || "").toLowerCase().includes(term) ||
-        (a.contactPerson || "").toLowerCase().includes(term) ||
-        posStr.includes(term) ||
-        agentsStr.includes(term)
+        (termNorm && (hayNorm.includes(termNorm) || (tokens.length > 1 && tokens.every(t => hayNorm.includes(t))))) ||
+        (digits.length >= 2 && cnpjDigits.includes(digits)) ||
+        emailHay.includes(rawLower)
       )
     })
   }, [agencies, search])

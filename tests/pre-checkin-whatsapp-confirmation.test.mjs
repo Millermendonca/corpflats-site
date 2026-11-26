@@ -4,7 +4,10 @@ import {
   DEFAULT_WHATSAPP_TEMPLATES,
   resolveWhatsAppTags,
   renderTemplateButtons,
-  triggerImmediateWhatsApp
+  triggerImmediateWhatsApp,
+  sanitizeButtonsForHydratedTemplate,
+  extractIncomingMessageInfo,
+  appendMessageToConversation
 } from "../artifacts/api-server/zapi-service.mjs";
 
 function createMockDb() {
@@ -49,7 +52,7 @@ test("Template tpl_pre_checkin_completed existe e contém todas as instruções 
   assert.ok(tpl, "Template tpl_pre_checkin_completed deve existir em DEFAULT_WHATSAPP_TEMPLATES");
   assert.equal(tpl.triggerEvent, "pre_checkin_completed");
   assert.equal(tpl.enabled, true);
-  assert.deepEqual(tpl.channels, ["site", "whatsapp", "booking", "airbnb", "outros"]);
+  assert.deepEqual(tpl.channels, ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"]);
 
   const db = createMockDb();
   const reservation = {
@@ -72,24 +75,27 @@ test("Template tpl_pre_checkin_completed existe e contém todas as instruções 
 
   const rendered = resolveWhatsAppTags(tpl.message, reservation, db, "https://corpflats.onrender.com", "guest", tpl);
 
-  // Valida que informa que já está tudo pronto e as 4 instruções de recepção
+  // Valida que informa que já está tudo pronto, instruções da recepção e link do Maps no texto
   assert.match(rendered, /tudo pronto/i);
-  assert.match(rendered, /Identifique-se na recepção/i);
+  assert.match(rendered, /Identifique-se/i);
   assert.match(rendered, /Check-in Online/i);
   assert.match(rendered, /CorpFlats/);
   assert.match(rendered, /Lucas Andrade/);
   assert.match(rendered, /Flat 204/);
+  assert.match(rendered, /https:\/\/share\.google\/LHu3541d5lhkdvbL2/);
   // Sem bloco de acompanhante pendente para reserva de 1 hóspede
   assert.doesNotMatch(rendered, /Acompanhante Pendente/i);
 
   const buttons = renderTemplateButtons(tpl.buttons, reservation, db, "https://corpflats.onrender.com", "guest", tpl);
   assert.equal(buttons.length, 2);
   assert.equal(buttons[0].id, "btn_portal");
-  assert.equal(buttons[1].id, "btn_maps");
+  assert.equal(buttons[1].id, "btn_admin");
+  assert.equal(buttons[1].type, "CALL");
 });
 
 test("Disparo de pre_checkin_completed em reserva com 2 hóspedes: Titular recebe link do 2º hóspede e Acompanhante recebe confirmação individual", async () => {
   const db = createMockDb();
+  db._nowOverride = new Date("2026-11-14T15:00:00Z");
   const reservation = {
     id: 502,
     code: "RES-305-0502",
@@ -138,21 +144,12 @@ test("Disparo de pre_checkin_completed em reserva com 2 hóspedes: Titular receb
     "https://corpflats.onrender.com"
   );
 
-  assert.equal(db.whatsappHistory.length, 2, "O Hóspede 1 deve receber a confirmação e, na sequência, o botão de informar que entrou");
+  assert.equal(db.whatsappHistory.length, 1, "O Hóspede 1 deve receber a confirmação de Check-in Online Concluído");
   assert.equal(db.whatsappHistory[0].triggerEvent, "pre_checkin_completed");
   assert.equal(db.whatsappHistory[0].recipientType, "guest");
   assert.equal(db.whatsappHistory[0].guestPhone, "21999112233");
   assert.match(db.whatsappHistory[0].message, /Acompanhante Pendente \(2º Hóspede\)/);
   assert.match(db.whatsappHistory[0].message, /\/pre-checkin\/RES-305-0502\?guest=2/);
-
-  // Valida a segunda mensagem enviada na sequência com mínimo de texto e botão único "Informar que Entrei"
-  assert.equal(db.whatsappHistory[1].triggerEvent, "pre_checkin_enter_prompt");
-  assert.equal(db.whatsappHistory[1].recipientType, "guest");
-  assert.equal(db.whatsappHistory[1].guestPhone, "21999112233");
-  assert.equal(db.whatsappHistory[1].message, "🚪 *Quando entrar no Flat 305, toque abaixo:*");
-  assert.equal(db.whatsappHistory[1].buttons.length, 1);
-  assert.equal(db.whatsappHistory[1].buttons[0].label, "🚪 Informar que Entrei");
-  assert.equal(db.whatsappHistory[1].buttons[0].url, "https://corpflats.onrender.com/api/pms/guest-portal/RES-305-0502/self-checkin");
 
   assert.equal(db.whatsappQueue[0].status, "cancelled", "Lembrete do titular deve ser cancelado");
   assert.equal(db.whatsappQueue[1].status, "scheduled", "Lembrete do 2º hóspede continua agendado até ele preencher");
@@ -169,20 +166,81 @@ test("Disparo de pre_checkin_completed em reserva com 2 hóspedes: Titular receb
     "https://corpflats.onrender.com"
   );
 
-  assert.equal(db.whatsappHistory.length, 4, "O 2º Hóspede deve receber sua confirmação e, na sequência, o botão de informar que entrou");
-  assert.equal(db.whatsappHistory[2].triggerEvent, "pre_checkin_completed");
-  assert.equal(db.whatsappHistory[2].recipientType, "guest_2");
-  assert.equal(db.whatsappHistory[2].guestPhone, "21988776655");
-  assert.match(db.whatsappHistory[2].message, /Olá, \*Pedro\*!/);
-  assert.match(db.whatsappHistory[2].message, /Pedro Costa/);
-  assert.match(db.whatsappHistory[2].message, /Flat 305/);
-  assert.doesNotMatch(db.whatsappHistory[2].message, /Acompanhante Pendente/);
-
-  assert.equal(db.whatsappHistory[3].triggerEvent, "pre_checkin_enter_prompt");
-  assert.equal(db.whatsappHistory[3].recipientType, "guest_2");
-  assert.equal(db.whatsappHistory[3].guestPhone, "21988776655");
-  assert.equal(db.whatsappHistory[3].buttons.length, 1);
-  assert.equal(db.whatsappHistory[3].buttons[0].label, "🚪 Informar que Entrei");
+  assert.equal(db.whatsappHistory.length, 2, "O 2º Hóspede deve receber sua confirmação individual");
+  assert.equal(db.whatsappHistory[1].triggerEvent, "pre_checkin_completed");
+  assert.equal(db.whatsappHistory[1].recipientType, "guest_2");
+  assert.equal(db.whatsappHistory[1].guestPhone, "21988776655");
+  assert.match(db.whatsappHistory[1].message, /Olá, \*Pedro\*!/);
+  assert.match(db.whatsappHistory[1].message, /Pedro Costa/);
+  assert.match(db.whatsappHistory[1].message, /Flat 305/);
+  assert.doesNotMatch(db.whatsappHistory[1].message, /Acompanhante Pendente/);
 
   assert.equal(db.whatsappQueue[1].status, "cancelled", "Lembrete do 2º hóspede deve ser cancelado após conclusão");
+});
+
+test("sanitizeButtonsForHydratedTemplate protege contra descarte silencioso (share.google / domínios mistos / 3 CTAs) e webhook hydratedTemplate deduplica eco", () => {
+  // 1) Botão share.google (Google Maps) misturado com corpflats.com.br é movido para texto, preservando o botão do Portal
+  const resMaps = sanitizeButtonsForHydratedTemplate([
+    { id: "btn_maps", type: "URL", label: "📍 Abrir no Google Maps", url: "https://share.google/LHu3541d5lhkdvbL2" },
+    { id: "btn_portal", type: "URL", label: "🏨 Portal do Hóspede", url: "https://corpflats.com.br/minha-reserva/RES-114-1024" }
+  ]);
+  assert.equal(resMaps.formattedActions.length, 1);
+  assert.equal(resMaps.formattedActions[0].id, "btn_portal");
+  assert.equal(resMaps.formattedActions[0].url, "https://corpflats.com.br/minha-reserva/RES-114-1024");
+  assert.equal(resMaps.demotedUrlButtons.length, 1);
+  assert.equal(resMaps.demotedUrlButtons[0].url, "https://share.google/LHu3541d5lhkdvbL2");
+
+  // 2) 2 URLs no mesmo domínio + 1 CALL (3 CTAs) limita a 2 CTAs para evitar descarte silencioso no WhatsApp
+  const res3Cta = sanitizeButtonsForHydratedTemplate([
+    { id: "btn_pagar", type: "URL", label: "💳 Ver Detalhes & Pagar", url: "https://corpflats.com.br/minha-reserva/RES-212-1002?requester=1" },
+    { id: "btn_pix", type: "COPY", label: "📋 Copiar Código PIX", url: "https://corpflats.com.br/copiar-pix/RES-212-1002" },
+    { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "5522997124021" }
+  ]);
+  assert.equal(res3Cta.formattedActions.length, 2);
+  assert.equal(res3Cta.formattedActions[0].id, "btn_pagar");
+  assert.equal(res3Cta.formattedActions[1].id, "btn_pix");
+
+  // 3) Webhook ReceivedCallback com hydratedTemplate é extraído e vinculado sem duplicar bolha no chat
+  const db = createMockDb();
+  const msgText = "Olá, *Efraim*! ✅🎉\nSeu *Check-in Online* foi concluído e já está *tudo pronto* para sua chegada!";
+  const tsIso = new Date().toISOString();
+  appendMessageToConversation(db, {
+    phone: "5528999104646",
+    senderName: "CorpFlats",
+    fromMe: true,
+    text: msgText,
+    type: "text",
+    timestamp: tsIso,
+    messageId: "msg_auto_12345"
+  });
+
+  const parsed = extractIncomingMessageInfo({
+    type: "ReceivedCallback",
+    phone: "5528999104646",
+    fromMe: true,
+    fromApi: true,
+    status: "SENT",
+    messageId: "3EB0ABCDEF123456",
+    momment: Date.now(),
+    hydratedTemplate: {
+      message: msgText,
+      footer: "CorpFlats • Check-in Online Confirmado",
+      hydratedButtons: [{ index: 0, urlButton: { url: "https://corpflats.com.br/minha-reserva/RES-114-1024", displayText: "🏨 Portal do Hóspede" } }]
+    }
+  });
+  assert.equal(parsed.text, msgText);
+  assert.equal(parsed.fromMe, true);
+
+  const conv = appendMessageToConversation(db, {
+    phone: parsed.phone,
+    senderName: parsed.senderName,
+    fromMe: parsed.fromMe,
+    text: parsed.text,
+    type: parsed.type,
+    timestamp: parsed.timestamp,
+    messageId: parsed.messageId
+  });
+  assert.equal(conv.messages.length, 1, "Não deve duplicar a bolha da mensagem de confirmação no chat interno");
+  assert.equal(conv.messages[0].zapiMessageId, "3EB0ABCDEF123456");
+  assert.equal(conv.messages[0].whatsappSentConfirmed, true);
 });

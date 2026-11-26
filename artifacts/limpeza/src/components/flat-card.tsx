@@ -943,7 +943,7 @@ export function FlatCard({
         maxWidth: 1280,
         maxHeight: 1280,
         quality: 0.8,
-        preferredFormat: "image/webp"
+        preferredFormat: "image/jpeg"
       })
       setLostPhotoBase64(res.base64)
       setPhotoCompressionStats({

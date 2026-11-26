@@ -36,6 +36,7 @@ import {
   evaluateSimpleFlatAvailability,
   type SimpleCrmGuestInspection,
 } from "@/lib/simplified-reservation-helpers";
+import { getBestCrmGuestDisplayName } from "@/lib/crm-guest-search";
 
 export interface SimplePhoneVerificationEntry {
   checking: boolean;
@@ -1010,7 +1011,7 @@ export const SimplifiedReservationForm = memo(function SimplifiedReservationForm
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="text-xs font-bold text-foreground truncate">
-                            {g.name || g.fullName}
+                            {getBestCrmGuestDisplayName(g)}
                           </div>
                           <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
                             {g.phone ? <span>Tel: {g.phone}</span> : null}

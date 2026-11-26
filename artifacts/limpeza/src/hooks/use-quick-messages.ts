@@ -352,8 +352,8 @@ Sua pré-reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) está aguardando pagame
 • Período: *{{data_checkin}} a {{data_checkout}}*
 • Total de Hóspedes: *{{num_hospedes}}*
 • Canal da Reserva: *{{canal_reserva}}*
-• Valor no Cartão de Crédito: *{{valor_cartao}}*
-• Valor com Desconto no PIX (-5%): *{{valor_pix}}*
+• Valor no PIX (à vista): *{{valor_pix}}*
+• Valor no Cartão de Crédito (+5%): *{{valor_cartao}}*
 
 Para garantir sua acomodação via PIX ou Cartão de Crédito, acesse o link seguro:
 {{link_portal_hospede}}`,
@@ -618,29 +618,64 @@ export function renderQuickMessage(
   } catch {}
 
   const guestCount = resolveReservationGuestCount(resItem)
-  const totalAmount = Number(resItem.totalAmount || resItem.amount || 0)
-  const paidAmount = Number(resItem.paidAmount ?? (resItem.paymentStatus === "pago" || resItem.paymentStatus === "pago_total" ? totalAmount : 0))
-  const pendingAmount = Math.max(0, totalAmount - paidAmount)
+  const ratesSum = Array.isArray(resItem.dailyRates) && resItem.dailyRates.length > 0
+    ? resItem.dailyRates.reduce((acc: number, d: any) => acc + (Number(d?.rate ?? d?.amount) || 0), 0)
+    : 0
+  const chargesSum = Array.isArray(resItem.charges) && resItem.charges.length > 0
+    ? resItem.charges.reduce((acc: number, c: any) => acc + (Number(c?.amount) || 0), 0)
+    : (Number(resItem.cleaningFee) || 0)
+  const rawTotal = Number(resItem.totalAmount ?? resItem.amount ?? 0)
+  const totalAmount = (!resItem.earlyCheckout && chargesSum > 0 && ratesSum > 0 && Math.abs(rawTotal - ratesSum) < 0.05)
+    ? Math.round((ratesSum + chargesSum) * 100) / 100
+    : rawTotal
+  const paymentsSum = Array.isArray(resItem.payments) && resItem.payments.length > 0
+    ? resItem.payments.reduce((acc: number, p: any) => acc + (Number(p?.amount) || 0), 0)
+    : 0
+  const explicitPaid = resItem.paidAmount !== undefined && resItem.paidAmount !== null
+    ? Number(resItem.paidAmount)
+    : (resItem.paymentStatus === "pago" || resItem.paymentStatus === "pago_total" ? totalAmount : 0)
+  const paidAmount = Math.round(Math.max(explicitPaid || 0, Number(resItem.amountPaid) || 0, paymentsSum) * 100) / 100
+  const pendingAmount = Math.max(0, Math.round((totalAmount - paidAmount) * 100) / 100)
   const pixBaseAmount = pendingAmount > 0 ? pendingAmount : totalAmount
   const cardBaseAmount = Math.round(pixBaseAmount * 1.05 * 100) / 100
 
-  const formattedTotal = totalAmount > 0 
-    ? totalAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
-    : "R$ 0,00"
-  const formattedPaid = paidAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
-  const formattedPending = pendingAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
-  const formattedPix = pixBaseAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
-  const formattedCard = cardBaseAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+  const fmtBRL = (val: number) => val.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+  const formattedTotal = totalAmount > 0 ? fmtBRL(totalAmount) : "R$ 0,00"
+  const formattedPaid = fmtBRL(paidAmount)
+  const formattedPending = fmtBRL(pendingAmount)
+  const formattedPix = fmtBRL(pixBaseAmount)
+  const formattedCard = fmtBRL(cardBaseAmount)
 
   const chanLower = String(resItem.channel || "").toLowerCase()
   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb")
-  const isPaid = isOta || resItem.paymentStatus === "pago" || resItem.paymentStatus === "pago_total" || (paidAmount >= totalAmount && totalAmount > 0)
-  const paymentStatus = isPaid ? "Confirmado / Pago" : "Aguardando Pagamento"
-  const statusConfirmacao = resItem.status === "pre_reserva" ? "Pré-Reserva" : "Confirmada"
+  const extHold = resItem.pendingStayExtension && resItem.pendingStayExtension.status === "pending_payment"
+    ? resItem.pendingStayExtension
+    : null
+  const hasPartialExtensionBalance = Boolean(
+    extHold ||
+    resItem.paymentStatus === "sinal_pago" ||
+    resItem.paymentStatus === "parcial" ||
+    (paidAmount > 0.01 && pendingAmount > 0.01)
+  )
+  const isPaid = !hasPartialExtensionBalance && (
+    (pendingAmount <= 0.01 && totalAmount > 0) ||
+    isOta ||
+    resItem.paymentStatus === "pago" ||
+    resItem.paymentStatus === "pago_total"
+  )
+  const paymentStatus = isPaid
+    ? "Confirmado / Pago"
+    : (hasPartialExtensionBalance ? "Pago Parcialmente (Saldo de Extensão em Aberto)" : "Aguardando Pagamento")
+  const statusConfirmacao = resItem.status === "pre_reserva"
+    ? "Pré-Reserva"
+    : (extHold?.isPreReservationHold ? "Pré-Reserva de Extensão" : "Confirmada")
 
-  const linkPortal = recipientGuestIndex > 1
-    ? `${origin}/minha-reserva/${resCode}?guest=${recipientGuestIndex}`
-    : `${origin}/minha-reserva/${resCode}`
+  const reqToken = String(resItem.requesterPortalToken || "").trim()
+  const linkPortal = (recipientIsRequester && requester.isDifferentFromGuest)
+    ? `${origin}/minha-reserva/${resCode}?requester=1${reqToken ? `&t=${encodeURIComponent(reqToken)}` : ""}`
+    : (recipientGuestIndex > 1
+        ? `${origin}/minha-reserva/${resCode}?guest=${recipientGuestIndex}`
+        : `${origin}/minha-reserva/${resCode}`)
   const linkCheckin = getCheckinUrl(resItem, recipientGuestIndex, origin)
   const linkCafe = `${origin}/minha-reserva/${resCode}/cafe`
   const linkCheckout = `${origin}/checkout/${resCode}`
@@ -695,6 +730,69 @@ export function renderQuickMessage(
   }
 
   let text = templateText
+  if (
+    hasPartialExtensionBalance &&
+    String(resItem.status || "").toLowerCase() !== "pre_reserva" &&
+    /Sua pr[eé]-reserva no \*\{\{nome_hotel\}\}\*/i.test(text)
+  ) {
+    const extLines: string[] = []
+    if (extHold) {
+      const oldCin = formatDateSafe(extHold.oldCheckinDate || resItem.checkinDate, "dd/MM/yyyy")
+      const oldCout = formatDateSafe(extHold.oldCheckoutDate || resItem.previousCheckoutDate, "dd/MM/yyyy")
+      const newCout = formatDateSafe(extHold.newCheckoutDate || resItem.checkoutDate, "dd/MM/yyyy")
+      const addedNights = Number(extHold.extraNights) || (Array.isArray(extHold.addedDates) ? extHold.addedDates.length : 0)
+      const addedRatesAmt = Number(extHold.addedRatesTotal) || (
+        Array.isArray(extHold.addedDailyRates)
+          ? extHold.addedDailyRates.reduce((acc: number, d: any) => acc + (Number(d?.rate ?? d?.amount) || 0), 0)
+          : 0
+      )
+      if (addedNights > 0 && oldCout && newCout && oldCout !== newCout) {
+        extLines.push(`• Diárias Extras (+${addedNights} ${addedNights === 1 ? "noite" : "noites"} • ${oldCout} a ${newCout}): *${fmtBRL(addedRatesAmt > 0 ? addedRatesAmt : pendingAmount)}*`)
+      }
+      if (Array.isArray(extHold.addedCharges) && extHold.addedCharges.length > 0) {
+        for (const ch of extHold.addedCharges) {
+          const chAmt = Number(ch?.amount) || 0
+          if (chAmt > 0.01) {
+            const chTitle = String(ch?.title || ch?.label || (ch?.type === "cleaning" ? "Taxa de Limpeza" : "Taxa Adicional"))
+            extLines.push(`• ${chTitle}${/limpeza/i.test(chTitle) && Number(extHold.oldCleaningFee) > 0 ? " Adicional" : ""}: *${fmtBRL(chAmt)}*`)
+          }
+        }
+      } else if (Number(extHold.addedCleaningFee) > 0.01) {
+        extLines.push(`• Taxa de Limpeza Adicional: *${fmtBRL(Number(extHold.addedCleaningFee))}*`)
+      }
+      const origStayNote = oldCin && oldCout
+        ? `\n_(Sua hospedagem original de *${oldCin} a ${oldCout}* permanece 100% confirmada e garantida.)_`
+        : ""
+      const breakdownSection = extLines.length > 0
+        ? `\n\n🧾 *Composição da Extensão:*\n${extLines.join("\n")}`
+        : ""
+      text = `Olá, *{{primeiro_nome}}*! ⏳
+Registramos a *Pré-Reserva de Extensão de Estadia* da reserva *{{numero_reserva}}* no *{{nome_hotel}}* (*Flat {{quarto}}*), aguardando pagamento para confirmação automática.${origStayNote}${breakdownSection}
+
+📋 *Resumo Atualizado:*
+• Período Total com Extensão: *{{data_checkin}} a {{data_checkout}}* (*{{num_diarias}} diárias*)
+• Valor Total Atualizado: *{{valor_total}}*
+• Valor Já Pago: *{{valor_pago}}*
+• Saldo da Extensão no PIX (à vista): *{{valor_pix}}*
+• Saldo da Extensão no Cartão (+5%): *{{valor_cartao}}*
+
+Para confirmar a extensão via PIX ou Cartão de Crédito, acesse o link seguro:
+{{link_portal_hospede}}`
+    } else {
+      text = `Olá, *{{primeiro_nome}}*! ⏳
+Sua reserva (*{{numero_reserva}}*) no *{{nome_hotel}}* (*Flat {{quarto}}*) possui saldo complementar aguardando pagamento para confirmação da extensão/adicional.
+
+📋 *Resumo Atualizado:*
+• Período: *{{data_checkin}} a {{data_checkout}}* (*{{num_diarias}} diárias*)
+• Valor Total Atualizado: *{{valor_total}}*
+• Valor Já Pago: *{{valor_pago}}*
+• Saldo Pendente no PIX (à vista): *{{valor_pix}}*
+• Saldo Pendente no Cartão (+5%): *{{valor_cartao}}*
+
+Para efetuar o pagamento via PIX ou Cartão de Crédito, acesse o link seguro:
+{{link_portal_hospede}}`
+    }
+  }
   if (hideFinancialForGuest) {
     text = text
       .replace(/💰\s*\*Situação Financeira:\*[\s\S]*?(?=\n\n|$)/gi, "")
@@ -784,6 +882,7 @@ function normalizeQuickMessagesList(list: any[]): WhatsAppQuickMessage[] {
       if (
         defPay &&
         (next.message?.includes("12x") ||
+          next.message?.includes("Desconto no PIX (-5%)") ||
           !next.message?.includes("{{valor_cartao}}") ||
           !next.message?.includes("{{num_hospedes}}") ||
           !next.message?.includes("{{canal_reserva}}"))

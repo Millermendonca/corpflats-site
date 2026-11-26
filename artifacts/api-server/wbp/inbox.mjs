@@ -1176,6 +1176,7 @@ export function handleOtaModification({ db, normalized, alertsManager = null }) 
         const code = `RES-${rFlatNumber}-${randSuffix}`;
         const roomOtaCode = spec.otaReservationCode || normalized.otaReservationCode || null;
 
+        db._guestReconcileNeeded = true;
         db.reservations.push({
           id: nextId,
           code,
@@ -1827,6 +1828,26 @@ export async function processIncomingOTA(rawPayload, options = {}) {
       }
     }
   }
+
+  if (!matchedCrmGuest && normGuestNameClean.length >= 2 && normalized.guestName) {
+    if (!Array.isArray(db.guests)) db.guests = [];
+    const nextGuestId = db.guests.reduce((max, g) => Math.max(max, Number(g?.id) || 0), 0) + 1;
+    const cleanOtaName = String(normalized.guestName).trim();
+    matchedCrmGuest = {
+      id: nextGuestId,
+      guestCode: `HOSP-${String(nextGuestId).padStart(5, "0")}`,
+      name: cleanOtaName,
+      fullName: cleanOtaName,
+      phone: normalized.guestPhone || "",
+      email: isOtaRelayEmail ? "" : (normalized.guestEmail || ""),
+      document: "",
+      documentNumber: "",
+      tags: ["Origem OTA"],
+      createdAt: new Date().toISOString()
+    };
+    db.guests.push(matchedCrmGuest);
+  }
+  db._guestReconcileNeeded = true;
 
   const matchedCrmCompany = (matchedCrmGuest?.companyId && Array.isArray(db.companies))
     ? db.companies.find(c => Number(c?.id) === Number(matchedCrmGuest.companyId)) || null

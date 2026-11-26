@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   DEFAULT_WHATSAPP_TEMPLATES,
   resolveWhatsAppTags,
+  renderTemplateButtons,
 } from '../artifacts/api-server/zapi-service.mjs';
 import {
   estenderEstadiaTool,
@@ -447,6 +448,138 @@ describe('Pré-Reserva de Diária Extra (Extensão Aguardando Pagamento)', () =>
     assert.match(pmsSrc, /data-extension-hold-badge="true"/);
     assert.match(pmsSrc, /extensionHoldMode/);
     assert.match(pmsSrc, /Reativar Diária Extra/);
+    assert.match(pmsSrc, /newDatesChannel:\s*"whatsapp"/);
+    assert.match(pmsSrc, /getSelectedResExtensionBaseline/);
     assert.match(hoverSrc, /Pré-Reserva de \+/);
+  });
+
+  it('6. Cenário real Flat 511 (Rosana): +3 diárias + 1 taxa de limpeza extra sem novo pagamento gera Pré-Reserva da Extensão com valores exatos (Airbnb e Direta)', () => {
+    const { resolveStayExtensionHold } = buildHoldEngine();
+    const tNow = new Date('2026-11-26T11:20:00-03:00');
+    const hold = resolveStayExtensionHold({}, '2026-11-28', { nowOverride: tNow });
+
+    const origRates = [
+      { date: '2026-11-24', rate: 220, channel: 'airbnb' },
+      { date: '2026-11-25', rate: 220, channel: 'airbnb' },
+      { date: '2026-11-26', rate: 220, channel: 'airbnb' },
+      { date: '2026-11-27', rate: 220, channel: 'airbnb' },
+    ];
+    const addedRates = [
+      { date: '2026-11-28', rate: 220, channel: 'whatsapp' },
+      { date: '2026-11-29', rate: 220, channel: 'whatsapp' },
+      { date: '2026-11-30', rate: 220, channel: 'whatsapp' },
+    ];
+
+    const rosanaRes = {
+      id: 5110,
+      code: 'RES-511-ROSANA',
+      flatId: 15,
+      flatNumber: '511',
+      guestName: 'Rosana Silva',
+      guestPhone: '5522999112233',
+      guestCount: 1,
+      channel: 'airbnb',
+      status: 'confirmada',
+      checkinDate: '2026-11-24',
+      checkoutDate: '2026-12-01',
+      previousCheckoutDate: '2026-11-28',
+      nights: 7,
+      dailyRates: [...origRates, ...addedRates],
+      charges: [
+        { id: 'chg_clean_1', type: 'cleaning', title: 'Taxa de Limpeza', amount: 120 },
+        { id: 'chg_clean_2', type: 'cleaning', title: 'Taxa de Limpeza', amount: 120 },
+      ],
+      cleaningFee: 240,
+      totalAmount: 1780, // 1000 já pago + 660 (3 diárias) + 120 (1 limpeza extra)
+      paidAmount: 1000,
+      paymentStatus: 'sinal_pago',
+      paymentMethod: 'pix',
+      pixCopiaECola: '00020126580014BR.GOV.BCB.PIX0136rosana-ext-780',
+      preCheckinCompleted: true,
+      fnrhSignedAt: '2026-11-24T15:00:00.000Z',
+      needsReSignature: false,
+      _nowOverride: tNow,
+      _changesContext: [
+        { field: 'checkoutDate', oldValue: '28/11/2026', newValue: '01/12/2026' },
+        { field: 'charges', oldValue: 'Taxa de Limpeza: R$ 120,00', newValue: 'Taxa de Limpeza: R$ 120,00, Taxa de Limpeza: R$ 120,00' },
+      ],
+      pendingStayExtension: {
+        isPreReservationHold: true,
+        source: 'pms',
+        status: 'pending_payment',
+        amount: 780,
+        extraNights: 3,
+        newTotalNights: 7,
+        oldCheckinDate: '2026-11-24',
+        oldCheckoutDate: '2026-11-28',
+        newCheckinDate: '2026-11-24',
+        newCheckoutDate: '2026-12-01',
+        addedDates: ['2026-11-28', '2026-11-29', '2026-11-30'],
+        addedDailyRates: addedRates,
+        addedRatesTotal: 660,
+        addedCharges: [
+          { id: 'chg_clean_2', type: 'cleaning', title: 'Taxa de Limpeza', amount: 120 },
+        ],
+        addedChargesTotal: 120,
+        addedCleaningFee: 120,
+        oldDailyRates: origRates,
+        oldCharges: [
+          { id: 'chg_clean_1', type: 'cleaning', title: 'Taxa de Limpeza', amount: 120 },
+        ],
+        oldCleaningFee: 120,
+        oldTotalAmount: 1000,
+        oldPaidAmount: 1000,
+        oldPaymentStatus: 'pago_total',
+        requiresDeferredReSignature: true,
+        ...hold,
+      },
+    };
+
+    const mockDb = {
+      reservations: [rosanaRes],
+      flats: [{ id: 15, number: '511' }],
+    };
+
+    const tplPending = DEFAULT_WHATSAPP_TEMPLATES.find((t) => t.id === 'tpl_additional_daily_pending');
+    assert.strictEqual(tplPending.footer, 'CorpFlats • Pagamento Seguro');
+
+    // Testa tanto targetRecipient='guest' quanto 'requester' em reserva originalmente Airbnb: valores NUNCA podem ficar em branco!
+    for (const target of ['guest', 'requester']) {
+      const msg = resolveWhatsAppTags(
+        tplPending.message,
+        rosanaRes,
+        mockDb,
+        'https://corpflats.com.br',
+        target,
+        tplPending
+      );
+
+      assert.match(msg, /Pré-Reserva de Extensão da sua Estadia/, `target=${target} deve indicar Pré-Reserva de Extensão`);
+      assert.match(msg, /será confirmado automaticamente assim que o pagamento for concluído/, `target=${target} deve explicar confirmação ao pagar`);
+      assert.doesNotMatch(msg, /Confirmamos a solicitação de alteração\/extensão/, `target=${target} não pode dizer que já está confirmada antes do pagamento`);
+      assert.match(msg, /Diárias Adicionais \(3x\): \*R\$\s*660,00\*/);
+      assert.match(msg, /Taxa de Limpeza Adicional: \*R\$\s*120,00\*/);
+      assert.match(msg, /Total da Extensão \(no PIX\): R\$\s*780,00/);
+      assert.match(msg, /Valor Total Atualizado: \*R\$\s*1\.780,00\*/);
+      assert.match(msg, /Valor Já Pago: \*R\$\s*1\.000,00\*/);
+      assert.match(msg, /Valor no PIX \(à vista\): \*R\$\s*780,00\*/);
+      assert.match(msg, /Valor no Cartão de Crédito \(\+5%\): \*R\$\s*819,00\*/);
+      assert.match(msg, /000201.*5406780\.00/);
+      assert.doesNotMatch(msg, /undefined/);
+
+      const btns = renderTemplateButtons(
+        tplPending,
+        rosanaRes,
+        mockDb,
+        'https://corpflats.com.br',
+        target,
+        tplPending
+      );
+      assert.strictEqual(
+        btns.some((b) => /Assinar Ficha/i.test(String(b?.label || ''))),
+        false,
+        `target=${target} NÃO pode injetar botão "Assinar Ficha Atualizada" antes do pagamento da extensão`
+      );
+    }
   });
 });
