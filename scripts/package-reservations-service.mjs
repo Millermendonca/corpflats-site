@@ -1846,6 +1846,54 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
 
   const activeSummaryItems = summary.items.filter((it) => it.isActive);
   const totalGuestsPkg = activeSummaryItems.reduce((acc, it) => acc + Math.max(1, Number(it.guestCount) || 1), 0);
+  const firstActiveItem = activeItems[0] || {};
+  const isB2bAgencyPkg = Boolean(
+    firstActiveItem.agencyId ||
+    firstActiveItem.b2bReservationNumber ||
+    String(firstActiveItem.channel || firstActiveItem.source || "").toLowerCase().includes("b2b") ||
+    String(firstActiveItem.requesterType || "").toLowerCase() === "agency"
+  );
+  const pkgCompanyObj = firstActiveItem.companyId && Array.isArray(db?.companies)
+    ? db.companies.find((c) => c && Number(c.id) === Number(firstActiveItem.companyId))
+    : null;
+  const pkgTermDays = Number(firstActiveItem.boletoTermDays ?? pkgCompanyObj?.boletoTermDays ?? 15) || 15;
+  const pkgCustomDue = String(firstActiveItem.boletoCustomDueDate || "").trim().slice(0, 10);
+  const latestCheckoutIso = activeSummaryItems
+    .map((it) => String(it.checkoutDate || "").trim().slice(0, 10))
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    .sort()
+    .pop() || "";
+  const fmtIsoFullBr = (iso) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ""))) return "";
+    const [yy, mm, dd] = String(iso).split("-");
+    return `${dd}/${mm}/${yy}`;
+  };
+  const pkgPredictedDueBr = (() => {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(pkgCustomDue)) return fmtIsoFullBr(pkgCustomDue);
+    if (!latestCheckoutIso) return "";
+    const dt = new Date(`${latestCheckoutIso}T12:00:00Z`);
+    if (Number.isNaN(dt.getTime())) return "";
+    dt.setUTCDate(dt.getUTCDate() + pkgTermDays);
+    return fmtIsoFullBr(dt.toISOString().slice(0, 10));
+  })();
+  const pkgPaymentMethodLabel = (() => {
+    if (isFaturado) return "Faturado (Boleto Bancário)";
+    const rm = String(firstActiveItem.paymentMethod || "").toLowerCase().trim();
+    if (rm.includes("debito") || rm.includes("débito")) return "Cartão de Débito";
+    if (rm.includes("cart") || rm.includes("card") || rm.includes("credit") || rm.includes("mercadopago")) return "Cartão de Crédito";
+    if (rm.includes("transf") || rm.includes("ted")) return "Transferência Bancária";
+    if (rm.includes("dinheiro") || rm.includes("especie")) return "Dinheiro";
+    return "PIX";
+  })();
+  const pkgBillingExtraLines = isFaturado
+    ? (
+        (/^\d{4}-\d{2}-\d{2}$/.test(pkgCustomDue)
+          ? `\n📅 *Vencimento do faturamento:* ${pkgPredictedDueBr}`
+          : `\n📅 *Prazo de faturamento:* ${pkgTermDays} ${pkgTermDays === 1 ? "dia" : "dias"} após o check-out${pkgPredictedDueBr ? ` (vencimento previsto: ${pkgPredictedDueBr})` : ""}`) +
+        `\n📄 *Boleto & Nota Fiscal (NFS-e):* Serão emitidos e enviados automaticamente no check-out.`
+      )
+    : `\n📄 *Nota Fiscal (NFS-e):* Será emitida e enviada automaticamente no check-out.`;
+  const sendSecondCredentialMessageForPkg = Boolean(!isUnpaidPreReservaPkg && summary.needsGuestCredentials && !isB2bAgencyPkg);
 
   let msgText = "";
   if (isUnpaidPreReservaPkg) {
@@ -1911,17 +1959,19 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
       : `Olá, *${reqNameFirst}*! Sua reserva com *${summary.activeFlatsCount} flats* no *${hotelName}* (*${summary.packageCode}*) está registrada.`;
 
     const financialLines = isPaid
-      ? `💰 *Total do pacote:* R$ ${formatMoneyBr(summary.totalAmount)}`
+      ? `💰 *Total do pacote:* R$ ${formatMoneyBr(summary.totalAmount)}\n💳 *Forma de pagamento:* ${pkgPaymentMethodLabel}${pkgBillingExtraLines}`
       : isFaturado
-        ? `💰 *Total faturado:* R$ ${formatMoneyBr(summary.totalAmount)}`
+        ? `💰 *Total faturado:* R$ ${formatMoneyBr(summary.totalAmount)}\n💳 *Forma de pagamento:* ${pkgPaymentMethodLabel}${pkgBillingExtraLines}`
         : hasPartialPayment
           ? `💰 *Total do pacote:* R$ ${formatMoneyBr(summary.totalAmount)}\n` +
-            `💎 *Saldo no PIX:* R$ ${formatMoneyBr(pendingAmt)} • *Cartão:* R$ ${formatMoneyBr(summary.cardPendingAmount)}`
-          : `💎 *Total no PIX:* R$ ${formatMoneyBr(pendingAmt)} • *Cartão:* R$ ${formatMoneyBr(summary.cardPendingAmount)}`;
+            `💎 *Saldo no PIX:* R$ ${formatMoneyBr(pendingAmt)} • *Cartão:* R$ ${formatMoneyBr(summary.cardPendingAmount)}${pkgBillingExtraLines}`
+          : `💎 *Total no PIX:* R$ ${formatMoneyBr(pendingAmt)} • *Cartão:* R$ ${formatMoneyBr(summary.cardPendingAmount)}${pkgBillingExtraLines}`;
 
-    const footerGuidance = summary.needsGuestCredentials
-      ? `👥 Use os botões abaixo para gerenciar o pacote e cadastrar os hóspedes de cada flat:\n👉 ${summary.packagePortalUrl}`
-      : `✨ Os hóspedes identificados recebem apenas as instruções do seu flat (sem valores financeiros).\n👉 ${summary.packagePortalUrl}`;
+    const footerGuidance = sendSecondCredentialMessageForPkg
+      ? `🏨 Acompanhe todas as acomodações, comprovantes e notas no seu Portal do Solicitante:\n👉 ${summary.packagePortalUrl}`
+      : summary.needsGuestCredentials
+        ? `👥 Use os botões abaixo para gerenciar o pacote e cadastrar os hóspedes de cada flat:\n👉 ${summary.packagePortalUrl}`
+        : `✨ Os hóspedes identificados recebem apenas as instruções do seu flat (sem valores financeiros).\n👉 ${summary.packagePortalUrl}`;
 
     msgText =
       `${headerLine}\n\n` +
@@ -1942,7 +1992,7 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
 
   if (cleanPhone && cleanPhone.length >= 10 && typeof deps.sendZapiMessage === "function" && !deps.suppressExternalSend) {
     try {
-      const triggerEvt = isPaid ? "payment_confirmed" : (allConfirmed ? "reservation_created" : "pre_reservation_created");
+      const triggerEvt = isPaid ? "payment_confirmed" : (allConfirmed ? "requester_reservation_confirmed" : "pre_reservation_created");
       const buttons = [];
       if (!isPaid && !isFaturado) {
         buttons.push({
@@ -1971,9 +2021,9 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
           id: `pkg_portal_${summary.packageCode}`,
           type: "URL",
           url: summary.packagePortalUrl,
-          label: "🏨 Abrir Pacote"
+          label: "🏨 Portal do Solicitante"
         });
-        if (summary.needsGuestCredentials) {
+        if (summary.needsGuestCredentials && !sendSecondCredentialMessageForPkg) {
           buttons.push({
             id: `pkg_guests_${summary.packageCode}`,
             type: "URL",
@@ -2037,6 +2087,82 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
           messageId: zRes?.messageId || `msg_pkg_${Date.now()}`
         });
       }
+
+      if (sendSecondCredentialMessageForPkg) {
+        const isLiveZapi = Boolean(db?.zapiConfig?.instanceId?.trim() && db?.zapiConfig?.token?.trim());
+        await new Promise((resolve) => setTimeout(resolve, isLiveZapi ? 1800 : 30));
+        const pendingFlatsLabels = activeSummaryItems
+          .filter((it) => it.informGuestsLater || !it.guestName || /a\s*definir|a\s*informar/i.test(String(it.guestName)))
+          .map((it) => `• *Flat ${it.flatNumber}* (${formatDateBrShort(it.checkinDate)} a ${formatDateBrShort(it.checkoutDate)})`)
+          .join("\n");
+        const credMsgText =
+          `🔐 *Cadastro dos Hóspedes — Pacote ${summary.packageCode}*\n\n` +
+          `Olá, *${reqNameFirst}*! Para liberarmos a entrada na portaria 24h e enviarmos as instruções individuais de estadia (sem valores financeiros) a cada hóspede, preencha o *Nome Completo, CPF e WhatsApp* das acomodações pendentes:\n\n` +
+          `${pendingFlatsLabels ? `${pendingFlatsLabels}\n\n` : ""}` +
+          `👉 ${summary.packagePortalUrl}#hospedes`;
+        const credButtons = [
+          {
+            id: `pkg_guests_${summary.packageCode}`,
+            type: "URL",
+            url: `${summary.packagePortalUrl}#hospedes`,
+            label: "👥 Cadastrar Hóspedes"
+          },
+          {
+            id: "btn_admin",
+            type: "CALL",
+            phone: hotelPhone,
+            label: "📞 Falar com Atendimento"
+          }
+        ];
+        const zCredRes = await deps.sendZapiMessage(db?.zapiConfig, {
+          phone: cleanPhone,
+          message: credMsgText,
+          footer: "CorpFlats • Credenciamento de Hóspedes",
+          buttons: credButtons,
+          channelId: "guest_schedule",
+          recipientRole: "solicitante",
+          triggerEvent: "b2b_agency_credential_request",
+          db
+        });
+        const sentCredWa = Boolean(zCredRes?.success || zCredRes?.ok || zCredRes?.sent || zCredRes?.messageId || zCredRes?.zaapId);
+        const credNowIso = new Date().toISOString();
+        for (const r of activeItems) {
+          db.whatsappHistory.push({
+            id: `wah_pkg_cred_${r.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            reservationId: r.id,
+            reservationCode: r.code,
+            packageCode: summary.packageCode,
+            guestName: summary.requesterName,
+            guestPhone: cleanPhone,
+            recipientType: "requester",
+            recipientRole: "solicitante",
+            triggerEvent: "b2b_agency_credential_request",
+            templateId: "tpl_b2b_agency_credential",
+            message: credMsgText,
+            buttons: credButtons,
+            status: sentCredWa ? "sent" : "failed",
+            messageId: zCredRes?.messageId || null,
+            sentAt: credNowIso
+          });
+        }
+        if (typeof deps.appendMessageToConversation === "function") {
+          deps.appendMessageToConversation(db, {
+            phone: cleanPhone,
+            senderName: "CorpFlats",
+            senderPhone: db?.zapiConfig?.instanceId || "",
+            fromMe: true,
+            text: credMsgText,
+            type: "text",
+            buttons: credButtons,
+            triggerEvent: "b2b_agency_credential_request",
+            reservationCode: activeItems[0]?.code || summary.packageCode,
+            packageCode: summary.packageCode,
+            status: sentCredWa ? "delivered" : "failed",
+            timestamp: credNowIso,
+            messageId: zCredRes?.messageId || `msg_pkg_cred_${Date.now()}`
+          });
+        }
+      }
     } catch (wErr) {
       console.warn(`[Package WhatsApp] Falha ao enviar mensagem consolidada (${summary.packageCode}):`, wErr?.message || wErr);
     }
@@ -2094,6 +2220,23 @@ export async function dispatchPackagePreReservationCreated(db, packageIdOrRes, b
             <tbody>${htmlRows}</tbody>
           </table>
           <p style="font-size:16px;"><strong>Total do Pacote: R$ ${formatMoneyBr(summary.totalAmount)}</strong></p>
+          ${
+            !isUnpaidPreReservaPkg
+              ? `<p style="font-size:14px;color:#334155;margin:6px 0;">
+                   <strong>Forma de Pagamento:</strong> ${pkgPaymentMethodLabel}
+                   ${
+                     isFaturado
+                       ? `<br/><strong>Prazo de Faturamento:</strong> ${
+                           /^\d{4}-\d{2}-\d{2}$/.test(pkgCustomDue)
+                             ? `Vencimento em ${pkgPredictedDueBr}`
+                             : `${pkgTermDays} ${pkgTermDays === 1 ? "dia" : "dias"} após o check-out${pkgPredictedDueBr ? ` (vencimento previsto: ${pkgPredictedDueBr})` : ""}`
+                         }
+                          <br/><strong>Boleto &amp; Nota Fiscal (NFS-e):</strong> Serão emitidos e enviados automaticamente no momento do check-out.`
+                       : `<br/><strong>Nota Fiscal (NFS-e):</strong> Será emitida e enviada automaticamente no momento do check-out.`
+                   }
+                 </p>`
+              : ""
+          }
           ${
             hasPartialPayment
               ? `<p style="font-size:15px;color:#15803d;margin:4px 0;"><strong>Valor Já Pago: - R$ ${formatMoneyBr(paidAmt)}</strong></p>

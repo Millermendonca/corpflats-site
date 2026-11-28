@@ -516,6 +516,43 @@ Preencha antecipadamente pelo menos o *Nome Completo e o WhatsApp* do hóspede p
     ]
   },
   {
+    id: "tpl_requester_reservation_confirmed",
+    triggerEvent: "requester_reservation_confirmed",
+    title: "Solicitante (Empresa / Terceiro) • Confirmação & Faturamento da Reserva",
+    description: "Enviada automaticamente por WhatsApp e E-mail para o Solicitante distinto (Terceiro/PF ou Empresa PJ — exceto Agências B2B) quando uma reserva confirmada é registrada. Informa resumo da reserva, valores, forma de pagamento, prazo de faturamento e emissão de boleto/NFS-e no check-out, com acesso ao Portal do Solicitante (sem PDF do manual, sem Wi-Fi, sem Check-in Online e sem link de café).",
+    enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "requester",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    hasAttachment: false,
+    sendEmail: true,
+    message: `Olá, *{{primeiro_nome_solicitante}}*! Tudo bem? 👋
+Confirmamos a reserva *{{numero_reserva}}* no *{{nome_hotel}}* (*Flat {{quarto}}*)!
+
+📋 *Resumo da Reserva:*
+• Código: *{{numero_reserva}}*
+• Acomodação: *Flat {{quarto}}*
+• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*
+• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
+• Hóspede(s): *{{nomes_hospedes_solicitante}}* ({{num_hospedes}} pessoa(s))
+• Café da Manhã: *{{status_cafe}}*
+• Canal da Reserva: *{{canal_reserva}}*
+
+💰 *Pagamento, Faturamento & Nota Fiscal:*
+{{bloco_financeiro_solicitante}}
+
+Acompanhe reservas, comprovantes e notas pelo seu *Portal do Solicitante*:`,
+    footer: "CorpFlats • Portal do Solicitante",
+    buttons: [
+      { id: "btn_pagar", type: "URL", label: "💳 Ver Reserva & Pagar", url: "{{link_portal_hospede}}" },
+      { id: "btn_pix", type: "COPY", label: "📋 Copiar Código PIX", copyCode: "{{pix_copia_e_cola}}", url: "{{link_copiar_pix}}" },
+      { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
+    ]
+  },
+  {
     id: "tpl_pre_reserva",
     triggerEvent: "pre_reservation_created",
     title: "Pré-Reserva • Confirmação & Aguardando Pagamento",
@@ -864,10 +901,10 @@ Qualquer dúvida ou necessidade, estamos à sua total disposição por aqui.`,
     offsetUnit: "minutes",
     fixedTime: "",
     message: `{{alerta_mudanca_flat}}Olá, *{{primeiro_nome}}*! 🔄
-Sua reserva (*{{numero_reserva}}*) no *{{nome_hotel}}* foi alterada.
+Sua reserva (*{{numero_reserva}}*{{contexto_hospede_para_solicitante}}) no *{{nome_hotel}}* foi alterada.
 
 Confira o que foi atualizado:
-{{resumo_alteracoes}}{{confirmacao_mudanca_flat}}`,
+{{resumo_alteracoes}}{{resumo_financeiro_pos_alteracao_solicitante}}{{confirmacao_mudanca_flat}}`,
     footer: "CorpFlats • Central de Atendimento",
     buttons: [
       { id: "btn_checkin", type: "URL", label: "📝 Assinar Ficha Atualizada", url: "{{link_checkin_digital}}" },
@@ -1271,10 +1308,13 @@ Valorizamos imensamente sua sinceridade — é graças ao seu feedback que evolu
     offsetValue: 0,
     offsetUnit: "minutes",
     fixedTime: "",
-    message: `Olá, *{{nome_hospede}}*.
-Confirmamos o cancelamento da sua reserva *{{numero_reserva}}* no *{{nome_hotel}}*.
+    message: `Olá, *{{nome_destinatario}}*.
+Confirmamos o cancelamento da reserva *{{numero_reserva}}* no *{{nome_hotel}}*:
 
-Lamentamos que não possa se hospedar conosco nesta ocasião e estaremos de braços abertos para recebê-lo em suas próximas viagens a Campos!`,
+• Acomodação: *Flat {{quarto}}*
+• Período: *{{data_checkin}} a {{data_checkout}}*{{linha_hospede_para_solicitante}}
+
+Lamentamos que a hospedagem não ocorra nesta ocasião e seguimos à disposição para futuras reservas!`,
     footer: "CorpFlats • Central de Reservas",
     buttons: [
       { id: "btn_site", type: "URL", label: "🌐 Reservar Novas Datas", url: "https://corpflats.com.br" }
@@ -2768,7 +2808,10 @@ export const FINANCIAL_CHANGE_FIELDS = new Set([
   "paidAmount",
   "paymentStatus",
   "dailyRate",
-  "paymentMethod"
+  "paymentMethod",
+  "isFaturadoBoleto",
+  "boletoTermDays",
+  "boletoCustomDueDate"
 ]);
 
 export function hasNonFinancialChanges(changes = []) {
@@ -2812,6 +2855,10 @@ export function formatWhatsAppChangesSummary(changes = [], options = {}) {
     if (c.field === "totalAmount") label = "Valor Total";
     if (c.field === "paidAmount") label = "Valor Pago";
     if (c.field === "paymentStatus") label = "Situação do Pagamento";
+    if (c.field === "paymentMethod") label = "Forma de Pagamento";
+    if (c.field === "isFaturadoBoleto") label = "Modalidade Faturada";
+    if (c.field === "boletoTermDays") label = "Prazo de Faturamento";
+    if (c.field === "boletoCustomDueDate") label = "Vencimento do Faturamento";
     if (c.field === "guestCount" || c.field === "adults") label = "Total de Hóspedes";
     if (c.field === "includeBreakfast") label = "Café da Manhã";
     if (c.field === "twinBeds") label = "Configuração de Camas";
@@ -3837,6 +3884,7 @@ export function getReservationRecipients(reservation = {}, db = {}) {
 
 // ── Régua de Acompanhantes: eventos puramente de cobrança nunca vão para o 2º/3º hóspede ──
 export const COMPANION_EXCLUDED_EVENTS = new Set([
+  "requester_reservation_confirmed",
   "pre_reservation_created",
   "pre_reservation_expiring_soon",
   "pre_reservation_expired",
@@ -3847,8 +3895,9 @@ export const COMPANION_EXCLUDED_EVENTS = new Set([
   "payment_confirmed"
 ]);
 
-// ── Cobrança / PIX puro: quando há solicitante distinto, vai EXCLUSIVAMENTE ao solicitante ──
+// ── Cobrança / PIX / Confirmação Comercial pura: quando há solicitante distinto, vai EXCLUSIVAMENTE ao solicitante ──
 export const PURE_BILLING_EVENTS = new Set([
+  "requester_reservation_confirmed",
   "b2b_agency_credential_request",
   "pre_reservation_created",
   "pre_reservation_expiring_soon",
@@ -3860,6 +3909,7 @@ export const PURE_BILLING_EVENTS = new Set([
 ]);
 
 export const PURE_BILLING_TEMPLATE_IDS = new Set([
+  "tpl_requester_reservation_confirmed",
   "tpl_b2b_agency_credential",
   "tpl_pre_reserva",
   "tpl_pre_reserva_lembrete",
@@ -3871,6 +3921,164 @@ export const PURE_BILLING_TEMPLATE_IDS = new Set([
   "qm_payment_pending",
   "qm_payment_confirmed"
 ]);
+
+/**
+ * Verifica se a reserva possui um Solicitante distinto elegível para receber a confirmação
+ * comercial/financeira da reserva: apenas Terceiro (PF / other_person) ou Empresa PJ (company),
+ * excluindo Agências B2B (agency / b2b) e excluindo casos onde o próprio hóspede é o solicitante.
+ */
+export function isEligibleNonAgencyRequester(reservation = {}, db = {}) {
+  if (!reservation || typeof reservation !== "object") {
+    return { eligible: false, requester: null, recipients: null };
+  }
+  const recipients = getReservationRecipients(reservation, db);
+  const requester = recipients?.requester || null;
+  if (!requester || !requester.isDifferentFromGuest || !requester.hasOwnContact) {
+    return { eligible: false, requester, recipients };
+  }
+  const chanLower = String(reservation.channel || reservation.source || "").toLowerCase().trim();
+  const isB2bAgency = Boolean(
+    requester.type === "agency" ||
+    reservation.agencyId ||
+    reservation.b2bReservationNumber ||
+    chanLower.includes("b2b") ||
+    chanLower.includes("agenc") ||
+    chanLower.includes("agênc")
+  );
+  if (isB2bAgency) {
+    return { eligible: false, requester, recipients };
+  }
+  const isAllowedType = requester.type === "other_person" || requester.type === "company";
+  return { eligible: isAllowedType, requester, recipients };
+}
+
+export function formatPaymentMethodLabelPt(reservation = {}) {
+  const rawMethod = String(reservation?.paymentMethod || "").toLowerCase().trim();
+  const isFaturado = Boolean(
+    reservation?.isFaturadoBoleto ||
+    rawMethod === "boleto_faturado" ||
+    rawMethod === "faturado_boleto" ||
+    rawMethod === "boleto" ||
+    rawMethod === "faturado_pj" ||
+    rawMethod === "faturado_b2b" ||
+    rawMethod.includes("faturado") ||
+    String(reservation?.b2bPaymentType || "").trim().toUpperCase() === "FATURADO"
+  );
+  if (isFaturado) return "Faturado (Boleto Bancário)";
+  if (rawMethod.includes("debito") || rawMethod.includes("débito") || rawMethod === "debit_card") return "Cartão de Débito";
+  if (
+    rawMethod.includes("cart") ||
+    rawMethod.includes("card") ||
+    rawMethod.includes("credit") ||
+    rawMethod.includes("mercadopago") ||
+    rawMethod.includes("infinite") ||
+    (reservation?.mpPaymentId && !reservation?.pixEndToEndId)
+  ) {
+    return "Cartão de Crédito";
+  }
+  if (rawMethod.includes("transf") || rawMethod.includes("ted") || rawMethod.includes("doc")) return "Transferência Bancária";
+  if (rawMethod.includes("dinheiro") || rawMethod.includes("especie") || rawMethod.includes("espécie") || rawMethod === "cash") return "Dinheiro";
+  if (rawMethod.includes("booking")) return "Booking.com";
+  if (rawMethod.includes("airbnb")) return "Airbnb";
+  if (rawMethod.includes("pix") || !rawMethod) return "PIX";
+  return String(reservation.paymentMethod);
+}
+
+export function computePredictedFaturadoDueDateBr(checkoutDateIso, termDays) {
+  const cleanCo = String(checkoutDateIso || "").trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanCo)) return "";
+  const days = Math.max(0, Number(termDays) || 0);
+  const dt = new Date(`${cleanCo}T12:00:00Z`);
+  if (Number.isNaN(dt.getTime())) return "";
+  dt.setUTCDate(dt.getUTCDate() + days);
+  const iso = dt.toISOString().slice(0, 10);
+  return formatDateBr(iso);
+}
+
+export function buildRequesterFinancialAndBillingSummary(reservation = {}, db = {}) {
+  const ratesSum = Array.isArray(reservation?.dailyRates) && reservation.dailyRates.length > 0
+    ? reservation.dailyRates.reduce((acc, d) => acc + (Number(d?.rate ?? d?.amount) || 0), 0)
+    : 0;
+  const chargesSum = Array.isArray(reservation?.charges) && reservation.charges.length > 0
+    ? reservation.charges.reduce((acc, c) => acc + (Number(c?.amount) || 0), 0)
+    : (Number(reservation?.cleaningFee) || 0);
+  const rawTot = Number(reservation?.totalAmount ?? reservation?.totalPrice) || 0;
+  const totalAmount = (!reservation?.earlyCheckout && chargesSum > 0 && ratesSum > 0 && Math.abs(rawTot - ratesSum) < 0.05)
+    ? Math.round((ratesSum + chargesSum) * 100) / 100
+    : rawTot;
+  const paymentsSum = Array.isArray(reservation?.payments) && reservation.payments.length > 0
+    ? reservation.payments.reduce((acc, p) => acc + (Number(p?.amount) || 0), 0)
+    : 0;
+  const paidAmount = Math.round(Math.max(
+    Number(reservation?.paidAmount) || 0,
+    Number(reservation?.amountPaid) || 0,
+    paymentsSum
+  ) * 100) / 100;
+  const pendingAmount = Math.max(0, Math.round((totalAmount - paidAmount) * 100) / 100);
+  const cardPendingAmount = computeCardAmountFromPix(pendingAmount > 0 ? pendingAmount : totalAmount);
+
+  const rawMethod = String(reservation?.paymentMethod || "").toLowerCase().trim();
+  const isFaturadoBoleto = Boolean(
+    reservation?.isFaturadoBoleto ||
+    rawMethod === "boleto_faturado" ||
+    rawMethod === "faturado_boleto" ||
+    rawMethod === "boleto" ||
+    rawMethod === "faturado_pj" ||
+    rawMethod === "faturado_b2b" ||
+    rawMethod.includes("faturado") ||
+    String(reservation?.b2bPaymentType || "").trim().toUpperCase() === "FATURADO"
+  );
+  const chanLower = String(reservation?.channel || "").toLowerCase();
+  const isOta = (chanLower.includes("booking") || chanLower.includes("airbnb")) &&
+    reservation?.paymentCollect !== "Property" && !reservation?.collectAtCheckin;
+  const hasPartial = paidAmount > 0.01 && pendingAmount > 0.01;
+  const isPaid = !isFaturadoBoleto && !hasPartial && (
+    pendingAmount <= 0.01 ||
+    isOta ||
+    reservation?.paymentStatus === "pago" ||
+    reservation?.paymentStatus === "pago_total" ||
+    reservation?.paymentStatus === "paid" ||
+    (paidAmount >= totalAmount - 0.01 && totalAmount > 0)
+  );
+  const methodLabel = formatPaymentMethodLabelPt(reservation);
+
+  const lines = [];
+  lines.push(`• Valor Total: *${formatCurrency(totalAmount)}*`);
+
+  if (isFaturadoBoleto) {
+    lines.push(`• Forma de Pagamento: *Faturado (Boleto Bancário)*`);
+    const customDue = String(reservation?.boletoCustomDueDate || "").trim().slice(0, 10);
+    const companyObj = reservation?.companyId && Array.isArray(db?.companies)
+      ? db.companies.find(c => c && Number(c.id) === Number(reservation.companyId))
+      : null;
+    const termDays = Number(reservation?.boletoTermDays ?? companyObj?.boletoTermDays ?? 15) || 15;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(customDue)) {
+      lines.push(`• Vencimento do Faturamento: *${formatDateBr(customDue)}*`);
+    } else {
+      const predictedBr = computePredictedFaturadoDueDateBr(reservation?.checkoutDate, termDays);
+      lines.push(
+        `• Prazo de Faturamento: *${termDays} ${termDays === 1 ? "dia" : "dias"} após o check-out*${predictedBr ? ` (vencimento previsto: *${predictedBr}*)` : ""}`
+      );
+    }
+    if (reservation?.isConsumptionFaturado) {
+      lines.push(`• Consumos Extras: *Inclusos no faturamento*`);
+    }
+    lines.push(`• Boleto & Nota Fiscal (NFS-e): *Serão emitidos e enviados automaticamente no momento do check-out.*`);
+  } else if (isPaid) {
+    lines.push(`• Forma de Pagamento: *${methodLabel}*`);
+    lines.push(`• Situação: *Pago Integralmente ✅*`);
+    lines.push(`• Nota Fiscal (NFS-e): *Será emitida e enviada automaticamente no momento do check-out.*`);
+  } else {
+    if (paidAmount > 0.01) {
+      lines.push(`• Valor Já Pago: *${formatCurrency(paidAmount)}*`);
+    }
+    lines.push(`• Forma de Pagamento: *${rawMethod && !rawMethod.includes("pix") ? methodLabel : "PIX (-5%) ou Cartão de Crédito"}*`);
+    lines.push(`• Saldo em Aberto: *${formatCurrency(pendingAmount)} no PIX (-5%)* ou *${formatCurrency(cardPendingAmount)} no Cartão*`);
+    lines.push(`• Nota Fiscal (NFS-e): *Será emitida e enviada automaticamente no momento do check-out.*`);
+  }
+
+  return lines.join("\n");
+}
 
 // ── Eventos e templates que vão TANTO para o Solicitante (não-hóspede) QUANTO para os Hóspedes ──
 export const REQUESTER_AND_GUEST_EVENTS = new Set([
@@ -4205,6 +4413,7 @@ const EMAIL_SUBJECT_BY_EVENT = {
   pre_reservation_created: "Pré-reserva recebida • Aguardando pagamento",
   pre_reservation_expiring_soon: "⏰ Lembrete: sua pré-reserva expira em breve",
   pre_reservation_expired: "Pré-reserva expirada • Prazo de pagamento encerrado",
+  requester_reservation_confirmed: "Confirmação de reserva e faturamento",
   reservation_created: "Sua reserva está confirmada",
   payment_confirmed: "Pagamento confirmado",
   payment_pending: "Pagamento pendente da sua reserva",
@@ -5204,6 +5413,43 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{resumo_alteracoes}}": resumoAlteracoes,
     "{{alerta_mudanca_flat}}": alertaMudancaFlat,
     "{{confirmacao_mudanca_flat}}": confirmacaoMudancaFlat,
+    "{{nomes_hospedes_solicitante}}": (() => {
+      const names = [];
+      if (Array.isArray(reservation.guests) && reservation.guests.length > 0) {
+        for (const g of reservation.guests) {
+          const nm = String(g?.name || "").trim();
+          if (nm && !isPendingGuestName(nm) && !g?.informLater && !names.includes(nm)) {
+            names.push(nm);
+          }
+        }
+      }
+      if (names.length === 0 && guest.name && !isPendingGuestName(guest.name)) {
+        names.push(guest.name);
+      }
+      return names.length > 0 ? names.join(", ") : "A Definir (Aguardando Cadastro)";
+    })(),
+    "{{bloco_financeiro_solicitante}}": hideFinancialForGuest ? "" : buildRequesterFinancialAndBillingSummary(reservation, db),
+    "{{contexto_hospede_para_solicitante}}": (recipientIsRequester && requester.isDifferentFromGuest)
+      ? ` • *Flat ${flatNumber}*${guest.name && !isPendingGuestName(guest.name) ? ` • Hóspede: *${guest.name}*` : ""}`
+      : "",
+    "{{resumo_financeiro_pos_alteracao_solicitante}}": (() => {
+      if (!recipientIsRequester || !requester.isDifferentFromGuest || reservation._isExtensionPaymentConfirmed) return "";
+      if (templateId !== "tpl_reservation_updated" && triggerEvent !== "reservation_updated") return "";
+      const finOrDateFields = new Set([
+        "totalAmount", "paidAmount", "paymentStatus", "paymentMethod",
+        "isFaturadoBoleto", "boletoTermDays", "boletoCustomDueDate",
+        "checkinDate", "checkoutDate", "dailyRate", "charges", "cleaningFee"
+      ]);
+      const chArr = Array.isArray(changes)
+        ? changes
+        : (changes && typeof changes === "object" ? Object.keys(changes).map(f => ({ field: f })) : []);
+      const hasRelevantFinOrDateChange = chArr.some(c => c && finOrDateFields.has(String(c.field || "")));
+      if (!hasRelevantFinOrDateChange) return "";
+      return `\n\n💰 *Posição Financeira Atualizada:*\n${buildRequesterFinancialAndBillingSummary(reservation, db)}`;
+    })(),
+    "{{linha_hospede_para_solicitante}}": (recipientIsRequester && requester.isDifferentFromGuest && guest.name && !isPendingGuestName(guest.name))
+      ? `\n• Hóspede: *${guest.name}*`
+      : "",
     "{{nome_camareira}}": reservation.maidName || reservation.foundBy || "Camareira",
     "{{whatsapp_camareira}}": reservation.maidPhone || "",
     "{{link_whatsapp_camareira}}": reservation.maidWhatsAppUrl || (reservation.maidPhone ? `https://wa.me/55${String(reservation.maidPhone).replace(/\D/g, "").replace(/^55/, "")}` : ""),
@@ -5246,7 +5492,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
       rendered = rendered
         .replace(/Olá,\s*\*\{\{primeiro_nome\}\}\*!\s*🔄/i, "Olá, *{{primeiro_nome}}*! ✅🎉")
         .replace(
-          /Sua reserva \(\*\{\{numero_reserva\}\}\*\) no \*\{\{nome_hotel\}\}\* foi alterada\./i,
+          /Sua reserva \(\*\{\{numero_reserva\}\}\*(?:\{\{contexto_hospede_para_solicitante\}\})?\) no \*\{\{nome_hotel\}\}\* foi alterada\./i,
           `Confirmamos o recebimento do seu pagamento de *${extPaidFmt}* (*${extMethodLabel}*) e a *${hasCheckoutChange ? "extensão da sua estadia" : "quitação do saldo da sua reserva"}* (*{{numero_reserva}}*) no *{{nome_hotel}}* (*Flat {{quarto}}*)!`
         );
       const extSummaryBlock =
@@ -5267,7 +5513,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
       rendered = rendered
         .replace(/Olá,\s*\*\{\{primeiro_nome\}\}\*!\s*🔄/i, "Olá, *{{primeiro_nome}}*! ✅🎉")
         .replace(
-          /Sua reserva \(\*\{\{numero_reserva\}\}\*\) no \*\{\{nome_hotel\}\}\* foi alterada\./i,
+          /Sua reserva \(\*\{\{numero_reserva\}\}\*(?:\{\{contexto_hospede_para_solicitante\}\})?\) no \*\{\{nome_hotel\}\}\* foi alterada\./i,
           `Confirmamos a *extensão da sua estadia* na reserva (*{{numero_reserva}}*) no *{{nome_hotel}}* (*Flat {{quarto}}*)!`
         );
       const extSummaryGuestBlock =
@@ -6039,7 +6285,9 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
       if (b.id === "btn_pagar" || /ver\s*(detalhes|reserva)\s*&\s*pagar|pagar\s*e\s*confirmar/i.test(String(b.label || ""))) {
         return {
           ...b,
-          label: (isFaturadoBoletoBtn && !isPaidStatusOnlyBtn) ? "📄 Ver Reserva" : "🏨 Ver Detalhes da Reserva"
+          label: (isRequesterBtnTarget && hasSeparateRequester)
+            ? "🏨 Portal do Solicitante"
+            : ((isFaturadoBoletoBtn && !isPaidStatusOnlyBtn) ? "📄 Ver Reserva" : "🏨 Ver Detalhes da Reserva")
         };
       }
       return b;
@@ -10514,6 +10762,50 @@ export function ensureCorpFlatsBootMigrations(db, saveDatabase = null) {
 
   const needsIntroMigration = !db.zapiConfig.corpflatsIntroReactivated20261126;
   const needsButtonBodyMigration = !db.zapiConfig.whatsappButtonBodyLimit20261126;
+  const needsRequesterConfirmMigration = !db.zapiConfig.requesterConfirmationMigration20261128;
+
+  if (Array.isArray(db.whatsappTemplates)) {
+    const defReqConfirm = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_requester_reservation_confirmed");
+    if (defReqConfirm) {
+      let reqConfirmTpl = db.whatsappTemplates.find(
+        t => t && (t.id === "tpl_requester_reservation_confirmed" || t.triggerEvent === "requester_reservation_confirmed")
+      );
+      if (!reqConfirmTpl && db.whatsappTemplates.length > 0) {
+        reqConfirmTpl = JSON.parse(JSON.stringify(defReqConfirm));
+        const credIdx = db.whatsappTemplates.findIndex(t => t && t.id === "tpl_b2b_agency_credential");
+        if (credIdx >= 0) {
+          db.whatsappTemplates.splice(credIdx + 1, 0, reqConfirmTpl);
+        } else {
+          db.whatsappTemplates.push(reqConfirmTpl);
+        }
+        changed = true;
+      } else if (reqConfirmTpl && needsRequesterConfirmMigration) {
+        reqConfirmTpl.id = "tpl_requester_reservation_confirmed";
+        reqConfirmTpl.triggerEvent = "requester_reservation_confirmed";
+        reqConfirmTpl.recipientTarget = "requester";
+        reqConfirmTpl.triggerTiming = "immediate";
+        reqConfirmTpl.channels = defReqConfirm.channels;
+        reqConfirmTpl.hasAttachment = false;
+        reqConfirmTpl.sendEmail = true;
+        reqConfirmTpl.message = defReqConfirm.message;
+        reqConfirmTpl.footer = defReqConfirm.footer;
+        reqConfirmTpl.buttons = JSON.parse(JSON.stringify(defReqConfirm.buttons));
+        if (reqConfirmTpl.enabled !== false) reqConfirmTpl.enabled = true;
+        changed = true;
+      }
+    }
+
+    if (needsRequesterConfirmMigration) {
+      for (const reqSyncId of ["tpl_reservation_updated", "tpl_reservation_cancelled"]) {
+        const defSync = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === reqSyncId);
+        const dbSync = db.whatsappTemplates.find(t => t && t.id === reqSyncId);
+        if (defSync && dbSync && dbSync.message !== defSync.message) {
+          dbSync.message = defSync.message;
+          changed = true;
+        }
+      }
+    }
+  }
 
   if (needsButtonBodyMigration && Array.isArray(db.whatsappTemplates)) {
     const CONCISE_SYNC_TEMPLATE_IDS = [
@@ -10533,7 +10825,7 @@ export function ensureCorpFlatsBootMigrations(db, saveDatabase = null) {
     }
   }
 
-  if (needsIntroMigration || needsButtonBodyMigration) {
+  if (needsIntroMigration || needsButtonBodyMigration || needsRequesterConfirmMigration) {
     if (Array.isArray(db.whatsappQueue) && Array.isArray(db.reservations)) {
       const appOriginForQueue = process.env.APP_BASE_URL || db?.settings?.baseUrl || "https://corpflats.com.br";
       const nowIso = new Date().toISOString();
@@ -10558,11 +10850,12 @@ export function ensureCorpFlatsBootMigrations(db, saveDatabase = null) {
     }
     db.zapiConfig.corpflatsIntroReactivated20261126 = true;
     db.zapiConfig.whatsappButtonBodyLimit20261126 = true;
+    db.zapiConfig.requesterConfirmationMigration20261128 = true;
     changed = true;
     if (typeof saveDatabase === "function") {
       saveDatabase();
     }
-    console.log("[Z-API Migration] Template 'tpl_corpflats_intro' ativo, textos sincronizados <= 980 chars (anti-drop WhatsApp) e fila re-renderizada com títulos íntegros.");
+    console.log("[Z-API Migration] Templates sincronizados (incluindo 'tpl_requester_reservation_confirmed' e contexto do solicitante) e fila re-renderizada.");
   }
 
   return changed;
@@ -15502,6 +15795,7 @@ const CHECKOUT_GROUP_EVENTS = new Set([
 
 const SINGLE_DISPATCH_EVENTS = new Set([
   "corpflats_intro",
+  "requester_reservation_confirmed",
   "b2b_agency_credential_request",
   "reservation_created",
   "payment_confirmed",
@@ -17573,7 +17867,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       (reservation.b2bCredentialCompletedAt && (now.getTime() - new Date(reservation.b2bCredentialCompletedAt).getTime()) <= 48 * 3600 * 1000) ||
       (reservation.guestPhoneUpdatedAt && (now.getTime() - new Date(reservation.guestPhoneUpdatedAt).getTime()) <= 48 * 3600 * 1000)
     );
-    if ((eventName === "corpflats_intro" || eventName === "reservation_created" || eventName === "pre_reservation_created") && reservation.createdAt && !credentialedRecently) {
+    if ((eventName === "corpflats_intro" || eventName === "requester_reservation_confirmed" || eventName === "reservation_created" || eventName === "pre_reservation_created") && reservation.createdAt && !credentialedRecently) {
       const createdDate = new Date(reservation.createdAt);
       if ((now.getTime() - createdDate.getTime()) > 48 * 3600 * 1000) {
         console.warn(`[WhatsApp Trigger] Evento '${eventName}' IGNORADO pois a reserva ${reservation.code} foi criada há mais de 48h (${reservation.createdAt}). Mensagens da régua de estadia continuam ativas.`);
@@ -17707,6 +18001,9 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       } else {
         console.log(`[Z-API Intro Skip] Template 'tpl_corpflats_intro' está desativado (enabled=false) nas configurações — apresentação ignorada para ${reservation?.code || reservation?.id}.`);
       }
+    } else if (templates.length === 0 && eventName === "requester_reservation_confirmed") {
+      const defReqConf = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_requester_reservation_confirmed");
+      if (defReqConf) templates = [defReqConf];
     } else if (templates.length === 0 && eventName === "b2b_agency_credential_request") {
       const defCred = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_b2b_agency_credential");
       if (defCred) templates = [defCred];
@@ -18201,6 +18498,35 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     console.error(`[Z-API Instant Trigger Error]:`, err.message);
     return { ok: false, deliveredWaCount: 0, deliveredEmailCount: 0, attemptedWaCount: 0, failedWaCount: 0, error: err.message };
   }
+}
+
+/**
+ * Dispara a mensagem de confirmação da reserva (com resumo completo, valores, forma de pagamento,
+ * prazo de faturamento e aviso de boleto/NFS-e no check-out) EXCLUSIVAMENTE para o Solicitante
+ * distinto quando o perfil é Empresa PJ (company) ou Terceiro PF (other_person).
+ * Agências B2B (agency / b2b) e o próprio hóspede (requesterIsGuest1) são ignorados.
+ */
+export async function dispatchRequesterReservationConfirmed(dbOrGetter, saveDatabase, reservation, baseUrl = "") {
+  const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
+  if (!db || !reservation) {
+    return { ok: false, skipped: true, reason: "missing_db_or_reservation" };
+  }
+  const elig = isEligibleNonAgencyRequester(reservation, db);
+  if (!elig.eligible) {
+    return { ok: false, skipped: true, reason: "not_eligible_requester" };
+  }
+  return triggerImmediateWhatsApp(
+    db,
+    saveDatabase,
+    "requester_reservation_confirmed",
+    {
+      ...reservation,
+      _onlyRequesterTarget: true,
+      _skipAutoIntro: true,
+      _forceInitialWelcome: Boolean(reservation._forceInitialWelcome)
+    },
+    baseUrl
+  );
 }
 
 // ── Helpers Centralizados de Check-out e Check-out Antecipado ──────────────────

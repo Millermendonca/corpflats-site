@@ -143,6 +143,9 @@ import {
   resolveBestNpsGuestName,
   getReservationRecipients,
   hasNonFinancialChanges,
+  isEligibleNonAgencyRequester,
+  dispatchRequesterReservationConfirmed,
+  formatPaymentMethodLabelPt,
   isValidBrazilianCpf,
   isPendingGuestName,
   isMissingGuestDataForCredential,
@@ -13863,6 +13866,256 @@ export function areGuestNamesCompatible(nameA, nameB, options = {}) {
   return areSingleGuestNamesCompatible(nameA, nameB, options);
 }
 
+function foldPortugueseNameToken(rawTok) {
+  let s = normalizeName(rawTok || "").replace(/[^a-z0-9]/g, "");
+  if (!s) return "";
+  s = s
+    .replace(/bapt/g, "bat")
+    .replace(/ph/g, "f")
+    .replace(/th/g, "t")
+    .replace(/sh/g, "x")
+    .replace(/ch/g, "x")
+    .replace(/y/g, "i")
+    .replace(/w/g, "v")
+    .replace(/k/g, "c")
+    .replace(/z/g, "s")
+    .replace(/([a-z])\1+/g, "$1");
+  return s;
+}
+
+function computeBoundedLevenshtein(a, b, maxDist = 2) {
+  if (a === b) return 0;
+  const la = a.length;
+  const lb = b.length;
+  if (Math.abs(la - lb) > maxDist) return maxDist + 1;
+  const prev = new Array(lb + 1);
+  const curr = new Array(lb + 1);
+  for (let j = 0; j <= lb; j++) prev[j] = j;
+  for (let i = 1; i <= la; i++) {
+    curr[0] = i;
+    let rowMin = curr[0];
+    for (let j = 1; j <= lb; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+      if (curr[j] < rowMin) rowMin = curr[j];
+    }
+    if (rowMin > maxDist) return maxDist + 1;
+    for (let j = 0; j <= lb; j++) prev[j] = curr[j];
+  }
+  return prev[lb];
+}
+
+function looseGuestTokensMatch(tokA, tokB, allowInitial = false) {
+  if (!tokA || !tokB) return false;
+  if (tokA === tokB) return true;
+  if (tokA.length >= 3 && tokB.length >= 3 && tokA.replace(/l/g, "i") === tokB.replace(/l/g, "i")) return true;
+  const fA = foldPortugueseNameToken(tokA);
+  const fB = foldPortugueseNameToken(tokB);
+  if (!fA || !fB) return false;
+  if (fA === fB) return true;
+  if (allowInitial) {
+    if (fA.length === 1 && fB.length >= 3 && fB[0] === fA[0]) return true;
+    if (fB.length === 1 && fA.length >= 3 && fA[0] === fB[0]) return true;
+  }
+  if (fA[0] !== fB[0]) return false;
+  const minLen = Math.min(fA.length, fB.length);
+  const maxLen = Math.max(fA.length, fB.length);
+  if (minLen >= 3 && maxLen >= 5 && (fA.startsWith(fB) || fB.startsWith(fA)) && minLen >= 4) {
+    return true;
+  }
+  if (minLen >= 4 && maxLen <= 6) {
+    return computeBoundedLevenshtein(fA, fB, 1) <= 1;
+  }
+  if (minLen >= 5 && maxLen >= 7) {
+    return computeBoundedLevenshtein(fA, fB, 2) <= 2;
+  }
+  return false;
+}
+
+export function areGuestNamesLooselyCompatible(nameA, nameB) {
+  if (isSystemOrServiceOrderGuestName(nameA) || isSystemOrServiceOrderGuestName(nameB)) return false;
+  if (isPlaceholderOrEmptyGuestName(nameA) || isPlaceholderOrEmptyGuestName(nameB)) return true;
+  if (areGuestNamesCompatible(nameA, nameB)) return true;
+
+  const stopWords = new Set(["de", "da", "do", "dos", "das", "del", "di", "du", "e", "jr", "junior", "filho", "filha", "neto", "neta", "sobrinho", "sobrinha", "segundo", "terceiro", "ii", "iii", "iv", "sr", "sra", "srta", "dr", "dra", "prof", "eng"]);
+  const extractTokens = (raw) =>
+    normalizeName(raw || "")
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter(t => t.length >= 1 && !stopWords.has(t));
+
+  const listA = splitCompositeGuestNames(String(nameA || ""));
+  const listB = splitCompositeGuestNames(String(nameB || ""));
+  const candidatesA = listA.length > 0 ? listA : [String(nameA || "")];
+  const candidatesB = listB.length > 0 ? listB : [String(nameB || "")];
+
+  return candidatesA.some(candA => candidatesB.some(candB => {
+    const tA = extractTokens(candA);
+    const tB = extractTokens(candB);
+    const fullA = tA.filter(t => t.length >= 2);
+    const fullB = tB.filter(t => t.length >= 2);
+    if (fullA.length === 0 || fullB.length === 0) return true;
+    if (fullA.length === 1 && fullB.length === 1) {
+      return looseGuestTokensMatch(fullA[0], fullB[0], false);
+    }
+    if (fullA.length === 1) {
+      return looseGuestTokensMatch(fullA[0], fullB[0], false) || (fullB.length >= 2 && looseGuestTokensMatch(fullA[0], fullB[1], false));
+    }
+    if (fullB.length === 1) {
+      return looseGuestTokensMatch(fullB[0], fullA[0], false) || (fullA.length >= 2 && looseGuestTokensMatch(fullB[0], fullA[1], false));
+    }
+    if (looseGuestTokensMatch(tA[0], tB[0], false)) {
+      return tA.slice(1).some(xa => tB.slice(1).some(xb => looseGuestTokensMatch(xa, xb, true)));
+    }
+    if (tA.length >= 3 && looseGuestTokensMatch(tA[1], tB[0], false)) {
+      return tB.slice(1).some(xb => tA.slice(2).some(xa => looseGuestTokensMatch(xa, xb, true)));
+    }
+    if (tB.length >= 3 && looseGuestTokensMatch(tB[1], tA[0], false)) {
+      return tA.slice(1).some(xa => tB.slice(2).some(xb => looseGuestTokensMatch(xa, xb, true)));
+    }
+    return false;
+  }));
+}
+
+export function pickBestPreservedGuestName(existingGuestOrName, incomingName) {
+  const existingRaw = typeof existingGuestOrName === "string"
+    ? existingGuestOrName.trim()
+    : String(existingGuestOrName?.fullName || existingGuestOrName?.name || "").trim();
+  const incomingRaw = String(incomingName || "").trim();
+  const existingPending = !existingRaw || isPendingGuestName(existingRaw) || isPlaceholderOrEmptyGuestName(existingRaw);
+  const incomingPending = !incomingRaw || isPendingGuestName(incomingRaw) || isPlaceholderOrEmptyGuestName(incomingRaw);
+  if (existingPending && incomingPending) return existingRaw || incomingRaw;
+  if (existingPending) return incomingRaw;
+  if (incomingPending) return existingRaw;
+
+  const stopWords = new Set(["de", "da", "do", "dos", "das", "del", "di", "du", "e"]);
+  const countMeaningfulWords = (str) =>
+    normalizeName(str)
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter(t => t.length >= 2 && !stopWords.has(t)).length;
+
+  const existingWords = countMeaningfulWords(existingRaw);
+  const incomingWords = countMeaningfulWords(incomingRaw);
+  const hasValidatedExisting = Boolean(
+    typeof existingGuestOrName === "object" &&
+    existingGuestOrName &&
+    (existingGuestOrName.fnhrCompleted ||
+      existingGuestOrName.signatureUrl ||
+      existingGuestOrName.docPhotoUrl ||
+      normalizeDoc(existingGuestOrName.document || existingGuestOrName.documentNumber || existingGuestOrName.cpf).length >= 8)
+  );
+
+  if (existingWords > incomingWords) return existingRaw;
+  if (incomingWords > existingWords) {
+    if (hasValidatedExisting && !areGuestNamesLooselyCompatible(existingRaw, incomingRaw)) {
+      return existingRaw;
+    }
+    return incomingRaw;
+  }
+  if (hasValidatedExisting) return existingRaw;
+  if (existingRaw.length >= incomingRaw.length) return existingRaw;
+  return incomingRaw;
+}
+
+export function findMatchingExistingCrmGuest(currentDb, candidate = {}) {
+  if (!currentDb || !Array.isArray(currentDb.guests)) return null;
+  const rawGuestId = candidate.guestId && candidate.guestId !== "manual" ? Number(candidate.guestId) : null;
+  const rawName = String(candidate.name || candidate.fullName || "").trim();
+  const isPending = !rawName || isPendingGuestName(rawName) || isPlaceholderOrEmptyGuestName(rawName);
+  const cleanDocRaw = String(candidate.document || candidate.cpf || candidate.documentNumber || "").trim();
+  const normDoc = normalizeDoc(cleanDocRaw);
+  const hasValidDoc = normDoc.length >= 5;
+  const cleanPhoneRaw = String(candidate.phone || candidate.whatsapp || candidate.phoneNumber || "").trim();
+  const normPhoneDigits = normalizePhone(cleanPhoneRaw);
+  const hasValidPhone = normPhoneDigits.length >= 8;
+  const cleanEmailRaw = String(candidate.email || "").trim().toLowerCase();
+  const hasValidPersonalEmail = Boolean(
+    cleanEmailRaw &&
+    cleanEmailRaw.includes("@") &&
+    !cleanEmailRaw.endsWith("@guest.booking.com") &&
+    !isPureBillingMailbox(cleanEmailRaw)
+  );
+
+  // Regra Anti-Duplicidade: NUNCA buscar/unificar hóspede apenas pelo nome.
+  // Exige ao menos 1 identificador forte (guestId, CPF/Passaporte, Telefone/WhatsApp ou E-mail pessoal).
+  if (!rawGuestId && !hasValidDoc && !hasValidPhone && !hasValidPersonalEmail) {
+    return null;
+  }
+
+  const deletedIds = Array.isArray(currentDb.deletedGuestIds) ? currentDb.deletedGuestIds : [];
+  const deletedDocs = Array.isArray(currentDb.deletedGuestDocs) ? currentDb.deletedGuestDocs : [];
+
+  const validGuests = currentDb.guests.filter(g => {
+    if (!g) return false;
+    if (g.id && deletedIds.includes(Number(g.id))) return false;
+    const gDoc = normalizeDoc(g.document || g.documentNumber || g.cpf);
+    if (gDoc && deletedDocs.includes(gDoc)) return false;
+    if (isForbiddenTestOrInternalGuestName(g.fullName || g.name || "")) return false;
+    return true;
+  });
+
+  // 1. Vínculo explícito por guestId (sem conflito de CPF ou identidade)
+  if (rawGuestId) {
+    const byId = validGuests.find(g => {
+      if (Number(g.id) !== rawGuestId) return false;
+      const gDoc = normalizeDoc(g.document || g.documentNumber || g.cpf);
+      if (hasValidDoc && gDoc && gDoc !== normDoc) return false;
+      if (!isPending && !(hasValidDoc && gDoc && gDoc === normDoc) && !areGuestNamesLooselyCompatible(g.fullName || g.name, rawName)) {
+        return false;
+      }
+      return true;
+    });
+    if (byId) return byId;
+  }
+
+  // 2. Match exato de CPF / Passaporte (identificador soberano — aceita variações/abreviações de nome do solicitante)
+  if (hasValidDoc) {
+    const byDoc = validGuests.find(g => {
+      const gDoc = normalizeDoc(g.document || g.documentNumber || g.cpf);
+      return Boolean(gDoc && gDoc === normDoc);
+    });
+    if (byDoc) return byDoc;
+  }
+
+  // 3. Match de Telefone/WhatsApp normalizado (55 / 9º dígito) + compatibilidade flexível de nome + sem conflito de CPF
+  if (hasValidPhone) {
+    const byPhone = validGuests.find(g => {
+      const gDoc = normalizeDoc(g.document || g.documentNumber || g.cpf);
+      if (hasValidDoc && gDoc && gDoc !== normDoc) return false;
+      const phoneMatches =
+        phonesMatch(g.phone || g.whatsapp || g.phoneNumber, cleanPhoneRaw) ||
+        (g.secondaryPhone && phonesMatch(g.secondaryPhone, cleanPhoneRaw)) ||
+        (Array.isArray(g.additionalPhones) && g.additionalPhones.some(ap => phonesMatch(ap, cleanPhoneRaw)));
+      if (!phoneMatches) return false;
+      const gName = g.fullName || g.name || "";
+      if (isPending || isPlaceholderOrEmptyGuestName(gName)) return true;
+      return areGuestNamesLooselyCompatible(gName, rawName);
+    });
+    if (byPhone) return byPhone;
+  }
+
+  // 4. Match de E-mail pessoal + compatibilidade flexível de nome + sem conflito de CPF ou Telefone
+  if (hasValidPersonalEmail) {
+    const byEmail = validGuests.find(g => {
+      const gDoc = normalizeDoc(g.document || g.documentNumber || g.cpf);
+      if (hasValidDoc && gDoc && gDoc !== normDoc) return false;
+      const gEmail = String(g.email || "").trim().toLowerCase();
+      if (!gEmail || gEmail !== cleanEmailRaw) return false;
+      const gPhoneRaw = String(g.phone || g.whatsapp || g.phoneNumber || "").trim();
+      if (hasValidPhone && normalizePhone(gPhoneRaw).length >= 8 && !phonesMatch(gPhoneRaw, cleanPhoneRaw)) {
+        return false;
+      }
+      const gName = g.fullName || g.name || "";
+      if (isPending || isPlaceholderOrEmptyGuestName(gName)) return true;
+      return areGuestNamesLooselyCompatible(gName, rawName);
+    });
+    if (byEmail) return byEmail;
+  }
+
+  return null;
+}
+
 function normalizeDoc(doc) {
   if (!doc) return "";
   const strippedLabel = String(doc)
@@ -16059,7 +16312,10 @@ export function healContaminatedGuestAndReservationLinks(database) {
     if (!r || !r.guestId || isPlaceholderOrEmptyGuestName(r.guestName)) continue;
     const linkedGuest = currentDb.guests.find(g => g && Number(g.id) === Number(r.guestId));
     if (linkedGuest && !isPlaceholderOrEmptyGuestName(linkedGuest.fullName || linkedGuest.name)) {
-      if (!areGuestNamesCompatible(r.guestName, linkedGuest.fullName || linkedGuest.name)) {
+      const linkedDoc = normalizeDoc(linkedGuest.document || linkedGuest.documentNumber || linkedGuest.cpf);
+      const resDoc = normalizeDoc(r.guestDocument || r.document);
+      const exactSameDoc = Boolean(linkedDoc && resDoc && linkedDoc.length >= 8 && linkedDoc === resDoc);
+      if (!exactSameDoc && !areGuestNamesLooselyCompatible(r.guestName, linkedGuest.fullName || linkedGuest.name)) {
         const gEmail = String(linkedGuest.email || "").trim().toLowerCase();
         const gDoc = normalizeDoc(linkedGuest.document || linkedGuest.documentNumber);
         if (gEmail && String(r.guestEmail || "").trim().toLowerCase() === gEmail) {
@@ -16171,59 +16427,51 @@ export function reconcileAndMergeGuests(database, force = false) {
           (candidate.guestId && g.id && Number(candidate.guestId) === Number(g.id))
         );
       }
-      return areGuestNamesCompatible(cRawName, gRawName);
+      return areGuestNamesLooselyCompatible(cRawName, gRawName);
     };
 
-    // Prioridade 1: ID ou CPF/Documento (somente se não houver conflito de identidade nominal entre duas pessoas distintas)
-    if (candidate.id || candidate.guestId || (cDoc && cDoc.length >= 8)) {
+    // Prioridade 1: ID ou CPF/Documento (CPF/Passaporte exato é soberano; por ID valida compatibilidade nominal)
+    if (candidate.id || candidate.guestId || (cDoc && cDoc.length >= 5)) {
       const byIdOrDoc = list.find(g => {
+        const gDoc = normalizeDoc(g.document || g.documentNumber || g.cpf);
+        if (cDoc && gDoc && cDoc === gDoc) return true;
+        if (cDoc && gDoc && cDoc !== gDoc) return false;
         if (!isNameCompatibleWith(g)) return false;
         if (candidate.id && g.id && Number(candidate.id) === Number(g.id)) return true;
         if (candidate.guestId && g.id && Number(candidate.guestId) === Number(g.id)) return true;
-        const gDoc = normalizeDoc(g.document || g.documentNumber);
-        if (cDoc && gDoc && cDoc === gDoc) return true;
         return false;
       });
       if (byIdOrDoc) return byIdOrDoc;
     }
 
-    // Prioridade 2: E-mail (com validação de compatibilidade nominal)
-    if (cEmail && cEmail.includes("@")) {
-      const byEmail = list.find(g => (g.email || "").trim().toLowerCase() === cEmail && isNameCompatibleWith(g));
-      if (byEmail) return byEmail;
-    }
-
-    // Prioridade 3: Telefone normalizado (principal ou adicional, com validação de compatibilidade nominal)
+    // Prioridade 2: Telefone normalizado (principal, whatsapp ou adicional, com compatibilidade flexível de nome e sem conflito de CPF)
     if (cPhone && cPhone.length >= 8) {
-      const byPhone = list.find(g =>
-        isNameCompatibleWith(g) && (
-          phonesMatch(g.phone || g.phoneNumber, cPhone) ||
+      const byPhone = list.find(g => {
+        const gDoc = normalizeDoc(g.document || g.documentNumber || g.cpf);
+        if (cDoc && gDoc && cDoc !== gDoc) return false;
+        return isNameCompatibleWith(g) && (
+          phonesMatch(g.phone || g.whatsapp || g.phoneNumber, cPhone) ||
+          (g.secondaryPhone && phonesMatch(g.secondaryPhone, cPhone)) ||
           (Array.isArray(g.additionalPhones) && g.additionalPhones.some(ap => phonesMatch(ap, cPhone)))
-        )
-      );
+        );
+      });
       if (byPhone) return byPhone;
     }
 
-    // Prioridade 4: Nome completo composto (>= 2 palavras) idêntico e sem conflito de documento/telefone/e-mail
-    // (nunca unifica homônimos de 1 único nome como "Ricardo" sem match de CPF/telefone/e-mail)
-    if (!isCandPlaceholder && !isSystemOrServiceOrderGuestName(cRawName) && cName && cName.length >= 2) {
-      const cWords = cName.split(/\s+/).filter(Boolean);
-      if (cWords.length >= 2) {
-        return list.find(g => {
-          if (!isNameCompatibleWith(g)) return false;
-          const gDoc = normalizeDoc(g.document || g.documentNumber);
-          if (cDoc && gDoc && cDoc !== gDoc) return false;
-          const gName = normalizeName(g.fullName || g.name);
-          if (gName !== cName) return false;
-          const gPhone = normalizePhone(g.phone || g.phoneNumber);
-          const gEmail = String(g.email || "").trim().toLowerCase();
-          if (cPhone && gPhone && !phonesMatch(cPhone, gPhone)) return false;
-          if (cEmail && gEmail && cEmail !== gEmail) return false;
-          return true;
-        });
-      }
+    // Prioridade 3: E-mail pessoal (com compatibilidade flexível de nome e sem conflito de CPF/telefone)
+    if (cEmail && cEmail.includes("@") && !cEmail.endsWith("@guest.booking.com") && !isPureBillingMailbox(cEmail)) {
+      const byEmail = list.find(g => {
+        const gDoc = normalizeDoc(g.document || g.documentNumber || g.cpf);
+        if (cDoc && gDoc && cDoc !== gDoc) return false;
+        if ((g.email || "").trim().toLowerCase() !== cEmail) return false;
+        const gPh = normalizePhone(g.phone || g.whatsapp || g.phoneNumber);
+        if (cPhone && gPh && !phonesMatch(cPhone, gPh)) return false;
+        return isNameCompatibleWith(g);
+      });
+      if (byEmail) return byEmail;
     }
 
+    // Regra Anti-Duplicidade: NUNCA unificar homônimos apenas pelo nome sem CPF, Telefone ou E-mail.
     return undefined;
   };
 
@@ -21413,6 +21661,9 @@ export function diffReservationFields(oldRes, newBody, flatsList = []) {
     guestEmail: "E-mail do Hóspede",
     channel: "Canal de Origem",
     paymentMethod: "Forma de Pagamento",
+    isFaturadoBoleto: "Modalidade Faturada",
+    boletoTermDays: "Prazo de Faturamento",
+    boletoCustomDueDate: "Vencimento do Faturamento",
     dailyRate: "Valor da Diária",
     totalAmount: "Valor Total",
     paidAmount: "Valor Pago",
@@ -21539,6 +21790,32 @@ export function diffReservationFields(oldRes, newBody, flatsList = []) {
           newValue: PAYMENT_STATUS_LABELS[normNewSt] || rawNewSt || "(vazio)"
         });
       }
+    } else if (key === "paymentMethod") {
+      const oldLbl = formatPaymentMethodLabelPt({ ...oldRes, paymentMethod: oldVal });
+      const newLbl = formatPaymentMethodLabelPt({ ...oldRes, ...newBody, paymentMethod: newVal });
+      if (oldLbl !== newLbl) {
+        changes.push({
+          field: key,
+          label,
+          oldValue: oldLbl || "(vazio)",
+          newValue: newLbl || "(vazio)"
+        });
+      }
+    } else if (key === "boletoTermDays") {
+      const isFatOld = Boolean(oldRes?.isFaturadoBoleto || String(oldRes?.paymentMethod || "").toLowerCase().includes("faturado") || String(oldRes?.paymentMethod || "").toLowerCase().includes("boleto"));
+      const isFatNew = Boolean(newBody?.isFaturadoBoleto ?? oldRes?.isFaturadoBoleto ?? (String(newBody?.paymentMethod ?? oldRes?.paymentMethod ?? "").toLowerCase().includes("faturado") || String(newBody?.paymentMethod ?? oldRes?.paymentMethod ?? "").toLowerCase().includes("boleto")));
+      if (isFatOld || isFatNew) {
+        const numOld = Number(oldVal) || 15;
+        const numNew = Number(newVal) || 15;
+        if (numOld !== numNew) {
+          changes.push({
+            field: key,
+            label,
+            oldValue: `${numOld} ${numOld === 1 ? "dia" : "dias"} após o check-out`,
+            newValue: `${numNew} ${numNew === 1 ? "dia" : "dias"} após o check-out`
+          });
+        }
+      }
     } else if (key === "adults" || key === "children" || key === "guestCount") {
       const numOld = Number(oldVal) || 0;
       const numNew = Number(newVal) || 0;
@@ -21646,6 +21923,10 @@ export const GUEST_FACING_RESERVATION_FIELDS = new Set([
   "totalAmount",
   "paidAmount",
   "paymentStatus",
+  "paymentMethod",
+  "isFaturadoBoleto",
+  "boletoTermDays",
+  "boletoCustomDueDate",
   "includeBreakfast",
   "guestName",
   "twinBeds",
@@ -41323,7 +41604,7 @@ function resolveOrUpsertReservationCompanyAndAgency(currentDb, input = {}) {
   return { resolvedCompany, resolvedAgency };
 }
 
-function upsertCrmGuestProfile(currentDb, guestInput = {}, options = {}) {
+export function upsertCrmGuestProfile(currentDb, guestInput = {}, options = {}) {
   if (!currentDb) return null;
   if (!Array.isArray(currentDb.guests)) currentDb.guests = [];
 
@@ -41342,46 +41623,14 @@ function upsertCrmGuestProfile(currentDb, guestInput = {}, options = {}) {
   let cleanPhone = String(guestInput.phone || guestInput.whatsapp || "").trim();
   let cleanEmail = String(guestInput.email || "").trim().toLowerCase();
   let cleanDoc = String(guestInput.document || guestInput.cpf || "").trim();
-  const normDoc = normalizeDoc(cleanDoc);
-  const normName = normalizeName(rawName);
-  const normNameWords = normName ? normName.split(/\s+/).filter(Boolean) : [];
-  const hasValidCleanPhone = cleanPhone.replace(/\D/g, "").length >= 8;
 
-  let guest = currentDb.guests.find(g => {
-    if (!g) return false;
-    if (!isPending && !areGuestNamesCompatible(g.fullName || g.name, rawName)) {
-      return false;
-    }
-    if (rawGuestId && Number(g.id) === rawGuestId) return true;
-    const gDoc = normalizeDoc(g.document || g.documentNumber || g.cpf);
-    if (normDoc && normDoc.length >= 5 && gDoc && gDoc !== normDoc) {
-      return false;
-    }
-    if (normDoc && normDoc.length >= 5 && gDoc === normDoc) return true;
-    if (hasValidCleanPhone && phonesMatch(g.phone || g.whatsapp, cleanPhone)) return true;
-    if (
-      cleanEmail &&
-      cleanEmail.includes("@") &&
-      !cleanEmail.endsWith("@guest.booking.com") &&
-      String(g.email || "").trim().toLowerCase() === cleanEmail
-    ) {
-      if (!hasValidCleanPhone || !(g.phone || g.whatsapp) || phonesMatch(g.phone || g.whatsapp, cleanPhone)) {
-        return true;
-      }
-    }
-    // Fallback apenas por nome: exige nome composto (>= 2 palavras) e ausência de conflito de telefone/e-mail
-    // (impede que um novo hóspede cadastrado só como "Ricardo" herde o guestId de outro "Ricardo" antigo)
-    if (!isPending && normNameWords.length >= 2 && (g.fullName || g.name) && normalizeName(g.fullName || g.name) === normName) {
-      const gPhoneRaw = String(g.phone || g.whatsapp || "").trim();
-      const gHasPhone = gPhoneRaw.replace(/\D/g, "").length >= 8;
-      if (hasValidCleanPhone && gHasPhone && !phonesMatch(gPhoneRaw, cleanPhone)) return false;
-      const gEmailStr = String(g.email || "").trim().toLowerCase();
-      if (cleanEmail && gEmailStr && cleanEmail !== gEmailStr) return false;
-      if (!hasValidCleanPhone && gHasPhone) return true;
-      if (!gHasPhone && !gDoc && !gEmailStr) return true;
-    }
-    return false;
-  }) || null;
+  let guest = findMatchingExistingCrmGuest(currentDb, {
+    guestId: rawGuestId,
+    name: rawName,
+    document: cleanDoc,
+    phone: cleanPhone,
+    email: cleanEmail
+  });
 
   const extraTags = Array.isArray(guestInput.tags) ? guestInput.tags.filter(Boolean) : [];
   const companyIdVal = guestInput.companyId ? Number(guestInput.companyId) : null;
@@ -41422,6 +41671,13 @@ function upsertCrmGuestProfile(currentDb, guestInput = {}, options = {}) {
   } else if (guest) {
     if (!guest.guestCode) {
       guest.guestCode = `HOSP-${String(guest.id).padStart(5, "0")}`;
+    }
+    if (!isPending && rawName) {
+      const preservedName = pickBestPreservedGuestName(guest, rawName);
+      if (preservedName) {
+        guest.name = preservedName;
+        guest.fullName = preservedName;
+      }
     }
     if (cleanPhone) guest.phone = cleanPhone;
     else if (guest.phone) cleanPhone = String(guest.phone).trim();
@@ -44155,6 +44411,7 @@ app.post("/api/pms/reservations", async (req, res) => {
       ? "not_billed"
       : normalizeBoletoConsumptionMode(
           req.body.boletoConsumptionMode ||
+          (req.body.isConsumptionFaturado === true ? "combined" : null) ||
           resolvedCompany?.defaultBoletoConsumptionMode ||
           resolvedAgency?.defaultBoletoConsumptionMode ||
           guest?.defaultBoletoConsumptionMode,
@@ -44173,6 +44430,7 @@ app.post("/api/pms/reservations", async (req, res) => {
       req.body.isConsumptionFaturado !== false &&
       normalizeBoletoConsumptionMode(
         req.body.boletoConsumptionMode ||
+        (req.body.isConsumptionFaturado === true ? "combined" : null) ||
         resolvedCompany?.defaultBoletoConsumptionMode ||
         resolvedAgency?.defaultBoletoConsumptionMode ||
         guest?.defaultBoletoConsumptionMode,
@@ -44458,10 +44716,38 @@ app.post("/api/pms/reservations", async (req, res) => {
   if (resolvedStatus === "pre_reserva") {
     triggerImmediateWhatsApp(db, saveDatabase, "pre_reservation_created", newReservation, baseUrl);
   } else {
+    const reqConfirmElig = isEligibleNonAgencyRequester(newReservation, db);
+
     // Reserva Confirmada: se houver Solicitante e faltarem dados obrigatórios do hóspede (Nome, CPF, Telefone),
     // envia o link /credenciamento/:code para o Solicitante via WhatsApp e E-mail.
+    // Quando o Solicitante é Empresa PJ ou Terceiro PF (não-agência), envia 2 mensagens em sequência:
+    // 1ª) Confirmação da Reserva + Faturamento/Prazo/NFS-e; 2ª) Solicitação de Credenciamento do Hóspede.
     if (hasSeparateRequester && isMissingGuestDataForCredential(newReservation, db)) {
-      if (req.body.sendAgencyCredentialEmail === false) {
+      if (reqConfirmElig.eligible) {
+        (async () => {
+          try {
+            await dispatchRequesterReservationConfirmed(db, saveDatabase, newReservation, baseUrl);
+          } catch (reqConfErr) {
+            console.warn("[Requester Reservation Confirmed] Aviso ao enviar confirmação ao solicitante:", reqConfErr?.message || reqConfErr);
+          }
+          if (req.body.sendAgencyCredentialEmail === false) {
+            newReservation.skipAgencyCredentialAuto = true;
+            saveDatabase();
+          } else {
+            const isLiveZapi = Boolean(db?.zapiConfig?.instanceId?.trim() && db?.zapiConfig?.token?.trim());
+            await new Promise(resolve => setTimeout(resolve, isLiveZapi ? 1800 : 30));
+            dispatchRequesterGuestCredentialRequest(db, saveDatabase, newReservation, { baseUrl }).catch(credWaErr => {
+              console.warn("[Requester Credential WhatsApp] Aviso ao enviar link de credenciamento ao solicitante:", credWaErr.message);
+            });
+            dispatchB2bAgencyCredentialEmail(db, saveDatabase, newReservation, {
+              baseUrl,
+              trigger: "b2b_agency_credential_request"
+            }).catch(b2bEmailErr => {
+              console.warn("[Requester Credential Email] Aviso ao enviar solicitação de credenciamento:", b2bEmailErr.message);
+            });
+          }
+        })();
+      } else if (req.body.sendAgencyCredentialEmail === false) {
         newReservation.skipAgencyCredentialAuto = true;
         saveDatabase();
       } else if (isGroupableAgencyReservation(newReservation, db)) {
@@ -44486,6 +44772,12 @@ app.post("/api/pms/reservations", async (req, res) => {
         });
       }
     } else {
+      if (reqConfirmElig.eligible) {
+        dispatchRequesterReservationConfirmed(db, saveDatabase, newReservation, baseUrl).catch(reqConfErr => {
+          console.warn("[Requester Reservation Confirmed] Aviso ao enviar confirmação ao solicitante:", reqConfErr?.message || reqConfErr);
+        });
+      }
+
       // Verifica se é no próprio dia do check-in após as 07:01
       const now = new Date();
       const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
@@ -47882,45 +48174,82 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
     const recipsOnConfirm = getReservationRecipients(r, db);
     const hasSepReqOnConfirm = Boolean(recipsOnConfirm.requester?.isDifferentFromGuest);
+    const reqConfirmEligOnPut = isEligibleNonAgencyRequester(r, db);
     const chanOnConfirm = String(r.channel || "").toLowerCase();
     const isDirectOnConfirm = !chanOnConfirm.includes("booking") && !chanOnConfirm.includes("airbnb") && !chanOnConfirm.includes("b2b") && !r.b2bReservationNumber;
+    const isFaturadoOnConfirm = Boolean(
+      r.isFaturadoBoleto ||
+      String(r.paymentMethod || "").toLowerCase().includes("faturado") ||
+      String(r.paymentMethod || "").toLowerCase().includes("boleto")
+    );
 
-    if (hasSepReqOnConfirm && recipsOnConfirm.requester?.hasOwnContact && isDirectOnConfirm && Number(r.paidAmount) > 0) {
-      const rCodeUp = String(r.code || "").toUpperCase();
-      const rIdSt = String(r.id || "");
-      const hasReqReceiptOnConfirm = (db.whatsappHistory || []).some(h => {
-        const hCode = String(h.reservationCode || "").toUpperCase();
-        const hId = h.reservationId ? String(h.reservationId) : "";
-        const isSameRes = (rCodeUp && hCode === rCodeUp) || (rIdSt && (hId === rIdSt || hCode === rIdSt));
-        return isSameRes && h.triggerEvent === "payment_confirmed" && (h.recipientType === "requester" || h.recipientRole === "solicitante") && isWaHistoryStatusDispatched(h.status);
-      });
-      if (!hasReqReceiptOnConfirm) {
-        triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", {
-          ...r,
-          _onlyRequesterTarget: true,
-          _skipAutoIntro: true,
-          _forceInitialWelcome: true
-        }, editBaseUrl).catch(err => {
-          console.warn("[Requester Payment Confirmed WhatsApp] Erro ao enviar comprovante na confirmação:", err.message);
+    const sendRequesterConfirmationOnPut = async () => {
+      if (reqConfirmEligOnPut.eligible) {
+        const rCodeUp = String(r.code || "").toUpperCase();
+        const rIdSt = String(r.id || "");
+        if (!isFaturadoOnConfirm && isDirectOnConfirm && Number(r.paidAmount) > 0) {
+          const hasReqReceiptOnConfirm = (db.whatsappHistory || []).some(h => {
+            const hCode = String(h.reservationCode || "").toUpperCase();
+            const hId = h.reservationId ? String(h.reservationId) : "";
+            const isSameRes = (rCodeUp && hCode === rCodeUp) || (rIdSt && (hId === rIdSt || hCode === rIdSt));
+            return isSameRes && (h.triggerEvent === "payment_confirmed" || h.triggerEvent === "requester_reservation_confirmed") && (h.recipientType === "requester" || h.recipientRole === "solicitante") && isWaHistoryStatusDispatched(h.status);
+          });
+          if (!hasReqReceiptOnConfirm) {
+            await dispatchRequesterReservationConfirmed(db, saveDatabase, { ...r, _forceInitialWelcome: true }, editBaseUrl);
+          }
+        } else {
+          await dispatchRequesterReservationConfirmed(db, saveDatabase, { ...r, _forceInitialWelcome: true }, editBaseUrl);
+        }
+      } else if (hasSepReqOnConfirm && recipsOnConfirm.requester?.hasOwnContact && isDirectOnConfirm && Number(r.paidAmount) > 0) {
+        const rCodeUp = String(r.code || "").toUpperCase();
+        const rIdSt = String(r.id || "");
+        const hasReqReceiptOnConfirm = (db.whatsappHistory || []).some(h => {
+          const hCode = String(h.reservationCode || "").toUpperCase();
+          const hId = h.reservationId ? String(h.reservationId) : "";
+          const isSameRes = (rCodeUp && hCode === rCodeUp) || (rIdSt && (hId === rIdSt || hCode === rIdSt));
+          return isSameRes && h.triggerEvent === "payment_confirmed" && (h.recipientType === "requester" || h.recipientRole === "solicitante") && isWaHistoryStatusDispatched(h.status);
         });
+        if (!hasReqReceiptOnConfirm) {
+          await triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", {
+            ...r,
+            _onlyRequesterTarget: true,
+            _skipAutoIntro: true,
+            _forceInitialWelcome: true
+          }, editBaseUrl);
+        }
       }
-    }
+    };
 
     if (hasSepReqOnConfirm && isMissingGuestDataForCredential(r, db)) {
-      if (isGroupableAgencyReservation(r, db)) {
+      if (isGroupableAgencyReservation(r, db) && !reqConfirmEligOnPut.eligible) {
         r.credentialPendingSince = r.credentialPendingSince || new Date().toISOString();
         saveDatabase();
       } else {
-        dispatchRequesterGuestCredentialRequest(db, saveDatabase, r, { baseUrl: editBaseUrl }).catch(err => {
-          console.warn("[Requester Credential WhatsApp] Erro ao enviar credenciamento na confirmação:", err.message);
-        });
-        dispatchB2bAgencyCredentialEmail(db, saveDatabase, r, {
-          baseUrl: editBaseUrl,
-          trigger: "b2b_agency_credential_request"
-        }).catch(err => {
-          console.warn("[Requester Credential Email] Erro ao enviar credenciamento na confirmação:", err.message);
-        });
+        (async () => {
+          try {
+            await sendRequesterConfirmationOnPut();
+          } catch (err) {
+            console.warn("[Requester Confirm WhatsApp] Erro ao enviar confirmação antes do credenciamento:", err?.message || err);
+          }
+          if (reqConfirmEligOnPut.eligible) {
+            const isLiveZapi = Boolean(db?.zapiConfig?.instanceId?.trim() && db?.zapiConfig?.token?.trim());
+            await new Promise(resolve => setTimeout(resolve, isLiveZapi ? 1800 : 30));
+          }
+          dispatchRequesterGuestCredentialRequest(db, saveDatabase, r, { baseUrl: editBaseUrl }).catch(err => {
+            console.warn("[Requester Credential WhatsApp] Erro ao enviar credenciamento na confirmação:", err.message);
+          });
+          dispatchB2bAgencyCredentialEmail(db, saveDatabase, r, {
+            baseUrl: editBaseUrl,
+            trigger: "b2b_agency_credential_request"
+          }).catch(err => {
+            console.warn("[Requester Credential Email] Erro ao enviar credenciamento na confirmação:", err.message);
+          });
+        })();
       }
+    } else {
+      sendRequesterConfirmationOnPut().catch(err => {
+        console.warn("[Requester Confirm WhatsApp] Erro ao enviar confirmação na edição:", err?.message || err);
+      });
     }
 
     const effectiveGuestDigitsOnConfirm = String(newGuestPhone || recipsOnConfirm.guest?.cleanDigits || "").replace(/\D/g, "");
@@ -48215,7 +48544,17 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       matchClientPhone(h.guestPhone || h.phone, newGuestPhoneRaw)
     );
 
-    if (isPreReservationBlocked(r)) {
+    const oldStCancelledOnPut = oldStatus === "cancelada" || oldStatus === "cancelled" || oldStatus === "cancelado";
+    const newStCancelledOnPut = r.status === "cancelada" || r.status === "cancelled" || r.status === "cancelado";
+
+    if (!oldStCancelledOnPut && newStCancelledOnPut) {
+      console.log(`[WhatsApp Trigger] Reserva ${r.code} (${r.guestName}) alterada para '${r.status}' na edição: disparando reservation_cancelled.`);
+      triggerImmediateWhatsApp(db, saveDatabase, "reservation_cancelled", r, editBaseUrl).catch(err => {
+        console.warn("[WhatsApp Trigger] Erro ao disparar reservation_cancelled na edição:", err.message);
+      });
+    } else if (newStCancelledOnPut) {
+      console.log(`[WhatsApp Trigger] Reserva ${r.code} já se encontra cancelada ('${r.status}'). Disparos de atualização suprimidos.`);
+    } else if (isPreReservationBlocked(r)) {
       const preResModified = Boolean(
         isDatesOrFlatChanged ||
         holdWasUpdatedOnPut ||
@@ -48696,13 +49035,13 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
             _changesContext: guestFacingDiffs.length > 0 ? guestFacingDiffs : diffs,
             ...(newlyAddedCompanionIndices.length > 0 ? { _excludeGuestIndices: newlyAddedCompanionIndices } : {})
           };
-          triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", resvForTrigger).catch(err => {
+          triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", resvForTrigger, editBaseUrl).catch(err => {
             console.warn("[WhatsApp Trigger] Erro ao disparar reservation_updated:", err.message);
           });
         }
       } else if (isAfter0701 && !hasReceivedTodayInstructions) {
         console.log(`[WhatsApp Trigger] Reserva ${r.code} (${r.guestName}) com check-in HOJE (${todayStr}) após 07:01 sem instruções prévias: disparando sameday_reservation.`);
-        triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", r).catch(err => {
+        triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", r, editBaseUrl).catch(err => {
           console.warn("[WhatsApp Trigger] Erro ao disparar sameday_reservation:", err.message);
         });
       } else {
@@ -51622,22 +51961,49 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
           hasCompletedCheckin: Boolean(cleanDocG2 && cleanPhoneG2)
         };
         if (!db.guests) db.guests = [];
-        if (cleanPhoneG2.replace(/\D/g, "").length >= 10 || cleanDocG2) {
-          const existingG2 = db.guests.find((g) =>
-            areGuestNamesCompatible(rawG2Name, g.fullName || g.name) && (
-              (cleanDocG2 && String(g.cpf || g.document || "").replace(/\D/g, "") === cleanDocG2) ||
-              (cleanPhoneG2 && String(g.phone || "").replace(/\D/g, "") === cleanPhoneG2.replace(/\D/g, ""))
-            )
-          );
-          if (!existingG2) {
+        if (cleanPhoneG2.replace(/\D/g, "").length >= 8 || cleanDocG2 || (rawG2Email && rawG2Email.includes("@"))) {
+          const existingG2 = findMatchingExistingCrmGuest(db, {
+            guestId: r.guests?.[1]?.guestId,
+            name: rawG2Name,
+            document: cleanDocG2,
+            phone: cleanPhoneG2,
+            email: rawG2Email
+          });
+          if (existingG2) {
+            const preservedG2Name = pickBestPreservedGuestName(existingG2, rawG2Name) || rawG2Name;
+            existingG2.name = preservedG2Name;
+            existingG2.fullName = preservedG2Name;
+            if (cleanDocG2) {
+              existingG2.cpf = cleanDocG2;
+              existingG2.document = cleanDocG2;
+              existingG2.documentNumber = cleanDocG2;
+              existingG2.docType = isPassG2 ? "Passaporte" : "CPF";
+            }
+            if (cleanPhoneG2) {
+              existingG2.phone = cleanPhoneG2;
+              existingG2.whatsapp = cleanPhoneG2;
+            }
+            if (rawG2Email) existingG2.email = rawG2Email;
+            if (!existingG2.guestCode) existingG2.guestCode = `HOSP-${String(existingG2.id).padStart(5, "0")}`;
+            existingG2.updatedAt = new Date().toISOString();
+            r.guests[1].name = preservedG2Name;
+            r.guests[1].guestId = existingG2.id;
+            r.guests[1].guestCode = existingG2.guestCode;
+            if (!r.guests[1].document && (existingG2.document || existingG2.cpf)) {
+              r.guests[1].document = existingG2.document || existingG2.cpf;
+              r.guests[1].cpf = r.guests[1].document;
+            }
+          } else {
             const nextG2Id = db.guests.length > 0 ? Math.max(...db.guests.map((g) => Number(g.id) || 0)) + 1 : 1;
+            const g2Code = `HOSP-${String(nextG2Id).padStart(5, "0")}`;
             db.guests.push({
               id: nextG2Id,
-              guestCode: `HOSP-${String(nextG2Id).padStart(5, "0")}`,
+              guestCode: g2Code,
               name: rawG2Name,
               fullName: rawG2Name,
               cpf: cleanDocG2,
               document: cleanDocG2,
+              documentNumber: cleanDocG2,
               docType: isPassG2 ? "Passaporte" : "CPF",
               phone: cleanPhoneG2,
               whatsapp: cleanPhoneG2,
@@ -51645,6 +52011,8 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString()
             });
+            r.guests[1].guestId = nextG2Id;
+            r.guests[1].guestCode = g2Code;
           }
         }
       } else {
@@ -51699,22 +52067,49 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
           hasCompletedCheckin: Boolean(cleanDocG3 && cleanPhoneG3)
         };
         if (!db.guests) db.guests = [];
-        if (cleanPhoneG3.replace(/\D/g, "").length >= 10 || cleanDocG3) {
-          const existingG3 = db.guests.find((g) =>
-            areGuestNamesCompatible(rawG3Name, g.fullName || g.name) && (
-              (cleanDocG3 && String(g.cpf || g.document || "").replace(/\D/g, "") === cleanDocG3) ||
-              (cleanPhoneG3 && String(g.phone || "").replace(/\D/g, "") === cleanPhoneG3.replace(/\D/g, ""))
-            )
-          );
-          if (!existingG3) {
+        if (cleanPhoneG3.replace(/\D/g, "").length >= 8 || cleanDocG3 || (rawG3Email && rawG3Email.includes("@"))) {
+          const existingG3 = findMatchingExistingCrmGuest(db, {
+            guestId: r.guests?.[2]?.guestId,
+            name: rawG3Name,
+            document: cleanDocG3,
+            phone: cleanPhoneG3,
+            email: rawG3Email
+          });
+          if (existingG3) {
+            const preservedG3Name = pickBestPreservedGuestName(existingG3, rawG3Name) || rawG3Name;
+            existingG3.name = preservedG3Name;
+            existingG3.fullName = preservedG3Name;
+            if (cleanDocG3) {
+              existingG3.cpf = cleanDocG3;
+              existingG3.document = cleanDocG3;
+              existingG3.documentNumber = cleanDocG3;
+              existingG3.docType = isPassG3 ? "Passaporte" : "CPF";
+            }
+            if (cleanPhoneG3) {
+              existingG3.phone = cleanPhoneG3;
+              existingG3.whatsapp = cleanPhoneG3;
+            }
+            if (rawG3Email) existingG3.email = rawG3Email;
+            if (!existingG3.guestCode) existingG3.guestCode = `HOSP-${String(existingG3.id).padStart(5, "0")}`;
+            existingG3.updatedAt = nowCredIso;
+            r.guests[2].name = preservedG3Name;
+            r.guests[2].guestId = existingG3.id;
+            r.guests[2].guestCode = existingG3.guestCode;
+            if (!r.guests[2].document && (existingG3.document || existingG3.cpf)) {
+              r.guests[2].document = existingG3.document || existingG3.cpf;
+              r.guests[2].cpf = r.guests[2].document;
+            }
+          } else {
             const nextG3Id = db.guests.length > 0 ? Math.max(...db.guests.map((g) => Number(g.id) || 0)) + 1 : 1;
+            const g3Code = `HOSP-${String(nextG3Id).padStart(5, "0")}`;
             db.guests.push({
               id: nextG3Id,
-              guestCode: `HOSP-${String(nextG3Id).padStart(5, "0")}`,
+              guestCode: g3Code,
               name: rawG3Name,
               fullName: rawG3Name,
               cpf: cleanDocG3,
               document: cleanDocG3,
+              documentNumber: cleanDocG3,
               docType: isPassG3 ? "Passaporte" : "CPF",
               phone: cleanPhoneG3,
               whatsapp: cleanPhoneG3,
@@ -51722,6 +52117,8 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
               createdAt: nowCredIso,
               updatedAt: nowCredIso
             });
+            r.guests[2].guestId = nextG3Id;
+            r.guests[2].guestCode = g3Code;
           }
         }
       } else {
@@ -51779,44 +52176,48 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       r.hasPreCheckin = true;
     }
 
-    // Atualiza o cadastro no CRM de Hóspedes (db.guests)
+    // Atualiza o cadastro no CRM de Hóspedes (db.guests) com busca anti-duplicidade e preservação do nome mais completo
     if (!db.guests) db.guests = [];
-    let guestRecord = r.guestId
-      ? db.guests.find(g => String(g.id) === String(r.guestId) && areGuestNamesCompatible(cleanName, g.fullName || g.name))
-      : null;
-    if (!guestRecord && cleanDoc) {
-      guestRecord = db.guests.find(g => {
-        if (!areGuestNamesCompatible(cleanName, g.fullName || g.name)) return false;
-        const existingDoc = String(g.cpf || g.document || g.documentNumber || "").trim();
-        return isPassportDoc
-          ? existingDoc.toUpperCase().replace(/[^A-Z0-9-]/g, "") === cleanDoc
-          : existingDoc.replace(/\D/g, "") === cleanDoc;
-      });
-    }
-    if (!guestRecord) {
-      guestRecord = db.guests.find(g =>
-        areGuestNamesCompatible(cleanName, g.fullName || g.name) &&
-        String(g.whatsapp || g.phone || "").replace(/\D/g, "") === cleanPhoneDigits
-      );
-    }
+    let guestRecord = findMatchingExistingCrmGuest(db, {
+      guestId: r.guestId || r.guests?.[0]?.guestId,
+      name: cleanName,
+      document: cleanDoc,
+      phone: cleanPhone,
+      email: cleanEmail
+    });
     if (guestRecord) {
-      guestRecord.name = cleanName;
-      guestRecord.fullName = cleanName;
+      const preservedG1Name = pickBestPreservedGuestName(guestRecord, cleanName) || cleanName;
+      guestRecord.name = preservedG1Name;
+      guestRecord.fullName = preservedG1Name;
+      r.guestName = preservedG1Name;
+      if (r.guests?.[0]) r.guests[0].name = preservedG1Name;
       if (r.guestDocument) {
         guestRecord.cpf = r.guestDocument;
         guestRecord.document = r.guestDocument;
         guestRecord.documentNumber = r.guestDocument;
         guestRecord.docType = resolvedDocType;
+      } else if (guestRecord.document || guestRecord.cpf) {
+        r.guestDocument = guestRecord.document || guestRecord.cpf;
+        if (r.guests?.[0] && !r.guests[0].document) {
+          r.guests[0].document = r.guestDocument;
+          r.guests[0].cpf = r.guestDocument;
+        }
       }
-      guestRecord.phone = cleanPhone;
-      guestRecord.whatsapp = cleanPhone;
+      if (cleanPhone) {
+        guestRecord.phone = cleanPhone;
+        guestRecord.whatsapp = cleanPhone;
+      }
       if (cleanSecPhone) guestRecord.secondaryPhone = cleanSecPhone;
       if (cleanEmail) guestRecord.email = cleanEmail;
       if (finalDocUrl) guestRecord.docPhotoUrl = finalDocUrl;
       guestRecord.updatedAt = new Date().toISOString();
       r.guestId = guestRecord.id;
       r.guestCode = guestRecord.guestCode || `HOSP-${String(guestRecord.id).padStart(5, "0")}`;
-      if (r.guests?.[0]) r.guests[0].guestId = guestRecord.id;
+      guestRecord.guestCode = r.guestCode;
+      if (r.guests?.[0]) {
+        r.guests[0].guestId = guestRecord.id;
+        r.guests[0].guestCode = r.guestCode;
+      }
     } else {
       const nextGId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
       guestRecord = {
