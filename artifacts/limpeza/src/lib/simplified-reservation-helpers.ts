@@ -6,6 +6,28 @@ import {
   type SimpleChargeItem,
 } from "./simplified-reservation-pricing.ts";
 
+export const CANONICAL_CORPFLATS_19_FLATS = [
+  { id: 1, number: "113", name: "Flat 113", isActive: true, cleaningStatus: "clean" },
+  { id: 2, number: "114", name: "Flat 114", isActive: true, cleaningStatus: "clean" },
+  { id: 3, number: "116", name: "Flat 116", isActive: true, cleaningStatus: "clean" },
+  { id: 4, number: "211", name: "Flat 211", isActive: true, cleaningStatus: "clean" },
+  { id: 5, number: "212", name: "Flat 212", isActive: true, cleaningStatus: "clean" },
+  { id: 6, number: "215", name: "Flat 215", isActive: true, cleaningStatus: "clean" },
+  { id: 7, number: "313", name: "Flat 313", isActive: true, cleaningStatus: "clean" },
+  { id: 8, number: "408", name: "Flat 408", isActive: true, cleaningStatus: "clean" },
+  { id: 10, number: "509", name: "Flat 509", isActive: true, cleaningStatus: "clean" },
+  { id: 11, number: "511", name: "Flat 511", isActive: true, cleaningStatus: "clean" },
+  { id: 12, number: "512", name: "Flat 512", isActive: true, cleaningStatus: "clean" },
+  { id: 13, number: "605", name: "Flat 605", isActive: true, cleaningStatus: "clean" },
+  { id: 14, number: "712", name: "Flat 712", isActive: true, cleaningStatus: "clean" },
+  { id: 15, number: "715", name: "Flat 715", isActive: true, cleaningStatus: "clean" },
+  { id: 16, number: "904", name: "Flat 904", isActive: true, cleaningStatus: "clean" },
+  { id: 17, number: "905", name: "Flat 905", isActive: true, cleaningStatus: "clean" },
+  { id: 18, number: "907", name: "Flat 907", isActive: true, cleaningStatus: "clean" },
+  { id: 19, number: "1004", name: "Flat 1004", isActive: true, cleaningStatus: "clean" },
+  { id: 21, number: "1304", name: "Flat 1304", isActive: true, cleaningStatus: "clean" },
+];
+
 export function isFlatBlockedStatus(flat: any): boolean {
   if (!flat) return false;
   return Boolean(

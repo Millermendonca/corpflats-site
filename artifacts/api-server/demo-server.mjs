@@ -13243,6 +13243,7 @@ async function _loadDatabaseImpl() {
             sanitizeTrackingSettings(db.adSettings);
           }
           pgHydratedSuccessfully = true;
+          bumpPmsStateVersion();
           if (hydrationRetryTimer) {
             clearTimeout(hydrationRetryTimer);
             hydrationRetryTimer = null;
@@ -13307,6 +13308,7 @@ async function _loadDatabaseImpl() {
             sanitizeTrackingSettings(db.adSettings);
           }
           pgHydratedSuccessfully = true;
+          bumpPmsStateVersion();
           if (hydrationRetryTimer) {
             clearTimeout(hydrationRetryTimer);
             hydrationRetryTimer = null;
@@ -16308,9 +16310,22 @@ export function healContaminatedGuestAndReservationLinks(database) {
   }
 
   // 2. Blindagem universal: desvincula qualquer reserva cujo guestId aponte para um hóspede com nome incompatível
+  const healGuestsById = new Map();
+  const healGuestsByPhone8 = new Map();
+  for (const g of currentDb.guests) {
+    if (!g) continue;
+    if (g.id != null) healGuestsById.set(Number(g.id), g);
+    const gpNorm = normalizePhone(g.phone || "");
+    if (gpNorm.length >= 8) {
+      const s8 = gpNorm.slice(-8);
+      let bucket = healGuestsByPhone8.get(s8);
+      if (!bucket) { bucket = []; healGuestsByPhone8.set(s8, bucket); }
+      bucket.push(g);
+    }
+  }
   for (const r of currentDb.reservations) {
     if (!r || !r.guestId || isPlaceholderOrEmptyGuestName(r.guestName)) continue;
-    const linkedGuest = currentDb.guests.find(g => g && Number(g.id) === Number(r.guestId));
+    const linkedGuest = healGuestsById.get(Number(r.guestId));
     if (linkedGuest && !isPlaceholderOrEmptyGuestName(linkedGuest.fullName || linkedGuest.name)) {
       const linkedDoc = normalizeDoc(linkedGuest.document || linkedGuest.documentNumber || linkedGuest.cpf);
       const resDoc = normalizeDoc(r.guestDocument || r.document);
@@ -16347,6 +16362,17 @@ export function healContaminatedGuestAndReservationLinks(database) {
   }
 
   // 3. Remove de additionalPhones qualquer telefone que seja de outro hóspede/reserva incompatível ou não corroborado
+  const healResByPhone8 = new Map();
+  for (const r2 of currentDb.reservations) {
+    if (!r2 || isPlaceholderOrEmptyGuestName(r2.guestName)) continue;
+    const rpNorm = normalizePhone(r2.guestPhone || r2.phone || "");
+    if (rpNorm.length >= 8) {
+      const s8 = rpNorm.slice(-8);
+      let bucket = healResByPhone8.get(s8);
+      if (!bucket) { bucket = []; healResByPhone8.set(s8, bucket); }
+      bucket.push(r2);
+    }
+  }
   for (const g1 of currentDb.guests) {
     if (!g1 || !Array.isArray(g1.additionalPhones) || g1.additionalPhones.length === 0) continue;
     const origLen = g1.additionalPhones.length;
@@ -16359,14 +16385,16 @@ export function healContaminatedGuestAndReservationLinks(database) {
       if (authPhoneToName.has(apNorm) && !areGuestNamesCompatible(g1Full, authPhoneToName.get(apNorm))) {
         return false;
       }
-      const belongsToOtherIncompatibleGuest = currentDb.guests.some(g2 =>
+      const s8 = apNorm.slice(-8);
+      const candGuests = healGuestsByPhone8.get(s8) || [];
+      const belongsToOtherIncompatibleGuest = candGuests.some(g2 =>
         g2 && g2.id !== g1.id &&
         phonesMatch(g2.phone, ap) &&
         !areGuestNamesCompatible(g1Full, g2.fullName || g2.name)
       );
       if (belongsToOtherIncompatibleGuest) return false;
-      const belongsToIncompatibleRes = currentDb.reservations.some(r2 =>
-        r2 && !isPlaceholderOrEmptyGuestName(r2.guestName) &&
+      const candRes = healResByPhone8.get(s8) || [];
+      const belongsToIncompatibleRes = candRes.some(r2 =>
         phonesMatch(r2.guestPhone || r2.phone, ap) &&
         !areGuestNamesCompatible(g1Full, r2.guestName)
       );
@@ -16381,9 +16409,26 @@ export function healContaminatedGuestAndReservationLinks(database) {
 let isGuestReconciliationDirty = true;
 let lastGuestReconcileTimestamp = 0;
 const GUEST_RECONCILE_COOLDOWN_MS = 60000;
+let bgGuestReconcilePending = false;
 
 export function markGuestReconciliationDirty() {
   isGuestReconciliationDirty = true;
+}
+
+export function scheduleBackgroundGuestReconcile(targetDb = null) {
+  if (bgGuestReconcilePending) return;
+  const database = targetDb || (typeof db !== "undefined" ? db : null);
+  if (!database) return;
+  const now = Date.now();
+  if (!isGuestReconciliationDirty && !database._guestReconcileNeeded) return;
+  if (!database._guestReconcileNeeded && now - lastGuestReconcileTimestamp < 15000) return;
+  bgGuestReconcilePending = true;
+  setImmediate(() => {
+    bgGuestReconcilePending = false;
+    try {
+      reconcileAndMergeGuests(database, Boolean(database._guestReconcileNeeded));
+    } catch (_) {}
+  });
 }
 
 export function reconcileAndMergeGuests(database, force = false) {
@@ -16403,21 +16448,82 @@ export function reconcileAndMergeGuests(database, force = false) {
 
   const didHeal = healContaminatedGuestAndReservationLinks(currentDb);
 
+  const deletedDocsSet = new Set((currentDb.deletedGuestDocs || []).filter(Boolean));
+  const deletedIdsSet = new Set((currentDb.deletedGuestIds || []).map(x => Number(x)).filter(n => !isNaN(n)));
+
   const isDeleted = (candidate) => {
     if (!candidate) return false;
     const cDoc = normalizeDoc(candidate.document || candidate.documentNumber || candidate.cpf || candidate.tomadorCpfCnpj);
-    if (cDoc && Array.isArray(currentDb.deletedGuestDocs) && currentDb.deletedGuestDocs.includes(cDoc)) return true;
-    if (candidate.id && Array.isArray(currentDb.deletedGuestIds) && currentDb.deletedGuestIds.includes(Number(candidate.id))) return true;
-    if (candidate.guestId && Array.isArray(currentDb.deletedGuestIds) && currentDb.deletedGuestIds.includes(Number(candidate.guestId))) return true;
+    if (cDoc && deletedDocsSet.has(cDoc)) return true;
+    if (candidate.id && deletedIdsSet.has(Number(candidate.id))) return true;
+    if (candidate.guestId && deletedIdsSet.has(Number(candidate.guestId))) return true;
     return false;
   };
 
+  // Índices em memória O(1) para evitar varreduras O(N²) + Levenshtein em toda a base
+  const deduplicated = [];
+  const dedupById = new Map();
+  const dedupByDoc = new Map();
+  const dedupByPhone8 = new Map();
+  const dedupByEmail = new Map();
+
+  const pushUniqueBucket = (map, key, guestObj) => {
+    if (!key) return;
+    let arr = map.get(key);
+    if (!arr) {
+      arr = [guestObj];
+      map.set(key, arr);
+    } else if (!arr.includes(guestObj)) {
+      arr.push(guestObj);
+    }
+  };
+
+  const indexDedupGuest = (g) => {
+    if (!g) return;
+    const numId = Number(g.id);
+    if (g.id != null && !isNaN(numId) && numId > 0) {
+      dedupById.set(numId, g);
+    }
+    const gDoc = normalizeDoc(g.document || g.documentNumber || g.cpf);
+    if (gDoc && gDoc.length >= 5) {
+      pushUniqueBucket(dedupByDoc, gDoc, g);
+    }
+    const rawPhones = [
+      g.phone,
+      g.whatsapp,
+      g.phoneNumber,
+      g.secondaryPhone,
+      ...(Array.isArray(g.additionalPhones) ? g.additionalPhones : [])
+    ];
+    for (const rp of rawPhones) {
+      if (!rp) continue;
+      const np = normalizePhone(rp);
+      if (np && np.length >= 8) {
+        pushUniqueBucket(dedupByPhone8, np.slice(-8), g);
+      }
+    }
+    const gEmail = String(g.email || "").trim().toLowerCase();
+    if (gEmail && gEmail.includes("@")) {
+      pushUniqueBucket(dedupByEmail, gEmail, g);
+    }
+  };
+
+  const rebuildDedupIndexes = () => {
+    dedupById.clear();
+    dedupByDoc.clear();
+    dedupByPhone8.clear();
+    dedupByEmail.clear();
+    for (const g of deduplicated) {
+      indexDedupGuest(g);
+    }
+  };
+
   const findMatchingGuest = (candidate, list) => {
+    const useIndex = list === deduplicated || list === currentDb.guests;
     const cDoc = normalizeDoc(candidate.document || candidate.documentNumber || candidate.cpf || candidate.tomadorCpfCnpj);
     const cPhone = normalizePhone(candidate.phone || candidate.phoneNumber || candidate.tomadorTelefone || candidate.guestPhone);
     const cEmail = (candidate.email || candidate.tomadorEmail || candidate.guestEmail || "").trim().toLowerCase();
     const cRawName = candidate.name || candidate.fullName || candidate.tomadorNome || candidate.guestName || "";
-    const cName = normalizeName(cRawName);
     const isCandPlaceholder = isPlaceholderOrEmptyGuestName(cRawName);
     const isNameCompatibleWith = (g) => {
       const gRawName = g.fullName || g.name || "";
@@ -16430,45 +16536,70 @@ export function reconcileAndMergeGuests(database, force = false) {
       return areGuestNamesLooselyCompatible(cRawName, gRawName);
     };
 
+    const candIdNum = candidate.id ? Number(candidate.id) : 0;
+    const candGuestIdNum = candidate.guestId ? Number(candidate.guestId) : 0;
+
     // Prioridade 1: ID ou CPF/Documento (CPF/Passaporte exato é soberano; por ID valida compatibilidade nominal)
-    if (candidate.id || candidate.guestId || (cDoc && cDoc.length >= 5)) {
-      const byIdOrDoc = list.find(g => {
-        const gDoc = normalizeDoc(g.document || g.documentNumber || g.cpf);
-        if (cDoc && gDoc && cDoc === gDoc) return true;
-        if (cDoc && gDoc && cDoc !== gDoc) return false;
-        if (!isNameCompatibleWith(g)) return false;
-        if (candidate.id && g.id && Number(candidate.id) === Number(g.id)) return true;
-        if (candidate.guestId && g.id && Number(candidate.guestId) === Number(g.id)) return true;
-        return false;
-      });
-      if (byIdOrDoc) return byIdOrDoc;
+    if (candIdNum || candGuestIdNum || (cDoc && cDoc.length >= 5)) {
+      if (useIndex) {
+        if (cDoc && cDoc.length >= 5) {
+          const docBucket = dedupByDoc.get(cDoc);
+          if (docBucket) {
+            for (const g of docBucket) {
+              const gDoc = normalizeDoc(g.document || g.documentNumber || g.cpf);
+              if (gDoc === cDoc) return g;
+            }
+          }
+        }
+        const idCandidates = [];
+        if (candIdNum && dedupById.has(candIdNum)) idCandidates.push(dedupById.get(candIdNum));
+        if (candGuestIdNum && candGuestIdNum !== candIdNum && dedupById.has(candGuestIdNum)) {
+          idCandidates.push(dedupById.get(candGuestIdNum));
+        }
+        for (const g of idCandidates) {
+          const gDoc = normalizeDoc(g.document || g.documentNumber || g.cpf);
+          if (cDoc && gDoc && cDoc !== gDoc) continue;
+          if (isNameCompatibleWith(g)) return g;
+        }
+      } else {
+        const byIdOrDoc = list.find(g => {
+          const gDoc = normalizeDoc(g.document || g.documentNumber || g.cpf);
+          if (cDoc && gDoc && cDoc === gDoc) return true;
+          if (cDoc && gDoc && cDoc !== gDoc) return false;
+          const sameId = (candIdNum && g.id && candIdNum === Number(g.id)) || (candGuestIdNum && g.id && candGuestIdNum === Number(g.id));
+          if (!sameId) return false;
+          return isNameCompatibleWith(g);
+        });
+        if (byIdOrDoc) return byIdOrDoc;
+      }
     }
 
-    // Prioridade 2: Telefone normalizado (principal, whatsapp ou adicional, com compatibilidade flexível de nome e sem conflito de CPF)
+    // Prioridade 2: Telefone normalizado (checa telefone e CPF O(1) ANTES de rodar comparação fonética/Levenshtein de nome)
     if (cPhone && cPhone.length >= 8) {
-      const byPhone = list.find(g => {
-        const gDoc = normalizeDoc(g.document || g.documentNumber || g.cpf);
-        if (cDoc && gDoc && cDoc !== gDoc) return false;
-        return isNameCompatibleWith(g) && (
+      const phonePool = useIndex ? (dedupByPhone8.get(cPhone.slice(-8)) || []) : list;
+      for (const g of phonePool) {
+        const phoneMatched =
           phonesMatch(g.phone || g.whatsapp || g.phoneNumber, cPhone) ||
           (g.secondaryPhone && phonesMatch(g.secondaryPhone, cPhone)) ||
-          (Array.isArray(g.additionalPhones) && g.additionalPhones.some(ap => phonesMatch(ap, cPhone)))
-        );
-      });
-      if (byPhone) return byPhone;
+          (Array.isArray(g.additionalPhones) && g.additionalPhones.some(ap => phonesMatch(ap, cPhone)));
+        if (!phoneMatched) continue;
+        const gDoc = normalizeDoc(g.document || g.documentNumber || g.cpf);
+        if (cDoc && gDoc && cDoc !== gDoc) continue;
+        if (isNameCompatibleWith(g)) return g;
+      }
     }
 
-    // Prioridade 3: E-mail pessoal (com compatibilidade flexível de nome e sem conflito de CPF/telefone)
+    // Prioridade 3: E-mail pessoal (checa e-mail exato O(1) ANTES de rodar comparação de nome)
     if (cEmail && cEmail.includes("@") && !cEmail.endsWith("@guest.booking.com") && !isPureBillingMailbox(cEmail)) {
-      const byEmail = list.find(g => {
+      const emailPool = useIndex ? (dedupByEmail.get(cEmail) || []) : list;
+      for (const g of emailPool) {
+        if ((g.email || "").trim().toLowerCase() !== cEmail) continue;
         const gDoc = normalizeDoc(g.document || g.documentNumber || g.cpf);
-        if (cDoc && gDoc && cDoc !== gDoc) return false;
-        if ((g.email || "").trim().toLowerCase() !== cEmail) return false;
+        if (cDoc && gDoc && cDoc !== gDoc) continue;
         const gPh = normalizePhone(g.phone || g.whatsapp || g.phoneNumber);
-        if (cPhone && gPh && !phonesMatch(cPhone, gPh)) return false;
-        return isNameCompatibleWith(g);
-      });
-      if (byEmail) return byEmail;
+        if (cPhone && gPh && !phonesMatch(cPhone, gPh)) continue;
+        if (isNameCompatibleWith(g)) return g;
+      }
     }
 
     // Regra Anti-Duplicidade: NUNCA unificar homônimos apenas pelo nome sem CPF, Telefone ou E-mail.
@@ -16476,11 +16607,14 @@ export function reconcileAndMergeGuests(database, force = false) {
   };
 
   // 1. Deduplica a base de hóspedes existente (filtrando cadastros fantasmas, de teste, internos e LIDs do WhatsApp)
-  const deduplicated = [];
   let runningSeedMaxId = currentDb.guests.reduce((mx, item) => {
     const n = Number(item?.id);
     return !isNaN(n) && n > mx ? n : mx;
   }, 0);
+  const allocateNextGuestId = () => {
+    runningSeedMaxId += 1;
+    return runningSeedMaxId;
+  };
   for (const g of currentDb.guests) {
     if (!g || isDeleted(g)) continue;
     const gRawName = g.fullName || g.name || "";
@@ -16495,12 +16629,15 @@ export function reconcileAndMergeGuests(database, force = false) {
     if (!existing) {
       const cloned = { ...g };
       if (!cloned.id || isNaN(Number(cloned.id))) {
-        runningSeedMaxId += 1;
-        cloned.id = runningSeedMaxId;
+        cloned.id = allocateNextGuestId();
+      } else if (Number(cloned.id) > runningSeedMaxId) {
+        runningSeedMaxId = Number(cloned.id);
       }
       deduplicated.push(cloned);
+      indexDedupGuest(cloned);
     } else {
       mergeGuestRecords(existing, g);
+      indexDedupGuest(existing);
     }
   }
 
@@ -16511,7 +16648,7 @@ export function reconcileAndMergeGuests(database, force = false) {
       if (isForbiddenTestOrInternalGuestName(acc.name) || isInternalOrForbiddenGuestPhone(acc.phone)) continue;
       let matched = findMatchingGuest(acc, deduplicated);
       if (!matched && (acc.name || acc.email || acc.document || acc.phone)) {
-        const nextId = deduplicated.length > 0 ? Math.max(...deduplicated.map(x => Number(x.id) || 0)) + 1 : 1;
+        const nextId = allocateNextGuestId();
         matched = {
           id: nextId,
           guestCode: `HOSP-${String(nextId).padStart(5, "0")}`,
@@ -16520,9 +16657,11 @@ export function reconcileAndMergeGuests(database, force = false) {
           createdAt: acc.createdAt || new Date().toISOString()
         };
         deduplicated.push(matched);
+        indexDedupGuest(matched);
       }
       if (matched) {
         mergeGuestRecords(matched, acc);
+        indexDedupGuest(matched);
         acc.guestId = matched.id;
         acc.guestCode = matched.guestCode;
       }
@@ -16569,7 +16708,7 @@ export function reconcileAndMergeGuests(database, force = false) {
 
     let matched = (isCandValidName || hasCandDoc) ? findMatchingGuest(rGuestCand, deduplicated) : undefined;
     if (!matched && (isCandValidName || hasCandDoc)) {
-      const nextId = deduplicated.length > 0 ? Math.max(...deduplicated.map(x => Number(x.id) || 0)) + 1 : 1;
+      const nextId = allocateNextGuestId();
       matched = {
         id: nextId,
         guestCode: `HOSP-${String(nextId).padStart(5, "0")}`,
@@ -16578,10 +16717,12 @@ export function reconcileAndMergeGuests(database, force = false) {
         createdAt: r.createdAt || new Date().toISOString()
       };
       deduplicated.push(matched);
+      indexDedupGuest(matched);
     }
 
     if (matched) {
       mergeGuestRecords(matched, rGuestCand);
+      indexDedupGuest(matched);
       r.guestId = matched.id;
       r.guestCode = matched.guestCode;
     } else if (!isCandValidName && !hasCandDoc) {
@@ -16630,7 +16771,7 @@ export function reconcileAndMergeGuests(database, force = false) {
 
         let slotMatch = findMatchingGuest(slotCand, deduplicated);
         if (!slotMatch && (slotCand.name || slotCand.document)) {
-          const nextId = deduplicated.length > 0 ? Math.max(...deduplicated.map(x => Number(x.id) || 0)) + 1 : 1;
+          const nextId = allocateNextGuestId();
           slotMatch = {
             id: nextId,
             guestCode: `HOSP-${String(nextId).padStart(5, "0")}`,
@@ -16639,10 +16780,12 @@ export function reconcileAndMergeGuests(database, force = false) {
             createdAt: new Date().toISOString()
           };
           deduplicated.push(slotMatch);
+          indexDedupGuest(slotMatch);
         }
 
         if (slotMatch) {
           mergeGuestRecords(slotMatch, slotCand);
+          indexDedupGuest(slotMatch);
           rg.guestId = slotMatch.id;
           rg.guestCode = slotMatch.guestCode;
         }
@@ -16671,7 +16814,7 @@ export function reconcileAndMergeGuests(database, force = false) {
       if (isDeleted(flatCompCand)) continue;
       let flatCompMatch = findMatchingGuest(flatCompCand, deduplicated);
       if (!flatCompMatch) {
-        const nextId = deduplicated.length > 0 ? Math.max(...deduplicated.map(x => Number(x.id) || 0)) + 1 : 1;
+        const nextId = allocateNextGuestId();
         flatCompMatch = {
           id: nextId,
           guestCode: `HOSP-${String(nextId).padStart(5, "0")}`,
@@ -16680,9 +16823,11 @@ export function reconcileAndMergeGuests(database, force = false) {
           createdAt: r.createdAt || new Date().toISOString()
         };
         deduplicated.push(flatCompMatch);
+        indexDedupGuest(flatCompMatch);
       }
       if (flatCompMatch) {
         mergeGuestRecords(flatCompMatch, flatCompCand);
+        indexDedupGuest(flatCompMatch);
         if (compIdx === 2) r.guest2Id = flatCompMatch.id;
         else r.guest3Id = flatCompMatch.id;
       }
@@ -16700,7 +16845,7 @@ export function reconcileAndMergeGuests(database, force = false) {
         if (isDeleted(partCand)) continue;
         let partMatch = findMatchingGuest(partCand, deduplicated);
         if (!partMatch) {
-          const nextId = deduplicated.length > 0 ? Math.max(...deduplicated.map(x => Number(x.id) || 0)) + 1 : 1;
+          const nextId = allocateNextGuestId();
           partMatch = {
             id: nextId,
             guestCode: `HOSP-${String(nextId).padStart(5, "0")}`,
@@ -16709,6 +16854,7 @@ export function reconcileAndMergeGuests(database, force = false) {
             createdAt: r.createdAt || new Date().toISOString()
           };
           deduplicated.push(partMatch);
+          indexDedupGuest(partMatch);
         }
         if (partMatch?.id) compIds.push(Number(partMatch.id));
       }
@@ -16749,7 +16895,7 @@ export function reconcileAndMergeGuests(database, force = false) {
 
     let matched = findMatchingGuest(invCand, deduplicated);
     if (!matched) {
-      const nextId = deduplicated.length > 0 ? Math.max(...deduplicated.map(x => Number(x.id) || 0)) + 1 : 1;
+      const nextId = allocateNextGuestId();
       matched = {
         id: nextId,
         guestCode: `HOSP-${String(nextId).padStart(5, "0")}`,
@@ -16758,10 +16904,12 @@ export function reconcileAndMergeGuests(database, force = false) {
         createdAt: inv.dataEmissao || inv.createdAt || new Date().toISOString()
       };
       deduplicated.push(matched);
+      indexDedupGuest(matched);
     }
 
     if (matched) {
       mergeGuestRecords(matched, invCand);
+      indexDedupGuest(matched);
     }
   }
 
@@ -16776,18 +16924,27 @@ export function reconcileAndMergeGuests(database, force = false) {
     return true;
   };
 
+  const resLookupByCode = new Map();
+  const resLookupByIdStr = new Map();
+  for (const r of (currentDb.reservations || [])) {
+    if (!r) continue;
+    if (r.code) resLookupByCode.set(String(r.code), r);
+    if (r.id != null) resLookupByIdStr.set(String(r.id), r);
+  }
+
   const linkPhoneToReservationOrGuest = ({ phone, name, document, email, reservationCode, reservationId, companyName, createIfMissing = false, tags = [] }) => {
     if (isInternalOrForbiddenGuestPhone(phone) || isForbiddenTestOrInternalGuestName(name)) return;
     const cleanP = normalizePhone(phone);
     if (!cleanP || cleanP.length < 8) return;
     if (isSystemOrServiceOrderGuestName(name)) return;
+    const phoneS8 = cleanP.slice(-8);
 
     let linkedRes = null;
     if (reservationCode || reservationId) {
-      linkedRes = (currentDb.reservations || []).find(r =>
-        (reservationCode && r.code === reservationCode) ||
-        (reservationId && (String(r.id) === String(reservationId) || r.code === String(reservationId)))
-      );
+      linkedRes =
+        (reservationCode ? resLookupByCode.get(String(reservationCode)) : null) ||
+        (reservationId ? (resLookupByIdStr.get(String(reservationId)) || resLookupByCode.get(String(reservationId))) : null) ||
+        null;
       if (linkedRes) {
         const reqPhone = linkedRes.requesterPhone || linkedRes.requesterInfo?.phone || "";
         const agentPhone = linkedRes.agencyAgentPhone || "";
@@ -16797,7 +16954,8 @@ export function reconcileAndMergeGuests(database, force = false) {
         const isCompanionPhone = Array.isArray(linkedRes.guests) && linkedRes.guests.some((rg, idx) =>
           idx > 0 && rg && phonesMatch(rg.phone || rg.whatsappPhone, phone) && !areGuestNamesCompatible(rg.name, linkedRes.guestName)
         );
-        const isOwnedByIncompatibleGuest = deduplicated.some(other =>
+        const samePhoneGuests = dedupByPhone8.get(phoneS8) || [];
+        const isOwnedByIncompatibleGuest = samePhoneGuests.some(other =>
           other &&
           (!linkedRes.guestId || Number(other.id) !== Number(linkedRes.guestId)) &&
           phonesMatch(other.phone, phone) &&
@@ -16821,6 +16979,7 @@ export function reconcileAndMergeGuests(database, force = false) {
               fullName: isValidPersonName(linkedRes.guestName) ? linkedRes.guestName : (isValidPersonName(name) ? name : undefined),
               tags
             });
+            indexDedupGuest(resGuest);
             return;
           }
         }
@@ -16841,7 +17000,7 @@ export function reconcileAndMergeGuests(database, force = false) {
 
     let matched = findMatchingGuest(cand, deduplicated);
     if (!matched && createIfMissing && cand.name) {
-      const nextId = deduplicated.length > 0 ? Math.max(...deduplicated.map(x => Number(x.id) || 0)) + 1 : 1;
+      const nextId = allocateNextGuestId();
       matched = {
         id: nextId,
         guestCode: `HOSP-${String(nextId).padStart(5, "0")}`,
@@ -16851,15 +17010,18 @@ export function reconcileAndMergeGuests(database, force = false) {
         createdAt: new Date().toISOString()
       };
       deduplicated.push(matched);
+      indexDedupGuest(matched);
     }
     if (matched) {
-      const phoneOwnedByIncompatible = deduplicated.some(other =>
+      const samePhoneGuests = dedupByPhone8.get(phoneS8) || [];
+      const phoneOwnedByIncompatible = samePhoneGuests.some(other =>
         other && Number(other.id) !== Number(matched.id) &&
         phonesMatch(other.phone, phone) &&
         !areGuestNamesCompatible(other.fullName || other.name, matched.fullName || matched.name)
       );
       if (!phoneOwnedByIncompatible) {
         mergeGuestRecords(matched, cand);
+        indexDedupGuest(matched);
       }
     }
   };
@@ -17002,6 +17164,7 @@ export function reconcileAndMergeGuests(database, force = false) {
     const numId = Number(g.id);
     if (!isNaN(numId) && numId > maxId) maxId = numId;
   }
+  const step4GuestsByPhone8 = new Map();
   for (const g of deduplicated) {
     if (!g.id || isNaN(Number(g.id))) {
       maxId++;
@@ -17014,22 +17177,48 @@ export function reconcileAndMergeGuests(database, force = false) {
     if (!g.name) g.name = g.fullName || "Hóspede";
     if (!g.documentNumber) g.documentNumber = g.document || "";
     if (!g.document) g.document = g.documentNumber || "";
+    const gpNorm = normalizePhone(g.phone || "");
+    if (gpNorm.length >= 8) {
+      const s8 = gpNorm.slice(-8);
+      let arr = step4GuestsByPhone8.get(s8);
+      if (!arr) { arr = []; step4GuestsByPhone8.set(s8, arr); }
+      arr.push(g);
+    }
+  }
+  const step4ResByPhone8 = new Map();
+  let hasRes486 = false;
+  for (const r of (currentDb.reservations || [])) {
+    if (!r) continue;
+    if (Number(r.id) === 486 || r.code === "RES-605-0486") hasRes486 = true;
+    if (r.status === "cancelled" || !isValidPersonName(r.guestName)) continue;
+    const rpNorm = normalizePhone(r.guestPhone || r.phone || "");
+    if (rpNorm.length >= 8) {
+      const s8 = rpNorm.slice(-8);
+      let arr = step4ResByPhone8.get(s8);
+      if (!arr) { arr = []; step4ResByPhone8.set(s8, arr); }
+      arr.push(r);
+    }
+  }
 
+  for (const g of deduplicated) {
     if (Array.isArray(g.additionalPhones) && g.additionalPhones.length > 0) {
       g.additionalPhones = g.additionalPhones.filter(ap => {
         if (!ap) return false;
+        const apNorm = normalizePhone(ap);
+        if (apNorm.length < 8) return false;
         if (g.phone && phonesMatch(g.phone, ap)) return false;
         if (Number(g.id) !== 33 && !normalizeName(g.fullName || g.name).includes("miller") && phonesMatch(ap, "22998505276")) return false;
-        const belongsToOtherIncompatible = deduplicated.some(g2 =>
+        const s8 = apNorm.slice(-8);
+        const candGuests = step4GuestsByPhone8.get(s8) || [];
+        const belongsToOtherIncompatible = candGuests.some(g2 =>
           g2 && Number(g2.id) !== Number(g.id) &&
           phonesMatch(g2.phone, ap) &&
           !areGuestNamesCompatible(g.fullName || g.name, g2.fullName || g2.name)
         );
         if (belongsToOtherIncompatible) return false;
-        const belongsToIncompatibleRes = (currentDb.reservations || []).some(r =>
-          r && r.status !== "cancelled" &&
+        const candRes = step4ResByPhone8.get(s8) || [];
+        const belongsToIncompatibleRes = candRes.some(r =>
           phonesMatch(r.guestPhone || r.phone, ap) &&
-          isValidPersonName(r.guestName) &&
           !areGuestNamesCompatible(g.fullName || g.name, r.guestName)
         );
         return !belongsToIncompatibleRes;
@@ -17045,11 +17234,10 @@ export function reconcileAndMergeGuests(database, force = false) {
     } else if (Number(g.id) === 145) {
       g.additionalPhones = [];
     } else if (Number(g.id) === 20) {
-      const has486 = currentDb.reservations.some(r => r && (Number(r.id) === 486 || r.code === "RES-605-0486"));
-      g.reservationIds = has486 ? [486] : [373];
+      g.reservationIds = hasRes486 ? [486] : [373];
       g.totalStays = 1;
       g.lastStayDate = "2026-10-22";
-      g.lastRoom = has486 ? "605" : "212";
+      g.lastRoom = hasRes486 ? "605" : "212";
       if (Array.isArray(g.additionalPhones)) {
         g.additionalPhones = g.additionalPhones.filter(ap => !phonesMatch(ap, "21970473174"));
       }
@@ -17066,6 +17254,7 @@ export function reconcileAndMergeGuests(database, force = false) {
   }
 
   currentDb.guests = deduplicated;
+  rebuildDedupIndexes();
 
   // 5. Propaga enriquecimento de volta para db.guestAccounts
   if (Array.isArray(currentDb.guestAccounts)) {
@@ -20339,6 +20528,11 @@ export function atomicWriteFileSync(filePath, content) {
 // ── Caches Reutilizáveis de Alta Performance (Redução de Alocação de Memória) ──
 const requestsForDateCache = new Map(); // dateStr -> { timestamp, data, version }
 let requestsForDateVersion = 0;
+let pmsStateVersion = 1;
+
+export function bumpPmsStateVersion() {
+  pmsStateVersion = (pmsStateVersion + 1) >>> 0 || 1;
+}
 
 let cachedGuestIndexes = null;
 let cachedGuestSource = null;
@@ -20356,6 +20550,7 @@ let cachedFlatsLength = -1;
 let cachedFlatsTimestamp = 0;
 
 export function invalidateGuestCache() {
+  bumpPmsStateVersion();
   if (typeof isGuestReconciliationDirty !== "undefined") isGuestReconciliationDirty = true;
   cachedGuestIndexes = null;
   cachedGuestSource = null;
@@ -20368,6 +20563,7 @@ export function invalidateGuestCache() {
 }
 
 export function invalidateFlatsCache() {
+  bumpPmsStateVersion();
   cachedFlatsByNumber = null;
   cachedFlatsSource = null;
   cachedFlatsLength = -1;
@@ -38506,12 +38702,62 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
     return true;
   };
 
+  // Pré-indexação em passagem única O(R) para eliminar 114 varreduras lineares de db.reservations por requisição
+  const resByFlatId = new Map();
+  const resByFlatNum = new Map();
+  const pendingModByFlatId = new Set();
+  const pendingModByFlatNum = new Set();
+  for (const r of (db.reservations || [])) {
+    if (!isActiveFairShareRes(r)) continue;
+    if (r.flatId !== undefined && r.flatId !== null) {
+      const kId = Number(r.flatId);
+      let arr = resByFlatId.get(kId);
+      if (!arr) { arr = []; resByFlatId.set(kId, arr); }
+      arr.push(r);
+    }
+    if (r.flatNumber !== undefined && r.flatNumber !== null) {
+      const kNum = String(r.flatNumber);
+      let arr = resByFlatNum.get(kNum);
+      if (!arr) { arr = []; resByFlatNum.set(kNum, arr); }
+      arr.push(r);
+    }
+    const pm = r.pendingModification;
+    if (pm && pm.status === "awaiting_payment" && (!pm.expiresAt || new Date(pm.expiresAt).getTime() > nowMs)) {
+      const modIn = pm.newCheckinDate || r.checkinDate;
+      const modOut = pm.newCheckoutDate || r.checkoutDate;
+      if (modIn < effectiveCheckout && modOut > effectiveCheckin) {
+        const targetFlatId = pm.newFlatId ?? r.flatId;
+        const targetFlatNum = pm.newFlatNumber ?? r.flatNumber;
+        if (targetFlatId !== undefined && targetFlatId !== null) pendingModByFlatId.add(Number(targetFlatId));
+        if (targetFlatNum !== undefined && targetFlatNum !== null) pendingModByFlatNum.add(String(targetFlatNum));
+      }
+    }
+  }
+
+  const getFlatActiveReservations = (flatIdNum, fNumStr) => {
+    const byId = resByFlatId.get(flatIdNum) || [];
+    const byNum = resByFlatNum.get(fNumStr) || [];
+    if (byId.length === 0) return byNum;
+    if (byNum.length === 0) return byId;
+    const seen = new Set(byId);
+    const merged = [...byId];
+    for (const r of byNum) {
+      if (!seen.has(r)) {
+        seen.add(r);
+        merged.push(r);
+      }
+    }
+    return merged;
+  };
+
+  const monthStartMs = new Date(monthStart).getTime();
+  const monthEndMs = new Date(monthEnd).getTime();
+  const reqInMs = new Date(effectiveCheckin).getTime();
+
   const flatStats = flats.map(flat => {
     const fNum = String(flat.number);
-    const matchesFlat = (r) =>
-      r.flatId === flat.id ||
-      Number(r.flatId) === Number(flat.id) ||
-      String(r.flatNumber) === fNum;
+    const flatIdNum = Number(flat.id);
+    const flatActiveRes = getFlatActiveReservations(flatIdNum, fNum);
 
     const isFlatBlockedStatus = Boolean(
       flat.status === "manutencao_bloqueada" ||
@@ -38525,7 +38771,7 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
 
     // Status de limpeza em tempo real (sincronizado com GET /api/pms/calendar e Governança)
     const reqToday = cleaningRequestsToday.find(r =>
-      (String(r.flatNumber) === fNum || Number(r.flatId) === Number(flat.id)) &&
+      (String(r.flatNumber) === fNum || Number(r.flatId) === flatIdNum) &&
       !r.isDeleted &&
       r.status !== "deleted" &&
       !r.isInstructionOnly &&
@@ -38591,8 +38837,7 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
     };
 
     // 1. Verifica conflitos de ocupação no período solicitado [effectiveCheckin, effectiveCheckout)
-    const conflicts = (db.reservations || []).filter(r => {
-      if (!isActiveFairShareRes(r) || !matchesFlat(r)) return false;
+    const conflicts = flatActiveRes.filter(r => {
       if (isResCheckoutCompleted(r)) {
         const effectiveOut = r.earlyCheckoutDate || (r.actualCheckoutAt ? getExecutionDateStr(r.actualCheckoutAt) : null) || (r.checkoutDate <= todayStr ? r.checkoutDate : todayStr);
         if (effectiveOut <= effectiveCheckin) return false;
@@ -38601,24 +38846,10 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
     });
 
     // Verifica travas temporárias de alteração pendente (pendingModification)
-    const hasPendingModConflict = (db.reservations || []).some(r => {
-      if (!isActiveFairShareRes(r)) return false;
-      const pm = r.pendingModification;
-      if (!pm || pm.status !== "awaiting_payment") return false;
-      if (pm.expiresAt && new Date(pm.expiresAt).getTime() <= nowMs) return false;
-      const targetFlatId = pm.newFlatId ?? r.flatId;
-      const targetFlatNum = pm.newFlatNumber ?? r.flatNumber;
-      const sameFlat =
-        (targetFlatId !== undefined && targetFlatId !== null && Number(targetFlatId) === Number(flat.id)) ||
-        (targetFlatNum !== undefined && targetFlatNum !== null && String(targetFlatNum) === fNum);
-      if (!sameFlat) return false;
-      const modIn = pm.newCheckinDate || r.checkinDate;
-      const modOut = pm.newCheckoutDate || r.checkoutDate;
-      return modIn < effectiveCheckout && modOut > effectiveCheckin;
-    });
+    const hasPendingModConflict = pendingModByFlatId.has(flatIdNum) || pendingModByFlatNum.has(fNum);
 
     const blockConflicts = (db.roomBlocks || []).filter(b =>
-      (b.flatId === flat.id || Number(b.flatId) === Number(flat.id) || String(b.flatNumber) === fNum) &&
+      (b.flatId === flat.id || Number(b.flatId) === flatIdNum || String(b.flatNumber) === fNum) &&
       b.startDate < effectiveCheckout &&
       b.endDate >= effectiveCheckin
     );
@@ -38634,7 +38865,7 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
         return order.flats.some(oflat => {
           if (!oflat) return false;
           const oflatSt = String(oflat.status || "").toLowerCase();
-          if (Number(oflat.flatId) !== Number(flat.id) && String(oflat.flatNumber) !== fNum) return false;
+          if (Number(oflat.flatId) !== flatIdNum && String(oflat.flatNumber) !== fNum) return false;
           if (oflatSt === "in_progress" || oflatSt === "em_andamento") {
             const range = getActiveServiceFlatBlockRange(oflat, todayStr);
             if (!range) return false;
@@ -38676,7 +38907,7 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
         });
       }
       if (!order.blockFlats && !order.interdictFlats && orderSt !== "in_progress" && orderSt !== "em_andamento") return false;
-      if (Number(order.flatId) !== Number(flat.id) && String(order.flatNumber) !== fNum) return false;
+      if (Number(order.flatId) !== flatIdNum && String(order.flatNumber) !== fNum) return false;
       const sDate = String(order.startDate || order.scheduledDate || order.createdAt || "").slice(0, 10);
       const eDate = String(order.endDate || order.expectedCompletionDate || order.scheduledDate || sDate).slice(0, 10);
       return (!sDate || sDate < effectiveCheckout) && (!eDate || eDate >= effectiveCheckin);
@@ -38690,18 +38921,12 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
       !hasServiceOrderConflict;
 
     // 1.1 Prioridade no dia do Check-in e Prontidão de Limpeza:
-    // Prioridade 1: Vago no check-in e Limpo (pronto para uso imediato)
-    // Prioridade 2: Vago no check-in e Em Limpeza no momento
-    // Prioridade 3: Vago no check-in, porém Sujo (aguardando limpeza)
-    // Prioridade 4: Ocupado com check-out previsto para o mesmo dia do check-in (ainda não encerrado)
-    const sameDayCheckoutReservations = (db.reservations || []).filter(r => {
-      if (!isActiveFairShareRes(r) || !matchesFlat(r)) return false;
+    const sameDayCheckoutReservations = flatActiveRes.filter(r => {
       if (r.checkoutDate !== effectiveCheckin) return false;
       if (isResCheckoutCompleted(r)) return false;
       return true;
     });
-    const completedSameDayCheckouts = (db.reservations || []).filter(r => {
-      if (!isActiveFairShareRes(r) || !matchesFlat(r)) return false;
+    const completedSameDayCheckouts = flatActiveRes.filter(r => {
       const outDate = r.earlyCheckoutDate || r.checkoutDate;
       if (outDate !== effectiveCheckin) return false;
       return isResCheckoutCompleted(r);
@@ -38711,8 +38936,7 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
     const sameDayCheckoutGuestName = sameDayCheckoutReservations[0]?.guestName || null;
     const isCompletelyVacantOnCheckin = !hasSameDayCheckout;
 
-    const activeResToday = (db.reservations || []).find(r => {
-      if (!isActiveFairShareRes(r) || !matchesFlat(r)) return false;
+    const activeResToday = flatActiveRes.find(r => {
       if (isResCheckoutCompleted(r)) return false;
       return (r.checkinDate <= todayStr && r.checkoutDate > todayStr) || (r.checkoutDate === todayStr);
     });
@@ -38759,33 +38983,31 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
     }
 
     // 2. Calcula total de diárias ocupadas no mês do checkin
-    const monthReservations = (db.reservations || []).filter(r =>
-      isActiveFairShareRes(r) &&
-      matchesFlat(r) &&
+    const monthReservations = flatActiveRes.filter(r =>
       r.checkinDate < monthEnd &&
       r.checkoutDate > monthStart
     );
 
     let monthOccupiedDays = 0;
     for (const r of monthReservations) {
-      const startD = new Date(Math.max(new Date(r.checkinDate).getTime(), new Date(monthStart).getTime()));
-      const endD = new Date(Math.min(new Date(r.checkoutDate).getTime(), new Date(monthEnd).getTime()));
-      const days = Math.max(0, Math.round((endD - startD) / 86400000));
+      const startMs = Math.max(new Date(r.checkinDate).getTime(), monthStartMs);
+      const endMs = Math.min(new Date(r.checkoutDate).getTime(), monthEndMs);
+      const days = Math.max(0, Math.round((endMs - startMs) / 86400000));
       monthOccupiedDays += days;
     }
 
     // 3. Dias desde o último checkout antes do checkinDate (tempo ocioso)
-    const pastReservations = (db.reservations || []).filter(r =>
-      isActiveFairShareRes(r) &&
-      matchesFlat(r) &&
-      r.checkoutDate <= effectiveCheckin
-    ).sort((a, b) => b.checkoutDate.localeCompare(a.checkoutDate));
+    let latestPastCheckout = "";
+    for (const r of flatActiveRes) {
+      if (r.checkoutDate && r.checkoutDate <= effectiveCheckin && r.checkoutDate > latestPastCheckout) {
+        latestPastCheckout = r.checkoutDate;
+      }
+    }
 
     let daysSinceLastCheckout = 999;
-    if (pastReservations.length > 0) {
-      const lastOut = new Date(pastReservations[0].checkoutDate);
-      const reqIn = new Date(effectiveCheckin);
-      daysSinceLastCheckout = Math.max(0, Math.round((reqIn - lastOut) / 86400000));
+    if (latestPastCheckout) {
+      const lastOutMs = new Date(latestPastCheckout).getTime();
+      daysSinceLastCheckout = Math.max(0, Math.round((reqInMs - lastOutMs) / 86400000));
     }
 
     return {
@@ -40317,6 +40539,73 @@ export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase
 }
 
 let lastCalendarObsPurgeTime = 0;
+let lastCalendarSeedCheckTime = 0;
+
+function computeCalendarStateVersion({ start, end, normFocusCode, todayStr, isModalOnlyMode, rawReservations, cleaningRequestsToday }) {
+  let h = 2166136261 >>> 0;
+  const mixStr = (s) => {
+    const str = String(s ?? "");
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    h ^= 124;
+    h = Math.imul(h, 16777619) >>> 0;
+  };
+  mixStr(pmsStateVersion);
+  mixStr(todayStr);
+  mixStr(start);
+  mixStr(end);
+  mixStr(normFocusCode);
+  mixStr(isModalOnlyMode ? "M1" : "M0");
+  mixStr((db.reservations || []).length);
+  for (const r of rawReservations) {
+    mixStr(r.id);
+    mixStr(r.status);
+    mixStr(r.flatId);
+    mixStr(r.flatNumber);
+    mixStr(r.checkinDate);
+    mixStr(r.checkoutDate);
+    mixStr(r.guestName);
+    mixStr(r.totalAmount);
+    mixStr(r.paidAmount);
+    mixStr(r.paymentStatus);
+    mixStr(r.checkoutDone ? 1 : 0);
+    mixStr(r.earlyCheckout ? 1 : 0);
+    mixStr(r.updatedAt);
+    if (r.pendingStayExtension) mixStr(r.pendingStayExtension.status + ":" + (r.pendingStayExtension.expiresAt || ""));
+  }
+  for (const cr of (cleaningRequestsToday || [])) {
+    mixStr(cr.id);
+    mixStr(cr.flatNumber);
+    mixStr(cr.cleaningRequest?.status || cr.status);
+    mixStr(cr.isVacant ? 1 : 0);
+    mixStr(cr.updatedAt);
+  }
+  for (const b of (db.roomBlocks || [])) {
+    if (b && b.startDate <= end && b.endDate >= start) {
+      mixStr(b.id);
+      mixStr(b.flatId);
+      mixStr(b.startDate);
+      mixStr(b.endDate);
+      mixStr(b.updatedAt);
+    }
+  }
+  for (const o of (db.observations || [])) {
+    if (o && o.status === "aberta") {
+      mixStr(o.id);
+      mixStr(o.isRentalBlocker ? 1 : 0);
+      mixStr(o.updatedAt);
+    }
+  }
+  for (const so of (db.serviceOrders || [])) {
+    if (so && so.status === "active") {
+      mixStr(so.id);
+      mixStr(so.updatedAt);
+    }
+  }
+  return `v1_${pmsStateVersion}_${h.toString(36)}`;
+}
 
 app.get("/api/pms/calendar", (req, res) => {
   const userAuth = getAuthUser(req);
@@ -40327,14 +40616,17 @@ app.get("/api/pms/calendar", (req, res) => {
   res.set("Pragma", "no-cache");
   res.set("Expires", "0");
 
-  if (sanitizeContaminatedSmokingFlags(db)) {
-    setImmediate(() => saveDatabase("clean_smoking_false_positives_v1"));
-  }
-  if (ensureB2bSeedData(db)) {
-    setImmediate(() => saveDatabase("b2b_calendar_backfill"));
+  const now = Date.now();
+  if (now - lastCalendarSeedCheckTime > 60000) {
+    lastCalendarSeedCheckTime = now;
+    if (sanitizeContaminatedSmokingFlags(db)) {
+      setImmediate(() => saveDatabase("clean_smoking_false_positives_v1"));
+    }
+    if (ensureB2bSeedData(db)) {
+      setImmediate(() => saveDatabase("b2b_calendar_backfill"));
+    }
   }
 
-  const now = Date.now();
   if (now - lastCalendarReconcileTime > 15000) {
     lastCalendarReconcileTime = now;
     if (isUniversalIntegrityDirty && reconcileUniversalIntegrity()) {
@@ -40352,11 +40644,49 @@ app.get("/api/pms/calendar", (req, res) => {
   const end = endDate || getOffsetDateStr(30);
   const rawFocusCode = typeof focusCode === "string" ? focusCode.trim() : "";
   const normFocusCode = rawFocusCode.toUpperCase();
+  const isLiteMode = req.query.lite === "1";
+  const isSyncMode = req.query.sync === "1";
+  const isModalOnlyMode = req.query.modalOnly === "1";
+  const sinceVersion = typeof req.query.sinceVersion === "string" ? req.query.sinceVersion.trim() : "";
 
   const todayStr = getTodayStr();
   // Expira e sanea pré-reservas ANTES de gerar os cards de governança do dia (evitando contaminação de check-out em pré-reservas expiradas)
   sweepExpiredPreReservations(db, saveDatabase);
   const cleaningRequestsToday = getRequestsForDate(todayStr);
+
+  const rawReservations = (db.reservations || []).filter(r => {
+    if (!r || r.status === "expirada") return false;
+    if (
+      normFocusCode &&
+      (String(r.code || r.reservationCode || "").toUpperCase() === normFocusCode ||
+        String(r.id) === rawFocusCode)
+    ) {
+      return true;
+    }
+    const effectiveCheckout = (r.earlyCheckout && r.originalCheckoutDate && r.originalCheckoutDate > r.checkoutDate)
+      ? r.originalCheckoutDate
+      : r.checkoutDate;
+    return (
+      r.checkinDate <= end &&
+      effectiveCheckout >= start &&
+      r.status !== "cancelada" &&
+      r.status !== "cancelled"
+    );
+  });
+
+  const currentCalendarVersion = computeCalendarStateVersion({
+    start,
+    end,
+    normFocusCode,
+    todayStr,
+    isModalOnlyMode,
+    rawReservations,
+    cleaningRequestsToday
+  });
+
+  if (isSyncMode && sinceVersion && sinceVersion === currentCalendarVersion) {
+    return res.json({ unchanged: true, version: currentCalendarVersion });
+  }
 
   const flats = (db.flats || []).filter(f => f.isActive !== false).sort((a, b) => String(a.number).localeCompare(String(b.number), undefined, { numeric: true })).map(f => {
     const fNum = String(f.number);
@@ -40386,10 +40716,14 @@ app.get("/api/pms/calendar", (req, res) => {
         cleaningLabel = "Limpo";
       }
     }
-    const openMaintenanceIssues = (db.observations || [])
-      .filter(o => isRealMaintenanceObservation(o) && o.status === "aberta" && (Number(o.flatId) === Number(f.id) || String(o.flatNumber) === fNum))
-      .map(o => typeof enrichObservationWithLiveStatus === "function" ? enrichObservationWithLiveStatus(o, todayStr) : o);
-    const hasImpeditiveMaintenance = openMaintenanceIssues.some(o => Boolean(o.isRentalBlocker));
+    const openMaintenanceIssues = isModalOnlyMode
+      ? []
+      : (db.observations || [])
+          .filter(o => isRealMaintenanceObservation(o) && o.status === "aberta" && (Number(o.flatId) === Number(f.id) || String(o.flatNumber) === fNum))
+          .map(o => typeof enrichObservationWithLiveStatus === "function" ? enrichObservationWithLiveStatus(o, todayStr) : o);
+    const hasImpeditiveMaintenance = isModalOnlyMode
+      ? (db.observations || []).some(o => isRealMaintenanceObservation(o) && o.status === "aberta" && Boolean(o.isRentalBlocker) && (Number(o.flatId) === Number(f.id) || String(o.flatNumber) === fNum))
+      : openMaintenanceIssues.some(o => Boolean(o.isRentalBlocker));
 
     return {
       ...f,
@@ -40398,26 +40732,6 @@ app.get("/api/pms/calendar", (req, res) => {
       openMaintenanceIssues,
       hasImpeditiveMaintenance
     };
-  });
-
-  const rawReservations = (db.reservations || []).filter(r => {
-    if (!r || r.status === "expirada") return false;
-    if (
-      normFocusCode &&
-      (String(r.code || r.reservationCode || "").toUpperCase() === normFocusCode ||
-        String(r.id) === rawFocusCode)
-    ) {
-      return true;
-    }
-    const effectiveCheckout = (r.earlyCheckout && r.originalCheckoutDate && r.originalCheckoutDate > r.checkoutDate)
-      ? r.originalCheckoutDate
-      : r.checkoutDate;
-    return (
-      r.checkinDate <= end &&
-      effectiveCheckout >= start &&
-      r.status !== "cancelada" &&
-      r.status !== "cancelled"
-    );
   });
 
   // Pré-indexação dos hóspedes em Map com cache reutilizável para acesso O(1) instantâneo sem alocações repetidas
@@ -40546,10 +40860,8 @@ app.get("/api/pms/calendar", (req, res) => {
       checkoutReportedBy: r.checkoutReportedBy || r.earlyCheckoutReportedBy || null,
       minibarOrders: getVisibleReservationMinibarOrders(r)
     };
-    if (req.query.lite === "1" || req.query.sync === "1") {
-      delete mappedRes.auditLogs;
-      delete mappedRes.fnrhAuditTrail;
-    }
+    delete mappedRes.auditLogs;
+    delete mappedRes.fnrhAuditTrail;
     return mappedRes;
   });
   const serviceOrderBlocks = [];
@@ -40589,109 +40901,123 @@ app.get("/api/pms/calendar", (req, res) => {
     ...(db.roomBlocks || []).filter(b => b.startDate <= end && b.endDate >= start),
     ...serviceOrderBlocks
   ];
-  const isLiteMode = req.query.lite === "1";
-  const isSyncMode = req.query.sync === "1";
 
-  const fullExpiredItems = (db.reservations || [])
-    .filter(r => {
-      if (!r || r.status !== "expirada" || !r.checkinDate) return false;
-      if (
-        normFocusCode &&
-        (String(r.code || r.reservationCode || "").toUpperCase() === normFocusCode ||
-          String(r.id) === rawFocusCode)
-      ) {
-        return true;
-      }
-      return r.checkinDate >= todayStr;
-    })
-    .map(r => {
-      const conflicts = findActiveOverbookingConflicts(db, {
-        flatId: r.flatId,
-        flatNumber: r.flatNumber,
-        checkinDate: r.checkinDate,
-        checkoutDate: r.checkoutDate,
-        excludeResId: r.id
-      });
-      return {
-        ...r,
-        isExpiredExtension: false,
-        code: r.code || r.reservationCode || `RES-${r.flatNumber || "000"}-${String(r.id).padStart(4, "0")}`,
-        isOriginalFlatAvailable: conflicts.length === 0,
-        activeFlatConflicts: conflicts
-      };
-    });
+  const skipExpiredScan = isLiteMode || (isModalOnlyMode && !normFocusCode);
 
-  const expiredExtensionItems = (db.reservations || [])
-    .filter(r =>
-      r &&
-      r.status !== "cancelada" &&
-      r.status !== "cancelled" &&
-      r.status !== "expirada" &&
-      r.status !== "completed" &&
-      r.status !== "checked_out" &&
-      !r.checkoutDone &&
-      !r.earlyCheckout &&
-      r.expiredStayExtension &&
-      !r.expiredStayExtension.reactivatedAt &&
-      !r.pendingStayExtension &&
-      (r.expiredStayExtension.attemptedCheckoutDate || "") > todayStr
-    )
-    .map(r => {
-      const expExt = r.expiredStayExtension;
-      const extStart = (Array.isArray(expExt.addedDates) && expExt.addedDates.length > 0)
-        ? [...expExt.addedDates].sort()[0]
-        : (expExt.oldCheckoutDate || r.checkoutDate);
-      const extEnd = expExt.attemptedCheckoutDate || r.checkoutDate;
-      const conflicts = findActiveOverbookingConflicts(db, {
-        flatId: r.flatId,
-        flatNumber: r.flatNumber,
-        checkinDate: extStart,
-        checkoutDate: extEnd,
-        excludeResId: r.id
-      });
-      return {
-        id: expExt.id || `exp_ext_${r.id}`,
-        parentReservationId: r.id,
-        isExpiredExtension: true,
-        code: r.code || r.reservationCode || `RES-${r.flatNumber || "000"}-${String(r.id).padStart(4, "0")}`,
-        guestName: r.guestName,
-        guestPhone: r.guestPhone,
-        guestEmail: r.guestEmail,
-        flatId: r.flatId,
-        flatNumber: r.flatNumber,
-        channel: r.channel,
-        checkinDate: extStart,
-        checkoutDate: extEnd,
-        originalCheckinDate: r.checkinDate,
-        originalCheckoutDate: r.checkoutDate,
-        attemptedCheckinDate: expExt.attemptedCheckinDate || r.checkinDate,
-        attemptedCheckoutDate: expExt.attemptedCheckoutDate || extEnd,
-        addedDates: Array.isArray(expExt.addedDates) ? expExt.addedDates : [],
-        addedDailyRates: Array.isArray(expExt.addedDailyRates) ? expExt.addedDailyRates : [],
-        extraNights: Number(expExt.extraNights) || 1,
-        extraAmount: Number(expExt.extraAmount) || 0,
-        totalAmount: Number(expExt.extraAmount) || 0,
-        expiredAt: expExt.expiredAt || null,
-        expiresAt: expExt.expiresAt || null,
-        holdDurationLabel: expExt.holdDurationLabel || null,
-        isOriginalFlatAvailable: conflicts.length === 0,
-        activeFlatConflicts: conflicts
-      };
-    });
+  const fullExpiredItems = skipExpiredScan
+    ? []
+    : (db.reservations || [])
+        .filter(r => {
+          if (!r || r.status !== "expirada" || !r.checkinDate) return false;
+          if (
+            normFocusCode &&
+            (String(r.code || r.reservationCode || "").toUpperCase() === normFocusCode ||
+              String(r.id) === rawFocusCode)
+          ) {
+            return true;
+          }
+          return r.checkinDate >= todayStr;
+        })
+        .map(r => {
+          const conflicts = findActiveOverbookingConflicts(db, {
+            flatId: r.flatId,
+            flatNumber: r.flatNumber,
+            checkinDate: r.checkinDate,
+            checkoutDate: r.checkoutDate,
+            excludeResId: r.id
+          });
+          const slimExp = {
+            ...r,
+            isExpiredExtension: false,
+            code: r.code || r.reservationCode || `RES-${r.flatNumber || "000"}-${String(r.id).padStart(4, "0")}`,
+            isOriginalFlatAvailable: conflicts.length === 0,
+            activeFlatConflicts: conflicts
+          };
+          delete slimExp.auditLogs;
+          delete slimExp.fnrhAuditTrail;
+          return slimExp;
+        });
 
-  const expiredPreReservations = [...fullExpiredItems, ...expiredExtensionItems]
-    .sort((a, b) => {
-      const tA = new Date(a.expiredAt || a.updatedAt || a.createdAt || 0).getTime();
-      const tB = new Date(b.expiredAt || b.updatedAt || b.createdAt || 0).getTime();
-      return tB - tA;
-    })
-    .slice(0, 50);
+  const expiredExtensionItems = skipExpiredScan
+    ? []
+    : (db.reservations || [])
+        .filter(r =>
+          r &&
+          r.status !== "cancelada" &&
+          r.status !== "cancelled" &&
+          r.status !== "expirada" &&
+          r.status !== "completed" &&
+          r.status !== "checked_out" &&
+          !r.checkoutDone &&
+          !r.earlyCheckout &&
+          r.expiredStayExtension &&
+          !r.expiredStayExtension.reactivatedAt &&
+          !r.pendingStayExtension &&
+          (r.expiredStayExtension.attemptedCheckoutDate || "") > todayStr
+        )
+        .map(r => {
+          const expExt = r.expiredStayExtension;
+          const extStart = (Array.isArray(expExt.addedDates) && expExt.addedDates.length > 0)
+            ? [...expExt.addedDates].sort()[0]
+            : (expExt.oldCheckoutDate || r.checkoutDate);
+          const extEnd = expExt.attemptedCheckoutDate || r.checkoutDate;
+          const conflicts = findActiveOverbookingConflicts(db, {
+            flatId: r.flatId,
+            flatNumber: r.flatNumber,
+            checkinDate: extStart,
+            checkoutDate: extEnd,
+            excludeResId: r.id
+          });
+          return {
+            id: expExt.id || `exp_ext_${r.id}`,
+            parentReservationId: r.id,
+            isExpiredExtension: true,
+            code: r.code || r.reservationCode || `RES-${r.flatNumber || "000"}-${String(r.id).padStart(4, "0")}`,
+            guestName: r.guestName,
+            guestPhone: r.guestPhone,
+            guestEmail: r.guestEmail,
+            flatId: r.flatId,
+            flatNumber: r.flatNumber,
+            channel: r.channel,
+            checkinDate: extStart,
+            checkoutDate: extEnd,
+            originalCheckinDate: r.checkinDate,
+            originalCheckoutDate: r.checkoutDate,
+            attemptedCheckinDate: expExt.attemptedCheckinDate || r.checkinDate,
+            attemptedCheckoutDate: expExt.attemptedCheckoutDate || extEnd,
+            addedDates: Array.isArray(expExt.addedDates) ? expExt.addedDates : [],
+            addedDailyRates: Array.isArray(expExt.addedDailyRates) ? expExt.addedDailyRates : [],
+            extraNights: Number(expExt.extraNights) || 1,
+            extraAmount: Number(expExt.extraAmount) || 0,
+            totalAmount: Number(expExt.extraAmount) || 0,
+            expiredAt: expExt.expiredAt || null,
+            expiresAt: expExt.expiresAt || null,
+            holdDurationLabel: expExt.holdDurationLabel || null,
+            isOriginalFlatAvailable: conflicts.length === 0,
+            activeFlatConflicts: conflicts
+          };
+        });
+
+  const expiredPreReservations = skipExpiredScan
+    ? []
+    : [...fullExpiredItems, ...expiredExtensionItems]
+        .sort((a, b) => {
+          const tA = new Date(a.expiredAt || a.updatedAt || a.createdAt || 0).getTime();
+          const tB = new Date(b.expiredAt || b.updatedAt || b.createdAt || 0).getTime();
+          return tB - tA;
+        })
+        .slice(0, 50);
 
   if (!isLiteMode && !isSyncMode && (isGuestReconciliationDirty || db._guestReconcileNeeded)) {
-    try { reconcileAndMergeGuests(db, true); } catch (_) {}
+    if (process.env.NODE_ENV === "test") {
+      try { reconcileAndMergeGuests(db, true); } catch (_) {}
+    } else {
+      scheduleBackgroundGuestReconcile(db);
+    }
   }
 
   res.json({
+    version: currentCalendarVersion,
     startDate: start,
     endDate: end,
     flats: isLiteMode ? [] : flats,
@@ -57553,6 +57879,8 @@ app.get("/api/pms/analytics/reports", (req, res) => {
   });
 });
 
+let lastUnlinkedResGuestCheckTs = 0;
+
 app.get("/api/pms/guests", (req, res) => {
   const userAuth = getAuthUser(req);
   if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "reception" && userAuth.role !== "recepcao")) {
@@ -57560,13 +57888,15 @@ app.get("/api/pms/guests", (req, res) => {
   }
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   if (!db.guests) db.guests = [];
-  const hasUnlinkedResGuest = Array.isArray(db.reservations) && db.reservations.some(
+  const now = Date.now();
+  const shouldCheckUnlinked = process.env.NODE_ENV === "test" || (now - lastUnlinkedResGuestCheckTs > 60000);
+  const hasUnlinkedResGuest = shouldCheckUnlinked && Array.isArray(db.reservations) && db.reservations.some(
     r => r && !r.guestId && r.guestName && !isPlaceholderOrEmptyGuestName(r.guestName) && !isForbiddenTestOrInternalGuestName(r.guestName)
   );
+  if (shouldCheckUnlinked) lastUnlinkedResGuestCheckTs = now;
   if (isGuestReconciliationDirty || db._guestReconcileNeeded || hasUnlinkedResGuest) {
-    try { reconcileAndMergeGuests(db, true); } catch (_) {}
+    try { reconcileAndMergeGuests(db, Boolean(process.env.NODE_ENV === "test" || db._guestReconcileNeeded || hasUnlinkedResGuest)); } catch (_) {}
   }
-  const now = Date.now();
   if (
     cachedEnrichedGuests &&
     cachedEnrichedGuestsSource === db.guests &&

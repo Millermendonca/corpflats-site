@@ -86,6 +86,7 @@ import {
   type PmsTariffQuoteResponse,
 } from "@/lib/simplified-reservation-pricing"
 import {
+  CANONICAL_CORPFLATS_19_FLATS,
   evaluateSimpleFlatAvailability,
   resolveFairShareFlatAllocation,
   inspectSimpleCrmGuestState,
@@ -98,6 +99,162 @@ import {
   searchIndexedCrmList,
   getBestCrmGuestDisplayName,
 } from "@/lib/crm-guest-search"
+
+const PMS_CALENDAR_CACHE_KEY = "corpflats_pms_calendar_cache_v2";
+const PMS_AUX_CACHE_KEY = "corpflats_pms_aux_cache_v1";
+
+interface PmsCalendarCachedPayload {
+  savedAt: number;
+  flats: any[];
+  reservations: any[];
+  blocks: any[];
+  expiredPreReservations?: any[];
+  checkinTime?: string;
+  checkoutTime?: string;
+}
+
+function readCachedPmsCalendarState(modalOnly: boolean): {
+  hasHydratedData: boolean;
+  state: { flats: any[]; reservations: any[]; blocks: any[]; guests?: any[]; expiredPreReservations?: any[] };
+  checkinTime?: string;
+  checkoutTime?: string;
+} {
+  if (typeof window === "undefined") {
+    return {
+      hasHydratedData: false,
+      state: { flats: CANONICAL_CORPFLATS_19_FLATS, reservations: [], blocks: [], guests: [], expiredPreReservations: [] },
+    };
+  }
+  try {
+    const raw = localStorage.getItem(PMS_CALENDAR_CACHE_KEY);
+    if (raw) {
+      const parsed: PmsCalendarCachedPayload = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.flats) && Array.isArray(parsed.reservations)) {
+        // Cache válido para abertura instantânea (até 24h; revalidado silenciosamente em background logo em seguida)
+        const ageMs = Date.now() - (Number(parsed.savedAt) || 0);
+        if (ageMs >= 0 && ageMs < 24 * 60 * 60 * 1000) {
+          return {
+            hasHydratedData: true,
+            state: {
+              flats: parsed.flats.length > 0 ? parsed.flats : CANONICAL_CORPFLATS_19_FLATS,
+              reservations: parsed.reservations,
+              blocks: Array.isArray(parsed.blocks) ? parsed.blocks : [],
+              guests: [],
+              expiredPreReservations: modalOnly ? [] : (Array.isArray(parsed.expiredPreReservations) ? parsed.expiredPreReservations : []),
+            },
+            checkinTime: parsed.checkinTime,
+            checkoutTime: parsed.checkoutTime,
+          };
+        }
+      }
+    }
+  } catch {}
+  return {
+    hasHydratedData: false,
+    state: { flats: CANONICAL_CORPFLATS_19_FLATS, reservations: [], blocks: [], guests: [], expiredPreReservations: [] },
+  };
+}
+
+let calendarCacheWriteTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleWritePmsCalendarCache(payload: Omit<PmsCalendarCachedPayload, "savedAt">) {
+  if (typeof window === "undefined") return;
+  if (calendarCacheWriteTimer) clearTimeout(calendarCacheWriteTimer);
+  calendarCacheWriteTimer = setTimeout(() => {
+    calendarCacheWriteTimer = null;
+    try {
+      const toStore: PmsCalendarCachedPayload = {
+        savedAt: Date.now(),
+        flats: Array.isArray(payload.flats) && payload.flats.length > 0 ? payload.flats : CANONICAL_CORPFLATS_19_FLATS,
+        reservations: Array.isArray(payload.reservations) ? payload.reservations.slice(0, 600) : [],
+        blocks: Array.isArray(payload.blocks) ? payload.blocks : [],
+        expiredPreReservations: Array.isArray(payload.expiredPreReservations) ? payload.expiredPreReservations.slice(0, 50) : [],
+        checkinTime: payload.checkinTime,
+        checkoutTime: payload.checkoutTime,
+      };
+      localStorage.setItem(PMS_CALENDAR_CACHE_KEY, JSON.stringify(toStore));
+    } catch {}
+  }, 120);
+}
+
+function readCachedPmsAuxState(): { companies: any[]; agencies: any[]; crmGuests: any[]; savedAt: number } {
+  if (typeof window === "undefined") {
+    return { companies: [], agencies: [], crmGuests: [], savedAt: 0 };
+  }
+  try {
+    const raw = localStorage.getItem(PMS_AUX_CACHE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        return {
+          companies: Array.isArray(parsed.companies) ? parsed.companies : [],
+          agencies: Array.isArray(parsed.agencies) ? parsed.agencies : [],
+          crmGuests: Array.isArray(parsed.crmGuests) ? parsed.crmGuests : [],
+          savedAt: Number(parsed.savedAt) || 0,
+        };
+      }
+    }
+  } catch {}
+  return { companies: [], agencies: [], crmGuests: [], savedAt: 0 };
+}
+
+let auxCacheWriteTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleWritePmsAuxCache(next: { companies?: any[]; agencies?: any[]; crmGuests?: any[] }) {
+  if (typeof window === "undefined") return;
+  if (auxCacheWriteTimer) clearTimeout(auxCacheWriteTimer);
+  auxCacheWriteTimer = setTimeout(() => {
+    auxCacheWriteTimer = null;
+    try {
+      const prev = readCachedPmsAuxState();
+      const slimGuests = Array.isArray(next.crmGuests)
+        ? next.crmGuests.slice(0, 1200).map((g: any) => ({
+            id: g.id,
+            guestCode: g.guestCode,
+            name: g.name,
+            fullName: g.fullName,
+            document: g.document,
+            documentNumber: g.documentNumber,
+            phone: g.phone,
+            whatsapp: g.whatsapp,
+            additionalPhones: Array.isArray(g.additionalPhones) ? g.additionalPhones.slice(0, 3) : undefined,
+            email: g.email,
+            city: g.city,
+            state: g.state,
+            cep: g.cep,
+            address: g.address,
+            street: g.street,
+            streetNumber: g.streetNumber,
+            complement: g.complement,
+            neighborhood: g.neighborhood,
+            companyId: g.companyId,
+            companyName: g.companyName,
+            companyData: g.companyData,
+            financialResponsible: g.financialResponsible,
+            defaultBillingRecipients: g.defaultBillingRecipients,
+            isMonthlyGuest: g.isMonthlyGuest,
+            clientType: g.clientType,
+            autoEmitInvoice: g.autoEmitInvoice,
+            isCamposResident: g.isCamposResident,
+            prefersHighFloor: g.prefersHighFloor,
+            twinBeds: g.twinBeds,
+            isSmoker: g.isSmoker,
+            smokedInRoom: g.smokedInRoom,
+            riskAttentionAlert: g.riskAttentionAlert,
+            riskAttentionReason: g.riskAttentionReason,
+            tags: g.tags,
+          }))
+        : prev.crmGuests;
+      localStorage.setItem(
+        PMS_AUX_CACHE_KEY,
+        JSON.stringify({
+          savedAt: Date.now(),
+          companies: Array.isArray(next.companies) ? next.companies : prev.companies,
+          agencies: Array.isArray(next.agencies) ? next.agencies : prev.agencies,
+          crmGuests: slimGuests,
+        })
+      );
+    } catch {}
+  }, 200);
+}
 
 const DEFAULT_CLIENT_PAYMENT_METHODS: PaymentMethod[] = [
   { id: "booking", name: "Booking.com", gatewayFeeRate: 0, commissionRate: 0, active: true, isSystem: true },
@@ -2841,14 +2998,22 @@ export default function PmsCalendar(props?: {
 
   const [currentDate, setCurrentDate] = useState(new Date())
   const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const [data, setData] = useState<{ flats: any[]; reservations: any[]; blocks: any[]; guests?: any[]; expiredPreReservations?: any[] }>({
-    flats: [],
-    reservations: [],
-    blocks: [],
-    guests: [],
-    expiredPreReservations: []
+  const initialCalendarCacheRef = useRef<ReturnType<typeof readCachedPmsCalendarState> | null>(null)
+  if (!initialCalendarCacheRef.current) {
+    initialCalendarCacheRef.current = readCachedPmsCalendarState(modalOnly)
+  }
+  const initialAuxCacheRef = useRef<ReturnType<typeof readCachedPmsAuxState> | null>(null)
+  if (!initialAuxCacheRef.current) {
+    initialAuxCacheRef.current = readCachedPmsAuxState()
+  }
+  const [data, setData] = useState<{ flats: any[]; reservations: any[]; blocks: any[]; guests?: any[]; expiredPreReservations?: any[] }>(() => ({
+    ...initialCalendarCacheRef.current!.state,
+    guests: initialAuxCacheRef.current!.crmGuests.length > 0 ? initialAuxCacheRef.current!.crmGuests : [],
+  }))
+  const [loading, setLoading] = useState<boolean>(() => {
+    if (modalOnly) return Boolean(editReservationCode || reactivateReservationCode) && !initialCalendarCacheRef.current!.hasHydratedData
+    return !initialCalendarCacheRef.current!.hasHydratedData
   })
-  const [loading, setLoading] = useState(true)
   const [isSyncing, setIsSyncing] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
   const [cleaningFilter, setCleaningFilter] = useState<"all" | "dirty" | "clean">("all")
@@ -3945,16 +4110,17 @@ export default function PmsCalendar(props?: {
     setRawBoletoInputs({})
   }, [resModalOpen, selectedRes?.id])
 
-  const lastModalAuxFetchRef = useRef(0)
+  const lastModalAuxFetchRef = useRef<number>(initialAuxCacheRef.current?.savedAt || 0)
 
   useEffect(() => {
     if (!resModalOpen) return
     const now = Date.now()
-    if (crmGuests.length === 0 || now - lastModalAuxFetchRef.current > 15000) {
+    const auxAge = now - lastModalAuxFetchRef.current
+    if (crmGuests.length === 0 || auxAge > 300000) {
       lastModalAuxFetchRef.current = now
       fetchCrmGuests()
-      fetchCompanies()
-      fetchAgencies()
+      if (companies.length === 0 || auxAge > 300000) fetchCompanies()
+      if (agencies.length === 0 || auxAge > 300000) fetchAgencies()
     }
   }, [resModalOpen])
 
@@ -4095,9 +4261,9 @@ export default function PmsCalendar(props?: {
   const [formCompanyId, setFormCompanyId] = useState("")
   const [formCompanyName, setFormCompanyName] = useState("")
   const [formCostCenter, setFormCostCenter] = useState("")
-  const [companies, setCompanies] = useState<any[]>([])
-  const [agencies, setAgencies] = useState<any[]>([])
-  const [crmGuests, setCrmGuests] = useState<any[]>([])
+  const [companies, setCompanies] = useState<any[]>(() => initialAuxCacheRef.current?.companies || [])
+  const [agencies, setAgencies] = useState<any[]>(() => initialAuxCacheRef.current?.agencies || [])
+  const [crmGuests, setCrmGuests] = useState<any[]>(() => initialAuxCacheRef.current?.crmGuests || [])
   const [guestSearchFilter, setGuestSearchFilter] = useState("")
   const [showGuestSuggestions, setShowGuestSuggestions] = useState(false)
   const guestSuggestionsRef = useRef<HTMLDivElement>(null)
@@ -5570,12 +5736,12 @@ export default function PmsCalendar(props?: {
   }
 
 
-  // Timeline Contínua Multi-Mês com Rolagem Infinita (desativada quando modalOnly para evitar overhead pesado)
+  // Timeline Contínua Multi-Mês com Rolagem Infinita (janela inicial enxuta de ~90 dias: -15d a +75d para abertura instantânea)
   const [timelineStart, setTimelineStart] = useState<Date>(() =>
-    modalOnly ? new Date() : startOfMonth(subMonths(new Date(), 4))
+    modalOnly ? new Date() : subDays(new Date(), 15)
   )
   const [timelineEnd, setTimelineEnd] = useState<Date>(() =>
-    modalOnly ? new Date() : endOfMonth(addMonths(new Date(), 6))
+    modalOnly ? new Date() : addDays(new Date(), 75)
   )
   const timelineBoundsRef = useRef<{ start: Date; end: Date }>({
     start: timelineStart,
@@ -5598,6 +5764,35 @@ export default function PmsCalendar(props?: {
     return eachDayOfInterval({ start: timelineStart, end: timelineEnd })
   }, [modalOnly, timelineStart, timelineEnd])
 
+  // Pré-computa formatações de cada dia 1 única vez por mudança de janela (elimina milhares de chamadas format() por render nas 19 linhas)
+  const daysMetaInView = useMemo(() => {
+    if (modalOnly || daysInView.length === 0) return []
+    return daysInView.map((day) => {
+      const today = isToday(day)
+      const yesterday = isYesterday(day)
+      const isWeekend = day.getDay() === 0 || day.getDay() === 6
+      const isFirstOfMonth = day.getDate() === 1
+      const dayStr = format(day, "yyyy-MM-dd")
+      const dayBrStr = format(day, "dd/MM/yyyy")
+      const monthShort = isFirstOfMonth ? format(day, "MMM", { locale: ptBR }) : ""
+      const weekdayShort = format(day, "EEE", { locale: ptBR })
+      const dayNum = String(day.getDate())
+      return {
+        day,
+        dayStr,
+        dayBrStr,
+        today,
+        yesterday,
+        isWeekend,
+        isFirstOfMonth,
+        monthShort,
+        monthShortClean: monthShort.replace(".", ""),
+        weekdayShort,
+        dayNum,
+      }
+    })
+  }, [modalOnly, daysInView])
+
   // Configuração de larguras das colunas da agenda
   const EXPANDED_COL_WIDTH = 100 // Coluna de 100px no dia atual e dia anterior
   const NORMAL_COL_WIDTH = 48    // Largura padrão dos demais dias
@@ -5605,30 +5800,29 @@ export default function PmsCalendar(props?: {
 
   const getDayColWidth = (day: Date) => (isToday(day) || isYesterday(day) ? EXPANDED_COL_WIDTH : NORMAL_COL_WIDTH)
   const gridTemplateColumns = useMemo(() => {
-    if (modalOnly || daysInView.length === 0) return ""
-    return `${FLAT_COL_WIDTH}px ${daysInView.map(day => `${getDayColWidth(day)}px`).join(" ")}`
-  }, [modalOnly, daysInView])
+    if (modalOnly || daysMetaInView.length === 0) return ""
+    return `${FLAT_COL_WIDTH}px ${daysMetaInView.map(dm => `${dm.today || dm.yesterday ? EXPANDED_COL_WIDTH : NORMAL_COL_WIDTH}px`).join(" ")}`
+  }, [modalOnly, daysMetaInView])
   const totalGridMinWidth = useMemo(() => {
-    if (modalOnly || daysInView.length === 0) return 0
-    return FLAT_COL_WIDTH + daysInView.reduce((acc, day) => acc + getDayColWidth(day), 0)
-  }, [modalOnly, daysInView])
+    if (modalOnly || daysMetaInView.length === 0) return 0
+    return FLAT_COL_WIDTH + daysMetaInView.reduce((acc, dm) => acc + (dm.today || dm.yesterday ? EXPANDED_COL_WIDTH : NORMAL_COL_WIDTH), 0)
+  }, [modalOnly, daysMetaInView])
 
-  const timelineStartStr = modalOnly || daysInView.length === 0 ? "" : format(daysInView[0], "yyyy-MM-dd")
-  const timelineEndStr = modalOnly || daysInView.length === 0 ? "" : format(daysInView[daysInView.length - 1], "yyyy-MM-dd")
+  const timelineStartStr = modalOnly || daysMetaInView.length === 0 ? "" : daysMetaInView[0].dayStr
+  const timelineEndStr = modalOnly || daysMetaInView.length === 0 ? "" : daysMetaInView[daysMetaInView.length - 1].dayStr
 
   // Mapa cumulativo de posições horizontais (left e width) de cada dia na linha
   const dayLayoutMap = useMemo(() => {
-    if (modalOnly || daysInView.length === 0) return {}
+    if (modalOnly || daysMetaInView.length === 0) return {}
     const map: Record<string, { left: number; width: number; idx: number }> = {}
     let currentLeft = FLAT_COL_WIDTH
-    daysInView.forEach((day, idx) => {
-      const dayStr = format(day, "yyyy-MM-dd")
-      const width = getDayColWidth(day)
-      map[dayStr] = { left: currentLeft, width, idx }
+    daysMetaInView.forEach((dm, idx) => {
+      const width = dm.today || dm.yesterday ? EXPANDED_COL_WIDTH : NORMAL_COL_WIDTH
+      map[dm.dayStr] = { left: currentLeft, width, idx }
       currentLeft += width
     })
     return map
-  }, [modalOnly, daysInView])
+  }, [modalOnly, daysMetaInView])
 
   const parseTimeToFraction = (timeStr?: string, defaultTime = "12:00") => {
     const cleanTime = (timeStr && timeStr.includes(":") ? timeStr : defaultTime).trim()
@@ -5719,7 +5913,10 @@ export default function PmsCalendar(props?: {
     try {
       const res = await fetch("/api/companies", { credentials: "include" })
       const json = await res.json()
-      if (Array.isArray(json)) setCompanies(json)
+      if (Array.isArray(json)) {
+        setCompanies(json)
+        scheduleWritePmsAuxCache({ companies: json })
+      }
     } catch {}
   }
 
@@ -5727,7 +5924,10 @@ export default function PmsCalendar(props?: {
     try {
       const res = await fetch("/api/agencies", { credentials: "include" })
       const json = await res.json()
-      if (Array.isArray(json)) setAgencies(json)
+      if (Array.isArray(json)) {
+        setAgencies(json)
+        scheduleWritePmsAuxCache({ agencies: json })
+      }
     } catch {}
   }
 
@@ -5735,7 +5935,10 @@ export default function PmsCalendar(props?: {
     try {
       const res = await fetch(`/api/pms/guests?_t=${Date.now()}`, { cache: "no-store", credentials: "include" })
       const json = await res.json()
-      if (Array.isArray(json)) setCrmGuests(json)
+      if (Array.isArray(json)) {
+        setCrmGuests(json)
+        scheduleWritePmsAuxCache({ crmGuests: json })
+      }
     } catch {}
   }
 
@@ -5750,6 +5953,8 @@ export default function PmsCalendar(props?: {
   const lastAuxFetchRef = useRef(0);
   const hasLoadedInitialCalendarRef = useRef(false);
   const hasLoadedPaymentMethodsRef = useRef(false);
+  const lastCalendarVersionRef = useRef<{ windowKey: string; version: string }>({ windowKey: "", version: "" });
+  const didMountTimelineEffectRef = useRef(false);
   const focusTargetCodeRef = useRef<string>("");
   focusTargetCodeRef.current = String(reactivateReservationCode || editReservationCode || "").trim();
   const modalFetchDoneForKeyRef = useRef<string | null>(null);
@@ -5760,7 +5965,8 @@ export default function PmsCalendar(props?: {
       return;
     }
     isFetchingRef.current = true;
-    if (showLoading) setLoading(true);
+    const shouldShowBlockingLoader = showLoading && !initialCalendarCacheRef.current?.hasHydratedData && data.flats.length === 0;
+    if (shouldShowBlockingLoader) setLoading(true);
     else setIsSyncing(true);
 
     try {
@@ -5780,31 +5986,73 @@ export default function PmsCalendar(props?: {
         ).trim();
       }
       const focusQs = focusCodeParam ? `&focusCode=${encodeURIComponent(focusCodeParam)}` : "";
+      const modalOnlyQs = modalOnly ? "&modalOnly=1" : "";
+      const windowKey = `${startStr}|${endStr}|${focusCodeParam}|${modalOnly ? "1" : "0"}`;
       const isBackgroundSync = !showLoading && hasLoadedInitialCalendarRef.current;
-      const syncQs = isBackgroundSync ? "&sync=1" : "";
+      const sinceVersionQs =
+        isBackgroundSync &&
+        lastCalendarVersionRef.current.windowKey === windowKey &&
+        lastCalendarVersionRef.current.version
+          ? `&sinceVersion=${encodeURIComponent(lastCalendarVersionRef.current.version)}`
+          : "";
+      const syncQs = isBackgroundSync ? `&sync=1${sinceVersionQs}` : "";
       const activeTargetKey =
         modalOnly && focusTargetCodeRef.current
           ? `${reactivateReservationCode ? "R:" : "E:"}${focusTargetCodeRef.current}`
           : null;
-      const res = await fetch(`/api/pms/calendar?startDate=${startStr}&endDate=${endStr}${focusQs}${syncQs}&_t=${Date.now()}`, { cache: "no-store", credentials: "include" });
+      const res = await fetch(`/api/pms/calendar?startDate=${startStr}&endDate=${endStr}${focusQs}${modalOnlyQs}${syncQs}&_t=${Date.now()}`, { cache: "no-store", credentials: "include" });
       if (res.ok) {
         const json = await res.json();
         hasLoadedInitialCalendarRef.current = true;
-        setData(prev => ({
-          ...prev,
-          ...json,
-          guests: Array.isArray(json.guests) ? json.guests : prev.guests,
-        }));
+        if (json?.version) {
+          lastCalendarVersionRef.current = { windowKey, version: String(json.version) };
+        }
+        if (!json?.unchanged) {
+          setData(prev => {
+            const nextFlats = Array.isArray(json.flats) && json.flats.length > 0 ? json.flats : prev.flats;
+            const nextReservations = Array.isArray(json.reservations) ? json.reservations : prev.reservations;
+            const nextBlocks = Array.isArray(json.blocks) ? json.blocks : prev.blocks;
+            const nextExpired = Array.isArray(json.expiredPreReservations) ? json.expiredPreReservations : prev.expiredPreReservations;
+            const nextGuests = Array.isArray(json.guests) ? json.guests : prev.guests;
+            if (!modalOnly) {
+              scheduleWritePmsCalendarCache({
+                flats: nextFlats,
+                reservations: nextReservations,
+                blocks: nextBlocks,
+                expiredPreReservations: nextExpired,
+                checkinTime: json.settings?.checkinTime,
+                checkoutTime: json.settings?.checkoutTime,
+              });
+            }
+            return {
+              ...prev,
+              ...json,
+              flats: nextFlats,
+              reservations: nextReservations,
+              blocks: nextBlocks,
+              expiredPreReservations: nextExpired,
+              guests: nextGuests,
+            };
+          });
+          if (Array.isArray(json.agencies)) setAgencies(json.agencies);
+          if (Array.isArray(json.companies)) setCompanies(json.companies);
+          if (Array.isArray(json.guests)) {
+            setCrmGuests(prev => (prev.length > 0 ? prev : json.guests));
+            lastModalAuxFetchRef.current = Date.now();
+          }
+          if (Array.isArray(json.agencies) || Array.isArray(json.companies) || Array.isArray(json.guests)) {
+            scheduleWritePmsAuxCache({
+              agencies: Array.isArray(json.agencies) ? json.agencies : undefined,
+              companies: Array.isArray(json.companies) ? json.companies : undefined,
+              crmGuests: Array.isArray(json.guests) ? json.guests : undefined,
+            });
+          }
+          if (json.settings?.checkinTime) setDefaultCheckinTime(json.settings.checkinTime);
+          if (json.settings?.checkoutTime) setDefaultCheckoutTime(json.settings.checkoutTime);
+        }
         if (activeTargetKey) {
           modalFetchDoneForKeyRef.current = activeTargetKey;
         }
-        if (Array.isArray(json.agencies)) setAgencies(json.agencies);
-        if (Array.isArray(json.companies)) setCompanies(json.companies);
-        if (Array.isArray(json.guests)) {
-          setCrmGuests(prev => (prev.length > 0 ? prev : json.guests));
-        }
-        if (json.settings?.checkinTime) setDefaultCheckinTime(json.settings.checkinTime);
-        if (json.settings?.checkoutTime) setDefaultCheckoutTime(json.settings.checkoutTime);
       }
 
       if (!hasLoadedPaymentMethodsRef.current) {
@@ -5812,10 +6060,9 @@ export default function PmsCalendar(props?: {
         fetchPaymentMethods();
       }
 
-      // Atualiza pedidos de café da manhã e Quarto da Vez a cada 60s ou no carregamento inicial
-      // (companies/agencies/crmGuests já vêm na carga inicial do calendário e são atualizados ao abrir o modal)
+      // Atualiza pedidos de café da manhã e Quarto da Vez apenas na tela completa do calendário (nunca em modalOnly)
       const now = Date.now();
-      if (showLoading || now - lastAuxFetchRef.current > 60000) {
+      if (!modalOnly && (showLoading || now - lastAuxFetchRef.current > 60000)) {
         lastAuxFetchRef.current = now;
 
         try {
@@ -5843,8 +6090,8 @@ export default function PmsCalendar(props?: {
     } catch (err) {
       console.error("Erro ao sincronizar dados do calendário:", err);
     } finally {
-      if (showLoading) setLoading(false);
-      else setIsSyncing(false);
+      setLoading(false);
+      setIsSyncing(false);
       isFetchingRef.current = false;
       if (pendingFetchRef.current) {
         pendingFetchRef.current = false;
@@ -5872,7 +6119,11 @@ export default function PmsCalendar(props?: {
   }, [modalOnly, autoOpenNewRes, editReservationCode, reactivateReservationCode, duplicateDraftProp]);
 
   useEffect(() => {
-    if (modalOnly || loading) return;
+    if (!didMountTimelineEffectRef.current) {
+      didMountTimelineEffectRef.current = true;
+      return;
+    }
+    if (modalOnly) return;
     fetchData(false);
   }, [timelineStart, timelineEnd, modalOnly]);
 
@@ -6114,20 +6365,20 @@ export default function PmsCalendar(props?: {
 
   const scrollToDate = useCallback((targetDate: Date, behavior: "auto" | "smooth" = "smooth") => {
     const targetDateStr = format(targetDate, "yyyy-MM-dd")
-    const minRequiredStart = startOfMonth(subMonths(targetDate, 1))
-    const minRequiredEnd = endOfMonth(addMonths(targetDate, 2))
+    const minRequiredStart = subDays(targetDate, 7)
+    const minRequiredEnd = addDays(targetDate, 35)
     const curStart = timelineBoundsRef.current.start
     const curEnd = timelineBoundsRef.current.end
 
     let needsExpansion = false
     if (minRequiredStart < curStart) {
-      const nextStart = startOfMonth(subMonths(targetDate, 2))
+      const nextStart = startOfMonth(subMonths(targetDate, 1))
       timelineBoundsRef.current.start = nextStart
       setTimelineStart(nextStart)
       needsExpansion = true
     }
     if (minRequiredEnd > curEnd) {
-      const nextEnd = endOfMonth(addMonths(targetDate, 3))
+      const nextEnd = endOfMonth(addMonths(targetDate, 2))
       timelineBoundsRef.current.end = nextEnd
       setTimelineEnd(nextEnd)
       needsExpansion = true
@@ -6647,6 +6898,17 @@ export default function PmsCalendar(props?: {
   const [inlineCompanyData, setInlineCompanyData] = useState<Record<string, any> | null>(null)
   const [loadingInlineCnpj, setLoadingInlineCnpj] = useState(false)
   const [inlineCnpjExpanded, setInlineCnpjExpanded] = useState(false)
+  const effectiveModalFlatsList = useMemo(() => {
+    if (Array.isArray(data.flats) && data.flats.length > 0) return data.flats
+    if (Array.isArray(fairShareResult?.allStats) && fairShareResult.allStats.length > 0) {
+      const fromStats = fairShareResult.allStats
+        .map((s: any) => s?.flat)
+        .filter((f: any) => f && f.id !== undefined && f.id !== null && f.isActive !== false)
+      if (fromStats.length > 0) return fromStats
+    }
+    return CANONICAL_CORPFLATS_19_FLATS
+  }, [data.flats, fairShareResult])
+
   const isMultiFlat = !selectedRes && formFlats.length > 1
 
   const handleOpenNewRes = (defaultFlatId?: number, defaultDate?: Date, initialChannel: string = "") => {
@@ -6672,7 +6934,7 @@ export default function PmsCalendar(props?: {
     } else {
       isFlatManuallyChangedRef.current = false
       const initAvail = evaluateSimpleFlatAvailability({
-        flatsList: data.flats || [],
+        flatsList: effectiveModalFlatsList,
         reservationsList: data.reservations || [],
         blocksList: data.blocks || [],
         fairShareResult,
@@ -6789,9 +7051,8 @@ export default function PmsCalendar(props?: {
       !resModalOpen ||
       selectedRes ||
       formFlatId ||
-      loadingFairShare ||
       isFlatManuallyChangedRef.current ||
-      data.flats.length === 0 ||
+      effectiveModalFlatsList.length === 0 ||
       !formCheckin ||
       !formCheckout ||
       formCheckout <= formCheckin
@@ -6799,7 +7060,7 @@ export default function PmsCalendar(props?: {
       return
     }
     const avail = evaluateSimpleFlatAvailability({
-      flatsList: data.flats,
+      flatsList: effectiveModalFlatsList,
       reservationsList: data.reservations || [],
       blocksList: data.blocks || [],
       fairShareResult,
@@ -6819,7 +7080,7 @@ export default function PmsCalendar(props?: {
         prev.map((f, idx) => (idx === 0 && !f.flatId ? { ...f, flatId: fallbackFlatId, forceOverbooking: false } : f))
       )
     }
-  }, [resModalOpen, selectedRes, formFlatId, loadingFairShare, data.flats, data.reservations, data.blocks, fairShareResult, formCheckin, formCheckout])
+  }, [resModalOpen, selectedRes, formFlatId, effectiveModalFlatsList, data.reservations, data.blocks, fairShareResult, formCheckin, formCheckout])
 
   const handleOpenEditRes = (resItem: any, options?: { skipRemoteSideEffects?: boolean }) => {
     setSelectedRes(resItem)
@@ -10374,7 +10635,7 @@ export default function PmsCalendar(props?: {
     if (isSimpleCreateSubmit) {
       setSimpleSubmitAttempted(true)
       const simpleAvail = evaluateSimpleFlatAvailability({
-        flatsList: data.flats || [],
+        flatsList: effectiveModalFlatsList,
         reservationsList: data.reservations || [],
         blocksList: data.blocks || [],
         fairShareResult,
@@ -10386,7 +10647,7 @@ export default function PmsCalendar(props?: {
         channel: formChannel,
         checkinDate: pFlat.checkinDate,
         checkoutDate: pFlat.checkoutDate,
-        loadingFairShare,
+        loadingFairShare: loadingFairShare && !pFlat.flatId,
         availability: simpleAvail,
         flatId: pFlat.flatId,
         guest1Name: pFlat.guest1.name,
@@ -11800,44 +12061,6 @@ export default function PmsCalendar(props?: {
     return data.reservations.filter(r => r.status !== "cancelada" && r.hasMinor).length
   }, [modalOnly, data.reservations])
 
-  const riskAttentionCount = useMemo(() => {
-    if (modalOnly) return 0
-    return data.reservations.filter(r => {
-      if (r.status === "cancelada") return false
-      const matched = (data.guests || []).find(g => g.id === r.guestId)
-      return isResCamposResident(r, matched)
-    }).length
-  }, [modalOnly, data.reservations, data.guests])
-
-  const displayedFlats = useMemo(() => {
-    if (modalOnly) return []
-    return data.flats.filter(f => {
-      if (cleaningFilter === "dirty") {
-        if (!((f as any).cleaningStatus === "dirty" || (f as any).cleaningStatus === "cleaning_now")) return false
-      } else if (cleaningFilter === "clean") {
-        if (!((f as any).cleaningStatus === "clean" || !(f as any).cleaningStatus)) return false
-      }
-
-      if (specialFilter === "minors") {
-        const hasMinorInFlat = data.reservations.some(r => 
-          (r.flatId === f.id || String(r.flatNumber) === String(f.number)) &&
-          r.status !== "cancelada" &&
-          r.hasMinor
-        )
-        if (!hasMinorInFlat) return false
-      } else if (specialFilter === "risk") {
-        const hasRiskInFlat = data.reservations.some(r => 
-          (r.flatId === f.id || String(r.flatNumber) === String(f.number)) &&
-          r.status !== "cancelada" &&
-          isResCamposResident(r, (data.guests || []).find(g => g.id === r.guestId))
-        )
-        if (!hasRiskInFlat) return false
-      }
-
-      return true
-    })
-  }, [modalOnly, data.flats, data.reservations, data.guests, cleaningFilter, specialFilter])
-
   const dataGuestLookup = useMemo(() => {
     const byId = new Map<any, any>()
     const byDoc = new Map<string, any>()
@@ -11857,6 +12080,81 @@ export default function PmsCalendar(props?: {
     }
     return { byId, byDoc, byPhone, byName }
   }, [data.guests])
+
+  const reservationsByFlatKey = useMemo(() => {
+    if (modalOnly) return new Map<string, any[]>()
+    const map = new Map<string, any[]>()
+    const pushItem = (key: string, item: any) => {
+      let arr = map.get(key)
+      if (!arr) {
+        arr = [item]
+        map.set(key, arr)
+      } else if (!arr.includes(item)) {
+        arr.push(item)
+      }
+    }
+    for (const r of data.reservations || []) {
+      if (!r) continue
+      if (r.flatId != null) pushItem(`id:${r.flatId}`, r)
+      if (r.flatNumber != null) pushItem(`num:${String(r.flatNumber)}`, r)
+    }
+    return map
+  }, [modalOnly, data.reservations])
+
+  const blocksByFlatKey = useMemo(() => {
+    if (modalOnly) return new Map<string, any[]>()
+    const map = new Map<string, any[]>()
+    const pushItem = (key: string, item: any) => {
+      let arr = map.get(key)
+      if (!arr) {
+        arr = [item]
+        map.set(key, arr)
+      } else if (!arr.includes(item)) {
+        arr.push(item)
+      }
+    }
+    for (const b of data.blocks || []) {
+      if (!b) continue
+      if (b.flatId != null) pushItem(`id:${b.flatId}`, b)
+      if (b.flatNumber != null) pushItem(`num:${String(b.flatNumber)}`, b)
+    }
+    return map
+  }, [modalOnly, data.blocks])
+
+  const riskAttentionCount = useMemo(() => {
+    if (modalOnly) return 0
+    return data.reservations.filter(r => {
+      if (r.status === "cancelada") return false
+      const matched = r.guestId != null ? dataGuestLookup.byId.get(r.guestId) : undefined
+      return isResCamposResident(r, matched)
+    }).length
+  }, [modalOnly, data.reservations, dataGuestLookup])
+
+  const displayedFlats = useMemo(() => {
+    if (modalOnly) return []
+    return data.flats.filter(f => {
+      if (cleaningFilter === "dirty") {
+        if (!((f as any).cleaningStatus === "dirty" || (f as any).cleaningStatus === "cleaning_now")) return false
+      } else if (cleaningFilter === "clean") {
+        if (!((f as any).cleaningStatus === "clean" || !(f as any).cleaningStatus)) return false
+      }
+
+      if (specialFilter === "minors") {
+        const flatRes = reservationsByFlatKey.get(`id:${f.id}`) || reservationsByFlatKey.get(`num:${String(f.number)}`) || []
+        const hasMinorInFlat = flatRes.some(r => r.status !== "cancelada" && r.hasMinor)
+        if (!hasMinorInFlat) return false
+      } else if (specialFilter === "risk") {
+        const flatRes = reservationsByFlatKey.get(`id:${f.id}`) || reservationsByFlatKey.get(`num:${String(f.number)}`) || []
+        const hasRiskInFlat = flatRes.some(r =>
+          r.status !== "cancelada" &&
+          isResCamposResident(r, r.guestId != null ? dataGuestLookup.byId.get(r.guestId) : undefined)
+        )
+        if (!hasRiskInFlat) return false
+      }
+
+      return true
+    })
+  }, [modalOnly, data.flats, reservationsByFlatKey, dataGuestLookup, cleaningFilter, specialFilter])
 
   const findMatchedGuest = useCallback(
     (resItem: any) => {
@@ -13025,17 +13323,13 @@ export default function PmsCalendar(props?: {
                 <div className="px-3 py-2.5 text-left border-r-2 border-r-border/80 bg-slate-100 dark:bg-slate-900 sticky left-0 z-30 font-black text-xs text-foreground shadow-[2px_0_6px_-2px_rgba(0,0,0,0.1)] select-none flex items-center">
                   Apartamento
                 </div>
-                {daysInView.map((day) => {
-                  const today = isToday(day)
-                  const yesterday = isYesterday(day)
-                  const isWeekend = day.getDay() === 0 || day.getDay() === 6
-                  const isFirstOfMonth = day.getDate() === 1
-                  const dayStr = format(day, "yyyy-MM-dd")
+                {daysMetaInView.map((dm) => {
+                  const { day, dayStr, today, yesterday, isWeekend, isFirstOfMonth, monthShort, monthShortClean, weekdayShort, dayNum } = dm
 
                   if (today) {
                     return (
                       <div 
-                        key={day.toISOString()} 
+                        key={dayStr} 
                         data-header-day={dayStr}
                         className={`p-1 border-r relative flex flex-col items-center justify-center bg-primary/20 text-primary font-black shadow-inner transition-all ${
                           todayPulseActive
@@ -13045,7 +13339,7 @@ export default function PmsCalendar(props?: {
                       >
                         {isFirstOfMonth && (
                           <span className="absolute top-0.5 left-1 text-[8px] font-black uppercase tracking-wider bg-primary text-primary-foreground px-1 py-0.2 rounded-md shadow-xs">
-                            {format(day, "MMM", { locale: ptBR })}
+                            {monthShort}
                           </span>
                         )}
                         <div className="flex items-center gap-1">
@@ -13053,11 +13347,11 @@ export default function PmsCalendar(props?: {
                             HOJE
                           </span>
                           <span className="text-[9px] uppercase font-bold text-primary">
-                            {format(day, "EEE", { locale: ptBR })}
+                            {weekdayShort}
                           </span>
                         </div>
                         <span className="text-xs font-black text-primary mt-0.5">
-                          {format(day, "d")}
+                          {dayNum}
                         </span>
                       </div>
                     )
@@ -13066,13 +13360,13 @@ export default function PmsCalendar(props?: {
                   if (yesterday) {
                     return (
                       <div 
-                        key={day.toISOString()} 
+                        key={dayStr} 
                         data-header-day={dayStr}
                         className="p-1 border-r relative flex flex-col items-center justify-center bg-slate-200/60 dark:bg-slate-800/60 text-slate-800 dark:text-slate-200 font-bold border-l border-border/60 shadow-2xs"
                       >
                         {isFirstOfMonth && (
                           <span className="absolute top-0.5 left-1 text-[8px] font-black uppercase tracking-wider bg-primary text-primary-foreground px-1 py-0.2 rounded-md shadow-xs">
-                            {format(day, "MMM", { locale: ptBR })}
+                            {monthShort}
                           </span>
                         )}
                         <div className="flex items-center gap-1">
@@ -13080,11 +13374,11 @@ export default function PmsCalendar(props?: {
                             ONTEM
                           </span>
                           <span className="text-[9px] uppercase font-bold text-slate-700 dark:text-slate-300">
-                            {format(day, "EEE", { locale: ptBR })}
+                            {weekdayShort}
                           </span>
                         </div>
                         <span className="text-xs font-black text-slate-800 dark:text-slate-100 mt-0.5">
-                          {format(day, "d")}
+                          {dayNum}
                         </span>
                       </div>
                     )
@@ -13092,7 +13386,7 @@ export default function PmsCalendar(props?: {
 
                   return (
                     <div 
-                      key={day.toISOString()} 
+                      key={dayStr} 
                       data-header-day={dayStr}
                       className={`p-1 border-r relative flex flex-col items-center justify-center ${
                         isFirstOfMonth ? 'border-l-2 border-l-primary bg-primary/5 pt-3.5' : ''
@@ -13102,12 +13396,12 @@ export default function PmsCalendar(props?: {
                     >
                       {isFirstOfMonth && (
                         <span className="absolute top-0.5 left-1 text-[8px] leading-tight font-black uppercase tracking-wider bg-primary text-primary-foreground px-1 py-0.2 rounded shadow-xs">
-                          {format(day, "MMM", { locale: ptBR }).replace(".", "")}
+                          {monthShortClean}
                         </span>
                       )}
-                      <span className="text-[9px] uppercase font-bold">{format(day, "EEE", { locale: ptBR })}</span>
+                      <span className="text-[9px] uppercase font-bold">{weekdayShort}</span>
                       <span className="text-xs font-black">
-                        {format(day, "d")}
+                        {dayNum}
                       </span>
                     </div>
                   )
@@ -13115,15 +13409,19 @@ export default function PmsCalendar(props?: {
               </div>
 
               {/* Rows: Flats */}
-              {loading ? (
+              {loading && data.flats.length === 0 ? (
                 <div className="text-center py-16 text-xs text-muted-foreground">Carregando mapa de ocupação...</div>
               ) : data.flats.length === 0 ? (
                 <div className="text-center py-16 text-xs text-muted-foreground">Nenhum apartamento cadastrado.</div>
               ) : (
                 displayedFlats.map((flat) => {
                   const activeAmenities = getFlatActiveAmenities(flat);
-                  const flatReservations = data.reservations.filter(r => (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)));
-                  const flatBlocks = data.blocks.filter(b => (b.flatId === flat.id || String(b.flatNumber) === String(flat.number)));
+                  const byIdRes = reservationsByFlatKey.get(`id:${flat.id}`) || [];
+                  const byNumRes = reservationsByFlatKey.get(`num:${String(flat.number)}`) || [];
+                  const flatReservations = byIdRes.length === 0 ? byNumRes : (byNumRes.length === 0 ? byIdRes : Array.from(new Set([...byIdRes, ...byNumRes])));
+                  const byIdBlk = blocksByFlatKey.get(`id:${flat.id}`) || [];
+                  const byNumBlk = blocksByFlatKey.get(`num:${String(flat.number)}`) || [];
+                  const flatBlocks = byIdBlk.length === 0 ? byNumBlk : (byNumBlk.length === 0 ? byIdBlk : Array.from(new Set([...byIdBlk, ...byNumBlk])));
                   const cleaningStatus = (flat as any).cleaningStatus || "clean";
                   const isDirty = cleaningStatus === "dirty";
                   const isCleaningNow = cleaningStatus === "cleaning_now";
@@ -13232,13 +13530,11 @@ export default function PmsCalendar(props?: {
                       </div>
 
                       {/* Background Day Cells (Para seleção e criação de reserva) */}
-                      {daysInView.map((day, dIdx) => {
-                        const dayStr = format(day, "yyyy-MM-dd");
+                      {daysMetaInView.map((dm, dIdx) => {
+                        const { day, dayStr, dayBrStr, today, yesterday } = dm;
                         const isMobileStart = mobileRangeStart && mobileRangeStart.flatId === flat.id && isSameDay(mobileRangeStart.day, day);
                         const inDragRange = isCellInDragRange(flat.id, day);
-                        const today = isToday(day);
-                        const yesterday = isYesterday(day);
-                        const cellBlock = flatBlocks.find(b => b.startDate && b.endDate && dayStr >= b.startDate && dayStr <= b.endDate);
+                        const cellBlock = flatBlocks.length > 0 ? flatBlocks.find(b => b.startDate && b.endDate && dayStr >= b.startDate && dayStr <= b.endDate) : undefined;
 
                         return (
                           <div 
@@ -13259,7 +13555,7 @@ export default function PmsCalendar(props?: {
                                 : yesterday ? 'bg-slate-500/[0.04] dark:bg-slate-400/[0.04]'
                                 : ''
                             } hover:bg-primary/10 group/cell`}
-                            title={cellBlock ? `Apartamento bloqueado em ${format(day, "dd/MM/yyyy")}` : `Toque para iniciar reserva no Apt ${flat.number} em ${format(day, "dd/MM/yyyy")}`}
+                            title={cellBlock ? `Apartamento bloqueado em ${dayBrStr}` : `Toque para iniciar reserva no Apt ${flat.number} em ${dayBrStr}`}
                           >
                             {isMobileStart && (
                               <div className="w-full h-8 mx-0.5 rounded-md bg-emerald-600 text-white flex flex-col items-center justify-center text-[9px] font-black shadow-xs ring-2 ring-emerald-400">
@@ -14356,7 +14652,7 @@ export default function PmsCalendar(props?: {
                     isFlatManual={isFlatManualSelection}
                     onSelectFlat={handleSimpleSelectFlat}
                     onResetFlatAuto={handleSimpleResetFlatAuto}
-                    flatsList={data.flats || []}
+                    flatsList={effectiveModalFlatsList}
                     reservationsList={data.reservations || []}
                     blocksList={data.blocks || []}
                     fairShareResult={fairShareResult}
@@ -16483,7 +16779,7 @@ export default function PmsCalendar(props?: {
                         totalFlats={formFlats.length}
                         isEditMode={Boolean(selectedRes)}
                         selectedRes={selectedRes}
-                        flatsList={data.flats || []}
+                        flatsList={effectiveModalFlatsList}
                         reservationsList={data.reservations || []}
                         blocksList={data.blocks || []}
                         otherFlatsInPackage={formFlats
@@ -19417,13 +19713,13 @@ export default function PmsCalendar(props?: {
                   <Button
                     type="submit"
                     size="sm"
-                    disabled={savingRes || (!selectedRes && resCreateMode === "simple" && loadingFairShare)}
+                    disabled={savingRes || (!selectedRes && resCreateMode === "simple" && loadingFairShare && !formFlatId)}
                     className="font-bold text-xs bg-primary hover:bg-primary/90 text-primary-foreground min-w-[100px] shadow-sm"
                   >
-                    {savingRes || (!selectedRes && resCreateMode === "simple" && loadingFairShare) ? (
+                    {savingRes || (!selectedRes && resCreateMode === "simple" && loadingFairShare && !formFlatId) ? (
                       <RefreshCw className="w-3.5 h-3.5 animate-spin mr-1" />
                     ) : null}
-                    {!savingRes && !selectedRes && resCreateMode === "simple" && loadingFairShare
+                    {!savingRes && !selectedRes && resCreateMode === "simple" && loadingFairShare && !formFlatId
                       ? "Verificando flats..."
                       : selectedRes
                         ? "Salvar Alterações"

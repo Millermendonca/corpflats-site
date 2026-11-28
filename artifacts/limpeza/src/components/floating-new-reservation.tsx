@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react';
 import { useLocation } from 'wouter';
 import { useGetMe } from '@workspace/api-client-react';
-import { Plus, GripVertical, CalendarPlus, Minimize2, Maximize2 } from 'lucide-react';
+import { Plus, GripVertical, CalendarPlus, Minimize2, Maximize2, Loader2 } from 'lucide-react';
 import { hasModuleAccess } from '@/lib/permissions';
 
 const PmsCalendarLazy = lazy(() => import('@/pages/pms-calendar'));
@@ -66,7 +66,9 @@ export function FloatingNewReservationButton() {
   const [isDragging, setIsDragging] = useState(false);
   const [isResModalOpen, setIsResModalOpen] = useState(false);
   const [isModalMounted, setIsModalMounted] = useState(false);
+  const [isOpeningModal, setIsOpeningModal] = useState(false);
   const unmountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
@@ -105,6 +107,11 @@ export function FloatingNewReservationButton() {
         const isOpen = customEvent.detail.open;
         setIsResModalOpen(isOpen);
         if (isOpen) {
+          setIsOpeningModal(false);
+          if (openingTimeoutRef.current) {
+            clearTimeout(openingTimeoutRef.current);
+            openingTimeoutRef.current = null;
+          }
           if (unmountTimerRef.current) {
             clearTimeout(unmountTimerRef.current);
             unmountTimerRef.current = null;
@@ -123,6 +130,7 @@ export function FloatingNewReservationButton() {
     return () => {
       window.removeEventListener('gfm-res-modal-state', handleModalState);
       if (unmountTimerRef.current) clearTimeout(unmountTimerRef.current);
+      if (openingTimeoutRef.current) clearTimeout(openingTimeoutRef.current);
     };
   }, []);
 
@@ -230,10 +238,18 @@ export function FloatingNewReservationButton() {
   };
 
   const handleTriggerNewReservation = () => {
-    if (hasMovedRef.current) return;
+    if (hasMovedRef.current || isOpeningModal) return;
     if (isOnReservationsPage) {
       window.dispatchEvent(new CustomEvent('open-new-reservation-modal'));
     } else {
+      if (!isModalMounted) {
+        setIsOpeningModal(true);
+        if (openingTimeoutRef.current) clearTimeout(openingTimeoutRef.current);
+        openingTimeoutRef.current = setTimeout(() => {
+          setIsOpeningModal(false);
+          openingTimeoutRef.current = null;
+        }, 8000);
+      }
       setIsModalMounted(true);
       window.dispatchEvent(new CustomEvent('open-new-reservation-modal'));
     }
@@ -285,7 +301,9 @@ export function FloatingNewReservationButton() {
 
           {/* Ícone principal + */}
           <div className="w-6 h-6 rounded-full bg-[#C5A059]/20 border border-[#C5A059]/40 flex items-center justify-center shrink-0 pointer-events-none">
-            {isCompact ? (
+            {isOpeningModal ? (
+              <Loader2 className="w-3.5 h-3.5 text-[#E5C98B] animate-spin" />
+            ) : isCompact ? (
               <CalendarPlus className="w-3.5 h-3.5 text-[#E5C98B]" />
             ) : (
               <Plus className="w-4 h-4 text-[#E5C98B] stroke-[2.5]" />
@@ -295,7 +313,7 @@ export function FloatingNewReservationButton() {
           {/* Rótulo do botão */}
           {!isCompact && (
             <span className="text-xs font-extrabold tracking-tight whitespace-nowrap pr-0.5 pointer-events-none">
-              Nova Reserva
+              {isOpeningModal ? 'Abrindo...' : 'Nova Reserva'}
             </span>
           )}
 
